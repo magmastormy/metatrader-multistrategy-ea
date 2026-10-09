@@ -27,7 +27,7 @@ struct SAIPredictionRecord
 {
     datetime predictionTime;      // When prediction was made
     string symbol;                // Symbol predicted
-    ENUM_TRADE_SIGNAL prediction; // AI prediction
+    ENUM_TRADE_SIGNAL prediction;
     double confidence;            // AI confidence level
     double uncertainty;           // AI uncertainty level
     ENUM_MARKET_REGIME regime;    // Market regime at prediction
@@ -40,8 +40,8 @@ struct SAIPredictionRecord
     
     // Performance metrics
     double accuracyScore;         // Accuracy score for this prediction
-    double calibrationScore;      // Calibration score
-    double profitabilityScore;    // Profitability score
+    double calibrationScore;
+    double profitabilityScore;
     
     SAIPredictionRecord()
     {
@@ -65,13 +65,13 @@ struct SAIPredictionRecord
 struct SAIModelMetrics
 {
     int totalPredictions;         // Total predictions made
-    int correctPredictions;       // Correct predictions
+    int correctPredictions;
     double accuracy;              // Overall accuracy
     double precision;             // Precision score
     double recall;                // Recall score
-    double f1Score;               // F1 score
-    double calibrationError;      // Calibration error
-    double averageConfidence;     // Average confidence
+    double f1Score;
+    double calibrationError;
+    double averageConfidence;
     double profitability;         // Average profitability
     double sharpeRatio;           // Sharpe ratio of AI predictions
     
@@ -81,8 +81,8 @@ struct SAIModelMetrics
     double volatileAccuracy;      // Accuracy in volatile markets
     
     // Recent performance (last 50 predictions)
-    double recentAccuracy;        // Recent accuracy
-    double recentProfitability;   // Recent profitability
+    double recentAccuracy;
+    double recentProfitability;
     
     SAIModelMetrics()
     {
@@ -523,7 +523,6 @@ bool CAIPerformanceFeedback::ShouldRetrain(void)
         return true;
     }
     
-    // Check profitability threshold
     if(m_currentMetrics.recentProfitability < m_minProfitabilityThreshold)
     {
         LogFeedback(StringFormat("Retraining triggered: Recent profitability %.4f below threshold %.4f", 
@@ -779,14 +778,13 @@ bool CAIPerformanceFeedback::ShouldRetrainBasedOnAccuracy(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
     
-    // Check recent accuracy vs threshold
     if(m_currentMetrics.recentAccuracy < m_minAccuracyThreshold) return true;
     
     // Check if accuracy has dropped significantly from overall performance
     if(m_currentMetrics.totalPredictions > 100)
     {
         double accuracyDrop = m_currentMetrics.accuracy - m_currentMetrics.recentAccuracy;
-        if(accuracyDrop > 0.15) return true; // 15% drop in accuracy
+        if(accuracyDrop > 0.15) return true;
     }
     
     return false;
@@ -797,7 +795,6 @@ bool CAIPerformanceFeedback::ShouldRetrainBasedOnProfitability(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
     
-    // Check recent profitability vs threshold
     if(m_currentMetrics.recentProfitability < m_minProfitabilityThreshold) return true;
     
     // Check Sharpe ratio degradation

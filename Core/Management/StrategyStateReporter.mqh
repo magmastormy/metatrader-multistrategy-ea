@@ -1,4 +1,3 @@
-// Strategy State Reporter (Phase C, Slice 1 - C1)
 // Read-only telemetry / JSON serialization extracted from
 // Holds a const back-pointer to the owning manager and reads its
 // state exclusively through the manager's minimal const accessor
@@ -214,7 +213,6 @@ string CStrategyStateReporter::GetConsensusContextJSON() const
     return json;
 }
 
-// Consensus Decision Class to String Conversion
 string CStrategyStateReporter::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
 {
     switch(decisionClass)
@@ -236,7 +234,6 @@ string CStrategyStateReporter::ConsensusDecisionClassToString(ENUM_CONSENSUS_DEC
     }
 }
 
-// Registered strategy field readers
 string CStrategyStateReporter::GetRegisteredStrategyName(const int index) const
 {
     if(m_src == NULL)

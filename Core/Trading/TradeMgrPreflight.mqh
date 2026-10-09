@@ -29,7 +29,6 @@
 #include "TradeMgrPricing.mqh"
 #include "TradeMgrConfirmationQueue.mqh"
 
-// Trade Manager Preflight
 class CTradeMgrPreflight
 {
 public:
@@ -45,7 +44,6 @@ public:
         // Analyze market conditions to choose appropriate fill mode
         bool useIOC = true;
 
-        // Get spread for the symbol
         double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
         double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
         if(point <= 0.0)

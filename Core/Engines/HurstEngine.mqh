@@ -1,13 +1,10 @@
 // Hurst Exponent engine — DFA + variance-time ensemble
 // Provides regime classification and strategy weight multipliers
-// Batch 114: DFA (Kantelhardt 2002) replaces pure variance-time
-// with ensemble averaging for 30-50% lower estimation RMSE
 #ifndef HURST_ENGINE_MQH
 #define HURST_ENGINE_MQH
 
 #include "../Utils/Enums.mqh"
 
-// Hurst Regime Classification
 enum ENUM_HURST_REGIME
 {
     HURST_MEAN_REVERTING = 0,   // H < 0.45
@@ -41,7 +38,6 @@ struct SHurstSnapshot
     }
 };
 
-// CHurstEngine — DFA + Variance-Time Ensemble Hurst Calculator
 class CHurstEngine
 {
 private:
@@ -56,11 +52,10 @@ private:
     datetime        m_lastBarTime;
     bool            m_timeframeResolved;  // Track if PERIOD_CURRENT has been resolved
 
-    // DFA-specific settings (Batch 114)
     int             m_dfaMinBoxSize;
     int             m_dfaMaxBoxSize;
     int             m_dfaPolyOrder;       // polynomial detrending order (3 = cubic)
-    double          m_dfaEnsembleWeight;  // weight for DFA in ensemble (0-1)
+    double          m_dfaEnsembleWeight;
     double          m_dfaConfidence;      // R² from DFA regression
 
     // --- Resolve PERIOD_CURRENT to actual chart timeframe ---
@@ -73,7 +68,6 @@ private:
         }
     }
 
-    // --- Throttled logging helper ---
     void ThrottledLog(const string message)
     {
         datetime now = TimeCurrent();
@@ -122,7 +116,6 @@ private:
         if(n < 2)
             return 0.0;
 
-        // Compute lagged differences
         double sum = 0.0;
         for(int i = 0; i < n; i++)
         {
@@ -172,7 +165,6 @@ private:
 
         slope = ((double)n * sumXY - sumX * sumY) / denom;
 
-        // R-squared
         double meanY = sumY / (double)n;
         double ssTot = 0.0;
         double ssRes = 0.0;
@@ -216,7 +208,6 @@ private:
         double augmented[4][5]; // nTerms x (nTerms+1)
         double coeffs[4];
 
-        // Zero out
         for(int r = 0; r < nTerms; r++)
         {
             XTY[r] = 0.0;
@@ -243,7 +234,6 @@ private:
             }
         }
 
-        // Build augmented matrix
         for(int r = 0; r < nTerms; r++)
         {
             for(int c = 0; c < nTerms; c++)
@@ -259,7 +249,6 @@ private:
                 if(MathAbs(augmented[row][col]) > MathAbs(augmented[maxRow][col]))
                     maxRow = row;
 
-            // Swap rows
             for(int k = 0; k <= nTerms; k++)
             {
                 double temp = augmented[col][k];
@@ -416,11 +405,9 @@ public:
                          m_dfaEnsembleWeight(0.6),
                          m_dfaConfidence(0.0)
                      {
-                         // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
                          ResolveTimeframe();
                      }
 
-    // --- Calculate Hurst exponent using DFA + variance-time ensemble ---
     // DFA (Kantelhardt 2002) is more robust to nonstationarity.
     // Ensemble weighting: DFA=0.6, variance-time=0.4 (research-proven optimal mix)
     double CalculateHurst(const double &closePrices[], const int dataSize)
@@ -456,7 +443,7 @@ public:
             logPrices[i] = MathLog(closePrices[i]);
         }
 
-        // Step 2: Compute DFA Hurst (Batch 114 primary method)
+        // Step 2: Compute DFA Hurst (primary method)
         double dfaHurst = CalculateDFAHurst(logPrices, usableBars);
 
         // Step 3: Compute variance-time Hurst (legacy fallback)
@@ -515,7 +502,6 @@ public:
         return ensembleHurst;
     }
 
-    // --- Classify regime from Hurst value ---
     ENUM_HURST_REGIME GetRegimeClassification(const double hurstValue) const
     {
         if(hurstValue < 0.45)
@@ -525,7 +511,6 @@ public:
         return HURST_RANDOM_WALK;
     }
 
-    // --- Compute strategy weight multipliers from Hurst regime ---
     void GetStrategyWeightMultipliers(const ENUM_HURST_REGIME regime,
                                        double &meanRevWeight,
                                        double &momentumWeight,
@@ -567,7 +552,6 @@ public:
     // --- Update: called each bar, computes Hurst from close prices ---
         bool Update()
         {
-            // Resolve PERIOD_CURRENT on first call
             ResolveTimeframe();
 
             // Bar-change detection: skip recalc if bar hasn't changed
@@ -586,7 +570,6 @@ public:
             return false;
         }
 
-        // Warmup guard
         int minRequired = m_maxLag * 2;
         if(copied < minRequired)
         {
@@ -609,7 +592,6 @@ public:
         double hurst = CalculateHurst(closePrices, copied);
         ENUM_HURST_REGIME regime = GetRegimeClassification(hurst);
 
-        // Update snapshot
         m_snapshot.hurstValue = hurst;
         m_snapshot.regime = regime;
         m_snapshot.timestamp = TimeCurrent();
@@ -622,7 +604,6 @@ public:
 
         m_lastBarTime = currentBarTime;
 
-        // Throttled state logging
         ThrottledLog(StringFormat("[HURST] %s | H=%.4f | regime=%s | R2=%.3f | bars=%d | MeanRev=%.1fx | Momentum=%.1fx | Trend=%.1fx | Breakout=%.1fx",
                                    m_symbol,
                                    hurst,
@@ -637,13 +618,11 @@ public:
         return true;
     }
 
-    // --- Snapshot accessor ---
     SHurstSnapshot GetSnapshot() const
     {
         return m_snapshot;
     }
 
-    // --- Direct accessors ---
     double GetHurstValue() const          { return m_snapshot.hurstValue; }
     ENUM_HURST_REGIME GetRegime() const   { return m_snapshot.regime; }
     double GetConfidence() const          { return m_snapshot.confidence; }
@@ -653,14 +632,12 @@ public:
     double GetTrendWeightMult() const     { return m_snapshot.trendWeightMult; }
     double GetBreakoutWeightMult() const  { return m_snapshot.breakoutWeightMult; }
 
-    // --- Warmup check ---
         bool IsWarmedUp() const
         {
             int minRequired = m_maxLag * 2;
             return m_snapshot.barCount >= minRequired && m_snapshot.timestamp > 0;
         }
 
-        // --- Cleanup ---
         void Deinit()
         {
             m_snapshot = SHurstSnapshot();

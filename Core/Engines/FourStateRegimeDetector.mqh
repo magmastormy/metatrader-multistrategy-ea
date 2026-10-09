@@ -2,13 +2,11 @@
 // Combines volatility regime (MSR-inspired) with trend (KAMA)
 // States: LowVol-Bull, LowVol-Bear, HighVol-Bull, HighVol-Bear
 // Source: arXiv:2208.11574 (Springer 2023, cited 12 times)
-// Batch 114: New engine for regime-conditional strategy weighting
 #ifndef FOUR_STATE_REGIME_DETECTOR_MQH
 #define FOUR_STATE_REGIME_DETECTOR_MQH
 
 #include "../Utils/Enums.mqh"
 
-// Four-State Market Regime
 enum ENUM_FOUR_STATE_REGIME
 {
     FSTATE_LOW_VOL_BULL = 0,   // Low volatility + Bullish trend
@@ -17,7 +15,6 @@ enum ENUM_FOUR_STATE_REGIME
     FSTATE_HIGH_VOL_BEAR = 3   // High volatility + Bearish trend
 };
 
-// Four-State Regime Snapshot
 struct SFourStateSnapshot
 {
     ENUM_FOUR_STATE_REGIME regime;
@@ -31,7 +28,6 @@ struct SFourStateSnapshot
     datetime lastChangeTime;
     datetime timestamp;
 
-    // Strategy weight multipliers per state
     double trendWeightMult;
     double momentumWeightMult;
     double meanRevWeightMult;
@@ -73,18 +69,15 @@ private:
     string          m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
 
-    // KAMA parameters
     int    m_kamaPeriod;
     int    m_kamaFastPeriod;
     int    m_kamaSlowPeriod;
 
-    // Volatility regime parameters
     int    m_volCalcPeriod;      // Bars for realized vol calculation
     int    m_volHistoryWindow;   // Bars for percentile comparison
     double m_highVolThreshold;   // Percentile threshold for high vol (default: 0.75)
     double m_lowVolThreshold;    // Percentile threshold for low vol (default: 0.25)
 
-    // State
     double m_kama;
     double m_kamaPrev;
     double m_erNumerator;
@@ -174,7 +167,6 @@ private:
         return MathSqrt(varSum / (double)(count - 2)) * MathSqrt(barsPerYear);
     }
 
-    //--- Compute volatility percentile in history
     double ComputeVolPercentile() const
     {
         if(m_volCount < 10) return 0.5;
@@ -188,7 +180,6 @@ private:
         return (double)belowCount / (double)m_volCount;
     }
 
-    //--- Get weight multipliers for a given state
     void GetStateWeights(ENUM_FOUR_STATE_REGIME state,
                          double &trendW, double &momentumW, double &meanRevW,
                          double &breakoutW, double &ictW) const
@@ -241,7 +232,6 @@ public:
                 m_lastLogTime(0)
             {
                 ArrayResize(m_volHistory, 252);
-                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
                 ResolveTimeframe();
             }
 
@@ -271,12 +261,11 @@ public:
     //--- Initialize from history
         bool Initialize()
         {
-            // Resolve PERIOD_CURRENT to actual timeframe
             ResolveTimeframe();
         
             double closes[];
             ArraySetAsSeries(closes, true);
-            // Batch 158: shift 1 = last closed bar (not shift 0 = forming bar)
+            // shift 1 = last closed bar (not shift 0 = forming bar)
             int copied = CopyClose(m_symbol, m_timeframe, 1, m_volHistoryWindow + m_volCalcPeriod + 10, closes);
             if(copied < m_volCalcPeriod + 10)
                 return false;
@@ -319,7 +308,6 @@ public:
 //--- Update: called each bar
         bool Update()
         {
-            // Resolve PERIOD_CURRENT to actual timeframe if not already resolved
             ResolveTimeframe();
         
             datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
@@ -328,15 +316,13 @@ public:
             if(currentBarTime == m_lastBarTime && m_lastSnapshot.timestamp > 0)
                 return true;
 
-            // Get closes
             double closes[];
             ArraySetAsSeries(closes, true);
-            // Batch 158: shift 1 = last closed bar (not shift 0 = forming bar)
+            // shift 1 = last closed bar (not shift 0 = forming bar)
             int copied = CopyClose(m_symbol, m_timeframe, 1, MathMax(m_volCalcPeriod + 10, m_kamaPeriod + 5), closes);
             if(copied < m_kamaPeriod + 2)
                 return false;
 
-            // Update KAMA
             m_kamaPrev = m_kama;
             m_kama = ComputeKAMA(closes, copied);
             double kamaSlope = (m_kama > m_kamaPrev) ? 1.0 : -1.0;
@@ -344,10 +330,8 @@ public:
             // Determine trend direction using closed bar
             bool isBullish = (closes[0] > m_kama);
 
-        // Update volatility
         m_currentVol = ComputeRealizedVol(closes, MathMin(m_volCalcPeriod, copied));
 
-        // Store in history
         m_volHistory[m_volCursor] = m_currentVol;
         m_volCursor = (m_volCursor + 1) % m_volHistoryWindow;
         if(m_volCount < m_volHistoryWindow) m_volCount++;
@@ -355,7 +339,6 @@ public:
         double volPctile = ComputeVolPercentile();
         bool isHighVol = (volPctile > m_highVolThreshold);
 
-        // Determine four-state regime
         ENUM_FOUR_STATE_REGIME newRegime;
         if(!isHighVol && isBullish)        newRegime = FSTATE_LOW_VOL_BULL;
         else if(!isHighVol && !isBullish)  newRegime = FSTATE_LOW_VOL_BEAR;
@@ -387,11 +370,9 @@ public:
         }
         m_barsInRegime++;
 
-        // Get weight multipliers
         double trendW, momentumW, meanRevW, breakoutW, ictW;
         GetStateWeights(newRegime, trendW, momentumW, meanRevW, breakoutW, ictW);
 
-        // Build snapshot
         m_lastSnapshot.regime = newRegime;
         m_lastSnapshot.kamaValue = m_kama;
         m_lastSnapshot.kamaSlope = kamaSlope;
@@ -424,7 +405,6 @@ public:
         return true;
     }
 
-    //--- Accessors
     ENUM_FOUR_STATE_REGIME GetRegime() const { return m_lastSnapshot.regime; }
     double GetKAMA() const { return m_kama; }
     double GetVolPercentile() const { return m_lastSnapshot.volPercentile; }
@@ -440,7 +420,6 @@ public:
 
     SFourStateSnapshot GetSnapshot() const { return m_lastSnapshot; }
 
-        // --- Cleanup ---
         void Deinit()
         {
             // CFourStateRegimeDetector holds no indicator handles or external resources.

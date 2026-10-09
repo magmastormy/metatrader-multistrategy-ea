@@ -1,9 +1,4 @@
-// Decomposition extraction from CSpikeHunterEngine (behaviour
-// preserving).
-// Owns the three plain-data structs that used to be declared
-// inline inside SpikeHunterEngine.mqh:
-// SSpikeHunterConfig, SSpikeSymbolState,
-// SSpikeHunterFamilyOverrides
+// Owns the three plain-data structs of the spike hunter.
 // SpikeHunterEngine.mqh #includes this header, so every existing
 // consumer of these types keeps seeing them unchanged.
 // Field order, defaults and comments are reproduced verbatim.
@@ -57,26 +52,22 @@ struct SSpikeSymbolState
    string   symbol;
    bool     isActive;                  // Is this symbol being monitored
 
-   // Tick velocity tracking
    datetime tickWindowStart;
    int      tickWindowCount;
    double   tickRateBaseline;          // EMA baseline tick rate
    bool     velocityTriggered;         // Layer 1 triggered
 
-   // Direction accumulation tracking
    int      consecutiveUpTicks;        // Consecutive upward ticks
-   int      consecutiveDownTicks;      // Consecutive downward ticks
+   int      consecutiveDownTicks;
    double   lastBid;                   // Last bid for direction comparison
    datetime directionWindowStart;      // Start of direction accumulation window
    bool     directionTriggered;        // Layer 2 triggered
    int      directionSign;             // +1 = up, -1 = down
 
-   // ATR compression tracking
    double   currentATR;
    double   atrSMA;
    bool     compressionTriggered;      // Layer 3 triggered
 
-   // Spike state
    int      confluenceCount;           // How many layers are triggered
    datetime lastSpikeTradeTime;        // When last spike trade was opened
    datetime lastSpikeDetectionTime;    // When spike was last detected (for long-term cooldown)

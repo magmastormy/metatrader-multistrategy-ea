@@ -1,11 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the scalp position tracking array that used to be two loose
-// members on CFastScalpEngine:
-// SScalpPositionState m_scalpPositions[20]; int m_scalpPositionCount;
-// Moved methods (bodies verbatim):
-// RegisterScalpPosition(), RemoveScalpPosition(),
-// FindScalpPositionState(), CountScalpPositions(),
+// Owns the scalp position tracking array.
 // IsScalpPosition()
 // CountScalpPositions()/IsScalpPosition() scan the terminal, not
 // the local array, so they are `static`.
@@ -20,11 +13,9 @@
 
 #include "FastScalpTypes.mqh"
 
-// CFastScalpPositionTracker — stateful scalp position registry
 class CFastScalpPositionTracker
 {
 private:
-   // Scalp position tracking (moved verbatim from CFastScalpEngine)
    SScalpPositionState       m_scalpPositions[20];
    int                       m_scalpPositionCount;
 
@@ -37,7 +28,6 @@ public:
          m_scalpPositions[i].Reset();
    }
 
-   //--- Number of tracked scalp positions
    int Count() const { return m_scalpPositionCount; }
 
    //--- Destructor-time reset (was `m_scalpPositionCount = 0;`)
@@ -76,7 +66,6 @@ public:
       m_scalpPositions[index].breakevenSet = true;
    }
 
-// Register a scalp position in the tracking array
    void RegisterScalpPosition(ulong ticket, string symbol, double entryPrice,
                                double sl, double tp, double oneRPrice)
    {
@@ -94,14 +83,12 @@ public:
       m_scalpPositionCount++;
    }
 
-// Remove a scalp position from tracking by ticket
    void RemoveScalpPosition(ulong ticket)
    {
       for(int i = 0; i < m_scalpPositionCount; i++)
       {
          if(m_scalpPositions[i].ticket == ticket)
          {
-            // Shift remaining
             for(int j = i; j < m_scalpPositionCount - 1; j++)
                m_scalpPositions[j] = m_scalpPositions[j + 1];
             m_scalpPositionCount--;
@@ -144,7 +131,6 @@ public:
       return count;
    }
 
-// Check if a position is a scalp position
    static bool IsScalpPosition(ulong ticket)
    {
       if(!PositionSelectByTicket(ticket))

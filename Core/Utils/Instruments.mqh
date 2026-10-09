@@ -267,7 +267,7 @@ int DetectFamilyId(const string symbol)
     if(IsRangeBreakSyntheticSymbolName(symbol))     return 8;   // DERIV_RANGE_BREAK
     if(IsTrekSyntheticSymbolName(symbol))           return 12;  // DERIV_TREK
     if(IsTacticalSyntheticSymbolName(symbol))       return 13;  // DERIV_TACTICAL
-    if(IsDerivedSyntheticSymbolName(symbol))        return 14;  // DERIV_DERIVED
+    if(IsDerivedSyntheticSymbolName(symbol))        return 14;
     if(IsStableSpreadSyntheticSymbolName(symbol))   return 15;  // DERIV_STABLE_SPREAD
     if(IsPairsArbitrageSyntheticSymbolName(symbol)) return 16;  // DERIV_PAIRS_ARBITRAGE
     if(IsSpotVolatilitySyntheticSymbolName(symbol)) return 17;  // DERIV_SPOT_VOLATILITY

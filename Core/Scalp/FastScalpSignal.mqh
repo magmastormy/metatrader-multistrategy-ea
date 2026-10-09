@@ -1,16 +1,5 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the two evaluation paths that made up
-// CFastScalpEngine::EvaluateScalpSignal():
-// EvaluateFromCache() — zero-CopyBuffer fast path driven by
-// CScalpSignalCache
-// EvaluateSlowPath()  — RefreshIndicators + spread gate +
-// EMA crossover + RSI confirmation
-// The engine keeps EvaluateScalpSignal() as a coordinator: it does
-// the m_initialized guard, pulls the cache entry, and — only when
-// the fast path yields a non-NONE signal — mirrors the cached
-// indicator values into CFastScalpIndicators, exactly as the
-// original inline block did.
+// Owns the two scalp signal evaluation paths: cached fast path and indicator-refresh slow path.
+// The engine keeps EvaluateScalpSignal() as a coordinator: m_initialized guard, cache pull, and only on a non-NONE fast-path signal does it mirror the cached indicator values into CFastScalpIndicators.
 // Thresholds, comparison operators and short-circuit order are
 // reproduced verbatim.
 #property strict
@@ -24,7 +13,6 @@
 #include "FastScalpIndicators.mqh"
 #include "FastScalpFilters.mqh"
 
-// CFastScalpSignal — scalp signal evaluation
 class CFastScalpSignal
 {
 public:
@@ -69,7 +57,6 @@ public:
                                              const SScalpConfig &config,
                                              CFastScalpIndicators &indicators)
    {
-      // Fallback: existing RefreshIndicators path (slow path / timer path)
       if(!indicators.RefreshIndicators(symbol, config))
          return TRADE_SIGNAL_NONE;
 
@@ -79,7 +66,6 @@ public:
                                                 config.maxSpreadATRRatio))
          return TRADE_SIGNAL_NONE;
 
-      // EMA crossover detection
       ENUM_TRADE_SIGNAL emaSignal2 = TRADE_SIGNAL_NONE;
       if(!CFastScalpIndicators::GetEMACrossover(symbol, config, emaSignal2))
          return TRADE_SIGNAL_NONE;
@@ -87,7 +73,6 @@ public:
       if(emaSignal2 == TRADE_SIGNAL_NONE)
          return TRADE_SIGNAL_NONE;
 
-      // RSI confirmation
       if(!indicators.IsRSIConfirmed(emaSignal2, config))
          return TRADE_SIGNAL_NONE;
 

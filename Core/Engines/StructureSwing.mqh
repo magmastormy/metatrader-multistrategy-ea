@@ -11,7 +11,6 @@
 
 #include "StructureTypes.mqh"
 
-// Swing point detector - owns swing config + potential slots
 class CStructureSwingDetector
 {
 private:
@@ -20,24 +19,22 @@ private:
     bool   m_useATR;                // Use ATR for adaptive thresholds
 
     // Potential swing tracking for real-time detection (L4-009 fix)
-    double m_potentialSwingHighPrice;    // Price of potential swing high
-    int    m_potentialSwingHighIndex;    // Index of potential swing high
-    double m_potentialSwingLowPrice;     // Price of potential swing low
-    int    m_potentialSwingLowIndex;     // Index of potential swing low
+    double m_potentialSwingHighPrice;
+    int    m_potentialSwingHighIndex;
+    double m_potentialSwingLowPrice;
+    int    m_potentialSwingLowIndex;
     bool   m_potentialSwingHighValid;    // Flag if potential swing high is valid
     bool   m_potentialSwingLowValid;     // Flag if potential swing low is valid
 
 public:
     CStructureSwingDetector();
 
-    //--- Configuration
     void Configure(double minSwingSize, bool useATR)
     {
         m_minSwingSize = minSwingSize;
         m_useATR = useATR;
     }
 
-    //--- Swing predicates
     bool IsSwingHigh(const MqlRates &rates[], int index, int period);
     bool IsSwingLow(const MqlRates &rates[], int index, int period);
     bool IsPotentialSwingHigh(const MqlRates &rates[], int index, int period);
@@ -45,7 +42,6 @@ public:
     bool IsConfirmedSwingHigh(const MqlRates &rates[], int index, int period);
     bool IsConfirmedSwingLow(const MqlRates &rates[], int index, int period);
 
-    //--- Potential swing slot accessors
     bool   PotentialHighValid() const { return m_potentialSwingHighValid; }
     int    PotentialHighIndex() const { return m_potentialSwingHighIndex; }
     double PotentialHighPrice() const { return m_potentialSwingHighPrice; }
@@ -101,7 +97,6 @@ CStructureSwingDetector::CStructureSwingDetector() :
 {
 }
 
-// Check if bar is a swing high
 bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)
@@ -109,21 +104,18 @@ bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, in
     
     double high = rates[index].high;
     
-    // Check left side
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].high >= high)
             return false;
     }
     
-    // Check right side
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].high > high)
             return false;
     }
     
-    // Verify minimum swing size
     double avgBody = 0;
     for(int i = index - period; i <= index + period; i++)
     {
@@ -143,7 +135,6 @@ bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, in
     }
 }
 
-// Check if bar is a swing low
 bool CStructureSwingDetector::IsSwingLow(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)
@@ -151,21 +142,18 @@ bool CStructureSwingDetector::IsSwingLow(const MqlRates &rates[], int index, int
     
     double low = rates[index].low;
     
-    // Check left side
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].low <= low)
             return false;
     }
     
-    // Check right side  
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].low < low)
             return false;
     }
     
-    // Verify minimum swing size
     double avgBody = 0;
     for(int i = index - period; i <= index + period; i++)
     {
@@ -270,7 +258,6 @@ bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int 
     
     double high = rates[index].high;
     
-    // Check left side
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].high >= high)
@@ -284,7 +271,6 @@ bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int 
             return false;
     }
     
-    // Verify minimum swing size
     double avgBody = 0;
     int count = 0;
     for(int i = index - period; i <= index + period; i++)
@@ -316,7 +302,6 @@ bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int i
     
     double low = rates[index].low;
     
-    // Check left side
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].low <= low)
@@ -330,7 +315,6 @@ bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int i
             return false;
     }
     
-    // Verify minimum swing size
     double avgBody = 0;
     int count = 0;
     for(int i = index - period; i <= index + period; i++)

@@ -244,7 +244,6 @@ static bool ApplyVolatilityFilter(CMathematicalEngineRegistry* m_mathRegistry, c
     ENUM_VOLATILITY_STATE volState = volatilityEngine.GetVolatilityState();
     double atrPercent = volatilityEngine.GetATRPercent();
     
-    // Check maximum volatility
     double hardVolatilityLimit = m_filters.volatility.maxVolatility * 1.35;
     if(atrPercent > hardVolatilityLimit)
     {

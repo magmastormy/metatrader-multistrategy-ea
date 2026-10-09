@@ -52,7 +52,7 @@ struct STrendline
     bool        isBroken;
     bool        isExtended;         // Line has been extended beyond P2
     datetime    breakTime;          // When it broke
-    double      breakPrice;         // Price at break
+    double      breakPrice;
     int         barsSinceLastTouch; // Bars since price last tested this line (recency)
 
     // ATR context at time of formation
@@ -798,7 +798,6 @@ double CTrendlineDetector::ProjectTrendline(STrendline &trendline, datetime targ
     return trendline.point1Price + trendline.slope * (double)(targetTime - trendline.point1Time);
 }
 
-// Check if at Trendline
 bool CTrendlineDetector::IsAtTrendline(double price, int &touchedLineIndex)
 {
     double tolerance = m_tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -829,7 +828,6 @@ int CTrendlineDetector::FindActiveTrendlineAtPrice(double price)
     return -1;
 }
 
-// Check if Trendline is Broken
 bool CTrendlineDetector::IsTrendlineBroken(STrendline &trendline)
 {
     // Check cached break flag first

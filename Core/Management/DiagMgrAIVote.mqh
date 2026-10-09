@@ -36,10 +36,8 @@ public:
     bool IsTrackingEnabled() const { return m_aiVoteTrackingEnabled; }
 
 // Size the tracking matrix for the configured symbol universe
-// Mirrors the initialisation block inside the original SetSymbols()
     void ConfigureSymbols(const int symbolCount)
     {
-        // Initialize AI vote tracking array [L11-004]
         // 2D array: [symbolIndex * AI_VOTE_COUNT + aiType]
         if(symbolCount > 0)
         {
@@ -49,7 +47,6 @@ public:
         }
     }
 
-// Update AI vote activity timestamp [L11-004]
 // Call this when an AI adapter logs an [AI-VOTE] heartbeat
     void UpdateActivity(string &symbols[],
                         const int symbolCount,
@@ -59,7 +56,6 @@ public:
         if(!m_aiVoteTrackingEnabled || symbolCount == 0)
             return;
 
-        // Find symbol index
         int symbolIndex = -1;
         for(int i = 0; i < symbolCount; i++)
         {
@@ -72,7 +68,6 @@ public:
         if(symbolIndex < 0)
             return;
 
-        // Map AI type string to enum
         int aiTypeIndex = -1;
         if(aiType == "NeuralNet" || aiType == "Neural Network AI")
             aiTypeIndex = AI_VOTE_NEURAL_NET;
@@ -85,12 +80,10 @@ public:
         else
             return;
 
-        // Update timestamp
         int arrayIndex = symbolIndex * AI_VOTE_COUNT + aiTypeIndex;
         m_aiVoteLastActivity[arrayIndex] = TimeCurrent();
     }
 
-// AI vote heartbeat monitoring [L11-004]
 // Check if AI adapters are logging [AI-VOTE] heartbeats
 // Emits identical AIVoteMissing warnings, in identical order.
     void EmitMissingVoteWarnings(string &symbols[],
@@ -104,7 +97,6 @@ public:
     {
         for(int symIdx = 0; symIdx < symbolCount; symIdx++)
         {
-            // Check each AI type that should be active
             // Neural Network AI
             if(nnEnabled)
             {

@@ -15,9 +15,9 @@ class CDashBridgeHealth
 {
 private:
    int                 m_pScansCount;          // Scans performed
-   int                 m_pSignalsGenerated;    // Signals generated
-   int                 m_pSignalsValidated;    // Signals validated
-   int                 m_pTradesOpened;        // Trades opened
+   int                 m_pSignalsGenerated;
+   int                 m_pSignalsValidated;
+   int                 m_pTradesOpened;
    int                 m_pSpikeEvents;         // Spike events observed
    bool                m_heartbeatCountersSet; // Counters supplied at least once
 

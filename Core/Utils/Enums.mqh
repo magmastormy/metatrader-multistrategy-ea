@@ -11,9 +11,9 @@
 // Trading Signal Types
 enum ENUM_TRADE_SIGNAL
 {
-    TRADE_SIGNAL_NONE = 0,     // No signal
-    TRADE_SIGNAL_BUY = 1,      // Buy signal
-    TRADE_SIGNAL_SELL = -1     // Sell signal
+    TRADE_SIGNAL_NONE = 0,
+    TRADE_SIGNAL_BUY = 1,
+    TRADE_SIGNAL_SELL = -1
 };
 
 // Trading Style Enumeration
@@ -35,11 +35,11 @@ enum ENUM_TRADING_MODE
 
 enum ENUM_MARKET_REGIME
 {
-    MARKET_REGIME_UNKNOWN = 0,     // Unknown regime
-    MARKET_REGIME_TRENDING = 1,    // Trending market
-    MARKET_REGIME_RANGING = 2,     // Ranging market
-    MARKET_REGIME_VOLATILE = 3,    // Volatile market
-    MARKET_REGIME_QUIET = 4        // Quiet market
+    MARKET_REGIME_UNKNOWN = 0,
+    MARKET_REGIME_TRENDING = 1,
+    MARKET_REGIME_RANGING = 2,
+    MARKET_REGIME_VOLATILE = 3,
+    MARKET_REGIME_QUIET = 4
 };
 
 enum ENUM_STRATEGY_TIER
@@ -52,13 +52,13 @@ enum ENUM_STRATEGY_TIER
 
 enum ENUM_STRATEGY_TYPE
 {
-    STRATEGY_MOMENTUM = 1,         // Momentum strategy
-    STRATEGY_TREND = 2,            // Trend strategy
+    STRATEGY_MOMENTUM = 1,
+    STRATEGY_TREND = 2,
     // STRATEGY_FIBONACCI = 3 — REMOVED: merged into Support/Resistance as confluence module
     // STRATEGY_ELLIOTT_WAVE = 4 — REMOVED: subjective pattern recognition, unsuitable for automation
-    STRATEGY_SUPPORT_RESISTANCE = 5, // Support/Resistance strategy
-    STRATEGY_UNIFIED_ICT = 6,      // Unified ICT strategy
-    STRATEGY_CANDLESTICK = 7,      // Candlestick strategy
+    STRATEGY_SUPPORT_RESISTANCE = 5,
+    STRATEGY_UNIFIED_ICT = 6,
+    STRATEGY_CANDLESTICK = 7,
     STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy (NEW: Batch 93)
     STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy (NEW: Batch 93 - Week 3)
     STRATEGY_STATISTICAL_ARBITRAGE = 10, // Statistical Arbitrage strategy (NEW: Batch 93 - Week 4 - ADVANCED)
@@ -69,10 +69,10 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
     STRATEGY_UNICORN_MODEL = 16,    // Unicorn Model strategy (ICT variant)
     STRATEGY_POWER_OF_THREE = 17,   // Power of Three strategy (ICT variant)
-    STRATEGY_LIQUIDITY_SWEEP = 18,    // Liquidity Sweep strategy
+    STRATEGY_LIQUIDITY_SWEEP = 18,
     STRATEGY_RANGE_COMPRESSION = 19,  // Range Compression Breakout strategy
-    STRATEGY_EXIT_OPTIMIZER = 20,     // Exit Optimizer strategy
-    STRATEGY_CUSTOM = 99,          // Custom strategy
+    STRATEGY_EXIT_OPTIMIZER = 20,
+    STRATEGY_CUSTOM = 99,
     STRATEGY_BRAIN = 100,          // Strategy brain type
     STRATEGY_AI_ENHANCED = 101,    // AI enhanced strategy type
     STRATEGY_ONNX = 102            // ONNX AI strategy type
@@ -123,16 +123,16 @@ enum ENUM_PYTHON_BRIDGE_MODE
 
 enum ENUM_ERROR_LEVEL
 {
-    ERROR_LEVEL_INFO = 0,         // Informational
-    ERROR_LEVEL_WARNING = 1,      // Warning
+    ERROR_LEVEL_INFO = 0,
+    ERROR_LEVEL_WARNING = 1,
     ERROR_LEVEL_ERROR = 2,        // Error
-    ERROR_LEVEL_CRITICAL = 3      // Critical error
+    ERROR_LEVEL_CRITICAL = 3
 };
 
 // Log Level Enumeration (L2-028: Gate verbose PrintFormat)
 enum ENUM_LOG_LEVEL
 {
-    LOG_LEVEL_NONE = 0,      // No logging
+    LOG_LEVEL_NONE = 0,
     LOG_LEVEL_ERROR = 1,     // Errors only
     LOG_LEVEL_WARNING = 2,   // Errors + warnings
     LOG_LEVEL_INFO = 3,      // Errors + warnings + info
@@ -144,20 +144,20 @@ enum ENUM_LOG_LEVEL
 enum ENUM_RISK_MODE
 {
     RISK_MODE_FIXED = 1,           // Fixed lot size
-    RISK_MODE_PERCENTAGE = 2,      // Percentage risk
+    RISK_MODE_PERCENTAGE = 2,
     RISK_MODE_ADAPTIVE = 3         // Adaptive risk management
 };
 
 enum ENUM_SIGNAL_EVAL_MODE
 {
-    EVAL_MODE_NEW_BAR = 0,         // New bar evaluation
-    EVAL_MODE_INTRABAR = 1         // Intrabar evaluation
+    EVAL_MODE_NEW_BAR = 0,
+    EVAL_MODE_INTRABAR = 1
 };
 
 enum ENUM_VALIDATION_PROFILE
 {
-    VALIDATION_PROFILE_NEW_BAR = 0,     // New bar validation profile
-    VALIDATION_PROFILE_INTRABAR = 1     // Intrabar validation profile
+    VALIDATION_PROFILE_NEW_BAR = 0,
+    VALIDATION_PROFILE_INTRABAR = 1
 };
 
 enum ENUM_STRATEGY_ROLE
@@ -294,7 +294,7 @@ enum ENUM_POSITION_SIZING_MODE
     POSITION_SIZING_FIXED_LOT = 0,         // Fixed lot size
     POSITION_SIZING_FIXED_RISK = 1,        // Fixed risk percentage
     POSITION_SIZING_KELLY = 2,             // Kelly Criterion
-    POSITION_SIZING_VOLATILITY_TARGET = 3, // Volatility targeting
+    POSITION_SIZING_VOLATILITY_TARGET = 3,
     POSITION_SIZING_EQUITY_CURVE = 4       // Equity curve scaling
 };
 
@@ -307,37 +307,37 @@ enum ENUM_POSITION_SIZING_MODE
 
 enum ENUM_STRATEGY_TYPE_EXTENDED
 {
-    STRATEGY_TYPE_CUSTOM = 99,         // Custom strategy type
-    STRATEGY_TYPE_BRAIN = 100,         // Strategy brain type
-    STRATEGY_TYPE_AI_ENHANCED = 101    // AI enhanced strategy type
+    STRATEGY_TYPE_CUSTOM = 99,
+    STRATEGY_TYPE_BRAIN = 100,
+    STRATEGY_TYPE_AI_ENHANCED = 101
 };
 
 struct SConsensusDecisionContext
 {
     string symbol;                 // Symbol being analyzed
     ENUM_TRADE_SIGNAL signal;       // Final consensus signal
-    int decisionClass;              // Decision classification
+    int decisionClass;
     double confidence;               // Final confidence level
-    double convictionScore;          // Conviction score
+    double convictionScore;
     double buyScore;                // Total buy score
     double sellScore;               // Total sell score
     double buySupport;              // Buy support ratio
     double sellSupport;             // Sell support ratio
-    double readyLiveWeight;         // Ready live weight
-    double totalLiveWeight;         // Total live weight
-    double readinessScore;          // Readiness score
-    double contextScore;            // Context score
-    double costScore;                // Cost score
-    double diversityScore;          // Diversity score
-    double directionalQuality;      // Directional quality
-    double supportRatio;            // Support ratio
-    double directionalWeight;       // Directional weight
-    double readyCoverage;           // Ready coverage
+    double readyLiveWeight;
+    double totalLiveWeight;
+    double readinessScore;
+    double contextScore;
+    double costScore;
+    double diversityScore;
+    double directionalQuality;
+    double supportRatio;
+    double directionalWeight;
+    double readyCoverage;
     double quorumGap;               // Gap between buy/sell scores
-    double stalenessPenalty;        // Staleness penalty
-    int eligibleLiveVoterCount;     // Eligible live voter count
-    int effectiveMinVoters;         // Effective minimum voters
-    string quorumMode;              // Quorum mode
+    double stalenessPenalty;
+    int eligibleLiveVoterCount;
+    int effectiveMinVoters;
+    string quorumMode;
     string vetoCode;                // Veto reason code
     int confluence;                 // Number of concurring strategies
     string reason;                  // Decision reason
@@ -446,24 +446,24 @@ struct SValidationResult
 {
     bool approved;                 // Whether the signal is approved
     string message;                // Validation message
-    double adjustedLotSize;        // Adjusted lot size
-    double riskPercent;            // Risk percentage
-    double portfolioRisk;          // Portfolio risk
-    double correlationRisk;        // Correlation risk
+    double adjustedLotSize;
+    double riskPercent;
+    double portfolioRisk;
+    double correlationRisk;
     bool requiresAdjustment;       // Whether adjustment is required
-    ENUM_ERROR_LEVEL severity;     // Error severity level
+    ENUM_ERROR_LEVEL severity;
     double confidenceMultiplier;   // Confidence adjustment multiplier (1.0 = no change)
     
     // Additional fields used by AdvancedSignalValidator
     bool isValid;                  // Signal validity
-    double qualityScore;           // Quality score
+    double qualityScore;
     string reason;                  // Reason for validation
-    double strategyConfluence;      // Strategy confluence
-    double avgConfidence;           // Average confidence
-    bool passedSpreadFilter;       // Passed spread filter
-    bool passedTimeFilter;         // Passed time filter
-    bool passedVolatilityFilter;   // Passed volatility filter
-    bool passedSessionFilter;      // Passed session filter
+    double strategyConfluence;
+    double avgConfidence;
+    bool passedSpreadFilter;
+    bool passedTimeFilter;
+    bool passedVolatilityFilter;
+    bool passedSessionFilter;
     
     // Default constructor
     SValidationResult() :
@@ -540,7 +540,7 @@ struct SRiskMetrics
     double freeMargin;            // Available free margin
     double marginLevel;           // Current margin level %
     double drawdown;              // Current drawdown %
-    double maxDrawdown;           // Maximum drawdown %
+    double maxDrawdown;
     int totalPositions;           // Total open positions
     double correlation;           // Average position correlation
     bool emergencyStop;           // Emergency stop flag
@@ -592,23 +592,23 @@ struct SPerformanceMetrics
     double totalProfit;           // Total profit/loss
     double averageWin;            // Average winning trade
     double averageLoss;           // Average losing trade
-    double profitFactor;          // Profit factor
-    double sharpeRatio;           // Sharpe ratio
+    double profitFactor;
+    double sharpeRatio;
     double sharpeRatioWithRiskFree; // Sharpe ratio with risk-free rate
-    double maxDrawdown;           // Maximum drawdown
-    double recoveryFactor;        // Recovery factor
+    double maxDrawdown;
+    double recoveryFactor;
 };
 
 struct SMarketAnalysis
 {
     ENUM_MARKET_REGIME regime;    // Current market regime
     double volatility;             // Current volatility level
-    double trendStrength;         // Trend strength [0-1]
+    double trendStrength;
     double momentum;              // Momentum indicator
     double support;               // Support level
     double resistance;            // Resistance level
     bool newsImpact;              // High impact news expected
-    datetime analysisTime;        // Analysis timestamp
+    datetime analysisTime;
 };
 
 struct SEnhancedTradeSignal
@@ -619,18 +619,18 @@ struct SEnhancedTradeSignal
     string reasoning;                    // Signal reasoning
     datetime timestamp;                  // Signal timestamp
     bool isValid;                        // Signal validity
-    double qualityScore;                 // Quality score
+    double qualityScore;
     string reason;                       // Reason for signal
-    double strategyConfluence;           // Strategy confluence
-    double avgConfidence;                // Average confidence
-    bool passedSpreadFilter;             // Passed spread filter
-    bool passedTimeFilter;               // Passed time filter
-    bool passedVolatilityFilter;         // Passed volatility filter
-    bool passedSessionFilter;            // Passed session filter
+    double strategyConfluence;
+    double avgConfidence;
+    bool passedSpreadFilter;
+    bool passedTimeFilter;
+    bool passedVolatilityFilter;
+    bool passedSessionFilter;
     
     // Additional fields for AI signals
-    double buyProbability;               // Buy probability
-    double sellProbability;              // Sell probability
+    double buyProbability;
+    double sellProbability;
     double uncertainty;                  // Uncertainty value
     double riskAdjustedSize;             // Risk adjusted position size
     

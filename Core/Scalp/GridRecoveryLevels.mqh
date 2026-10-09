@@ -12,11 +12,9 @@
 
 #include "GridRecoveryTypes.mqh"
 
-// CGridRecoveryLevels — stateless grid level helpers
 class CGridRecoveryLevels
 {
 public:
-// Find symbol index in the states array
    static int FindSymbolIndex(const SGridSymbolState &states[], int count, const string symbol)
    {
       for(int i = 0; i < count; i++)
@@ -27,7 +25,6 @@ public:
       return -1;
    }
 
-// Initialize a symbol state slot with defaults
    static void InitializeSymbolState(SGridSymbolState &state, const string symbol, int maxGridLevels)
    {
       state.symbol                = symbol;
@@ -42,7 +39,6 @@ public:
       state.hurstRegimeConfirmed  = false;
       state.initialEquity         = 0.0;
 
-      // Initialize levels array
       ArrayResize(state.levels, maxGridLevels);
       for(int l = 0; l < maxGridLevels; l++)
       {
@@ -56,7 +52,6 @@ public:
       }
    }
 
-// Calculate Fibonacci number for a given level
    static int FibonacciNumber(int level)
    {
       if(level <= 1)

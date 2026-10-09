@@ -44,7 +44,6 @@ struct SATRScalpingConfig
    }
 };
 
-// Per-symbol ATR scalp state tracking
 struct SATRScalpSymbolState
 {
    string   symbol;

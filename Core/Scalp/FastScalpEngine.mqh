@@ -1,9 +1,6 @@
 // Dedicated scalping pipeline bypassing full consensus engine
 // Single-strategy-allowed signals, tight stops, tick-level mgmt
-// DECOMPOSED: CFastScalpEngine is now a thin coordinator. The
-// implementation lives in focused FastScalp* modules, each owning
-// one cohesive concern. Every public method below is a signature-
-// identical forwarder — no behaviour, threshold or log tag changed.
+// CFastScalpEngine is a thin coordinator: every public method is a signature-identical forwarder into a focused FastScalp* module — no behaviour, threshold or log tag changed.
 // FastScalpTypes.mqh            SScalpConfig + tracking structs
 // FastScalpIndicators.mqh       M1 ATR/EMA/RSI cache (stateful)
 // FastScalpFilters.mqh          price/spread/burst/cost gates
@@ -35,12 +32,10 @@
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-// Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
 #include "ScalpSignalCache.mqh"
 
-//--- Decomposed FastScalp* modules (each header is self-guarded)
 #include "FastScalpTypes.mqh"
 #include "FastScalpIndicators.mqh"
 #include "FastScalpFilters.mqh"
@@ -53,7 +48,6 @@ class CAIAdapter;
 #include "FastScalpExit.mqh"
 #include "FastScalpEntry.mqh"
 
-// CFastScalpEngine — Dedicated scalping pipeline (coordinator)
 class CFastScalpEngine
 {
 private:
@@ -118,7 +112,6 @@ private:
    { return m_posTracker.FindScalpPositionState(ticket); }
 
 public:
-// Constructor
 // Scalar members keep their original initialisers; the extracted
 // state objects reproduce the rest in their own constructors.
    CFastScalpEngine() :
@@ -134,7 +127,6 @@ public:
    {
    }
 
-// Destructor
    ~CFastScalpEngine()
    {
       // Cancel any remaining pending orders
@@ -142,7 +134,6 @@ public:
       m_posTracker.Reset();
    }
 
-// Initialize with external dependencies
    bool Initialize(CTradeManager* scalpTradeMgr,
                    CUnifiedRiskManager* riskManager,
                    CPositionSizer* scalpPosSizer,
@@ -162,11 +153,9 @@ public:
       m_riskTierManager = riskTierManager;
       m_aiAdapter       = aiAdapter;  // L10-018: Store AI adapter
 
-      // Capture magic number from trade manager for pending orders
       // Note: CTradeManager doesn't expose GetMagicNumber, so we use the default
       // The market order path goes through CTradeManager which sets magic internally
 
-      // Load scalp budget from tier config
       m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
       if(m_config.scalpRiskPct <= 0.0)
       {
@@ -186,7 +175,6 @@ public:
       return true;
    }
 
-// Set custom configuration
    void SetConfig(SScalpConfig &config)
    {
       m_config = config;
@@ -195,27 +183,22 @@ public:
                   m_config.scalpSLPips, m_config.scalpTPPips);
    }
 
-// Get current configuration
    SScalpConfig GetConfig() const { return m_config; }
 
 // Set magic number for pending orders
    void SetMagicNumber(long magic) { m_magicNumber = magic; }
 
-// Set external signal cache for fast-path evaluation
 // When set, EvaluateScalpSignal reads from cache instead of
 // calling CopyBuffer — zero indicator computation in fast path
    void SetSignalCache(CScalpSignalCache* cache) { m_signalCache = cache; }
 
-// Set async mode for scalp order execution
    void SetAsyncMode(bool enabled) { m_asyncTracker.SetAsyncMode(enabled); }
 
 // Set max acceptable latency for async order confirmation
    void SetMaxLatencyMs(uint maxMs) { m_asyncTracker.SetMaxLatencyMs(maxMs); }
 
-// Get pending async order count
    int GetPendingAsyncCount() const { return m_asyncTracker.Count(); }
 
-// Is the engine initialized and enabled?
    bool IsInitialized() const { return m_initialized; }
 
 // Micro-trend: EMA5/EMA13 crossover on M1
@@ -262,7 +245,6 @@ public:
       if(!m_initialized)
          return false;
 
-      // Cooldown / max positions / scalp risk budget
       if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get()))
          return false;
 
@@ -279,7 +261,6 @@ public:
       // Calculate lot size using CPositionSizer (min-lot fallback inside)
       lotSize = CFastScalpSizing::ResolveBaseLotSize(symbol, m_config, confidence, m_positionSizer);
 
-      // Validate lot size
       if(lotSize <= 0.0)
          return false;
 
@@ -297,7 +278,6 @@ public:
       return CFastScalpEntry::FinalizeLotSize(symbol, lotSize);
    }
 
-// Execute a scalp trade (market order)
 // Supports both synchronous and async execution modes
    bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
                            double lotSize, double confidence)
@@ -318,10 +298,8 @@ public:
 // Check and manage pending scalp orders (cancel expired)
    void CheckPendingScalpOrders() { m_pendingBook.CheckExpired(m_config); }
 
-// Remove pending order from tracking array by index
    void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
-// Manage scalp positions at tick level
 // Quick profit lock, tight trailing, partial close
 // NOT throttled to 1 second like swing trailing
    void ManageScalpPositions()
@@ -336,7 +314,6 @@ public:
 // Count positions with "SCALP" in comment
    int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
 
-// Check if a position is a scalp position
    bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }
 
 // Sync tracked scalp positions with actual open positions
@@ -372,10 +349,8 @@ public:
       m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager);
    }
 
-// Remove a pending async order from tracking array by index
    void RemovePendingAsync(int index) { m_asyncTracker.RemovePendingAsync(index); }
 
-// Get scalp engine diagnostics
    void PrintDiagnostics()
    {
       PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | pending=%d | tracked=%d | async=%s | pendingAsync=%d",

@@ -30,10 +30,10 @@ private:
     
     // Configuration
     double              m_baseRiskPercent;      // Base risk per trade (e.g., 1%)
-    double              m_weakTrendMultiplier;  // 0.5x for weak trends
+    double              m_weakTrendMultiplier;
     double              m_normalMultiplier;     // 1.0x for normal trends
     double              m_strongMultiplier;     // 1.3x for strong trends
-    double              m_veryStrongMultiplier; // 1.5x for very strong
+    double              m_veryStrongMultiplier;
     
     // ADX thresholds (configurable via inputs)
     double              m_noTrendThreshold;     // Below this = no trade

@@ -56,7 +56,7 @@ private:
     //--- Extracted submodules (owned BY VALUE, zero-initialised by their ctors)
     CPositionMgrStateStore  m_stateStore;   // SPositionState registry
     CPositionMgrSRE         m_sre;          // signal reversal exit
-    CPositionMgrPyramid     m_pyramid;      // pyramiding
+    CPositionMgrPyramid     m_pyramid;
     CPositionMgrDynamicSL   m_dynamicSL;    // volatility regimes + dynamic SL/TP
     CPositionMgrLossGuard   m_lossGuard;    // loss minimization + daily budget
 

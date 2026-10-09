@@ -20,7 +20,6 @@
 
 class CUnifiedRiskManager;
 
-// CATRScalpEntry �?owns the entry dependencies and open counter
 class CATRScalpEntry
 {
 private:
@@ -30,7 +29,6 @@ private:
    int                    m_totalTradesOpened;
 
 public:
-// Constructor
    CATRScalpEntry() :
       m_baseMagic(0),
       m_positionSizer(NULL),
@@ -39,7 +37,6 @@ public:
    {
    }
 
-// Wire up the entry dependencies
    void Configure(int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager)
    {
       m_baseMagic     = baseMagic;
@@ -47,10 +44,8 @@ public:
       m_riskManager   = pRiskManager;
    }
 
-// Opened trade counter
    int TotalTradesOpened() const { return m_totalTradesOpened; }
 
-// Open a scalp trade in the given direction
    bool OpenScalpTrade(int idx, int direction, SATRScalpSymbolState &state,
                        const SATRScalpingConfig &config, CTrade &trade)
    {
@@ -67,7 +62,6 @@ public:
       double slDistance = atr * config.slAtrMultiplier;
       double tpDistance = atr * config.tpAtrMultiplier;
 
-      // Get current price
       double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
       double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
       if(bid <= 0.0 || ask <= 0.0)
@@ -125,7 +119,6 @@ public:
       if(lotSize < minVol)
          lotSize = minVol;
 
-      // Calculate entry, SL, TP
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       double entryPrice = (direction == 1) ? ask : bid;
       double sl = 0.0, tp = 0.0;
@@ -141,12 +134,7 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Batch 170: shared stop-feasibility and expectancy gate. This engine sends
-      // through its own CTrade object rather than CTradeManager, so the broker
-      // minimum stop distance, the sized-stop widening rejection and the
-      // take-profit-must-clear-the-spread test were all absent here - scalp
-      // entries placed stops inside the spread and targets that cannot pay for
-      // the round trip. Stops are validated before the send, not adjusted after.
+      // Stop validation must happen here: this engine sends through its own CTrade object, not CTradeManager, so the broker minimum stop distance, sized-stop widening rejection and take-profit-must-clear-spread tests are absent from the shared path - stops are validated before the send, not adjusted after.
       string scalpStopError = "";
       if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, scalpStopError))
       {
@@ -178,7 +166,6 @@ public:
          }
       }
 
-      // Set up trade object
       trade.SetExpertMagicNumber(magic);
       trade.SetDeviationInPoints(50);
       // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
@@ -187,7 +174,6 @@ public:
                                          (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
       trade.SetTypeFilling(scalpFill);
 
-      // Execute trade
       bool result = false;
       string dirStr = (direction == 1) ? "BUY" : "SELL";
 

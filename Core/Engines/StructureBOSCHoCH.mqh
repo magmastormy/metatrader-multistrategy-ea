@@ -11,7 +11,6 @@
 
 #include "StructureTypes.mqh"
 
-// Stateless BOS / CHOCH detection helpers
 class CStructureBOSCHoCH
 {
 public:
@@ -36,7 +35,6 @@ public:
                                 int lookback);
 };
 
-// Detect Break of Structure
 bool CStructureBOSCHoCH::DetectBOS(const SwingPoint &current, const SwingPoint &previous)
 {
     if(!current.isValid || !previous.isValid)
@@ -53,7 +51,6 @@ bool CStructureBOSCHoCH::DetectBOS(const SwingPoint &current, const SwingPoint &
     return false;
 }
 
-// Detect Change of Character
 bool CStructureBOSCHoCH::DetectCHOCH(const MarketStructureState &state,
                                      const SwingPoint &current,
                                      const SwingPoint &previous)
@@ -72,7 +69,6 @@ bool CStructureBOSCHoCH::DetectCHOCH(const MarketStructureState &state,
     return false;
 }
 
-// Check for recent bullish BOS
 bool CStructureBOSCHoCH::HasBullishBOS(const SwingPoint &swingHighs[],
                                        const SwingPoint &swingLows[],
                                        int lookback)
@@ -102,7 +98,6 @@ bool CStructureBOSCHoCH::HasBullishBOS(const SwingPoint &swingHighs[],
     return false;
 }
 
-// Check for recent bearish BOS
 bool CStructureBOSCHoCH::HasBearishBOS(const SwingPoint &swingHighs[],
                                        const SwingPoint &swingLows[],
                                        int lookback)
@@ -132,7 +127,6 @@ bool CStructureBOSCHoCH::HasBearishBOS(const SwingPoint &swingHighs[],
     return false;
 }
 
-// Check for recent bullish CHOCH
 bool CStructureBOSCHoCH::HasBullishCHOCH(const MarketStructureState &state,
                                          const SwingPoint &swingLows[],
                                          int lookback)
@@ -154,7 +148,6 @@ bool CStructureBOSCHoCH::HasBullishCHOCH(const MarketStructureState &state,
     return false;
 }
 
-// Check for recent bearish CHOCH
 bool CStructureBOSCHoCH::HasBearishCHOCH(const MarketStructureState &state,
                                          const SwingPoint &swingHighs[],
                                          int lookback)

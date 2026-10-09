@@ -51,7 +51,6 @@ public:
                                           double hurstBreakoutMult);
 };
 
-// Coarse regime tag
 string CRegimeComposite::RegimeToString(const ENUM_REGIME_STATE state)
 {
     switch(state)
@@ -64,7 +63,6 @@ string CRegimeComposite::RegimeToString(const ENUM_REGIME_STATE state)
     }
 }
 
-// ENHANCEMENT: Convert detailed regime to string (Batch 93 - Wk 5)
 string CRegimeComposite::DetailedRegimeToString(const ENUM_DETAILED_REGIME regime)
 {
     switch(regime)
@@ -82,7 +80,6 @@ string CRegimeComposite::DetailedRegimeToString(const ENUM_DETAILED_REGIME regim
     }
 }
 
-// Primary regime state + confidence scoring
 ENUM_REGIME_STATE CRegimeComposite::ClassifyState(const bool cooldownActive,
                                                   const double spreadToAtr,
                                                   const double zScore,
@@ -118,21 +115,18 @@ ENUM_REGIME_STATE CRegimeComposite::ClassifyState(const bool cooldownActive,
     return state;
 }
 
-// L4-011 Fix: Estimate regime state from fallback indicators
 ENUM_REGIME_STATE CRegimeComposite::EstimateRegimeStateFromFallback(const string symbol,
                                                                     const double atrValue,
                                                                     const double bbUpperValue,
                                                                     const double bbLowerValue,
                                                                     const SRegimeConfig &config)
 {
-    // Get current spread
     double spreadPrice = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD) * SymbolInfoDouble(symbol, SYMBOL_POINT);
 
     double spreadToAtr = (atrValue > 0.0) ? (spreadPrice / atrValue) : 0.0;
     double bbWidth = bbUpperValue - bbLowerValue;
     double bbWidthAtrRatio = (atrValue > 0.0) ? (bbWidth / atrValue) : 0.0;
 
-    // Simple regime estimation based on fallback data
     // Check for CHAOS (high spread)
     if(spreadToAtr > (config.maxSpreadToAtrRatio * 1.5))
         return REGIME_CHAOS;
@@ -145,7 +139,6 @@ ENUM_REGIME_STATE CRegimeComposite::EstimateRegimeStateFromFallback(const string
     return REGIME_TREND;
 }
 
-// ENHANCEMENT: Calculate Detailed Regime Classification
 ENUM_DETAILED_REGIME CRegimeComposite::CalculateDetailedRegime(double adxValue,
                                                                double zScore,
                                                                double bbWidthAtrRatio,
@@ -184,7 +177,6 @@ ENUM_DETAILED_REGIME CRegimeComposite::CalculateDetailedRegime(double adxValue,
     return DETAILED_REGIME_CHAOS;
 }
 
-// ENHANCEMENT: Calculate Strategy-Specific Weight Multipliers
 void CRegimeComposite::CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME regime,
                                                           double &momentumMult,
                                                           double &trendMult,

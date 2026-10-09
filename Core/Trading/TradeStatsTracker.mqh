@@ -28,11 +28,11 @@
 struct TradeStats
 {
     int totalTrades;                     // Total trades executed
-    int successfulTrades;                // Successful trades
+    int successfulTrades;
     int winningTrades;                   // Winning trades (profitable)
     uint failedTrades;                   // Number of failed trades
-    double totalProfit;                  // Total profit
-    double totalLoss;                    // Total loss
+    double totalProfit;
+    double totalLoss;
     datetime lastTradeTime;              // Last trade execution time
 };
 

@@ -15,7 +15,6 @@ struct SFibLevel
     SFibLevel() : price(0), ratio(0) {}
 };
 
-// Fibonacci Confluence Helper Class
 class CFibConfluence
 {
 private:
@@ -34,7 +33,6 @@ public:
     // Calculate Fibonacci levels from swing pair
     void                CalculateLevels(double swingHigh, double swingLow, SFibLevel &levels[], int &count);
     
-    // Check if price is near a Fibonacci level
     bool                IsNearFibLevel(double currentPrice, const SFibLevel &levels[], int count, 
                                       double tolerancePips, double &nearestRatio);
     
@@ -42,14 +40,12 @@ public:
     double              GetConfidenceBoost(double fibRatio);
 };
 
-// Constructor
 CFibConfluence::CFibConfluence() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT)
 {
 }
 
-// Destructor
 CFibConfluence::~CFibConfluence()
 {
 }
@@ -62,7 +58,6 @@ bool CFibConfluence::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-// Resolve PERIOD_CURRENT to actual chart timeframe
 void CFibConfluence::ResolveTimeframe()
 {
     if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
@@ -93,7 +88,6 @@ void CFibConfluence::CalculateLevels(double swingHigh, double swingLow, SFibLeve
     levels[2].ratio = 0.618;
 }
 
-// Check if Price is Near Fibonacci Level
 bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels[], int count,
                                    double tolerancePips, double &nearestRatio)
 {
@@ -118,7 +112,6 @@ bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels
     return (nearestRatio > 0);
 }
 
-// Get Confidence Boost Based on Fibonacci Ratio
 double CFibConfluence::GetConfidenceBoost(double fibRatio)
 {
     // Golden ratio gets highest boost

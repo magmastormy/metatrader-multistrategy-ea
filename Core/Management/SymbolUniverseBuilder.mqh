@@ -7,7 +7,7 @@
 struct SSymbolValidationConfig
 {
     long maxSpreadPoints;          // Maximum allowed spread in points
-    long minDailyVolumeLots;       // Minimum daily volume in lots
+    long minDailyVolumeLots;
     bool enableVolumeCheck;        // Enable/disable volume liquidity check
 };
 
@@ -79,7 +79,6 @@ private:
         return false;
     }
     
-    // Helper to extract volatility index number
     static int ExtractVolatilityIndex(const string sym)
     {
         int pos = StringFind(sym, "VOLATILITY");
@@ -93,7 +92,6 @@ private:
         return (int)StringToInteger(numStr);
     }
     
-    // Helper to extract Boom/Crash index
     static int ExtractBoomCrashIndex(const string sym)
     {
         int pos = StringFind(sym, "BOOM");
@@ -108,7 +106,6 @@ private:
         return (int)StringToInteger(numStr);
     }
     
-    // Helper to extract Jump index
     static int ExtractJumpIndex(const string sym)
     {
         int pos = StringFind(sym, "JUMP");
@@ -155,7 +152,6 @@ public:
         PrintFormat("[SYMBOLS] Validation config: maxSpread=%d points, minVolume=%d lots, volumeCheck=%s",
                     config.maxSpreadPoints, config.minDailyVolumeLots, config.enableVolumeCheck ? "ENABLED" : "DISABLED");
 
-        // ISS-701: Track rejected symbols for detailed reporting
         string rejectedSymbols[];
         ArrayResize(rejectedSymbols, 0);
         int rejectedCount = 0;
@@ -305,7 +301,6 @@ public:
                 Print("  - Volume Check: Skipped (not available in MQL5)");
         }
 
-        // ISS-701: Final summary of accepted/rejected symbols
         PrintFormat("[SYMBOL-VALIDATION] Accepted: %d | Rejected: %d", ArraySize(activePairs), splitCount - ArraySize(activePairs));
         if(ArraySize(activePairs) > 0)
         {

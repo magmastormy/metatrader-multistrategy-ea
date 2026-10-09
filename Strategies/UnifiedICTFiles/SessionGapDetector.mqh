@@ -278,14 +278,12 @@ bool CSessionGapDetector::IsInAnyGap(double price)
 
 bool CSessionGapDetector::IsNearGapMidpoint(double price, double tolerancePct)
 {
-    // NDOG check
     if(m_ndog.isValid && !m_ndog.isFilled)
     {
         double tolerance = m_ndog.size * tolerancePct;
         if(MathAbs(price - m_ndog.midpoint) <= tolerance) return true;
     }
 
-    // NWOG check
     if(m_nwog.isValid && !m_nwog.isFilled)
     {
         double tolerance = m_nwog.size * tolerancePct;

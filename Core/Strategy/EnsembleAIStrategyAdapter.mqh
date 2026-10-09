@@ -518,7 +518,6 @@ public:
         upper = MathMin(1.0, conf + unc);
     }
 
-    // IOnlineTraining
     virtual void EnableOnlineTraining(const bool enable) override
     {
         // CEnsembleMetaLearner has no SetLearningEnabled method; learning is always enabled by default.
@@ -537,14 +536,12 @@ public:
         return m_ensemble.IsLearningEnabled() ? "TRAINING" : "IDLE";
     }
 
-    // IRegimeAware
     virtual void OnRegimeChange(const int newRegime) override
     {
         // Not implemented: CEnsembleMetaLearner::OnRegimeChange() requires (oldR, newR, models)
         // parameters not available in the IRegimeAware interface context.
     }
 
-    // IModelHealth
     virtual double GetHealthScore(void) const override
     {
         return IsModelHealthy() ? 1.0 : 0.0;

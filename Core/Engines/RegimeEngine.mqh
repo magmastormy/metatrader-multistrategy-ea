@@ -140,7 +140,6 @@ public:
 
     bool Update(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
-        // Resolve PERIOD_CURRENT to actual chart timeframe
         ENUM_TIMEFRAMES resolvedTimeframe = CRegimeHandles::ResolveTimeframe(timeframe);
 
         double atrValue = 0.0;
@@ -292,7 +291,6 @@ public:
         m_lastSnapshot.rangeZScore = zScore;
         m_lastSnapshot.timestamp = TimeCurrent();
 
-        // ENHANCEMENT: Calculate detailed regime and weight multipliers (Batch 93 - Week 5)
         double adxValue = CRegimeVolatility::ReadAdxValue(m_handles.GetAdxHandle(), symbol, timeframe);
 
         m_lastSnapshot.trendStrength = adxValue;
@@ -309,7 +307,6 @@ public:
 
         datetime now = TimeCurrent();
 
-        // Log detailed regime with weight multipliers
         m_telemetry.LogDetailedRegime(m_lastSnapshot, adxValue, now);
 
         m_telemetry.LogRegimeState(symbol,
@@ -332,20 +329,17 @@ public:
         return true;
     }
 
-    // ENHANCEMENT: Convert detailed regime to string (Batch 93 - Week 5)
     string DetailedRegimeToString(ENUM_DETAILED_REGIME regime)
     {
         return CRegimeComposite::DetailedRegimeToString(regime);
     }
 
-    // ENHANCEMENT: Calculate Detailed Regime Classification (Batch 93 - Week 5)
     ENUM_DETAILED_REGIME CalculateDetailedRegime(double adxValue, double zScore,
                                                   double bbWidthAtrRatio, bool compression)
     {
         return CRegimeComposite::CalculateDetailedRegime(adxValue, zScore, bbWidthAtrRatio, compression);
     }
 
-    // ENHANCEMENT: Calculate Strategy-Specific Weight Multipliers (Batch 93 - Week 5)
     void CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME regime,
                                              double &momentumMult,
                                              double &trendMult,

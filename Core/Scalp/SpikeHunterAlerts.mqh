@@ -1,10 +1,4 @@
-// Decomposition extraction from CSpikeHunterEngine (behaviour
-// preserving).
-// Owns the push-notification throttle state that used to be the
-// loose member pair:
-// CSpikeHunterEngine::m_lastPushAlertTick  (L10-016 GetTickCount)
-// CSpikeHunterEngine::m_pushAlertCount
-// Moved logic (verbatim):
+// Owns the push-notification throttle state (last alert tick + alert count).
 // SendThrottledAlert() — enable gate, GetTickCount() delta vs
 // alertThrottleSeconds*1000, SendNotification() success/failure
 // branches and all three log tags.
@@ -20,7 +14,6 @@
 
 #include "SpikeHunterTypes.mqh"
 
-// CSpikeHunterAlerts — stateful throttled push alert dispatcher
 class CSpikeHunterAlerts
 {
 private:
@@ -38,10 +31,8 @@ public:
    //--- Config injection (mirrors CSpikeHunterEngine::Init assignment)
    void SetConfig(const SSpikeHunterConfig &config) { m_config = config; }
 
-   //--- Accessor (was CSpikeHunterEngine::m_pushAlertCount)
    int GetAlertCount() const { return m_pushAlertCount; }
 
-// Send a throttled push notification
    void SendThrottledAlert(const string message)
    {
       if(!m_config.enablePushAlerts)

@@ -28,7 +28,6 @@ public:
     static bool RequiresSpecialHandling(const string symbolName);
 };
 
-// Check if symbol is available for trading/analysis
 bool CMarketAnalysisSymbolProfile::IsSymbolAvailable(const string symbolName)
 {
     // Check if symbol exists in Market Watch
@@ -46,7 +45,6 @@ bool CMarketAnalysisSymbolProfile::IsSymbolAvailable(const string symbolName)
     return true;
 }
 
-// Check if symbol is compatible with ADX indicator
 bool CMarketAnalysisSymbolProfile::IsADXCompatible(const string symbolName)
 {
     // Use global multi-asset profiler for proper asset classification
@@ -79,7 +77,6 @@ bool CMarketAnalysisSymbolProfile::IsADXCompatible(const string symbolName)
     return true;
 }
 
-// Check if symbol needs special indicator handling
 bool CMarketAnalysisSymbolProfile::RequiresSpecialHandling(const string symbolName)
 {
     // Use global multi-asset profiler for proper asset classification
@@ -92,15 +89,12 @@ bool CMarketAnalysisSymbolProfile::RequiresSpecialHandling(const string symbolNa
     }
 
     // Fallback to string matching if profiler not available
-    // Volatility indices
     if(StringFind(symbolName, "Vol") >= 0)
         return true;
 
-    // Jump indices
     if(StringFind(symbolName, "Jump") >= 0)
         return true;
 
-    // Step indices
     if(StringFind(symbolName, "Step") >= 0)
         return true;
 

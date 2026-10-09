@@ -1,15 +1,6 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Stateless lot-sizing and confidence-scoring helpers pulled out
-// of CFastScalpEngine:
-// CapLotToMargin()      — was a private method
-// ResolveBaseLotSize()  — was the CPositionSizer / min-lot
-// fallback block inside ShouldEnterScalp
-// CalculateConfidence() — was the 0.60 / +0.15 / +0.10 / cap 0.90
-// block inside ShouldEnterScalp
+// Stateless lot-sizing and confidence-scoring helpers for the scalp pipeline.
 // The momentum-burst flag and the ATR are resolved by the caller
 // in the original order (IsMomentumBurst first, then GetATRCached)
-// so the indicator refresh sequence is bit-for-bit identical.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_SIZING_MQH
@@ -19,7 +10,6 @@
 #include "../Risk/PositionSizer.mqh"
 #include "FastScalpTypes.mqh"
 
-// CFastScalpSizing — stateless scalp sizing / confidence
 class CFastScalpSizing
 {
 public:
@@ -49,14 +39,11 @@ public:
 // +0.10 tight spread (< 15% ATR), hard cap at 0.90.
    static double CalculateConfidence(const string symbol, double atr, bool momentumBurst)
    {
-      // Calculate confidence
       double confidence = 0.60; // Base confidence for EMA crossover + RSI
 
-      // Boost confidence with momentum burst
       if(momentumBurst)
          confidence += 0.15;
 
-      // Tight spread bonus
       if(atr > 0.0)
       {
          double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -69,7 +56,6 @@ public:
          }
       }
 
-      // Cap confidence at 0.90
       return MathMin(confidence, 0.90);
    }
 
@@ -77,14 +63,12 @@ public:
    static double ResolveBaseLotSize(const string symbol, const SScalpConfig &config,
                                     double confidence, CPositionSizer* positionSizer)
    {
-      // Calculate lot size using CPositionSizer
       if(positionSizer != NULL && positionSizer.IsInitialized())
       {
          return positionSizer.CalculatePositionSize(
                    symbol, (double)config.scalpSLPips, confidence);
       }
 
-      // Fallback to minimum lot
       double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
       return (minLot > 0.0) ? minLot : MIN_LOT_SIZE;
    }

@@ -41,10 +41,10 @@ struct SDrawingConfig
     bool enableStructure;         // HH/HL/LH/LL, BOS, CHOCH
     bool enableSupportResistance; // Horizontal SR levels
     bool enableSupplyDemand;      // Supply/Demand zones
-    bool enableOrderBlocks;       // Order blocks
+    bool enableOrderBlocks;
     bool enableFVG;               // Fair Value Gaps
     bool enableLiquidity;         // Liquidity levels
-    bool enableTrendLines;        // Trend lines
+    bool enableTrendLines;
     bool enableSignalMarkers;     // Entry/Exit markers
     bool enableDebugMode;         // Developer-level visuals
     bool cleanupOldObjects;       // Auto-cleanup obsolete objects
@@ -65,7 +65,7 @@ struct SDrawingConfig
         enableDebugMode = false;
         cleanupOldObjects = true;
         maxObjectAge = 150; // Reduced from 500 to prevent excessive object retention
-        maxObjectsPerStrategy = 150; // Max objects per strategy
+        maxObjectsPerStrategy = 150;
     }
 };
 
@@ -75,10 +75,10 @@ class CChartDrawingManager
 {
 private:
     string m_prefix;                  // Object prefix for this manager
-    SDrawingConfig m_config;          // Drawing configuration
-    long m_chartID;                   // Chart ID
-    string m_symbol;                  // Symbol
-    ENUM_TIMEFRAMES m_timeframe;      // Timeframe
+    SDrawingConfig m_config;
+    long m_chartID;
+    string m_symbol;
+    ENUM_TIMEFRAMES m_timeframe;
     int m_maxObjects;                 // Max objects for this manager (default 900)
     
     // Statistics
@@ -761,7 +761,6 @@ void CChartDrawingManager::DeleteOldObjects(const string prefix, int maxAge)
     }
 }
 
-// Check if Object is Old
 bool CChartDrawingManager::IsObjectOld(const string objName, int maxAge)
 {
     datetime objTime = (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME);
@@ -865,7 +864,6 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
 {
     PrepareSnapshotDraw();
 
-    // Draw liquidity line
     if(!DrawLiquidityLevel(time1, time3, price, "EQH", false))
         return false;
     
@@ -890,7 +888,6 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
 {
     PrepareSnapshotDraw();
 
-    // Draw liquidity line
     if(!DrawLiquidityLevel(time1, time3, price, "EQL", false))
         return false;
     

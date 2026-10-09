@@ -1,11 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the scalp risk-budget accumulator that used to be the loose
-// member CFastScalpEngine::m_usedScalpRiskPct.
-// Moved logic (verbatim):
-// FreeScalpRiskBudget() — actual-risk reconstruction from the
-// live position (or the tracked original SL) with the
-// GetActiveRiskPerTradePercent() fallback and the clamp-at-zero.
+// Owns the scalp risk-budget accumulator (used risk percent).
 // The tracker lookup stays on the caller side (FastScalpExit) so
 // this module has no dependency on CFastScalpPositionTracker and
 // the include graph stays acyclic.
@@ -17,7 +10,6 @@
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "FastScalpTypes.mqh"
 
-// CFastScalpRiskBudget — stateful scalp risk budget accumulator
 class CFastScalpRiskBudget
 {
 private:
@@ -26,7 +18,6 @@ private:
 public:
    CFastScalpRiskBudget() : m_usedScalpRiskPct(0.0) {}
 
-   //--- Accessor (was CFastScalpEngine::GetUsedScalpRiskPct)
    double Get() const { return m_usedScalpRiskPct; }
 
    //--- Consume budget on entry
@@ -55,7 +46,6 @@ public:
    void FreeForTicket(ulong ticket, bool found, const SScalpPositionState &state,
                       CUnifiedRiskManager* riskManager)
    {
-      // Find the scalp position to get actual SL distance and lot size
       if(found)
       {
          string symbol = state.symbol;

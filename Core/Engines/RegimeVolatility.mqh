@@ -30,7 +30,6 @@ public:
                                const ENUM_TIMEFRAMES timeframe);
 };
 
-// Build ATR / Bollinger values from raw rates
 bool CRegimeVolatility::BuildFallbackIndicators(const string symbol,
                                                 const ENUM_TIMEFRAMES timeframe,
                                                 const SRegimeConfig &config,
@@ -88,7 +87,6 @@ bool CRegimeVolatility::BuildFallbackIndicators(const string symbol,
             MathIsValidNumber(bbLowerValue));
 }
 
-// Rolling close z-score
 bool CRegimeVolatility::ComputeRangeZScore(const string symbol,
                                            const ENUM_TIMEFRAMES timeframe,
                                            const int zScoreWindow,
@@ -123,7 +121,6 @@ bool CRegimeVolatility::ComputeRangeZScore(const string symbol,
     return MathIsValidNumber(zScoreOut);
 }
 
-// ENHANCEMENT: sanitised ADX read (Batch 93 - Week 5)
 double CRegimeVolatility::ReadAdxValue(const int adxHandle,
                                        const string symbol,
                                        const ENUM_TIMEFRAMES timeframe)

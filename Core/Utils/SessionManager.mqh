@@ -27,7 +27,6 @@ bool IsMarketOpen(const string symbol)
         return false;
     }
     
-    // Check trade mode
     ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
     if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
         return false;

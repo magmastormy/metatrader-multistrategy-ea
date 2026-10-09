@@ -52,7 +52,6 @@ public:
     bool HasTickGap();
 };
 
-// Check if spread is acceptable
 bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
 {
     long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -62,7 +61,6 @@ bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
     return ((double)spreadPoints <= m_maxSpreadPoints);
 }
 
-// Check if margin is healthy
 bool CTickSafetyMonitor::IsMarginHealthy()
 {
     double freeMargin = m_accountInfo.FreeMargin();
@@ -91,7 +89,6 @@ bool CTickSafetyMonitor::IsMarginHealthy()
     return true;
 }
 
-// Check if trading is allowed
 bool CTickSafetyMonitor::IsTradingAllowed()
 {
     // Auto-reset emergency stop after duration
@@ -125,7 +122,6 @@ void CTickSafetyMonitor::SetEmergencyStop(bool stop, int durationSeconds = 300)
     }
 }
 
-// Check for tick gap
 bool CTickSafetyMonitor::HasTickGap()
 {
     if(m_lastValidTickTime == 0)

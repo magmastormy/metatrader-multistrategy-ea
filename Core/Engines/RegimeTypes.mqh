@@ -11,7 +11,6 @@ enum ENUM_REGIME_STATE
     REGIME_CHAOS = 3
 };
 
-// ENHANCEMENT: Multi-Dimensional Regime Classification (Batch 93 - Week 5)
 enum ENUM_DETAILED_REGIME
 {
     DETAILED_REGIME_STRONG_UPTREND = 0,
@@ -52,12 +51,10 @@ struct SRegimeSnapshot
     double rangeZScore;
     datetime timestamp;
 
-    // ENHANCEMENT: Detailed Regime Classification (Batch 93 - Week 5)
     ENUM_DETAILED_REGIME detailedRegime;
     double trendStrength;           // ADX value or similar metric
     double volatilityPercentile;    // Current vol vs historical (0-1)
 
-    // ENHANCEMENT: Strategy-Specific Weight Multipliers (Batch 93 - Week 5)
     double momentumWeightMult;      // Momentum strategy multiplier
     double trendWeightMult;         // Trend strategy multiplier
     double meanRevWeightMult;       // Mean Reversion strategy multiplier

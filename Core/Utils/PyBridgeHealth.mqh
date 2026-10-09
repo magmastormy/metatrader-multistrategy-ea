@@ -20,12 +20,12 @@
 class CPyBridgeHealth
 {
 private:
-   int                  m_heartbeat_timeout;       // Heartbeat timeout (s)
+   int                  m_heartbeat_timeout;
    datetime             m_last_heartbeat;          // Last successful heartbeat
    datetime             m_last_reconnect;          // Last reconnection attempt
    int                  m_reconnect_attempts;      // Number of reconnect attempts
-   int                  m_max_reconnect_attempts;  // Max reconnect attempts
-   int                  m_reconnect_backoff;       // Reconnect backoff (ms)
+   int                  m_max_reconnect_attempts;
+   int                  m_reconnect_backoff;
    SPythonBridgeVersion m_server_version;          // Server version info
    datetime             m_lastNotConfiguredLogTime;// Throttle NOT_CONFIGURED dashboard logs
 
@@ -156,11 +156,9 @@ bool CPyBridgeHealth::AttemptReconnect(CPyBridgeTransport &transport)
    
    datetime now = TimeCurrent();
    
-   // Check backoff
    if((now - m_last_reconnect) < (m_reconnect_backoff / 1000))
       return false;
    
-   // Check max attempts
    if(m_reconnect_attempts >= m_max_reconnect_attempts)
    {
       if(transport.GetState() != PYTHON_BRIDGE_ERROR)

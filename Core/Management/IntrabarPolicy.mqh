@@ -1,17 +1,8 @@
-// Intrabar Policy (Phase C, Slice 4 - C6)
-// Intrabar (within-bar) signal-handling policy extracted from
-// CEnterpriseStrategyManager:
-// - the per-slot default policy table (L6-007), formerly
-// CEnterpriseStrategyManager::m_intrabarPolicyConfig[32], whose
-// ownership moves here wholesale (same treatment C3 gave the
-// post-consensus validator config block);
-// (per-slot table accessors, driven by the orchestrator);
-// - GetIntrabarPolicyHelper   (slot -> default policy resolution
-// used while auto-registering strategies);
-// - GetStrategyIntrabarPolicy (registered-entry policy resolution
-// with the legacy intrabarEligible fallback);
-// (LIVE / PROBE gating predicates);
-// (by-name policy mutators).
+// Intrabar (within-bar) signal-handling policy extracted from CEnterpriseStrategyManager:
+// the per-slot default policy table (L6-007, formerly m_intrabarPolicyConfig[32], whose
+// ownership moves here wholesale), the slot -> default policy resolution used while
+// auto-registering strategies and the registered-entry policy resolution with the legacy
+// intrabarEligible fallback.
 // Like C4/C5/C7 this module MUTATES the manager, so it holds a
 // NON-const back-pointer and writes through the manager's narrow
 // per-field accessors. It mirrors no injected manager pointer, so
@@ -61,22 +52,18 @@ public:
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
-    //--- per-slot default policy table (L6-007)
     void                 SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
 
-    //--- resolved policy / gating predicates for a registered strategy entry
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicy(const int strategyIndex) const;
     bool                 IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
     bool                 IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
 
-    //--- by-name policy mutators
     bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
     bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
 };
 
-// Constructor - L6-007: initialise policy config with defaults
 CIntrabarPolicy::CIntrabarPolicy() : m_src(NULL)
 {
     for(int i = 0; i < INTRABAR_POLICY_CONFIG_SLOTS; i++)
@@ -85,7 +72,6 @@ CIntrabarPolicy::CIntrabarPolicy() : m_src(NULL)
     }
 }
 
-// Intrabar policy configuration per strategy index (L6-007)
 void CIntrabarPolicy::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy)
 {
     if(strategyIndex >= 0 && strategyIndex < 32)
@@ -135,13 +121,11 @@ ENUM_INTRABAR_POLICY CIntrabarPolicy::GetStrategyIntrabarPolicy(const int strate
     return (ENUM_INTRABAR_POLICY)rawPolicy;
 }
 
-// LIVE gating predicate
 bool CIntrabarPolicy::IsStrategyIntrabarLiveEligible(const int strategyIndex) const
 {
     return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_LIVE);
 }
 
-// PROBE gating predicate
 bool CIntrabarPolicy::IsStrategyIntrabarProbeEligible(const int strategyIndex) const
 {
     return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_PROBE);
@@ -153,7 +137,6 @@ bool CIntrabarPolicy::SetStrategyIntrabarEligibilityByName(const string name, bo
     return SetStrategyIntrabarPolicyByName(name, enabled ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
 }
 
-// By-name policy mutator
 bool CIntrabarPolicy::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
 {
     if(m_src == NULL)

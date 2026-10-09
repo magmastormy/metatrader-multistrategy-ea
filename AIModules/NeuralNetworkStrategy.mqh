@@ -89,7 +89,6 @@ private:
                 m_regimeQuantiles[r] = m_globalQuantile;
         }
 
-        // Global quantile
         m_globalQuantile = ComputeQuantile(m_scores, m_count);
     }
 
@@ -837,7 +836,6 @@ private:
         if(sellProb > 0) entropy -= sellProb * MathLog(MathMax(sellProb, logEps));
         entropy /= MathLog(3.0);
 
-        // Conformal uncertainty
         double conformalUnc = m_conformal.GetQuantile();
 
         // Momentum from raw features

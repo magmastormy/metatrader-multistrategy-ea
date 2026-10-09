@@ -34,7 +34,7 @@ private:
     CRegistryAggregator*        m_registryAggregator;
     CLiveAuthorityResolver*     m_liveAuthority;
     CPositionManager*           m_positionManager;
-    CEnterpriseStrategyManager* m_primaryManager;   // == m_enterpriseManagers[0]
+    CEnterpriseStrategyManager* m_primaryManager;
 
 public:
     COrchestratorStatusReporter()

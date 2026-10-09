@@ -39,7 +39,7 @@ struct SFullMarginConfig
 struct SFullMarginBreachState
 {
    int      breachCount;             // Number of DD breaches today
-   datetime lastBreachTime;          // Time of last breach
+   datetime lastBreachTime;
    datetime cooldownUntil;           // Cooldown end time (at conservative tier)
    bool     sessionLocked;           // Full-margin disabled for rest of session
    datetime sessionLockDate;         // Date when session was locked (for midnight reset)

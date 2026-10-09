@@ -48,7 +48,6 @@ public:
                         const datetime now);
 };
 
-// Log detailed regime with weight multipliers
 void CRegimeTelemetry::LogDetailedRegime(const SRegimeSnapshot &snapshot, const double adxValue, const datetime now) const
 {
     if(m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
@@ -64,7 +63,6 @@ void CRegimeTelemetry::LogDetailedRegime(const SRegimeSnapshot &snapshot, const 
     }
 }
 
-// Log the coarse regime state transition
 void CRegimeTelemetry::LogRegimeState(const string symbol,
                                       const ENUM_TIMEFRAMES resolvedTimeframe,
                                       const ENUM_REGIME_STATE state,

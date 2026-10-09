@@ -374,8 +374,8 @@ public:
         for(int i = 0; i < 10; i++)
             out[13 + i] = (i < ArraySize(featSubset)) ? featSubset[i] : 0.0;
         out[23] = momentum;
-        out[24] = rsiZone;       // RSI(14) zone [-1,1]
-        out[25] = stochKZone;    // Stochastic %K zone [-1,1]
+        out[24] = rsiZone;
+        out[25] = stochKZone;
     }
 
     double Predict(const double &inp[])

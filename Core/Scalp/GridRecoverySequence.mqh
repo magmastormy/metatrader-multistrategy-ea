@@ -11,7 +11,6 @@
 
 #include "GridRecoveryTypes.mqh"
 
-// CGridRecoverySequence — stateless grid sequencing helpers
 class CGridRecoverySequence
 {
 public:

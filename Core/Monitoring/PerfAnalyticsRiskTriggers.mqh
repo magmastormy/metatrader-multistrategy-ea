@@ -68,7 +68,6 @@ public:
             CPerfAnalyticsLog::LogPerformanceUpdate(StringFormat("Performance trigger: %d consecutive losses", stats.GetConsecutiveLosses()));
         }
 
-        // Check profit factor
         if(stats.GetProfitFactor() < 1.2 && stats.GetTotalTrades() >= 20)
         {
             m_needsParameterAdjustment = true;
@@ -84,19 +83,19 @@ public:
 
         // Reduce based on win rate
         if(stats.GetRollingWinRate() < 30.0)
-            reductionFactor *= 0.3; // 70% reduction
+            reductionFactor *= 0.3;
         else if(stats.GetRollingWinRate() < 40.0)
-            reductionFactor *= 0.5; // 50% reduction
+            reductionFactor *= 0.5;
 
         // Reduce based on drawdown
         if(currentDrawdown > DRAWDOWN_CRITICAL)
-            reductionFactor *= 0.2; // 80% reduction
+            reductionFactor *= 0.2;
         else if(currentDrawdown > DRAWDOWN_WARNING)
-            reductionFactor *= 0.5; // 50% reduction
+            reductionFactor *= 0.5;
 
         // Reduce based on consecutive losses
         if(stats.GetConsecutiveLosses() >= MAX_CONSECUTIVE_LOSSES)
-            reductionFactor *= 0.3; // 70% reduction
+            reductionFactor *= 0.3;
 
         return MathMax(reductionFactor, 0.1); // Minimum 10% of original risk
     }
@@ -138,7 +137,6 @@ public:
         return triggerCount >= 2; // Conservative mode if 2+ triggers
     }
 
-// Check if Performance is Acceptable
     bool IsPerformanceAcceptable(const CPerfAnalyticsTradeStats &stats, const double maxDrawdown) const
     {
         if(stats.GetTotalTrades() < MIN_TRADES_FOR_STATS)

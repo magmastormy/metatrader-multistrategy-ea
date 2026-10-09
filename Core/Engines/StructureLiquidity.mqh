@@ -10,7 +10,6 @@
 
 #include "StructureTypes.mqh"
 
-// Stateless liquidity sweep helpers
 class CStructureLiquidity
 {
 public:
@@ -65,7 +64,6 @@ bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
     return false;
 }
 
-// Check for recent liquidity sweep
 bool CStructureLiquidity::HasLiquiditySweep(const MarketStructureState &state, int lookback)
 {
     // This would need to track sweep events

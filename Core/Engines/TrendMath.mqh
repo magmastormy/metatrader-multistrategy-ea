@@ -78,7 +78,6 @@ bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
     if(copied < period + count)
         return false;
 
-    // Allocate output array
     if(ArraySize(output) != count)
     {
         if(ArrayResize(output, count) < 0)
@@ -95,26 +94,21 @@ bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
         smaSum += closes[i];
     double ema = smaSum / (double)period;
 
-    // Calculate EMA forward through the series
     // closes[0] = most recent, closes[copied-1] = oldest
     for(int i = 0; i < copied; i++)
     {
         ema = (alpha * closes[i]) + (invAlpha * ema);
 
-        // Store results where output[0] = most recent EMA
         // output index maps: output[0] = EMA at closes[0] (most recent)
         int outputIdx = i;  // Will be offset from end when we collect output
     }
 
-    // Now collect the 'count' most recent EMA values into output array
     // We need to recalculate to get the last 'count' values properly
-    // Reset EMA to SMA and recalculate
     smaSum = 0.0;
     for(int i = 0; i < period; i++)
         smaSum += closes[i];
     ema = smaSum / (double)period;
 
-    // Calculate all EMAs, storing the last 'count' values
     double emaBuffer[];
     ArrayResize(emaBuffer, copied);
     for(int i = 0; i < copied; i++)
@@ -123,7 +117,6 @@ bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
         emaBuffer[i] = ema;
     }
 
-    // Copy the 'count' most recent EMAs to output
     // emaBuffer[0] = EMA at closes[0] (most recent)
     // emaBuffer[copied-1] = EMA at closes[copied-1] (oldest)
     for(int i = 0; i < count; i++)
@@ -145,7 +138,6 @@ double CTrendMath::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timefr
     if(CopyRates(symbol, timeframe, 0, period + 1, rates) < period + 1)
         return 0;
     
-    // Calculate rate of change
     if(rates[period].close <= 0.0)
         return 0.0;
     double roc = ((rates[0].close - rates[period].close) / rates[period].close) * 100;
@@ -155,7 +147,6 @@ double CTrendMath::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timefr
 
 double CTrendMath::CalculateTrendAngle(double &ma[], int period)
 {
-    // Validate inputs
     if(ArraySize(ma) < 2 || period < 2)
         return 0;
     

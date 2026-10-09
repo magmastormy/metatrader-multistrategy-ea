@@ -9,7 +9,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Signals/SignalDiagnostics.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CMarketAnalysis;

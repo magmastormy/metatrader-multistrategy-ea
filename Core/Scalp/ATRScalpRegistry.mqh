@@ -11,11 +11,9 @@
 
 #include "ATRScalpTypes.mqh"
 
-// CATRScalpRegistry — stateless helpers over the symbol state array
 class CATRScalpRegistry
 {
 public:
-// Find symbol index in the states array
    static int FindSymbolIndex(const SATRScalpSymbolState &states[], int symbolCount, const string symbol)
    {
       for(int i = 0; i < symbolCount; i++)
@@ -26,7 +24,6 @@ public:
       return -1;
    }
 
-// Initialize a symbol state slot with defaults
    static void InitializeSymbolState(SATRScalpSymbolState &states[], int idx, const string symbol, int spikeIntervalSec)
    {
       states[idx].symbol                   = symbol;

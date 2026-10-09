@@ -128,7 +128,6 @@ void CImbalanceDetector::ScanForImbalances(int lookback)
 
     for(int i = 2; i < lookback - 2 && m_imbCount < m_maxImbalances; i++)
     {
-        // Check for bullish imbalance
         SImbalance bullImb;
         if(DetectBullishImbalance(i, bullImb) && bullImb.isValid)
         {
@@ -137,7 +136,6 @@ void CImbalanceDetector::ScanForImbalances(int lookback)
             m_imbCount++;
         }
 
-        // Check for bearish imbalance
         SImbalance bearImb;
         if(DetectBearishImbalance(i, bearImb) && bearImb.isValid)
         {

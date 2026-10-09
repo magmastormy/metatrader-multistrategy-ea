@@ -8,7 +8,6 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 #define CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 
-// Grid progression type
 enum ENUM_GRID_PROGRESSION
 {
    GRID_PROGRESSION_MARTINGALE,    // Lot = baseLot * (factor ^ level)
@@ -18,11 +17,11 @@ enum ENUM_GRID_PROGRESSION
 struct SGridRecoveryConfig
 {
    double   gridFactorATR;           // Grid spacing as fraction of ATR (0.20)
-   int      maxGridLevels;           // Max grid levels (8)
+   int      maxGridLevels;
    ENUM_GRID_PROGRESSION progressionType;  // Martingale or Fibonacci
    double   progressionFactor;       // Lot multiplier per level (1.5 for Martingale)
    double   activationHurstThreshold;// Only activate when Hurst < this (0.45)
-   int      atrPeriod;               // ATR period (14)
+   int      atrPeriod;
    double   slAtrMultiplier;         // SL = ATR * this per level (1.5)
    double   tpAtrMultiplier;         // TP = 0.5 * grid size per level
    int      magicOffset;             // Magic number offset (8000)
@@ -52,7 +51,6 @@ struct SGridRecoveryConfig
    }
 };
 
-// Single grid level tracking
 struct SGridLevel
 {
    int      level;          // Grid level number (0-based)
@@ -64,13 +62,12 @@ struct SGridLevel
    bool     isActive;       // Whether this level is active/filled
 };
 
-// Per-symbol grid state tracking
 struct SGridSymbolState
 {
    string      symbol;
    bool        isActive;               // Is this symbol being monitored
    SGridLevel  levels[];               // Array of grid levels for this symbol
-   int         activeLevelCount;       // Count of active levels
+   int         activeLevelCount;
    double      totalGridRisk;          // Sum of risk across all levels
    double      baseLotSize;            // Base lot size for level 0
    int         direction;              // 1=BUY, -1=SELL

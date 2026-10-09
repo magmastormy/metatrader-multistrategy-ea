@@ -41,14 +41,14 @@ struct SDerivProfile
    string            familyName;       // Human-readable family name
    double            spikeThreshold;   // Tick velocity multiplier for spike detection
    double            atrCompressionRatio; // ATR compression ratio for spike detection (Layer 3)
-   double            atrMultiplierSL;  // SL = ATR * this
-   double            atrMultiplierTP;  // TP = ATR * this
+   double            atrMultiplierSL;
+   double            atrMultiplierTP;
    double            hurstThreshold;   // Hurst exponent threshold for regime detection
    double            riskPerTrade;     // Risk % per trade (0-100 scale)
    int               magicOffset;      // Magic number offset from base
    int               maxDrawdownPercent; // Max drawdown % for this family
    bool              enableSpikeHunter;  // Enable spike hunter engine
-   bool              enableGridRecovery; // Enable grid recovery
+   bool              enableGridRecovery;
    bool              enableHurstRegime;  // Enable Hurst regime detection
    bool              enableOUFilter;     // Enable Ornstein-Uhlenbeck filter
    double            gridFactorATR;    // Grid spacing as fraction of ATR
@@ -59,7 +59,7 @@ struct SDerivProfile
 
    // L7-006: Per-family strategy enablement flags
    bool              enableTrendStrategies;  // Enable trend-following strategies
-   bool              enableMomentumStrategies; // Enable momentum strategies
+   bool              enableMomentumStrategies;
    bool              enableIntrabarOverride; // Allow intrabar policy override for this family
 
    // Default constructor — MQL5 requires explicit string initialization

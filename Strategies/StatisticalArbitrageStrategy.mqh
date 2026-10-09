@@ -16,10 +16,10 @@ struct SStatArbSignal
     ENUM_TRADE_SIGNAL direction;        // BUY = Long spread, SELL = Short spread
     string leg1Symbol;                  // First symbol in pair (e.g., Vol75)
     string leg2Symbol;                  // Second symbol in pair (e.g., Vol100)
-    double leg1LotSize;                 // Lot size for leg 1
+    double leg1LotSize;
     double leg2LotSize;                 // Lot size for leg 2 (hedged ratio)
     double zScore;                      // Current z-score of spread
-    double entryZScore;                 // Z-score at entry
+    double entryZScore;
     double exitZScore;                  // Target z-score for exit (mean reversion)
     double confidence;
     string reason;
@@ -345,7 +345,6 @@ public:
     }
     
 private:
-    // Check if Python Bridge is available
     bool IsPythonBridgeAvailable()
     {
         if(m_pythonBridge == NULL)

@@ -10,7 +10,6 @@
 #include "..\..\IndicatorManager.mqh"
 #include "PosLifecycleMagicFilter.mqh"
 
-// AGGRESSIVE: Volatility regime tracking
 class CVolatilityRegime
 {
 public:
@@ -39,7 +38,6 @@ public:
 class CPosLifecycleVolatility
 {
 private:
-    // AGGRESSIVE: Dynamic SL/TP config
     bool   m_dynamicSLEnabled;
     double m_dynamicSLATRMultiplier;
     double m_dynamicTPATRMultiplier;
@@ -59,7 +57,6 @@ public:
 
     ~CPosLifecycleVolatility()
     {
-        // Clean up volatility regimes
         for(int i = 0; i < m_volatilityRegimeCount; i++)
         {
             if(CheckPointer(m_volatilityRegimes[i]) == POINTER_DYNAMIC)
@@ -69,7 +66,6 @@ public:
         ArrayFree(m_volatilityRegimes);
     }
 
-    //--- AGGRESSIVE: Configure dynamic SL/TP
     void Configure(bool enabled, double slATRMultiplier, double tpATRMultiplier, bool volAdjust)
     {
         m_dynamicSLEnabled = enabled;
@@ -80,7 +76,6 @@ public:
 
     bool IsEnabled() const { return m_dynamicSLEnabled; }
 
-    //--- AGGRESSIVE: Dynamic SL/TP management
     void ManageDynamicSLTP(CTradeManager* tradeManager, string &symbols[], const int symbolCount,
                            const int magicBase, const int magicMax)
     {
@@ -113,7 +108,6 @@ public:
             double slMultiplier = m_dynamicSLATRMultiplier;
             double tpMultiplier = m_dynamicTPATRMultiplier;
 
-            // Adjust SL based on volatility regime
             if(m_volatilitySLAdjustEnabled)
             {
                 if(regime.regime == 0) // Low volatility
@@ -161,7 +155,6 @@ public:
         }
     }
 
-    //--- AGGRESSIVE: Update volatility regimes for all symbols
     void UpdateVolatilityRegimes(string &symbols[], const int symbolCount)
     {
         datetime now = TimeCurrent();
@@ -170,7 +163,6 @@ public:
         {
             string symbol = symbols[i];
 
-            // Find or create regime for this symbol
             CVolatilityRegime* regime = GetVolatilityRegime(symbol);
             if(regime == NULL)
             {
@@ -181,7 +173,6 @@ public:
             // Update every 5 minutes to avoid excessive calculations
             if(now - regime.lastUpdate < 300) continue;
 
-            // Get ATR values
             double atr14 = GetATR(symbol, 14);
             double atr50 = GetATR(symbol, 50);
 
@@ -191,7 +182,6 @@ public:
                 regime.atr50 = atr50;
                 regime.atrRatio = atr14 / atr50;
 
-                // Determine regime
                 if(regime.atrRatio < 0.5)
                     regime.regime = 0; // Low volatility
                 else if(regime.atrRatio > 1.5)
@@ -204,7 +194,6 @@ public:
         }
     }
 
-    //--- AGGRESSIVE: Get volatility regime for a symbol
     CVolatilityRegime* GetVolatilityRegime(const string symbol)
     {
         for(int i = 0; i < m_volatilityRegimeCount; i++)
@@ -216,10 +205,8 @@ public:
         return NULL;
     }
 
-    //--- AGGRESSIVE: Create volatility regime for a symbol
     CVolatilityRegime* CreateVolatilityRegime(const string symbol)
     {
-        // Resize array if needed
         if(m_volatilityRegimeCount >= ArraySize(m_volatilityRegimes))
             ArrayResize(m_volatilityRegimes, m_volatilityRegimeCount + 10);
 
@@ -232,7 +219,6 @@ public:
         return regime;
     }
 
-    //--- AGGRESSIVE: Get ATR value for a symbol using IndicatorManager
     //--- Stateless: exposed as static so sibling lifecycle modules can reuse it.
     //--- NOTE: static methods cannot be const in MQL5.
     static double GetATR(const string symbol, int period)

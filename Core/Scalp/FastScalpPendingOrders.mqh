@@ -1,15 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the pending limit-order book that used to be three loose
-// members on CFastScalpEngine:
-// SPendingScalpOrder m_pendingOrders[10];
-// int                m_pendingOrderCount;
-// CTrade             m_tradeObj;
-// Moved methods (bodies verbatim):
-// PlaceScalpPendingOrder()  -> Place()
-// CheckPendingScalpOrders() -> CheckExpired()
-// RemovePendingOrder()      -> RemovePendingOrder()
-// ~CFastScalpEngine() cancel loop -> CancelAllOnShutdown()
+// Owns the scalp pending limit-order book.
 // m_config / m_magicNumber / m_lastScalpTime are passed in so the
 // engine stays the single owner of configuration and cooldown.
 // All stop-distance math, retcodes and log tags are unchanged.
@@ -24,11 +13,9 @@
 #include "FastScalpTypes.mqh"
 #include "FastScalpFilters.mqh"
 
-// CFastScalpPendingOrders — stateful scalp pending order book
 class CFastScalpPendingOrders
 {
 private:
-   // Pending order tracking (moved verbatim from CFastScalpEngine)
    SPendingScalpOrder        m_pendingOrders[10];
    int                       m_pendingOrderCount;
    CTrade                    m_tradeObj;   // For pending order operations (OrderDelete)
@@ -41,13 +28,11 @@ public:
          m_pendingOrders[i].Reset();
    }
 
-   //--- Was CFastScalpEngine::GetPendingOrderCount()
    int Count() const { return m_pendingOrderCount; }
 
 // Cancel any remaining pending orders (was the engine destructor)
    void CancelAllOnShutdown()
    {
-      // Cancel any remaining pending orders
       for(int i = 0; i < m_pendingOrderCount; i++)
       {
          if(m_pendingOrders[i].isActive && m_pendingOrders[i].ticket > 0)
@@ -77,7 +62,6 @@ public:
       if(!CFastScalpFilters::RefreshScalpPrice(symbol, ask, bid))
          return false;
 
-      // Calculate minimum offset from current price for pending orders
       // Must respect broker's SYMBOL_TRADE_STOPS_LEVEL
       long stopsLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
       long freezeLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL);
@@ -88,8 +72,8 @@ public:
       // Use a percentage-based minimum as fallback: 0.1% of mid-price.
       // This ensures stops are far enough from entry for high-priced instruments.
       double midPrice = (ask + bid) / 2.0;
-      double pctMinDistance = midPrice * 0.001;  // 0.1% of price
-      double absMinOffset = 10 * point;           // absolute minimum: 10 points
+      double pctMinDistance = midPrice * 0.001;
+      double absMinOffset = 10 * point;
       minOffset = MathMax(minOffset, MathMax(absMinOffset, pctMinDistance));
 
       // SL/TP must also be at least the same minimum distance away from entry price
@@ -170,7 +154,6 @@ public:
          return false;
       }
 
-      // Track the pending order
       m_pendingOrders[m_pendingOrderCount].ticket     = result.order;
       m_pendingOrders[m_pendingOrderCount].symbol     = symbol;
       m_pendingOrders[m_pendingOrderCount].orderType  = pendingType;
@@ -217,11 +200,9 @@ public:
             continue;
          }
 
-         // Check TTL
          int elapsedSec = (int)(now - m_pendingOrders[i].placedAt);
          if(elapsedSec >= config.pendingOrderTTL)
          {
-            // Cancel expired pending order
             if(m_tradeObj.OrderDelete(m_pendingOrders[i].ticket))
             {
                PrintFormat("[SCALP-PENDING-EXPIRED] %s | ticket=%I64u | elapsed=%ds",

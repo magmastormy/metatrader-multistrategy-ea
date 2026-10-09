@@ -13,7 +13,6 @@
 class CPerfAnalyticsReport
 {
 public:
-// Get Performance Metrics
     static SPerformanceMetrics BuildPerformanceMetrics(const CPerfAnalyticsTradeStats &stats,
                                                        const CPerfAnalyticsEquity &equity)
     {

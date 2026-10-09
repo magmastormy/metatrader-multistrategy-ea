@@ -233,7 +233,6 @@ bool CTrendReadiness::ShouldReinitializeIndicatorSet()
     return true;
 }
 
-// Capture readiness + reuse state
 STrendReadinessRestorePoint CTrendReadiness::Capture() const
 {
     STrendReadinessRestorePoint point;
@@ -244,7 +243,6 @@ STrendReadinessRestorePoint CTrendReadiness::Capture() const
     return point;
 }
 
-// Restore readiness + reuse state
 void CTrendReadiness::Restore(const STrendReadinessRestorePoint &point)
 {
     m_snapshot = point.snapshot;

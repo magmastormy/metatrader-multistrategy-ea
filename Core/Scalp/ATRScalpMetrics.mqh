@@ -11,20 +11,17 @@
 
 #include "ATRScalpTypes.mqh"
 
-// CATRScalpMetrics — owns the skipped counter, census + diagnostics
 class CATRScalpMetrics
 {
 private:
    int   m_totalTradesSkipped;
 
 public:
-// Constructor — counters start at zero
    CATRScalpMetrics() :
       m_totalTradesSkipped(0)
    {
    }
 
-// Counter mutator / accessor
    void RecordTradeSkipped()      { m_totalTradesSkipped++;    }
    int  TotalTradesSkipped() const { return m_totalTradesSkipped; }
 

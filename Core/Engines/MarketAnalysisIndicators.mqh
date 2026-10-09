@@ -18,11 +18,9 @@
 class CMarketAnalysisIndicators
 {
 private:
-    // Initialize indicator handles and settings
     string m_symbol;
     ENUM_TIMEFRAMES m_period;
 
-    // Indicator handles
     int m_adxHandle;
     int m_atrHandle;
     int m_bbHandle;
@@ -32,7 +30,6 @@ private:
     int m_ma50Handle;
     int m_ma200Handle;
 
-    // Indicator parameters
     int m_adxPeriod;
     int m_atrPeriod;
     int m_bbPeriod;
@@ -45,7 +42,6 @@ private:
     int m_maFastHandle;
     int m_maSlowHandle;
 
-    // Warmup tracking
     datetime m_initTime;              // Time when indicators were initialized
     bool m_indicatorsReady;           // Flag indicating if indicators are fully initialized
     int m_initAttempts;               // Count of initialization attempts
@@ -72,7 +68,6 @@ public:
     {
         // NOTE: m_maFastHandle / m_maSlowHandle are deliberately left out of
         // the initializer list to mirror the original CMarketAnalysis ctor.
-        // Initialize indicator parameters
         m_adxPeriod = 14;
         m_atrPeriod = 14;
         m_bbPeriod = 20;
@@ -85,12 +80,10 @@ public:
         m_initTime = 0;             // Will be set on successful indicator initialization
     }
 
-    //--- Context accessors
     string          Symbol()          const { return m_symbol; }
     ENUM_TIMEFRAMES Timeframe()       const { return m_period; }
     bool            IndicatorsReady() const { return m_indicatorsReady; }
 
-    //--- Handle accessors
     int AdxHandle()   const { return m_adxHandle; }
     int AtrHandle()   const { return m_atrHandle; }
     int BbHandle()    const { return m_bbHandle; }
@@ -100,7 +93,6 @@ public:
     int Ma50Handle()  const { return m_ma50Handle; }
     int Ma200Handle() const { return m_ma200Handle; }
 
-    //--- Helper to release all indicator handles
     void ReleaseAllHandles();
 
     //--- Check if we're still in warmup period (suppress warnings)
@@ -117,16 +109,13 @@ public:
     bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period, CMarketAnalysisMetricCache &cache);
 };
 
-// Helper to release all indicator handles
 void CMarketAnalysisIndicators::ReleaseAllHandles()
 {
-    // Array of all indicator handles for easier management
     int handles[] = {
         m_maFastHandle, m_maSlowHandle, m_adxHandle, m_atrHandle, m_bbHandle,
         m_macdHandle, m_rsiHandle, m_ma20Handle, m_ma50Handle, m_ma200Handle
     };
 
-    // Release each handle if valid
     for(int i = 0; i < ArraySize(handles); i++) {
         if(handles[i] != INVALID_HANDLE) {
             IndicatorRelease(handles[i]);
@@ -134,7 +123,6 @@ void CMarketAnalysisIndicators::ReleaseAllHandles()
         }
     }
 
-    // Update all handle variables
     m_maFastHandle = handles[0];
     m_maSlowHandle = handles[1];
     m_adxHandle = handles[2];
@@ -147,7 +135,6 @@ void CMarketAnalysisIndicators::ReleaseAllHandles()
     m_ma200Handle = handles[9];
 }
 
-// Check if we're still in warmup period (suppress warnings)
 bool CMarketAnalysisIndicators::IsInWarmup() const
 {
     // If indicators not ready and we haven't exhausted retries, stay in warmup
@@ -163,7 +150,6 @@ bool CMarketAnalysisIndicators::IsInWarmup() const
     return (TimeCurrent() - m_initTime) < WARMUP_SECONDS;
 }
 
-// Ensure indicator handles exist for current symbol/period
 bool CMarketAnalysisIndicators::EnsureIndicatorsReady(CMarketAnalysisMetricCache &cache)
 {
     if(m_symbol == "")
@@ -183,7 +169,6 @@ bool CMarketAnalysisIndicators::EnsureIndicatorsReady(CMarketAnalysisMetricCache
     return true;
 }
 
-// Initialize a single indicator and handle errors
 bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string symbolName, const ENUM_TIMEFRAMES period, const string indicatorName,
                                                     const int param1, const int param2, const double param3, const int param4)
 {
@@ -192,7 +177,6 @@ bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string sy
         return true;
     }
 
-    // Create the appropriate indicator based on name
     if(indicatorName == "ADX") {
         handle = iADX(symbolName, period, param1 > 0 ? param1 : ADX_PERIOD);
     }
@@ -226,7 +210,6 @@ bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string sy
                    param4 > 0 ? param4 : PRICE_CLOSE);
     }
 
-    // Check for errors
     if(handle == INVALID_HANDLE) {
         int error = GetLastError();
         // Custom error message since ErrorDescription is not available in MQL5
@@ -262,10 +245,8 @@ bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string sy
     return true;
 }
 
-// Initialize all required indicators for the symbol and period
 bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period, CMarketAnalysisMetricCache &cache)
 {
-    // Track initialization attempt
     m_initAttempts++;
     m_lastInitAttempt = TimeCurrent();
     if(m_symbol != symbolName || m_period != period)
@@ -301,7 +282,6 @@ bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, co
         }
     }
 
-    // Check if symbol is available
     if(!CMarketAnalysisSymbolProfile::IsSymbolAvailable(symbolName)) {
         if(m_initAttempts == 1) {
             PrintFormat("[INFO] Symbol %s not available in Market Watch or has no price data", symbolName);
@@ -310,7 +290,6 @@ bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, co
         return false;
     }
 
-    // Store symbol and period for later use
     m_symbol = symbolName;
     // Resolve PERIOD_CURRENT to actual chart timeframe
     ENUM_TIMEFRAMES resolvedPeriod = period;
@@ -333,35 +312,30 @@ bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, co
         m_adxHandle = INVALID_HANDLE;
     }
 
-    // Initialize ATR
     m_atrHandle = iATR(symbolName, period, m_atrPeriod);
     if(m_atrHandle == INVALID_HANDLE) {
         PrintFormat("Failed to create ATR handle for %s, error: %d", symbolName, GetLastError());
         return false;
     }
 
-    // Initialize Bollinger Bands
     m_bbHandle = iBands(symbolName, period, m_bbPeriod, 0, m_bbDeviation, m_appliedPrice);
     if(m_bbHandle == INVALID_HANDLE) {
         PrintFormat("Failed to create Bollinger Bands handle for %s, error: %d", symbolName, GetLastError());
         return false;
     }
 
-    // Initialize MACD
     m_macdHandle = iMACD(symbolName, period, m_macdFastPeriod, m_macdSlowPeriod, m_macdSignalPeriod, m_appliedPrice);
     if(m_macdHandle == INVALID_HANDLE) {
         PrintFormat("Failed to create MACD handle for %s, error: %d", symbolName, GetLastError());
         return false;
     }
 
-    // Initialize RSI
     m_rsiHandle = iRSI(symbolName, period, m_rsiPeriod, m_appliedPrice);
     if(m_rsiHandle == INVALID_HANDLE) {
         PrintFormat("Failed to create RSI handle for %s, error: %d", symbolName, GetLastError());
         return false;
     }
 
-    // Initialize Moving Averages
     m_ma20Handle = iMA(symbolName, period, 20, 0, MODE_EMA, m_appliedPrice);
     if(m_ma20Handle == INVALID_HANDLE) {
         PrintFormat("Failed to create MA(20) handle for %s, error: %d", symbolName, GetLastError());
@@ -386,7 +360,6 @@ bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, co
     bool indicatorsReady = false;
 
     while(retryCount < maxRetries && !indicatorsReady) {
-        // Check if indicators have enough calculated bars
         bool adxReady = (m_adxHandle == INVALID_HANDLE) || BarsCalculated(m_adxHandle) >= m_adxPeriod;
         bool atrReady = BarsCalculated(m_atrHandle) >= m_atrPeriod;
         bool bbReady = BarsCalculated(m_bbHandle) >= m_bbPeriod;

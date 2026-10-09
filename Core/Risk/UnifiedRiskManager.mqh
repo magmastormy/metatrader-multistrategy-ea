@@ -11,22 +11,16 @@
 #include "../Utils/TradeJournal.mqh"
 #include "../Processing/DerivAssetProfiler.mqh"
 #include "../Utils/RiskMath.mqh"
-// Phase E1 extracted sub-modules (behaviour-preserving decomposition)
 #include "RiskClusterCodec.mqh"
 #include "RiskSymbolStats.mqh"
 #include "RiskValidationStats.mqh"
-// Phase E2 extracted sub-modules (behaviour-preserving decomposition)
 #include "RiskClusterBudget.mqh"
 #include "RiskOpposingConflictGuard.mqh"
 #include "RiskCircuitBreaker.mqh"
 #include "RiskMarginHealth.mqh"
-// Phase E3 extracted sub-modules (behaviour-preserving decomposition)
 #include "RiskTieredCorrelation.mqh"
 #include "RiskAdaptiveTuner.mqh"
-// Phase E4 extracted sub-module (behaviour-preserving decomposition).
-// Provides:
-//   - SUnifiedRiskConfig / STradeValidationRequest (relocated verbatim, this
-//     header is included before they are first used below),
+// SUnifiedRiskConfig / STradeValidationRequest are defined here (included before first use),
 //   - IRiskPipelineHost  (call-back interface implemented by CUnifiedRiskManager),
 //   - CRiskValidationPipeline (owns ValidateTradeRequest + the 7 sub-checks).
 #include "RiskValidationPipeline.mqh"
@@ -43,14 +37,8 @@ struct SSymbolRiskBudget
 
 #define MAX_SYMBOL_BUDGETS 30
 
-// Unified risk configuration
-// Blueprint 10.4: All percent fields use 0-100 scale
-// Phase E4: struct SUnifiedRiskConfig was relocated VERBATIM to
-// RiskValidationPipeline.mqh (included above) because both
-// CUnifiedRiskManager and CRiskValidationPipeline need the complete
-// type. Field list, order and semantics are unchanged.
+// Blueprint 10.4: All percent fields use 0-100 scale (struct SUnifiedRiskConfig lives in RiskValidationPipeline.mqh)
 
-// Per-Symbol Risk Override (family-specific risk parameters)
 // Allows per-symbol risk limits that are lower than global defaults
 struct SSymbolRiskOverride
 {
@@ -68,7 +56,6 @@ struct SSymbolRiskOverride
     }
 };
 
-// Unified risk runtime snapshot
 // Blueprint 10.4: All percent fields use 0-100 scale
 struct SUnifiedRiskSnapshot
 {
@@ -95,18 +82,8 @@ struct SUnifiedRiskSnapshot
     bool emergencyMode;
 };
 
-// Trade Request Validation Structure
-// Phase E4: struct STradeValidationRequest was relocated VERBATIM
-// to RiskValidationPipeline.mqh (included above) because both
-// CUnifiedRiskManager and CRiskValidationPipeline need the complete
-// type. Field list, order, defaults and semantics are unchanged.
-
-// Phase E4: implements IRiskPipelineHost so CRiskValidationPipeline
-// can call back into the owner-private bookkeeping (daily budget,
-// per-symbol budgets/overrides, virtual reservations, audit log)
-// WITHOUT duplicating any of it. Every interface entry below is an
-// already-existing CUnifiedRiskManager method; the single addition
-// is CopyRiskConfig() (MQL5 forbids pointers to structures).
+// IRiskPipelineHost lets CRiskValidationPipeline call back into the owner-private
+// bookkeeping without duplicating it. CopyRiskConfig() exists because MQL5 forbids pointers to structures.
 class CUnifiedRiskManager : public IRiskPipelineHost
 {
 private:
@@ -119,36 +96,25 @@ private:
     // Lifetime: EAOrchestrator creates/owns; UnifiedRiskManager only references
     CPerformanceAnalytics* m_performanceAnalytics;
 
-    // Phase E3: m_activeRiskPerTradePercent now lives in CRiskAdaptiveTuner.
     double m_dailyRiskUsedPercent;
     double m_dailyStartEquity;
     datetime m_lastDailyReset;
     bool m_initialized;
-    // Phase E3: m_conservativeMode now lives in CRiskAdaptiveTuner.
     datetime m_lastPressureLogTime;
     
-    // Phase E2: drawdown / daily-loss circuit breakers, graduated auto-recovery
-    // and the emergency-close escalation flag now live in CRiskCircuitBreaker.
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskCircuitBreaker m_circuitBreaker;
 
-    // Broker trading day boundary tracking
     int m_lastTradingDayKey;         // Cached trading day key (YYYYMMDD)
     int m_tradingDayStartHour;       // Hour when broker trading day starts (default 0 = midnight server time)
 
-    // Per-Symbol Risk Budgeting (Phase 5)
     SSymbolRiskBudget m_symbolBudgets[];
     int m_symbolBudgetCount;
     datetime m_lastBudgetRefresh;
 
-    // Phase E3: m_riskReductionFactor now lives in CRiskAdaptiveTuner.
-
-    // Per-symbol risk overrides (family-specific risk parameters)
     SSymbolRiskOverride m_riskOverrides[];
     int m_riskOverrideCount;
-
-    // Phase E3: m_lastThrottlePressure now lives in CRiskAdaptiveTuner.
 
     long m_eaMagicNumber;  // Batch 119: EA magic number for position filtering
 
@@ -165,59 +131,42 @@ private:
     int    m_envelopeMaxPositionsSameBase;
     bool   m_envelopeCaptured;
 
-        // Deriv asset profiler for family detection
         CDerivAssetProfiler m_derivAssetProfiler;
 
-        // Validation gate state (moved from CRiskValidationGate to consolidate risk authority)
     bool m_clusterGovernanceEnabled;
     bool m_clusterMutexEnabled;
     int m_maxConcurrentPerCluster;
     double m_maxClusterRiskPercent;
-    // Phase E2: free-margin / margin-level thresholds and the runtime margin
-    // health monitor now live in CRiskMarginHealth.
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskMarginHealth m_marginHealth;
-    // Phase E2: opposing same-symbol conflict cooldown cache (Fix #9).
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskOpposingConflictGuard m_opposingGuard;
-    // Phase E2: per-cluster risk cap registry (Fix #11).
     // OWNED: Value member - constructor seeds the T/R default overrides that
     // used to be written in this class's constructor body.
     CRiskClusterBudget m_clusterBudget;
     string m_clusterSyncCodes[];
     int m_clusterSyncCounts[];
-    // Phase E1: validation counters, timing metrics and audit log sink.
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskValidationStats m_validationStats;
-    // Phase E3: tiered correlation logic (threshold config + portfolio PRM pointer).
     // OWNED: Value member - constructor seeds the threshold defaults and
     // sets the portfolio risk manager pointer that used to be accessed
     // directly as m_portfolioRiskManager in URM's method bodies.
     CRiskTieredCorrelation m_tieredCorrelation;
-    // Phase E3: adaptive risk-sizing state (active risk, conservative mode,
-    // throttle pressure, risk reduction factor).
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskAdaptiveTuner m_adaptiveTuner;
 
-    // Additional validation parameters (formerly in CRiskValidationGate)
     double m_emergencyRiskOverride;   // Blueprint 10.4: 0-100 scale (5.0 = 5%)
 
-    // Phase E4: the pre-trade validation pipeline (ValidateTradeRequest and
-    // its 7 sub-checks). OWNED: value member - automatically constructed and
-    // destroyed with CUnifiedRiskManager. It holds only NON-OWNING pointers
-    // back to this object and to the value members declared above; those
-    // addresses are stable for this object's whole lifetime.
-    // Declared LAST so that every collaborator it points at is already fully
-    // constructed when WireValidationPipeline() runs in the constructor body.
+    // OWNED: value member. Holds only NON-OWNING pointers back to this object and the value
+    // members above; those addresses are stable for this object's whole lifetime.
+    // Declared LAST so every collaborator it points at is fully constructed when WireValidationPipeline() runs.
     CRiskValidationPipeline m_validationPipeline;
 
-    // Phase E4: single wiring point, called from the constructor body and
-    // again from Initialize() (so a re-Initialize refreshes the mirrored
-    // scalars). Idempotent.
+    // Called from the constructor body and again from Initialize(); idempotent.
     void WireValidationPipeline();
 
 public:
@@ -228,10 +177,8 @@ public:
 
     // Called each cycle/new bar to keep limits and adaptive risk current.
     void RefreshRuntimeState();
-    // IRiskPipelineHost
     virtual void CheckAndResetDailyLimits();
-    
-    // Set performance analytics after initialization
+
     void SetPerformanceAnalytics(CPerformanceAnalytics* analytics);
 
     // Set base risk per trade percent (used by dual-mode auto-switching)
@@ -248,26 +195,19 @@ public:
                                 double effectiveDailyLossLimit,
                                 double maxRiskPerTradeOverride);
 
-    // Per-symbol risk overrides (family-specific risk parameters)
     void SetRiskPerTrade(const string symbol, double riskPct);
     void SetMaxDrawdownForFamily(const string symbol, double maxDDPct);
     virtual double GetEffectiveRiskPerTrade(const string symbol) const;
-    // IRiskPipelineHost
     virtual double GetEffectiveMaxDrawdown(const string symbol) const;
 
-    // Phase E4 / IRiskPipelineHost: MQL5 has no pointers to structures, so the
-    // pipeline cannot hold "&m_config". It copies the live struct at every
-    // public entry point instead. Read-only for the caller.
+    // MQL5 has no pointers to structures, so the pipeline copies the live struct at every public entry point (read-only).
     virtual void CopyRiskConfig(SUnifiedRiskConfig &outConfig) const { outConfig = m_config; }
 
-    // Phase E4 / IRiskPipelineHost: promoted from private to public so the
-    // pipeline can reach it through the interface. Behaviour unchanged; the
-    // former "= 0.0" default is dropped because every call site in the code
-    // base already passes an explicit argument.
+    // Public so the pipeline reaches it through IRiskPipelineHost; behaviour unchanged.
+    // No "= 0.0" default: every call site already passes an explicit argument.
     virtual double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent);
 
     // Single trade validation authority.
-    // Phase E4: thin forwarder -> CRiskValidationPipeline::Run (signature unchanged).
         SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime", const string corrId = "");
         void ConfigureClusterGovernance(const bool enabled,
                                     const int maxConcurrentPerCluster,
@@ -276,11 +216,9 @@ public:
 
     // Sync inherited cluster position counts on EA restart
     void SyncClusterPositionCounts();
-    // IRiskPipelineHost
     virtual bool ReserveVirtualPosition(const string ownerTag,
                                         const STradeValidationRequest &request,
                                         const double riskPercent);
-    // IRiskPipelineHost
     virtual void ReleaseVirtualPosition(const string ownerTag);
     virtual void UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent);
     void ClearVirtualPositions();
@@ -300,7 +238,6 @@ public:
     double GetThrottlePressure() const;
     bool HasUnprotectedPositions();
     int GetUnprotectedPositionCount();
-    // IRiskPipelineHost
     virtual bool IsInitialized() const { return m_initialized; }
 
     // Access portfolio risk manager (for wiring correlation engine to PositionSizer)
@@ -309,7 +246,6 @@ public:
     // Set broker trading day start hour (0=midnight server time, 17=5pm for forex rollover)
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
     
-    // EAMagicNumber is stored for validation gate use
     // Phase E4: push-synced into the pipeline, which mirrors this scalar.
     void SetEAMagicNumber(long magic)
     {
@@ -317,8 +253,6 @@ public:
         m_validationPipeline.SetEAMagicNumber(magic);
     }
     
-    // ENHANCEMENT: Circuit Breaker & Correlation Methods (Batch 93 - Week 1)
-    // IRiskPipelineHost
     virtual bool CheckDrawdownCircuitBreaker();
     double GetCurrentDrawdownPercent() const;
     bool IsTradingEnabled() const;
@@ -335,21 +269,15 @@ public:
     // key is exposed so the writer can stamp which broker day the state belongs to.
     bool   IsDailyLossHaltActive() const;
     int    GetCurrentTradingDayKey();
-    //--- Batch 168: CUnifiedRiskManager::Initialize leaves m_lastTradingDayKey at 0,
-    //--- so the first CheckAndResetDailyLimits() of every restart reports a "new
-    //--- trading day" and overwrites m_dailyStartEquity with current equity - which
-    //--- clobbered the restored baseline. Seeding the key suppresses that spurious
-    //--- reset when the saved state is from the same broker day.
+    // Seeding suppresses the spurious trading-day reset that would otherwise clobber the restored m_dailyStartEquity.
     void   SeedTradingDayKey(int dayKey);
     void   RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
                                       int savedBreachCount, double savedMaxDrawdown,
                                       bool restoreDailyLossHalt, bool restoreTradingHalt);
 
     // Daily P&L Loss Limit circuit breaker
-    // IRiskPipelineHost
     virtual bool CheckDailyLossLimit();
 
-    // Per-Symbol Risk Budgeting (Phase 5)
     virtual double GetSymbolRiskAllocation(const string symbol);
     virtual bool IsSymbolBudgetAvailable(const string symbol, const double riskPct);
     void RefreshSymbolBudgets();
@@ -357,21 +285,14 @@ public:
     double GetSymbolWinRate(const string symbol);
     double GetSymbolProfitFactor(const string symbol);
 
-    // Margin health monitoring (Phase 2.4)
     ENUM_MARGIN_HEALTH_LEVEL MonitorMarginHealth();
 
-    // Single source of truth for drawdown state (Phase 2.1)
-    // IRiskPipelineHost
+    // Single source of truth for drawdown state
     virtual SDrawdownState GetDrawdownState();
     
-    // ENHANCEMENT: Correlation and position risk methods (Batch 93)
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
     double CalculatePositionRiskPercent(ulong ticket);
 
-// Inline validation methods (formerly in CRiskValidationGate)
-// Phase E4: the bodies now live in CRiskValidationPipeline; the declarations
-// below are preserved 1:1 and forward to it (CRiskValidationGate and other
-// callers keep working unchanged).
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
     bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
@@ -387,22 +308,18 @@ public:
     bool PortfolioCorrelationAllowed(const string symbolParam);
     bool PortfolioEmergencyActive();
     bool PortfolioHasUnprotectedPositions();
-    // IRiskPipelineHost
     virtual bool IsSymbolDataValid(const string symbolParam);
     double GetSymbolTickValue(const string symbolParam);
     double GetSymbolPoint(const string symbolParam);
-    // IRiskPipelineHost
     virtual bool CheckAccountTradingPermissions(void);
     double CalculateSymbolCorrelation(const string symbol1Param, const string symbol2Param);
     double GetMaxCorrelationWithPortfolio(const string symbolParam);
     string NormalizeClusterCode(const string clusterCode) const;
     bool ParseClusterCodeFromComment(const string comment, string &clusterCode) const;
     virtual double EstimatePositionRiskPercent(const ulong ticket) const;
-    // IRiskPipelineHost
     virtual void LogValidationResult(const STradeValidationRequest &request, const SValidationResult &result);
     void WriteAuditLog(const string message);
     string FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result);
-    // IRiskPipelineHost
     virtual void UpdatePerformanceMetrics(const ulong startTime);
     double GetCurrentPortfolioRisk();
     void SetClusterRiskCap(const string clusterCode, const double capPercent);
@@ -417,8 +334,6 @@ private:
     double ClampRiskPercent(const double value) const;
     double CalculateDailyMarkToMarketLossPercent();
     double GetCurrentOpenExposureRiskPercent();
-    // Phase E4: GetEffectiveDailyRiskUsedPercent moved to the public section
-    // (IRiskPipelineHost implementation). Body and behaviour are unchanged.
     double CalculateMinLotRiskPercent(const string symbol);
     double ApplyPnlRiskAdjustment(const string symbol, const double rawUsedRisk);
 };
@@ -433,12 +348,9 @@ void CUnifiedRiskManager::SetPerformanceAnalytics(CPerformanceAnalytics* analyti
 void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
 {
     m_config.baseRiskPerTradePercent = ClampRiskPercent(riskPercent);
-    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
     m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(riskPercent));
 }
 
-// Apply tier overrides without full reinitialization
-// Updates only tier-controlled parameters, preserving runtime state
 void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              int tierMaxPositions,
                                              double effectiveDaily, double effectivePortfolio,
@@ -446,13 +358,8 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              double effectiveDailyLossLimit,
                                              double maxRiskPerTradeOverride)
 {
-    // Update config parameters controlled by tier system
-    //
-    // Batch 169: every tier value is clamped to the operator's configured envelope.
-    // The equity-bracket table in CCompoundingTierManager used to be an unconditional
-    // assignment, so a $10k-$50k account silently traded at 15% risk per trade, 35%
-    // daily and 50% portfolio while live_overrides.json said 1% / 4% / 12%. Lowering
-    // risk is still allowed; raising it past what was configured is not.
+    // Every tier value is clamped to the operator's configured envelope.
+    // Lowering risk is allowed; raising it past what was configured is not.
     double clampedBaseRisk   = m_envelopeCaptured ? MathMin(tierRiskPerTradePct, m_envelopeBaseRiskPerTradePercent) : tierRiskPerTradePct;
     double clampedMaxRisk    = m_envelopeCaptured ? MathMin(maxRiskPerTradeOverride, m_envelopeMaxRiskPerTradePercent) : maxRiskPerTradeOverride;
     double clampedDaily      = m_envelopeCaptured ? MathMin(effectiveDaily, m_envelopeMaxDailyRiskPercent) : effectiveDaily;
@@ -493,11 +400,8 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
     m_config.dailyLossLimitPercent   = clampedDailyLoss;
     m_config.maxPositionsSameBase    = clampedSameBase;
 
-        // Update active risk per trade
-        // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
         m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(m_config.baseRiskPerTradePercent));
 
-        // Update portfolio risk manager limits (no reinitialization)
         m_portfolioRiskManager.SetMaxPortfolioRisk(clampedPortfolio);
 
         PrintFormat("[RISK-INIT-SINGLE] Tier overrides applied (no reinit) | risk=%.1f%% | maxRisk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
@@ -509,10 +413,8 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                     m_config.drawdownCriticalPercent);
 }
 
-// Set per-symbol risk per trade override
 void CUnifiedRiskManager::SetRiskPerTrade(const string symbol, double riskPct)
 {
-    // Find existing override
     for(int i = 0; i < m_riskOverrideCount; i++)
     {
         if(m_riskOverrides[i].symbol == symbol)
@@ -538,7 +440,6 @@ void CUnifiedRiskManager::SetRiskPerTrade(const string symbol, double riskPct)
     PrintFormat("[RISK-FAMILY] Set risk per trade for %s: %.2f%%", symbol, riskPct);
 }
 
-// Set per-symbol max drawdown override
 void CUnifiedRiskManager::SetMaxDrawdownForFamily(const string symbol, double maxDDPct)
 {
     for(int i = 0; i < m_riskOverrideCount; i++)
@@ -574,7 +475,6 @@ double CUnifiedRiskManager::GetEffectiveRiskPerTrade(const string symbol) const
             return MathMin(m_riskOverrides[i].riskPerTradePercent, m_config.maxRiskPerTradePercent);
     }
     // L5-020 FIX: Return active risk per trade (reduced in conservative mode) instead of base risk
-    // Phase E3 forwarder -> CRiskAdaptiveTuner::GetActiveRiskPerTradePercent
     return m_adaptiveTuner.GetActiveRiskPerTradePercent();
 }
 
@@ -589,19 +489,13 @@ double CUnifiedRiskManager::GetEffectiveMaxDrawdown(const string symbol) const
     return m_config.drawdownCriticalPercent;
 }
 
-// Constructor
 CUnifiedRiskManager::CUnifiedRiskManager() :
     m_performanceAnalytics(NULL),
-    // Phase E3: m_activeRiskPerTradePercent, m_riskReductionFactor,
-    // m_lastThrottlePressure, m_conservativeMode now live in
-    // CRiskAdaptiveTuner::CRiskAdaptiveTuner() (identical values).
     m_dailyRiskUsedPercent(0.0),
     m_dailyStartEquity(0.0),
     m_lastDailyReset(0),
     m_initialized(false),
     m_lastPressureLogTime(0),
-    // Phase E2: circuit-breaker defaults now live in
-    // CRiskCircuitBreaker::CRiskCircuitBreaker() (identical values).
     m_lastTradingDayKey(0),
     m_tradingDayStartHour(0),
     m_symbolBudgetCount(0),
@@ -617,17 +511,10 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_envelopeDailyLossLimitPercent(0.0),
     m_envelopeMaxPositionsSameBase(0),
     m_envelopeCaptured(false),
-    // Validation gate state (moved from CRiskValidationGate)
     m_clusterGovernanceEnabled(true),
     m_clusterMutexEnabled(true),
     m_maxConcurrentPerCluster(5),
     m_maxClusterRiskPercent(5.0),
-    // Phase E2: margin-health thresholds now live in
-    // CRiskMarginHealth::CRiskMarginHealth() (identical values).
-    // Phase E2: opposing-conflict cooldown defaults now live in
-    // CRiskOpposingConflictGuard::CRiskOpposingConflictGuard() (identical values).
-    // Phase E1: audit-log + validation counter defaults now live in
-    // CRiskValidationStats::CRiskValidationStats() (identical values).
     m_emergencyRiskOverride(5.0)
 {
     m_config.baseRiskPerTradePercent = 1.0;   // Blueprint 10.4: 0-100 scale (1.0 = 1%)
@@ -648,9 +535,6 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.enableAuditLogging = true;
     m_config.auditLogFile = "UnifiedRiskValidation.log";
 
-    // Phase E2: per-cluster risk caps (Fix #11) default overrides are now
-    // seeded by CRiskClusterBudget::CRiskClusterBudget() (identical values).
-
     // Phase E3: sync correlation threshold config to CRiskTieredCorrelation
     // and wire the portfolio risk manager pointer (stable for URM's lifetime).
     m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
@@ -658,20 +542,13 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
                                       m_config.correlationBlockThreshold);
     m_tieredCorrelation.SetPortfolioRiskManager(&m_portfolioRiskManager);
 
-    // Phase E4: wire the validation pipeline here (not in Initialize) so that
-    // ValidateTradeRequest is never able to dereference a NULL collaborator,
-    // even if it is somehow called before Initialize(). All value members are
-    // fully constructed by the time the constructor body runs.
+    // Wired here, not in Initialize(), so ValidateTradeRequest can never dereference a NULL collaborator.
+    // All value members are fully constructed by the time the constructor body runs.
     WireValidationPipeline();
 }
 
-// Phase E4: wire CRiskValidationPipeline to its collaborators.
-// Every pointer handed over is NON-OWNING: it is either this object
-// (as IRiskPipelineHost) or the address of one of this object's own
-// value members. Those addresses are stable for the whole lifetime
-// of CUnifiedRiskManager, so re-running this method is safe and
-// idempotent. Mutable scalars mirrored by the pipeline are re-sent
-// here and push-synced from their setters.
+// Every pointer handed over is NON-OWNING (this object or its own value members); addresses are
+// stable for CUnifiedRiskManager's lifetime, so re-running is idempotent. Mirrored scalars are push-synced from setters.
 void CUnifiedRiskManager::WireValidationPipeline()
 {
     m_validationPipeline.Initialize(GetPointer(this),
@@ -693,14 +570,9 @@ void CUnifiedRiskManager::WireValidationPipeline()
                                     m_maxClusterRiskPercent);
 }
 
-// Destructor
 CUnifiedRiskManager::~CUnifiedRiskManager()
 {
-    // No manual cleanup required - all owned resources use RAII via value members:
-    // - m_portfolioRiskManager (value member, auto-destroyed)
-    // - m_virtualPositionBook (value member, auto-destroyed)
-    // - m_performanceAnalytics is NON-OWNING (owned by EAOrchestrator)
-    // This class owns NO raw pointers to dynamically allocated memory.
+    // No manual cleanup: this class owns no raw pointers (m_performanceAnalytics is NON-OWNING, owned by EAOrchestrator).
 }
 
 bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
@@ -741,11 +613,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_config.minLotRiskMultiplier <= 0.0)
         m_config.minLotRiskMultiplier = 1.0;
 
-    // Batch 169: snapshot the operator's configured envelope after the sanity
-    // clamping above and before any tier can overwrite it. Captured once, because
-    // ApplyTierOverrides mutates m_config in place and is called repeatedly as
-    // equity brackets change - without a stable snapshot the ceiling would drift
-    // down (or up) with each tier switch.
+    // Snapshot the operator envelope after the sanity clamping above and before any tier can overwrite it.
+    // Captured once: ApplyTierOverrides mutates m_config in place, so without a stable snapshot the ceiling would drift per tier switch.
     if(!m_envelopeCaptured)
     {
         m_envelopeMaxRiskPerTradePercent   = m_config.maxRiskPerTradePercent;
@@ -777,7 +646,6 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     }
 
     m_eaMagicNumber = 0;
-    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
     m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(m_config.baseRiskPerTradePercent));
     m_dailyRiskUsedPercent = 0.0;
     m_virtualPositionBook.Clear();
@@ -785,24 +653,19 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_dailyStartEquity <= 0.0)
         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
     
-    // ENHANCEMENT: Initialize drawdown circuit breaker (Batch 93 - Week 1)
-    // Phase E2 forwarder -> CRiskCircuitBreaker::InitializeState
     // (also re-arms the daily P&L loss limit circuit breaker)
     m_circuitBreaker.InitializeState(m_dailyStartEquity);
 
-    // Broker trading day boundary
     m_lastTradingDayKey = 0;
 
     m_lastDailyReset = TimeCurrent();
     m_initialized = true;
 
-    // Phase E4: re-wire the validation pipeline so it picks up the freshly
-    // clamped config and the reset m_eaMagicNumber. Idempotent - all pointers
-    // are the same stable addresses that were handed over in the constructor.
+    // Re-wire so the pipeline picks up the freshly clamped config and the reset m_eaMagicNumber.
+    // Idempotent - all pointers are the same stable addresses handed over in the constructor.
     WireValidationPipeline();
 
     // Risk percent scale validation — catch misconfiguration early
-    // Phase E3: read from CRiskAdaptiveTuner
     double activeRiskCheck = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     if(activeRiskCheck < 0.01 || activeRiskCheck > 20.0)
         PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] — verify input scale is 0-100 not 0-1",
@@ -828,7 +691,6 @@ void CUnifiedRiskManager::RefreshRuntimeState()
 
     // Update peak equity and drawdown from peak - keeps the circuit breaker's
     // drawdown reading current.
-    // Phase E2 forwarder -> CRiskCircuitBreaker::RefreshPeakAndDrawdown
     m_circuitBreaker.RefreshPeakAndDrawdown();
 
     // Batch 151: feed the CVaR equity sampler (minute-gated inside) so
@@ -860,25 +722,14 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
         m_lastDailyReset = nowTime;
 
         // Reset circuit breaker recovery counter on new trading day
-        // Phase E2 forwarder -> CRiskCircuitBreaker::ResetRecoveryCounterForNewDay
         m_circuitBreaker.ResetRecoveryCounterForNewDay();
 
         Print("[RISK-UNIFIED] Daily risk usage reset");
     }
 }
 
-// Phase E4: THIN FORWARDER. The full pre-trade gating pipeline
-// (initialization guard, daily-loss / drawdown / family-drawdown
-// circuit breakers, daily-budget check, virtual-reservation
-// conflict + early reserve/release, the 7 sub-validations, lot
-// floor, per-symbol budget, portfolio projection, family position
-// limit, tiered correlation block/reduce, risk recompute, projected
-// daily risk and the approval path) now lives verbatim in
-// CRiskValidationPipeline::Run.
-// The signature, the default arguments and every accept/reject
-// decision and its ordering are unchanged. The pipeline calls back
-// into this object through IRiskPipelineHost for all owner-private
-// bookkeeping, so no state is cloned and no logic is duplicated.
+// Thin forwarder: the full pre-trade gating pipeline lives verbatim in CRiskValidationPipeline::Run.
+// The signature, the default arguments and every accept/reject decision and its ordering are unchanged.
 SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidationRequest &request,
                                                             const string phaseTag,
                                                             const string corrId)
@@ -896,8 +747,7 @@ void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,
     m_maxConcurrentPerCluster = MathMax(1, maxConcurrentPerCluster);
     m_maxClusterRiskPercent = MathMax(0.1, maxClusterRiskPercent);
 
-    // Phase E4: push the (already clamped) values into the pipeline, which
-    // mirrors these scalars for ValidateClusterGovernance.
+    // Push the (already clamped) values into the pipeline, which mirrors these scalars for ValidateClusterGovernance.
     m_validationPipeline.SetClusterGovernance(m_clusterGovernanceEnabled,
                                               m_maxConcurrentPerCluster,
                                               m_maxClusterRiskPercent,
@@ -918,7 +768,6 @@ void CUnifiedRiskManager::SyncClusterPositionCounts()
     // Batch 120: Diagnostic method — populates sync arrays for logging
     // ValidateClusterGovernance counts positions directly from terminal,
     // so these arrays are for diagnostic output only, not gating logic
-    // Clear previous sync data
     ArrayResize(m_clusterSyncCodes, 0);
     ArrayResize(m_clusterSyncCounts, 0);
 
@@ -937,7 +786,6 @@ void CUnifiedRiskManager::SyncClusterPositionCounts()
         if(clusterCode == "N")
             continue;
 
-        // Find or add cluster in sync arrays
         bool found = false;
         for(int c = 0; c < ArraySize(m_clusterSyncCodes); c++)
         {
@@ -958,7 +806,6 @@ void CUnifiedRiskManager::SyncClusterPositionCounts()
         }
     }
 
-    // Log reconciled state
     PrintFormat("[RISK-CLUSTER-SYNC] Reconciled %d clusters from %d live positions:",
                 ArraySize(m_clusterSyncCodes), totalPositions);
     for(int c = 0; c < ArraySize(m_clusterSyncCodes); c++)
@@ -1041,7 +888,6 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 
     double riskUsed = validationResult.riskPercent;
     if(riskUsed <= 0.0)
-        // Phase E3: read from CRiskAdaptiveTuner
         riskUsed = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     double normalizedFillRatio = MathMax(0.0, MathMin(1.0, fillRatio));
     m_dailyRiskUsedPercent += MathMax(0.0, riskUsed * normalizedFillRatio);
@@ -1107,8 +953,6 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     if(conservative)
         pressureMultiplier = MathMin(pressureMultiplier, 0.80);
 
-    // Issue 17: Store throttle pressure for position-limit adjustment
-    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetThrottlePressure
     m_adaptiveTuner.SetThrottlePressure(pressureMultiplier);
 
     recommended *= pressureMultiplier;
@@ -1163,8 +1007,6 @@ int CUnifiedRiskManager::GetVirtualReservationCount() const
     return m_virtualPositionBook.GetReservationCount();
 }
 
-// Issue 17: Expose last throttle pressure
-// Phase E3 forwarder -> CRiskAdaptiveTuner::GetThrottlePressure
 double CUnifiedRiskManager::GetThrottlePressure() const
 {
     return m_adaptiveTuner.GetThrottlePressure();
@@ -1187,7 +1029,6 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     snapshot.emergencyMode = m_portfolioRiskManager.IsEmergencyMode();
     snapshot.conservativeMode = m_adaptiveTuner.IsConservativeMode();
 
-    // Inline stats (formerly from m_validationGate)
     int total = m_validationStats.GetValidationCount();
     int approved = m_validationStats.GetApprovedCount();
     int rejected = m_validationStats.GetRejectedCount();
@@ -1218,7 +1059,6 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     return snapshot;
 }
 
-// Runtime unprotected-position state
 bool CUnifiedRiskManager::HasUnprotectedPositions()
 {
     return (GetUnprotectedPositionCount() > 0);
@@ -1231,7 +1071,6 @@ int CUnifiedRiskManager::GetUnprotectedPositionCount()
     return m_portfolioRiskManager.GetUnprotectedPositionCount();
 }
 
-// Mark-to-market daily drawdown component
 double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
 {
     double baselineEquity = m_dailyStartEquity;
@@ -1246,7 +1085,6 @@ double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
     return MathMax(0.0, ((baselineEquity - equityNow) / baselineEquity) * 100.0);  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
-// Open exposure component
 double CUnifiedRiskManager::GetCurrentOpenExposureRiskPercent()
 {
     return m_portfolioRiskManager.GetPortfolioRisk();
@@ -1272,7 +1110,6 @@ double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent(const double additi
     return effective;
 }
 
-// Phase E3 forwarder -> CRiskAdaptiveTuner::UpdateAdaptiveRiskLevel
 // Config values and analytics pointer are passed as parameters because
 // they change at runtime (ApplyTierOverrides / SetPerformanceAnalytics).
 void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
@@ -1287,7 +1124,6 @@ void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
                                             m_performanceAnalytics);
 }
 
-// Broker-day key computation (pure — Batch 151)
 int CUnifiedRiskManager::TradingDayKey(const datetime nowTime) const
 {
     MqlDateTime dt;
@@ -1301,7 +1137,6 @@ int CUnifiedRiskManager::TradingDayKey(const datetime nowTime) const
     return dt.year * 10000 + dt.mon * 100 + dt.day;
 }
 
-// Day rollover check — uses broker trading day boundary
 bool CUnifiedRiskManager::IsNewTradingDay(const datetime nowTime)
 {
     int currentTradingDayKey = TradingDayKey(nowTime);
@@ -1320,10 +1155,7 @@ double CUnifiedRiskManager::ClampRiskPercent(const double value) const
                    MathMin(m_config.maxRiskPerTradePercent, value));
 }
 
-// ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)
-// Checks if drawdown from peak equity exceeds limits
 // Returns: true if trading is allowed, false if circuit breaker hit
-// Phase E2 forwarder -> CRiskCircuitBreaker::CheckDrawdownCircuitBreaker
 bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
 {
     if(!m_initialized)
@@ -1337,38 +1169,29 @@ bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
     return result;
 }
 
-// Get current drawdown status
-// Phase E2 forwarder -> CRiskCircuitBreaker::GetMaxDrawdownFromPeak
 double CUnifiedRiskManager::GetCurrentDrawdownPercent() const
 {
     return m_circuitBreaker.GetMaxDrawdownFromPeak();
 }
 
-// Check if trading is enabled
-// Phase E2 forwarder -> CRiskCircuitBreaker::IsTradingEnabled
 bool CUnifiedRiskManager::IsTradingEnabled() const
 {
     return m_circuitBreaker.IsTradingEnabled();
 }
 
-// Check if emergency close has been requested
 // L5-019: Emergency close flag set by circuit breaker
-// Phase E2 forwarder -> CRiskCircuitBreaker::IsEmergencyCloseRequested
 bool CUnifiedRiskManager::IsEmergencyCloseRequested() const
 {
     return m_circuitBreaker.IsEmergencyCloseRequested();
 }
 
-// Reset emergency close requested flag
 // L5-019: Called after emergency close is executed
-// Phase E2 forwarder -> CRiskCircuitBreaker::ResetEmergencyCloseRequested
 void CUnifiedRiskManager::ResetEmergencyCloseRequested()
 {
     m_circuitBreaker.ResetEmergencyCloseRequested();
 }
 
 // Manually reset circuit breaker (after review)
-// Phase E2 forwarder -> CRiskCircuitBreaker::ResetCircuitBreaker
 void CUnifiedRiskManager::ResetCircuitBreaker()
 {
     bool conservative = m_adaptiveTuner.IsConservativeMode();
@@ -1377,7 +1200,6 @@ void CUnifiedRiskManager::ResetCircuitBreaker()
 }
 
 // Crash recovery getters for circuit breaker state
-// Phase E2 forwarder -> CRiskCircuitBreaker::GetPeakEquity
 double CUnifiedRiskManager::GetPeakEquity() const
 {
     return m_circuitBreaker.GetPeakEquity();
@@ -1388,20 +1210,17 @@ double CUnifiedRiskManager::GetDailyStartEquity() const
     return m_dailyStartEquity;
 }
 
-// Phase E2 forwarder -> CRiskCircuitBreaker::GetDrawdownBreachCount
 int CUnifiedRiskManager::GetDrawdownBreachCount() const
 {
     return m_circuitBreaker.GetDrawdownBreachCount();
 }
 
-// Phase E2 forwarder -> CRiskCircuitBreaker::GetMaxDrawdownFromPeak
 double CUnifiedRiskManager::GetMaxDrawdownFromPeak() const
 {
     return m_circuitBreaker.GetMaxDrawdownFromPeak();
 }
 
 // Restore circuit breaker state from crash recovery file
-// Phase E2 forwarder -> CRiskCircuitBreaker::RestoreCircuitBreakerState
 void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
                                                      int savedBreachCount, double savedMaxDrawdown,
                                                      bool restoreDailyLossHalt, bool restoreTradingHalt)
@@ -1433,8 +1252,6 @@ void CUnifiedRiskManager::SeedTradingDayKey(int dayKey)
     PrintFormat("[RISK-UNIFIED] Trading day key seeded to %d - suppresses the spurious daily reset on restart", dayKey);
 }
 
-// Helper: Get correlation between two symbols (Phase 2.2: engine)
-// Phase E3 forwarder -> CRiskTieredCorrelation::GetSymbolCorrelation
 double CUnifiedRiskManager::GetSymbolCorrelation(const string symbol1, const string symbol2)
 {
     return m_tieredCorrelation.GetSymbolCorrelation(symbol1, symbol2);
@@ -1467,7 +1284,6 @@ SDrawdownState CUnifiedRiskManager::GetDrawdownState()
     return state;
 }
 
-// Helper: Calculate risk percent for a position
 double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
 {
     if(!PositionSelectByTicket(ticket)) {
@@ -1514,10 +1330,7 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
-// Circuit Breaker Auto-Recovery (Phase 2.4)
-// Attempts to re-enable trading after cooldown if drawdown recovers
 // L5-010 FIX: Uses bar-based cooldown instead of wall-clock minutes
-// Phase E2 forwarder -> CRiskCircuitBreaker::CheckCircuitBreakerRecovery
 bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
 {
     if(!m_initialized)
@@ -1530,9 +1343,6 @@ bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
     return result;
 }
 
-// Margin Health Monitoring (Phase 2.4)
-// Checks margin level and takes protective action
-// Phase E2 forwarder -> CRiskMarginHealth::MonitorMarginHealth
 ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
 {
     if(!m_initialized)
@@ -1544,10 +1354,8 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     return level;
 }
 
-// Daily P&L Loss Limit circuit breaker
 // Halts all trading when daily realized + unrealized loss exceeds
 // the configured percentage of daily starting equity. Resets on new day.
-// Phase E2 forwarder -> CRiskCircuitBreaker::ResetDailyLossHalt / EvaluateDailyLossLimit
 bool CUnifiedRiskManager::CheckDailyLossLimit()
 {
     if(!m_initialized)
@@ -1555,7 +1363,6 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
 
     datetime nowTime = TimeCurrent();
 
-    // Reset halt on new trading day.
     // Batch 151: TradingDayKey() is a pure read - this site can no longer advance
     // m_lastTradingDayKey ahead of CheckAndResetDailyLimits() and steal its
     // one-shot daily budget reset (the old IsNewTradingDay() mutation did).
@@ -1568,13 +1375,11 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
                                                    m_dailyStartEquity);
 }
 
-// Per-Symbol Risk Budgeting (Phase 5)
 // Allocates daily risk budget across symbols with performance
 // weighting: performing symbols get up to 1.5x, underperformers
 // get 0.5x of their equal share.
 double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
 {
-    // Count active symbols from open positions
     string activeSymbols[];
     int activeSymbolCount = 0;
 
@@ -1585,7 +1390,6 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
         if(ticket <= 0) continue;
         string posSymbol = PositionGetString(POSITION_SYMBOL);
 
-        // Check if already counted
         bool found = false;
         for(int j = 0; j < activeSymbolCount; j++)
         {
@@ -1646,7 +1450,6 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
     return allocation;
 }
 
-// Check if symbol has budget available for a new trade
 bool CUnifiedRiskManager::IsSymbolBudgetAvailable(const string symbol, const double riskPct)
 {
     double allocation = GetSymbolRiskAllocation(symbol);
@@ -1654,16 +1457,13 @@ bool CUnifiedRiskManager::IsSymbolBudgetAvailable(const string symbol, const dou
     return ((used + riskPct) <= allocation);
 }
 
-// Refresh per-symbol budget tracking from open positions
 void CUnifiedRiskManager::RefreshSymbolBudgets()
 {
-    // Throttle refresh to once per minute
     datetime now = TimeCurrent();
     if(m_lastBudgetRefresh > 0 && (now - m_lastBudgetRefresh) < 60)
         return;
     m_lastBudgetRefresh = now;
 
-    // Rebuild budget array from open positions
     ArrayResize(m_symbolBudgets, 0);
     m_symbolBudgetCount = 0;
 
@@ -1685,8 +1485,6 @@ void CUnifiedRiskManager::RefreshSymbolBudgets()
             double slCheck = PositionGetDouble(POSITION_SL);
             if(vol > 0.0 && slCheck > 0.0)
             {
-                // Position has volume and SL but zero risk — likely a phantom entry
-                // from a recently closed position. Log and skip it.
                 static datetime s_lastPhantomLog = 0;
                 if(now - s_lastPhantomLog > 30)
                 {
@@ -1698,7 +1496,6 @@ void CUnifiedRiskManager::RefreshSymbolBudgets()
             continue;
         }
 
-        // Find or create entry for this symbol
         int idx = -1;
         for(int j = 0; j < m_symbolBudgetCount; j++)
         {
@@ -1721,20 +1518,17 @@ void CUnifiedRiskManager::RefreshSymbolBudgets()
         m_symbolBudgets[idx].usedPct += posRisk;
     }
 
-    // Update allocations
     for(int j = 0; j < m_symbolBudgetCount; j++)
     {
         m_symbolBudgets[j].allocatedPct = GetSymbolRiskAllocation(m_symbolBudgets[j].symbol);
     }
 }
 
-// Get used risk for a specific symbol from open positions
 // Profitable positions reduce used risk via unrealized P&L credit
 double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
 {
     RefreshSymbolBudgets();
 
-    // Check cached budget first
     for(int i = 0; i < m_symbolBudgetCount; i++)
     {
         if(m_symbolBudgets[i].symbol == symbol)
@@ -1745,7 +1539,6 @@ double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
         }
     }
 
-    // Symbol not in budget list — calculate on the fly
     double usedRisk = 0.0;
     int totalPositions = PositionsTotal();
     for(int i = 0; i < totalPositions; i++)
@@ -1763,21 +1556,16 @@ double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
     return adjustedUsedRisk;
 }
 
-// Get per-symbol win rate from deal history
-// Phase E1 forwarder -> CRiskSymbolStats::GetWinRate
 double CUnifiedRiskManager::GetSymbolWinRate(const string symbol)
 {
     return CRiskSymbolStats::GetWinRate(symbol);
 }
 
-// Get per-symbol profit factor from deal history
-// Phase E1 forwarder -> CRiskSymbolStats::GetProfitFactor
 double CUnifiedRiskManager::GetSymbolProfitFactor(const string symbol)
 {
     return CRiskSymbolStats::GetProfitFactor(symbol);
 }
 
-// Calculate risk % of a single minimum-lot trade for viability
 // Uses ATR-based SL distance to estimate realistic risk per trade
 double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
 {
@@ -1823,12 +1611,9 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
     return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
-// Apply unrealized P&L adjustment to symbol used risk
-// Profitable positions free up risk budget for re-entries
 // Formula: adjustedUsedRisk = rawUsedRisk - Max(0, profit * factor)
 double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const double rawUsedRisk)
 {
-    // Phase E3: read reduction factor from CRiskAdaptiveTuner
     double riskReductionFactor = m_adaptiveTuner.GetRiskReductionFactor();
     if(rawUsedRisk <= 0.0 || riskReductionFactor <= 0.0)
         return MathMax(0.0, rawUsedRisk);
@@ -1837,7 +1622,6 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
     if(equity <= 0.0)
         return MathMax(0.0, rawUsedRisk);
 
-    // Sum unrealized profit for all open positions on this symbol
     double unrealizedProfit = 0.0;
     int totalPositions = PositionsTotal();
     for(int i = 0; i < totalPositions; i++)
@@ -1855,7 +1639,6 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
     if(unrealizedProfit <= 0.0)
         return MathMax(0.0, rawUsedRisk);
 
-    // Convert unrealized profit to risk-percent terms
     double profitRiskPct = (unrealizedProfit / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
     double reduction = MathMax(0.0, profitRiskPct * riskReductionFactor);
     double adjustedUsedRisk = rawUsedRisk - reduction;
@@ -1870,17 +1653,10 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
     return adjustedUsedRisk;
 }
 
-// Inline validation methods (formerly in CRiskValidationGate)
-// Phase E4: the bodies were relocated VERBATIM into
-// CRiskValidationPipeline. The seven methods below are kept as thin
-// forwarders because they are part of the CUnifiedRiskManager
-// public API (CRiskValidationGate::ValidatePortfolioRisk delegates
-// into ValidatePortfolioRisk, and the pipeline itself is driven
-// through ValidateTradeRequest). Signatures are unchanged 1:1.
-// No recursion: the pipeline resolves the owner-side helpers
-// (IsSymbolDataValid, CalculateTradeRisk, EstimatePositionRiskPercent,
-// GetDrawdownState, ...) through IRiskPipelineHost, never through
-// these forwarders.
+// Bodies relocated VERBATIM into CRiskValidationPipeline; these forwarders stay because they are part
+// of the CUnifiedRiskManager public API. No recursion: the pipeline resolves owner-side helpers
+// (IsSymbolDataValid, CalculateTradeRisk, EstimatePositionRiskPercent, GetDrawdownState, ...)
+// through IRiskPipelineHost, never through these forwarders.
 bool CUnifiedRiskManager::ValidateBasicParameters(const STradeValidationRequest &request, string &message)
 {
     return m_validationPipeline.ValidateBasicParameters(request, message);
@@ -1896,8 +1672,6 @@ bool CUnifiedRiskManager::ValidatePortfolioRisk(const STradeValidationRequest &r
     return m_validationPipeline.ValidatePortfolioRisk(request, tradeRiskPercent, message);
 }
 
-// Phase E3 forwarder -> CRiskTieredCorrelation::ValidateCorrelationLimits
-// (now reached through CRiskValidationPipeline::ValidateCorrelationLimits).
 // maxPositionsSameBase and eaMagicNumber are still supplied by the pipeline
 // because they change at runtime (ApplyTierOverrides / SetEAMagicNumber).
 bool CUnifiedRiskManager::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
@@ -1935,12 +1709,9 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
 
     double dist = stopLossPips * point;  // price distance of the stop
 
-    // Authoritative, symbol- and account-currency-agnostic risk:
-    // ask/bid the broker's own P/L for closing at the stop price. This is
-    // exact for every symbol (synthetic indices included) and removes the
-    // fragile tickValue/tickSize/point/currency chain that previously
-    // UNDERSTATED risk for some synthetic indices (e.g. Volatility 75),
-    // letting oversized trades through the post-size re-gate.
+    // Authoritative, symbol- and account-currency-agnostic risk: ask/bid the broker's own P/L for closing
+    // at the stop price. Exact for every symbol (synthetic indices included); the tickValue/tickSize/point/currency
+    // chain previously UNDERSTATED risk for some (e.g. Volatility 75), letting oversized trades through the post-size re-gate.
     double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
     double bid = SymbolInfoDouble(symbolParam, SYMBOL_BID);
     double risk = 0.0;
@@ -1964,7 +1735,6 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     return lotSize * riskPerLot;
 }
 
-// Phase E3 forwarder -> CRiskTieredCorrelation::CalculateCorrelationRisk
 double CUnifiedRiskManager::CalculateCorrelationRisk(const string symbolParam)
 {
     return m_tieredCorrelation.CalculateCorrelationRisk(symbolParam);
@@ -1975,7 +1745,6 @@ double CUnifiedRiskManager::CalculatePortfolioRiskAfterTrade(const double additi
     return GetPortfolioRiskValue() + additionalRisk;
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::LogValidationResult
 void CUnifiedRiskManager::LogValidationResult(const STradeValidationRequest &request, const SValidationResult &result)
 {
     m_validationStats.LogValidationResult(request.symbol,
@@ -2001,7 +1770,6 @@ bool CUnifiedRiskManager::PortfolioAllowsTrade(const string symbolParam, const d
     return m_portfolioRiskManager.IsTradeAllowed(symbolParam, lotSize);
 }
 
-// Phase E3 forwarder -> CRiskTieredCorrelation::PortfolioCorrelationAllowed
 bool CUnifiedRiskManager::PortfolioCorrelationAllowed(const string symbolParam)
 {
     return m_tieredCorrelation.PortfolioCorrelationAllowed(symbolParam);
@@ -2052,25 +1820,21 @@ bool CUnifiedRiskManager::CheckAccountTradingPermissions(void)
     return true;
 }
 
-// Phase E3 forwarder -> CRiskTieredCorrelation::CalculateSymbolCorrelation
 double CUnifiedRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
 {
     return m_tieredCorrelation.CalculateSymbolCorrelation(symbol1, symbol2);
 }
 
-// Phase E3 forwarder -> CRiskTieredCorrelation::GetMaxCorrelationWithPortfolio
 double CUnifiedRiskManager::GetMaxCorrelationWithPortfolio(const string symbolParam)
 {
     return m_tieredCorrelation.GetMaxCorrelationWithPortfolio(symbolParam);
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::WriteAuditLog
 void CUnifiedRiskManager::WriteAuditLog(const string message)
 {
     m_validationStats.WriteAuditLog(message);
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::FormatValidationMessage
 string CUnifiedRiskManager::FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result)
 {
     return CRiskValidationStats::FormatValidationMessage(request.symbol,
@@ -2085,19 +1849,16 @@ string CUnifiedRiskManager::FormatValidationMessage(const STradeValidationReques
                                                          result.correlationRisk);
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::UpdatePerformanceMetrics
 void CUnifiedRiskManager::UpdatePerformanceMetrics(const ulong startTimeParam)
 {
     m_validationStats.UpdatePerformanceMetrics(startTimeParam);
 }
 
-// Phase E1 forwarder -> CRiskClusterCodec::NormalizeClusterCode
 string CUnifiedRiskManager::NormalizeClusterCode(const string clusterCode) const
 {
     return CRiskClusterCodec::NormalizeClusterCode(clusterCode);
 }
 
-// Phase E1 forwarder -> CRiskClusterCodec::ParseClusterCodeFromComment
 bool CUnifiedRiskManager::ParseClusterCodeFromComment(const string comment, string &clusterCode) const
 {
     return CRiskClusterCodec::ParseClusterCodeFromComment(comment, clusterCode);
@@ -2154,25 +1915,21 @@ double CUnifiedRiskManager::GetCurrentPortfolioRisk()
     return m_portfolioRiskManager.GetPortfolioRisk();
 }
 
-// Phase E2 forwarder -> CRiskClusterBudget::SetClusterRiskCap
 void CUnifiedRiskManager::SetClusterRiskCap(const string clusterCode, const double capPercent)
 {
     m_clusterBudget.SetClusterRiskCap(clusterCode, capPercent);
 }
 
-// Phase E2 forwarder -> CRiskOpposingConflictGuard::ClearOpposingConflictCache
 void CUnifiedRiskManager::ClearOpposingConflictCache(const string symbol)
 {
     m_opposingGuard.ClearOpposingConflictCache(symbol);
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::GetStats
 void CUnifiedRiskManager::GetValidationStats(int &total, int &approved, int &rejected, double &approvalRate)
 {
     m_validationStats.GetStats(total, approved, rejected, approvalRate);
 }
 
-// Phase E1 forwarder -> CRiskValidationStats::Reset
 void CUnifiedRiskManager::ResetStats(void)
 {
     m_validationStats.Reset();

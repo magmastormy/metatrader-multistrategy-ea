@@ -1,10 +1,4 @@
-// Consensus Weighting & Quorum Profiles (Phase C, Slice 2 - C4)
-// Composite weight computation and quorum preset profiles extracted
-// from CEnterpriseStrategyManager:
-// - UpdateStrategyWeights        (performance/AI weight refresh)
-// - ApplyQuorumProfile           (conservative/balanced/aggressive)
-// - ApplyFamilyEngineWeights     (Deriv family cluster multipliers)
-// - ApplyAssetClassEngineWeights (multi-asset class multipliers)
+// Composite weight computation and quorum preset profiles extracted from CEnterpriseStrategyManager.
 // Unlike the Slice 1 collaborators this module MUTATES the manager,
 // so it holds a NON-const back-pointer. It writes exclusively
 // through the manager's existing public mutators
@@ -61,7 +55,6 @@ public:
     void ApplyAssetClassEngineWeights(const string symbol);
 };
 
-// Refresh all strategy weights
 void CConsensusWeightingConfig::UpdateStrategyWeights()
 {
     if(m_src == NULL)
@@ -69,7 +62,6 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
 
     const int strategyCount = m_src.GetStrategyCount();
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
@@ -102,7 +94,6 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         return;
     }
 
-    // Fallback if health monitor not initialized
     for(int i = 0; i < strategyCount; i++)
     {
         if(m_src.GetStrategyPtr(i) == NULL)
@@ -171,7 +162,6 @@ void CConsensusWeightingConfig::ApplyFamilyEngineWeights(const string symbol)
     if(family == DERIV_UNKNOWN)
         return;
 
-    // Iterate through all strategies and apply family cluster weight multipliers
     const int strategyCount = m_src.GetStrategyCount();
     for(int i = 0; i < strategyCount; i++)
     {
@@ -252,7 +242,6 @@ void CConsensusWeightingConfig::ApplyAssetClassEngineWeights(const string symbol
             return;
     }
 
-    // Apply multipliers to current weights
     int idx;
 
     if(volBreakoutMult != 1.0)

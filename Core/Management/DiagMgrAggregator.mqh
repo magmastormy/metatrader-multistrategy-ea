@@ -1,4 +1,3 @@
-// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
 // Stateless aggregation of consensus / role-cluster diagnostics
 // across the registered CEnterpriseStrategyManager instances, plus
 // dominant-cause resolution.

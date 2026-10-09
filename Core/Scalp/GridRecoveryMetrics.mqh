@@ -9,7 +9,6 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_METRICS_MQH
 #define CORE_SCALP_GRID_RECOVERY_METRICS_MQH
 
-// CGridRecoveryMetrics — owns the grid recovery statistics counters
 class CGridRecoveryMetrics
 {
 private:
@@ -18,7 +17,6 @@ private:
    int   m_totalLevelsPlaced;
 
 public:
-// Constructor — counters start at zero
    CGridRecoveryMetrics() :
       m_totalGridsOpened(0),
       m_totalGridsClosed(0),
@@ -26,12 +24,10 @@ public:
    {
    }
 
-// Counter mutators
    void RecordGridOpened()  { m_totalGridsOpened++;  }
    void RecordGridClosed()  { m_totalGridsClosed++;  }
    void RecordLevelPlaced() { m_totalLevelsPlaced++; }
 
-// Counter accessors
    int  TotalGridsOpened()  const { return m_totalGridsOpened;  }
    int  TotalGridsClosed()  const { return m_totalGridsClosed;  }
    int  TotalLevelsPlaced() const { return m_totalLevelsPlaced; }

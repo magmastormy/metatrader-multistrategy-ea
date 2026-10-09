@@ -1,4 +1,3 @@
-// Post-Consensus Validator (Phase C, Slice 2 - C3)
 // Validation applied AFTER a consensus decision has been produced:
 // hard spread cutoff, exogenous (ATR/spread) filters, adaptive
 // quality gate, OFI directional confirmation and VPIN toxicity.
@@ -26,7 +25,6 @@
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
 
-// Post-consensus validation result
 // Hoisted out of CEnterpriseStrategyManager (was the nested type
 // CEnterpriseStrategyManager::SValidationResult). Two reasons:
 // 1. a class declared BEFORE the manager cannot name a type
@@ -162,7 +160,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         result.vetoReason = "insufficient_quality";
         result.qualityScore = ctx.directionalQuality;
 
-        // Log rejection with correlation ID
         if(corrId != "")
         {
             CJsonLogger::LogSignal(symbol, signal, confidence, "VALIDATOR", corrId,
@@ -200,7 +197,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
 
     // 8. Safe mode kill zone - handled at higher level
 
-    // All checks passed
     result.passed = true;
     result.vetoReason = "";
     return result;
@@ -228,7 +224,6 @@ bool CPostConsensusValidator::CheckHardSpreadCutoff(const string symbol,
         result.vetoReason = "hard_spread_cutoff";
         result.spreadScore = spreadPts;
 
-        // Structured JSON logging with correlation ID
         if(CJsonLogger::IsEnabled())
         {
             string jsonData = "{\"filter\":\"hard_spread_cutoff\",\"signal\":\"" + EnumToString(signal) + "\",\"confidence\":" + DoubleToString(confidence, 2) + "\",\"spread_pts\":" + DoubleToString(spreadPts, 1) + "\",\"threshold\":" + DoubleToString(m_hardSpreadCutoffPoints, 1) + "\",\"confluence\":" + IntegerToString(confluence) + "}";
@@ -295,7 +290,6 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
         PrintFormat("[RISK-VOL-GATE] %s | atr_ratio=%.3f | action=halve_risk", symbol, result.atrRatio);
     }
 
-    // Spread filter
     if(atrValue > 0)
     {
         double spreadScore = 0;
@@ -314,7 +308,6 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
         }
         else
         {
-            // Fallback
             double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
             if(point <= 0.0) point = 0.00001;
             double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
@@ -446,10 +439,8 @@ double CPostConsensusValidator::GetATRDirect(const string symbol, int period, bo
 
 double CPostConsensusValidator::GetATRCrisisThreshold(const string symbol)
 {
-    // From EA inputs
     if(IsSyntheticSymbolForValidation(symbol))
     {
-        // Would use specific synthetic thresholds
         return 2.5; // Default
     }
     return 2.0; // Default for forex

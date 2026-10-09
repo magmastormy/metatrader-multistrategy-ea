@@ -6,19 +6,16 @@
 #property strict
 #property version "2.00"
 
-//--- Core includes
 #include "Core\Utils\Enums.mqh"
 #include "Core\AI\AIFeatureVectorBuilder.mqh"
 #include "IndicatorManager.mqh"
 
-//--- Engine includes
 #include "Core\Engines\RegimeEngine.mqh"
 #include "Core\Engines\HurstEngine.mqh"
 #include "Core\Engines\OrnsteinUhlenbeckEngine.mqh"
 #include "Core\Engines\OrderFlowImbalanceEngine.mqh"
 #include "Core\Risk\VPINFilter.mqh"
 
-//--- Strategy includes
 #include "Strategies\SimpleMomentumStrategy.mqh"
 #include "Strategies\StrategyTrend.mqh"
 #include "Strategies\StrategySupportResistance.mqh"
@@ -91,7 +88,6 @@ struct SSymbolExportContext
 {
     string              symbol;
 
-    // Regime engines
     CRegimeEngine*      regimeEngine;
     CHurstEngine*       hurstEngine;
     COrnsteinUhlenbeckEngine* ouEngine;
@@ -173,7 +169,6 @@ void ParseLabelHorizons()
 //+------------------------------------------------------------------+
 bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
 {
-    // Regime engine
     g_contexts[ctxIdx].regimeEngine = new CRegimeEngine();
     if(g_contexts[ctxIdx].regimeEngine == NULL)
     {
@@ -182,7 +177,6 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
     }
     g_contexts[ctxIdx].regimeEngine.Initialize();
 
-    // Hurst engine
     g_contexts[ctxIdx].hurstEngine = new CHurstEngine(g_contexts[ctxIdx].symbol, timeframe, InpHurstLookback);
     if(g_contexts[ctxIdx].hurstEngine == NULL)
     {
@@ -190,7 +184,6 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         return false;
     }
 
-    // OU engine
     g_contexts[ctxIdx].ouEngine = new COrnsteinUhlenbeckEngine(g_contexts[ctxIdx].symbol, timeframe, InpOULookback);
     if(g_contexts[ctxIdx].ouEngine == NULL)
     {
@@ -198,7 +191,6 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         return false;
     }
 
-    // OFI engine
     g_contexts[ctxIdx].ofiEngine = new COrderFlowImbalanceEngine();
     if(g_contexts[ctxIdx].ofiEngine == NULL)
     {
@@ -207,7 +199,6 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
     }
     g_contexts[ctxIdx].ofiEngine.Init(g_contexts[ctxIdx].symbol, 5, 20, InpOFISlowWindow);
 
-    // VPIN filter
     g_contexts[ctxIdx].vpinFilter = new CVPINFilter(g_contexts[ctxIdx].symbol, 0, InpVPINNumBuckets, InpVPINExtremeThreshold);
     if(g_contexts[ctxIdx].vpinFilter == NULL)
     {
@@ -287,8 +278,8 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
                 case 1: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // Trend
                 case 2: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // S/R
                 case 3: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // Candlestick
-                case 4: basePtr.SetStrategyCluster(MEAN_REVERSION_CLUSTER); break; // MeanRev
-                case 5: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // VolBreak
+                case 4: basePtr.SetStrategyCluster(MEAN_REVERSION_CLUSTER); break;
+                case 5: basePtr.SetStrategyCluster(TREND_CLUSTER); break;
             }
         }
     }
@@ -320,7 +311,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         TREND_CLUSTER,           // Trend
         STRUCTURE_CLUSTER,       // S/R
         STRUCTURE_CLUSTER,       // Candlestick
-        MEAN_REVERSION_CLUSTER,  // MeanRev
+        MEAN_REVERSION_CLUSTER,
         TREND_CLUSTER            // VolBreak
     };
 
@@ -330,12 +321,12 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
             g_contexts[ctxIdx].strategies[i],
             STRATEGY_NAMES[i],
             true,                       // enabled
-            weights[i],                 // weight
+            weights[i],
             tiers[i],                   // tier
             timeframe,                  // tf
             false,                      // intrabarEligible
             PRIMARY_ALPHA,              // role
-            clusters[i],                // cluster
+            clusters[i],
             true                        // liveVotingEnabled
         );
     }
@@ -502,15 +493,12 @@ bool ExportSymbolTrainingData(const int fileHandle,
     {
         // --- Update engines at each bar ---
 
-        // Regime engine
         if(InpExportRegimeData && g_contexts[ctxIdx].regimeEngine != NULL)
             g_contexts[ctxIdx].regimeEngine.Update(g_contexts[ctxIdx].symbol, timeframe);
 
-        // Hurst engine
         if(InpExportRegimeData && g_contexts[ctxIdx].hurstEngine != NULL)
             g_contexts[ctxIdx].hurstEngine.Update();
 
-        // OU engine
         if(InpExportRegimeData && g_contexts[ctxIdx].ouEngine != NULL)
             g_contexts[ctxIdx].ouEngine.Update();
 
@@ -543,7 +531,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                 g_contexts[ctxIdx].strategyManager.OnNewBar(g_contexts[ctxIdx].symbol, timeframe);
         }
 
-        // Check warm-up
         if(!warmedUp)
         {
             if(!AllEnginesWarmedUp(ctxIdx))
@@ -607,7 +594,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                                 regSnap.compression ? 1 : 0,
                                 regSnap.spreadShock ? 1 : 0);
 
-            // Hurst snapshot
             SHurstSnapshot hurstSnap;
             if(g_contexts[ctxIdx].hurstEngine != NULL)
                 hurstSnap = g_contexts[ctxIdx].hurstEngine.GetSnapshot();
@@ -617,7 +603,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                                 (int)hurstSnap.regime,
                                 hurstSnap.confidence);
 
-            // OU snapshot
             SOUSnapshot ouSnap;
             if(g_contexts[ctxIdx].ouEngine != NULL)
                 ouSnap = g_contexts[ctxIdx].ouEngine.GetSnapshot();
@@ -630,7 +615,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                                 ouSnap.ouZScore,
                                 ouSnap.signalQuality);
 
-            // VPIN snapshot
             SVPINSnapshot vpinSnap;
             if(g_contexts[ctxIdx].vpinFilter != NULL)
                 vpinSnap = g_contexts[ctxIdx].vpinFilter.GetSnapshot();
@@ -640,7 +624,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                                 (int)vpinSnap.toxicityRegime,
                                 vpinSnap.positionSizeMultiplier);
 
-            // OFI snapshot
             SOFISnapshot ofiSnap;
             if(g_contexts[ctxIdx].ofiEngine != NULL)
                 g_contexts[ctxIdx].ofiEngine.GetSnapshot(ofiSnap);
@@ -773,7 +756,6 @@ void Cleanup()
             g_contexts[i].strategyManager = NULL;
         }
 
-        // Delete engines
         if(g_contexts[i].regimeEngine != NULL)  { delete g_contexts[i].regimeEngine;  g_contexts[i].regimeEngine = NULL;  }
         if(g_contexts[i].hurstEngine != NULL)   { delete g_contexts[i].hurstEngine;   g_contexts[i].hurstEngine = NULL;   }
         if(g_contexts[i].ouEngine != NULL)      { delete g_contexts[i].ouEngine;      g_contexts[i].ouEngine = NULL;      }
@@ -807,7 +789,6 @@ int OnInit()
     if(InpExportTargetLabels)
         ParseLabelHorizons();
 
-    // Open output file
     int fileHandle = FileOpen(InpOutputFile, FILE_WRITE | FILE_CSV | FILE_ANSI); // per-terminal MQL5\Files\ (no FILE_COMMON)
     if(fileHandle == INVALID_HANDLE)
     {

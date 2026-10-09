@@ -1,12 +1,5 @@
-// Stateless price / volume / stop-level arithmetic for CTradeManager
-// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
-// Every member is a static pure function - this module holds NO
-// instance state. Bodies are verbatim copies of the original
-// CTradeManager methods, so execution behaviour is byte-identical.
-// NO BACK-POINTER: the two helpers that originally touched
-// CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo)
-// receive that object by reference, exactly like the pattern
-// already used by CPositionStateTracker.
+// Stateless price / volume / stop-level arithmetic for CTradeManager: every member is a static pure function, no instance state.
+// The two helpers that originally touched CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo) receive it by reference.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -33,18 +26,14 @@
 #define MIN_TP_COST_MULTIPLE 4.0
 #endif
 
-// Trade Manager Pricing Helpers
-// Broker-constraint aware normalisation and cost arithmetic.
 class CTradeMgrPricing
 {
 public:
-// Check if two double values are approximately equal
     static bool DoubleEquals(double a, double b, double epsilon = 0.00001)
     {
         return MathAbs(a - b) < epsilon;
     }
 
-// Calculate Average True Range (ATR) for volatility measurement
     static double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period)
     {
         double atrValues[];
@@ -243,12 +232,9 @@ public:
         return (double)MathMax(stopLevel, freezeLevel) * point;
     }
 
-// Round-trip transaction cost, expressed in PRICE units
-// Buying at ask and selling at bid costs exactly one quoted
-// spread against the mid, so the factor is 1.0 - the previous
-// 2.0 "paid entering and leaving" double-counted the same half
-// spread on each side and every risk estimate that adds this
-// term was inflated accordingly.
+// Round-trip transaction cost, expressed in PRICE units.
+// Buying at ask and selling at bid costs exactly one quoted spread against the mid, so the factor is 1.0;
+// the previous 2.0 "paid entering and leaving" double-counted the same half spread on each side.
     static double GetRoundTripCostPrice(const string symbol)
     {
         double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -270,7 +256,6 @@ public:
         int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
         double minDistance = GetMinimumStopDistance(symbol);
 
-        // Normalize input values
         slOut = NormalizeDouble(slOut, digits);
         tpOut = NormalizeDouble(tpOut, digits);
 
@@ -283,14 +268,12 @@ public:
         // pre-trade stopLossPips).
         double requestedSlDistance = (slOut > 0.0) ? MathAbs(price - slOut) : 0.0;
 
-        // Validate Stop Loss
         if(slOut > 0)
         {
             double dist = MathAbs(price - slOut);
             if(dist < minDistance)
             {
-                // Adjust to minimum distance
-                if(orderType == ORDER_TYPE_BUY)
+                        if(orderType == ORDER_TYPE_BUY)
                     slOut = price - minDistance - point;
                 else
                     slOut = price + minDistance + point;
@@ -305,8 +288,7 @@ public:
             double dist = MathAbs(price - tpOut);
             if(dist < minDistance)
             {
-                // Adjust to minimum distance
-                if(orderType == ORDER_TYPE_BUY)
+                        if(orderType == ORDER_TYPE_BUY)
                     tpOut = price + minDistance + point;
                 else
                     tpOut = price - minDistance - point;

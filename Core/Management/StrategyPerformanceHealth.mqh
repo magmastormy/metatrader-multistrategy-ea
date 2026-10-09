@@ -1,15 +1,7 @@
-// Strategy Performance & Health (Phase C, Slice 3 - C5)
-// Per-strategy performance accounting, rolling-window statistics
-// and health/quality scoring extracted from
-// - UpdatePerformance          (trade outcome accounting)
-// - UpdateRecentPerformance    (20-trade rolling ring buffer)
-// - CalculateRecentWinRate     (rolling win rate)
-// - CalculateSharpeRatio       (rolling Sharpe)
-// - CalculateStrategyMetrics   (winRate / profitFactor / Sharpe)
-// - ShouldDisableStrategy      (health governance predicate)
-// - ShouldReEnableStrategy     (cooldown expiry predicate)
-// - UpdateRegimePerformance    (regime-bucketed outcome hook)
-// - UpdateAIPerformanceMetrics (AI accuracy -> health blend)
+// Per-strategy performance accounting, rolling-window statistics and health/quality
+// scoring: trade outcome accounting, the 20-trade rolling ring buffer, rolling win
+// rate / Sharpe, derived metrics, the disable / re-enable governance predicates and
+// the AI accuracy -> health blend.
 // Like the Slice 2 collaborator CConsensusWeightingConfig this
 // module MUTATES the manager, so it holds a NON-const back-pointer.
 // Every read and every write goes through the manager's narrow
@@ -74,7 +66,6 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
 
     bool success = (netProfit > 0);
 
-    // Update trade counts
     m_src.SetStrategyTotalTrades(idx, m_src.GetStrategyTotalTrades(idx) + 1);
     if(success)
     {
@@ -107,20 +98,17 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
             m_src.SetStrategyAvgLoss(idx, (prevTotalLoss + absLoss) / losses);
         }
 
-        // Update max consecutive losses
         if(m_src.GetStrategyConsecutiveLosses(idx) > m_src.GetStrategyMaxConsecutiveLosses(idx))
         {
             m_src.SetStrategyMaxConsecutiveLosses(idx, m_src.GetStrategyConsecutiveLosses(idx));
         }
     }
 
-    // Update recent performance (rolling window)
     UpdateRecentPerformance(idx, netProfit);
 
     // Regime-specific performance attribution is owned by the health monitor; no per-trade
     // regime update is performed here.
 
-    // Recalculate metrics (WinRate, ProfitFactor, Sharpe)
     CalculateStrategyMetrics(idx);
 
     // Health score update (original ESM logic blended with AISO metrics)
@@ -136,7 +124,6 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
 
     m_src.SetStrategyLastUpdate(idx, TimeCurrent());
 
-    // Check if strategy needs to be disabled
     if(ShouldDisableStrategy(idx))
     {
         m_src.SetStrategyTemporarilyDisabled(idx, true);
@@ -146,13 +133,11 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
     }
 }
 
-// Push one trade result into the rolling ring buffer
 void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const double result)
 {
     if(m_src == NULL)
         return;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
@@ -160,13 +145,11 @@ void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const 
         return;
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount())
         return;
 
     const int rollingWindowSize = m_src.GetRollingWindowSize();
 
-    // Add to circular buffer
     m_src.SetStrategyRecentTrade(index, m_src.GetStrategyRecentTradeIndex(index), result);
     m_src.SetStrategyRecentTradeIndex(index, (m_src.GetStrategyRecentTradeIndex(index) + 1) % rollingWindowSize);
 
@@ -180,14 +163,12 @@ double CStrategyPerformanceHealth::CalculateRecentWinRate(const int index)
     if(m_src == NULL)
         return 0.0;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
         return healthMonitor.GetRecentWinRate(index);
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return 0.0;
 
     const int recentTradeCount = m_src.GetStrategyRecentTradeCount(index);
@@ -208,14 +189,12 @@ double CStrategyPerformanceHealth::CalculateSharpeRatio(const int index)
     if(m_src == NULL)
         return 0.0;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
         return healthMonitor.GetSharpeRatio(index);
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return 0.0;
 
     const int recentTradeCount = m_src.GetStrategyRecentTradeCount(index);
@@ -237,27 +216,22 @@ double CStrategyPerformanceHealth::CalculateSharpeRatio(const int index)
     return mean / stdev;
 }
 
-// Recompute derived per-strategy metrics
 void CStrategyPerformanceHealth::CalculateStrategyMetrics(const int index)
 {
     if(m_src == NULL)
         return;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     if(m_src.GetHealthMonitor() != NULL)
     {
         // The health monitor will calculate metrics internally
         return;
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return;
 
-    // Calculate win rate
     if(m_src.GetStrategyTotalTrades(index) > 0)
         m_src.SetStrategyWinRate(index, ((double)m_src.GetStrategyWinningTrades(index) / m_src.GetStrategyTotalTrades(index)));
 
-    // Calculate profit factor
     if(m_src.GetStrategyAvgLoss(index) > 0.0)
         m_src.SetStrategyProfitFactor(index, m_src.GetStrategyAvgProfit(index) / m_src.GetStrategyAvgLoss(index));
     else if(m_src.GetStrategyAvgProfit(index) > 0.0)
@@ -275,23 +249,19 @@ bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
     if(m_src == NULL)
         return false;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
         return healthMonitor.CheckStrategyDisabling(index);
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return false;
 
     // Only check if we have enough trades
     if(m_src.GetStrategyTotalTrades(index) < 10) return false;
 
-    // Disable if win rate is too low
     if(m_src.GetStrategyRecentWinRate(index) < m_src.GetMinWinRateThreshold()) return true;
 
-    // Disable if consecutive losses are too high
     if(m_src.GetStrategyConsecutiveLosses(index) >= m_src.GetMaxConsecutiveLossesLimit()) return true;
 
     return false;
@@ -313,7 +283,6 @@ bool CStrategyPerformanceHealth::ShouldReEnableStrategy(const int index)
     return (TimeCurrent() >= m_src.GetStrategyDisabledUntil(index));
 }
 
-// Regime-bucketed outcome hook
 void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int regime, const double result)
 {
     if(m_src == NULL)
@@ -327,14 +296,12 @@ void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int re
         healthMonitor.RecordTradeResult(index, result);
     }
 
-    // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return;
 
     // Regime-specific performance is tracked by the health monitor; this hook intentionally
     // performs no per-trade regime update.
 }
 
-// Update AI Performance Metrics for AI Strategies (L6-016)
 void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
 {
     if(m_src == NULL)
@@ -357,7 +324,6 @@ void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strateg
     m_src.SetStrategyRecentWinRate(idx, metrics.recentAccuracy);
     m_src.SetStrategyAvgProfit(idx, metrics.profitability);
 
-    // Adjust health score based on AI accuracy
     double aiHealth = metrics.accuracy;
     if(aiHealth > 0.0)
     {
@@ -366,7 +332,6 @@ void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strateg
         m_src.SetStrategyHealthScore(idx, MathMax(0.0, MathMin(1.0, blended)));
     }
 
-    // Log the update
     PrintFormat("[AI-FEEDBACK] %s | %s | accuracy=%.3f | profitability=%.3f | recentAcc=%.3f | health=%.3f",
                 m_src.GetManagedSymbol(), strategyName, metrics.accuracy, metrics.profitability,
                 metrics.recentAccuracy, m_src.GetStrategyHealthScore(idx));

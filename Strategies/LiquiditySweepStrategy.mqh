@@ -281,7 +281,6 @@ public:
     {
         SLiquiditySweepSignal signal;
 
-        // ATR check
         if(m_atrHandle == INVALID_HANDLE)
             return signal;
 

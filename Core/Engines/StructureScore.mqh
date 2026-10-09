@@ -11,7 +11,6 @@
 
 #include "StructureTypes.mqh"
 
-// Stateless structure scoring helpers
 class CStructureScore
 {
 public:
@@ -90,7 +89,6 @@ void CStructureScore::UpdateStructureState(MarketStructureState &state,
         state.prevHigh = state.lastHigh;
         state.lastHigh = newPoint.price;
         
-        // Determine structure type
         if(state.prevHigh > 0)
         {
             if(newPoint.price > state.prevHigh)
@@ -117,7 +115,6 @@ void CStructureScore::UpdateStructureState(MarketStructureState &state,
         state.prevLow = state.lastLow;
         state.lastLow = newPoint.price;
         
-        // Determine structure type
         if(state.prevLow > 0)
         {
             if(newPoint.price < state.prevLow)

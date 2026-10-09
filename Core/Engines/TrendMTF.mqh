@@ -19,10 +19,8 @@ public:
     static void ComputeAlignment(MTFTrendState &state);
 };
 
-// Compute MTF Alignment and Consensus
 void CTrendMTF::ComputeAlignment(MTFTrendState &state)
 {
-    // Calculate alignment
     int alignmentScore = 0;
     int totalWeight = 0;
     
@@ -56,13 +54,10 @@ void CTrendMTF::ComputeAlignment(MTFTrendState &state)
         alignmentScore -= 25;
     }
     
-    // Calculate alignment percentage
     state.alignment = MathAbs(alignmentScore);
     
-    // Determine if aligned
     state.isAligned = state.alignment >= 75;
     
-    // Determine consensus
     if(alignmentScore > 50)
     {
         state.consensus = state.htf.strength > 50 ? 

@@ -273,7 +273,7 @@ bool CSMCPremiumDiscount::IsExtremeDiscount(double price)
 bool CSMCPremiumDiscount::IsEquilibrium(double price)
 {
     double range = m_rangeHigh - m_rangeLow;
-    double tolerance = range * 0.05; // 5% tolerance
+    double tolerance = range * 0.05;
     return (MathAbs(price - m_rangeMid) < tolerance);
 }
 

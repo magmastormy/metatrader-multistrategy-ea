@@ -98,7 +98,6 @@ public:
     bool                HasGoldenCross50_200();  // 50 crosses above 200
     bool                HasDeathCross50_200();   // 50 crosses below 200
     
-    // Trend checks
     bool                IsStrongUptrend();
     bool                IsStrongDowntrend();
     bool                IsPerfectBullAlignment();
@@ -344,7 +343,6 @@ bool CMultiEMASystem::HasDeathCross50_200()
     return (m_ema50[0] < m_ema200[0] && m_ema50[1] >= m_ema200[1]);
 }
 
-// Trend Checks
 bool CMultiEMASystem::IsStrongUptrend()
 {
     return (m_currentTrend.isUptrend && m_currentTrend.strength > 25);

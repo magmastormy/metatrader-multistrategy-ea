@@ -1,6 +1,6 @@
 // Bayesian Online Changepoint Detection (Adams & MacKay 2007)
 // Detects regime breaks in real-time for signal gating
-// Batch 114: Integrates with AI pipeline as preprocessing gate
+// Integrates with AI pipeline as preprocessing gate
 #ifndef CHANGEPOINT_DETECTOR_MQH
 #define CHANGEPOINT_DETECTOR_MQH
 
@@ -27,7 +27,6 @@ struct SChangepointSnapshot
     {}
 };
 
-// CChangepointDetector — BOCPD for real-time regime break detection
 // Based on Adams & MacKay (2007) "Bayesian Online Changepoint
 // Detection". Maintains a posterior over run lengths and computes
 // the hazard function P(changepoint at t | data_{1:t}).
@@ -52,7 +51,6 @@ private:
     double m_runM2[];                    // Running M2 for Welford update
     long   m_runCount[];                 // Observation count for each run length
 
-    // State
     double m_lastObservation;
     int    m_currentRunLength;
     int    m_barsSinceChange;
@@ -113,13 +111,12 @@ public:
                 m_lastLogTime(0),
                 m_initialized(false)
             {
-                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
                 ResolveTimeframe();
             }
 
             ~CChangepointDetector() {}
 
-            // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+            // Resolve PERIOD_CURRENT to actual chart timeframe
             void ResolveTimeframe()
             {
                 if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
@@ -129,7 +126,6 @@ public:
             //--- Initialize from historical data
     bool Initialize()
     {
-        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
         if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
             m_timeframe = Period();
         
@@ -163,7 +159,6 @@ public:
                 m_observationNoise = 0.001;
         }
 
-        // Allocate arrays
         ArrayResize(m_runLengthProbs, m_maxRunLength + 1);
         ArrayResize(m_runMean, m_maxRunLength + 1);
         ArrayResize(m_runM2, m_maxRunLength + 1);
@@ -183,7 +178,6 @@ public:
         m_barsSinceChange = 0;
         m_maxRL = 0;
 
-        // Feed historical data
         for(int i = copied - 1; i >= 0; i--)
             Update(closes[i]);
 
@@ -218,7 +212,7 @@ public:
 
         // Step 3: Compute log growth and changepoint probabilities in log-space
         // This avoids numerical underflow from multiplying many small probabilities
-        double logCPProb = -1e300;  // log(0) ≈ -∞
+        double logCPProb = -1e300;
         double logGrowthProbs[];
         ArrayResize(logGrowthProbs, neededSize);
 
@@ -298,7 +292,6 @@ public:
             }
         }
 
-        // Copy new probabilities
         for(int i = 0; i <= m_maxRunLength; i++)
             m_runLengthProbs[i] = newProbs[i];
 
@@ -339,7 +332,6 @@ public:
             m_barsSinceChange++;
         }
 
-        // Build snapshot
         m_lastSnapshot.hazardRate = totalHazard;
         m_lastSnapshot.runLength = expectedRL;
         m_lastSnapshot.changeDetected = changeDetected;
@@ -353,21 +345,18 @@ public:
         return true;
     }
 
-    //--- Accessors
     double GetHazardRate() const     { return m_lastSnapshot.hazardRate; }
     double GetRunLength() const      { return m_lastSnapshot.runLength; }
     bool   IsChangeDetected() const  { return m_lastSnapshot.changeDetected; }
     double GetConfidence() const     { return m_lastSnapshot.confidence; }
     int    GetBarsSinceChange() const { return m_lastSnapshot.barsSinceChange; }
 
-    //--- Should trading be paused? (regime just changed)
     bool ShouldPauseTrading() const
     {
         // Pause for 3 bars after a changepoint to let indicators recalibrate
         return m_barsSinceChange < 3 && m_lastChangeTime > 0;
     }
 
-    //--- Should stops be widened? (regime uncertain)
     bool ShouldWidenStops() const
     {
         // Widen stops when hazard is elevated or recently changed
@@ -390,12 +379,10 @@ public:
 
     bool IsInitialized() const { return m_initialized; }
 
-        // --- Cleanup ---
         void Deinit()
         {
             // CChangepointDetector holds no indicator handles or external resources.
             // Dynamic arrays (m_runLengthProbs, m_runMean, m_runM2, m_runCount) are auto-managed.
-            // Reset state for potential reuse.
             ArrayFree(m_runLengthProbs);
             ArrayFree(m_runMean);
             ArrayFree(m_runM2);

@@ -96,7 +96,6 @@ public:
     int                 FindNearestSupport(double price);
     int                 FindNearestResistance(double price);
     
-    // Level checks
     bool                IsAtSupportLevel(double price, double tolerancePips = 15);
     bool                IsAtResistanceLevel(double price, double tolerancePips = 15);
     bool                HasRoleReversed(double price);
@@ -571,14 +570,12 @@ int CSupportResistanceDetector::FindNearestResistance(double price)
     return nearestIndex;
 }
 
-// Check if at Support Level
 bool CSupportResistanceDetector::IsAtSupportLevel(double price, double tolerancePips)
 {
     int idx = FindNearestLevel(price, tolerancePips);
     return (idx >= 0 && m_levels[idx].isSupport);
 }
 
-// Check if at Resistance Level
 bool CSupportResistanceDetector::IsAtResistanceLevel(double price, double tolerancePips)
 {
     int idx = FindNearestLevel(price, tolerancePips);

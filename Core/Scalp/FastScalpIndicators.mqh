@@ -1,12 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the per-symbol cached indicator state that used to live as
-// six loose members on CFastScalpEngine:
-// m_cachedSymbol, m_cachedBarTime, m_cachedATR,
-// m_cachedFastEMA, m_cachedSlowEMA, m_cachedRSI
-// Moved methods (bodies verbatim):
-// RefreshIndicators(), GetATRCached(), GetEMACrossover(),
-// IsRSIConfirmed()
+// Owns the per-symbol cached M1 indicator state for the scalp fast path.
 // The engine now holds one CFastScalpIndicators BY VALUE and
 // forwards to it with one-line forwarders keeping the exact
 // original private signatures. Config values that were read from
@@ -20,11 +12,9 @@
 #include "../../IndicatorManager.mqh"
 #include "FastScalpTypes.mqh"
 
-// CFastScalpIndicators — stateful M1 indicator cache
 class CFastScalpIndicators
 {
 private:
-   // Cached indicator data per symbol (moved verbatim from CFastScalpEngine)
    string                    m_cachedSymbol;
    datetime                  m_cachedBarTime;
    double                    m_cachedATR;
@@ -44,7 +34,6 @@ public:
    {
    }
 
-   //--- Cache readers
    string   GetCachedSymbol()  const { return m_cachedSymbol; }
    datetime GetCachedBarTime() const { return m_cachedBarTime; }
    double   GetCachedATR()     const { return m_cachedATR; }
@@ -65,7 +54,6 @@ public:
       m_cachedBarTime = barTime;
    }
 
-// Refresh cached indicator values for a symbol
    bool RefreshIndicators(const string symbol, const SScalpConfig &config)
    {
       // Only refresh on new bar for M1
@@ -122,7 +110,6 @@ public:
       return true;
    }
 
-// Get ATR value cached
    double GetATRCached(const string symbol, const SScalpConfig &config)
    {
       if(!RefreshIndicators(symbol, config))
@@ -130,7 +117,6 @@ public:
       return m_cachedATR;
    }
 
-// Get EMA values for crossover detection
 // Stateless — reads handles/buffers only, touches no member state.
    static bool GetEMACrossover(const string symbol, const SScalpConfig &config,
                                ENUM_TRADE_SIGNAL &signal)
@@ -165,7 +151,6 @@ public:
       return true;
    }
 
-// Check RSI confirmation: not overbought for BUY, not oversold
    bool IsRSIConfirmed(ENUM_TRADE_SIGNAL signal, const SScalpConfig &config) const
    {
       if(m_cachedRSI <= 0.0)

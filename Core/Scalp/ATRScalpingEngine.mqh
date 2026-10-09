@@ -20,7 +20,6 @@
 
 class CUnifiedRiskManager;
 
-// Extracted modules (structural debloat â€?no behaviour change)
 #include "ATRScalpTypes.mqh"
 #include "ATRScalpRegistry.mqh"
 #include "ATRScalpFilter.mqh"
@@ -29,7 +28,6 @@ class CUnifiedRiskManager;
 #include "ATRScalpExit.mqh"
 #include "ATRScalpMetrics.mqh"
 
-// CATRScalpingEngine â€?ATR-based between-spike scalping engine
 class CATRScalpingEngine
 {
 private:
@@ -43,19 +41,16 @@ private:
    CATRScalpEntry           m_entry;     // Sizing, risk gate, order execution
    CATRScalpMetrics         m_metrics;   // Skipped counter, census, diagnostics
 
-// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const
    {
       return CATRScalpRegistry::FindSymbolIndex(m_symbolStates, m_symbolCount, symbol);
    }
 
-// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol, int spikeIntervalSec)
    {
       CATRScalpRegistry::InitializeSymbolState(m_symbolStates, idx, symbol, spikeIntervalSec);
    }
 
-// Update indicator values for a symbol
    bool UpdateIndicators(int idx)
    {
       return m_signal.UpdateIndicators(idx, m_symbolStates[idx]);
@@ -74,7 +69,6 @@ private:
       return m_signal.EvaluateScalpSignal(m_symbolStates[idx], m_config);
    }
 
-// Open a scalp trade in the given direction
    bool OpenScalpTrade(int idx, int direction)
    {
       return m_entry.OpenScalpTrade(idx, direction, m_symbolStates[idx], m_config, m_trade);
@@ -87,19 +81,16 @@ private:
    }
 
 public:
-// Constructor
    CATRScalpingEngine() :
       m_symbolCount(0)
    {
    }
 
-// Destructor
    ~CATRScalpingEngine()
    {
       Deinit();
    }
 
-// Initialize the engine with config and dependencies
    bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
    {
       m_config         = config;
@@ -120,11 +111,9 @@ public:
       return true;
    }
 
-// Add a symbol to monitor for ATR scalping
 // spikeIntervalSec: expected spike interval (0 = no spike tracking)
    bool AddSymbol(const string symbol, int spikeIntervalSec = 0)
    {
-      // Check for duplicate
       if(FindSymbolIndex(symbol) >= 0)
       {
          PrintFormat("[ATR-SCALP-ENGINE] Symbol %s already registered", symbol);
@@ -166,7 +155,6 @@ public:
       CATRScalpRegistry::GrowStates(m_symbolStates, m_symbolCount, newSize);
       m_signal.ResizeHandles(newSize);
 
-      // Initialize new slot
       InitializeSymbolState(m_symbolCount, symbol, spikeIntervalSec);
       m_signal.SetHandles(m_symbolCount, atrHandle, emaFastHandle, emaSlowHandle, rsiHandle);
       m_symbolCount++;
@@ -176,7 +164,6 @@ public:
       return true;
    }
 
-// Release all indicator handles and clean up
    void Deinit()
    {
       // Batch 117: Handles are owned by CIndicatorManager â€?do NOT release them
@@ -198,19 +185,15 @@ public:
       if(!m_symbolStates[idx].isActive)
          return;
 
-      // 2. Update indicator values
       if(!UpdateIndicators(idx))
          return;
 
-      // 3. Check spike window
       bool inSpikeWindow = IsInSpikeWindow(idx);
 
       int signal = EvaluateScalpSignal(idx);
 
-      // 5. If signal and not in spike window, open trade
       if(signal != 0 && !inSpikeWindow)
       {
-         // Check cooldown
          datetime now = TimeCurrent();
          if(m_symbolStates[idx].lastTradeTime > 0)
          {
@@ -224,7 +207,6 @@ public:
             }
          }
 
-         // Check max positions
          if(GetActiveScalpPositions() >= m_config.maxPositions)
          {
             m_metrics.RecordTradeSkipped();
@@ -235,7 +217,6 @@ public:
          OpenScalpTrade(idx, signal);
       }
 
-      // 6. Manage existing scalp positions
       ManageScalpPositions(idx);
    }
 
@@ -251,7 +232,6 @@ public:
       PrintFormat("[ATR-SCALP] Spike detected for %s â€?updated lastSpikeTime", symbol);
    }
 
-// Set expected spike interval for a symbol
    void SetSpikeInterval(const string symbol, int intervalSec)
    {
       int idx = FindSymbolIndex(symbol);

@@ -19,17 +19,17 @@
 struct SPositionState
 {
     ulong positionId;           // Position ticket ID
-    string symbol;              // Symbol
-    ENUM_ORDER_TYPE orderType;  // Order type
-    double volume;              // Volume
+    string symbol;
+    ENUM_ORDER_TYPE orderType;
+    double volume;
     double price;               // Entry price
     double slPips;              // Stop loss in pips
     double tpPips;              // Take profit in pips
-    int clusterCode;            // Cluster code
-    string strategyRole;        // Strategy role
+    int clusterCode;
+    string strategyRole;
     string predictionId;        // Prediction ID associated with position
-    datetime aiPredictionTime;  // AI prediction time
-    ENUM_TRADE_SIGNAL aiPredictionSignal; // AI prediction signal
+    datetime aiPredictionTime;
+    ENUM_TRADE_SIGNAL aiPredictionSignal;
 
     SPositionState()
     {

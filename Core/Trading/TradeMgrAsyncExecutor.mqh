@@ -22,7 +22,6 @@
 #include "TradeDescriptor.mqh"
 #include "ExecutionQualityTracker.mqh"
 
-// Trade Manager Async Executor
 class CTradeMgrAsyncExecutor
 {
 private:
@@ -55,7 +54,6 @@ public:
         return m_pendingAsyncTrades[index].ticket;
     }
 
-// Check for duplicate idempotency key
     bool IsDuplicateIdempotencyKey(const string key) const
     {
         for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)

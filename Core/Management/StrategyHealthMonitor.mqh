@@ -1,4 +1,3 @@
-// Strategy Health Monitor - Enterprise Grade
 // Tracks performance, decay, disable/enable logic
 #ifndef STRATEGY_HEALTH_MONITOR_MQH
 #define STRATEGY_HEALTH_MONITOR_MQH
@@ -8,7 +7,6 @@
 
 struct SStrategyHealthEntry
 {
-    // Performance metrics
     int totalTrades;
     int winningTrades;
     double winRate;
@@ -23,27 +21,22 @@ struct SStrategyHealthEntry
     int recentTradeCount;
     double recentWinRate;
     
-    // Consecutive performance tracking
     int consecutiveLosses;
     int maxConsecutiveLosses;
     int consecutiveWins;
     
-    // Adaptation state
     bool temporarilyDisabled;
     datetime disabledUntil;
     datetime lastUpdate;
     
-    // Market regime performance
     double regimePerformance[5];
     int regimeTrades[5];
     
-    // Health scoring
     double healthScore;
     double participationScore;
     double avgConfidence;
     double netProfit;
     
-    // Decay tracking
     int consecutiveFilterCount;
     double originalWeight;
     double currentWeight;
@@ -84,7 +77,6 @@ struct SStrategyHealthEntry
 class CStrategyHealthMonitor
 {
 private:
-    // Configuration
     double m_minWinRateThreshold;
     int m_maxConsecutiveLosses_Limit;
     double m_performanceDecayFactor;
@@ -106,7 +98,6 @@ private:
     SStrategyHealthEntry m_healthEntries[];
     int m_healthEntryCount;
     
-    // Internal methods
     void EnsureCapacity(int index)
     {
         int currentSize = ArraySize(m_healthEntries);
@@ -142,11 +133,10 @@ private:
     bool ShouldReEnableStrategy(const SStrategyHealthEntry &entry) const
     {
         if(!entry.temporarilyDisabled) return false;
-        // Batch 154: a disabled strategy cannot trade, so demanding post-disable
-        // wins below was unreachable - once disabled it stayed disabled until EA
-        // restart. Serving the cooldown is now sufficient for a fresh sample;
-        // the same disable limits re-arm immediately if performance is still poor
-        // (CheckAllStrategiesReEnabling resets the rolling sample on re-enable).
+        // A disabled strategy cannot trade, so demanding post-disable wins was unreachable:
+        // serving the cooldown is sufficient for a fresh sample. The same disable limits re-arm
+        // immediately if performance is still poor (CheckAllStrategiesReEnabling resets the
+        // rolling sample on re-enable).
         if(entry.disabledUntil > 0 && TimeCurrent() < entry.disabledUntil) return false;
         return true;
     }
@@ -209,7 +199,6 @@ public:
           m_maxDrawdownLimit(0.2),
           m_strategyActivityDecayRate(0.9),
           m_strategyInactiveCounterThreshold(10),
-          // Participation score config (L6-008)
           m_participationDecayRate(0.85),
           m_participationRecoveryRate(0.15),
           m_participationTargetSignal(1.0),
@@ -223,7 +212,6 @@ public:
     ~CStrategyHealthMonitor() {}
     
     
-    // Configuration
     void SetOrchestratorMode(double minWinRate, int maxLosses)
     {
         m_minWinRateThreshold = MathMax(0.0, MathMin(1.0, minWinRate));
@@ -235,7 +223,6 @@ public:
     void SetStrategyActivityDecayRate(const double rate) { m_strategyActivityDecayRate = MathMax(0.0, MathMin(1.0, rate)); }
     void SetStrategyInactiveCounterThreshold(const int threshold) { m_strategyInactiveCounterThreshold = MathMax(1, threshold); }
     
-    // Participation score configuration setters (L6-008)
     void SetParticipationDecayRate(const double rate) { m_participationDecayRate = MathMax(0.0, MathMin(1.0, rate)); }
     void SetParticipationRecoveryRate(const double rate) { m_participationRecoveryRate = MathMax(0.0, MathMin(1.0, rate)); }
     void SetParticipationTargetSignal(const double target) { m_participationTargetSignal = MathMax(0.0, MathMin(1.0, target)); }
@@ -244,7 +231,6 @@ public:
     void SetParticipationMin(const double minVal) { m_participationMin = MathMax(0.0, MathMin(1.0, minVal)); }
     void SetParticipationMax(const double maxVal) { m_participationMax = MathMax(0.0, MathMin(1.0, maxVal)); }
     
-    // Strategy registration
     int RegisterStrategy(double weight = 1.0)
     {
         int idx = m_healthEntryCount;
@@ -271,7 +257,6 @@ public:
         ArrayResize(m_healthEntries, 0);
     }
     
-    // Health updates
     void UpdatePerformance(int index, double netProfit)
     {
         if(index < 0 || index >= m_healthEntryCount) return;
@@ -317,16 +302,13 @@ public:
         // Apply decay/recovery towards target
         if(currentScore > target)
         {
-            // Decay towards target
             currentScore = currentScore * m_participationDecayRate + target * (1.0 - m_participationDecayRate);
         }
         else
         {
-            // Recover towards target
             currentScore = currentScore * (1.0 - m_participationRecoveryRate) + target * m_participationRecoveryRate;
         }
         
-        // Clamp to bounds
         m_healthEntries[index].participationScore = MathMax(m_participationMin, MathMin(m_participationMax, currentScore));
     }
     
@@ -365,7 +347,6 @@ public:
         m_healthEntries[index].disabledUntil = until;
     }
     
-    // Weight management
     double GetStrategyWeight(int index) const
     {
         if(index < 0 || index >= m_healthEntryCount) return 1.0;
@@ -393,7 +374,6 @@ public:
         return m_healthEntries[index].participationScore;
     }
     
-    // Metrics access
     double GetWinRate(int index) const
     {
         if(index < 0 || index >= m_healthEntryCount) return 0.0;
@@ -425,7 +405,6 @@ public:
         return m_healthEntries[index].recentWinRate;
     }
     
-    // Batch processing
     void CheckAllStrategiesDisabling()
     {
         for(int i = 0; i < m_healthEntryCount; i++)
@@ -444,9 +423,8 @@ public:
             {
                 m_healthEntries[i].temporarilyDisabled = false;
                 m_healthEntries[i].disabledUntil = 0;
-                // Batch 154: fresh sample after cooldown - stale losing trades in
-                // the rolling window would insta-redisable the strategy on its
-                // first new loss without it ever getting a real chance.
+                // Fresh sample after cooldown: stale losing trades in the rolling window
+                // would insta-redisable the strategy on its first new loss.
                 ResetRecoverySample(m_healthEntries[i]);
             }
         }
@@ -462,7 +440,6 @@ public:
         }
     }
     
-    // Stats
     int GetActiveStrategyCount() const
     {
         int count = 0;

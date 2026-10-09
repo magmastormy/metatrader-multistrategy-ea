@@ -105,7 +105,6 @@ CTrendAdxHealth::CTrendAdxHealth() :
 {
 }
 
-// Does this symbol use the ADX trend model?
 bool CTrendAdxHealth::UsesAdxTrendModel(const string symbol)
 {
     return !IsSyntheticIndexSymbolName(symbol);
@@ -122,11 +121,9 @@ bool CTrendAdxHealth::TryCompleteReinit(const string symbol,
                                         const int handleADX,
                                         const int minBars)
 {
-    // Check if new ADX handle has enough data
     int adxBars = BarsCalculated(handleADX);
     if(adxBars < minBars * 2)
     {
-        // Still waiting for new handle to populate
         return false;
     }
 
@@ -219,7 +216,6 @@ void CTrendAdxHealth::MaybeReinitializeHandle(const string symbol,
         handleADX = INVALID_HANDLE;
     }
 
-    // Create new handle
     handleADX = iADX(symbol, timeframe, adxPeriod);
     if(handleADX == INVALID_HANDLE)
     {

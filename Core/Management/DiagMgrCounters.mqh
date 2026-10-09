@@ -1,4 +1,3 @@
-// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
 // Owns the consensus-diagnostics counter bank: raw counts, root
 // baselines, snapshot baselines, plus interval-gated logging.
 // Behaviour is byte-identical to the original inline implementation:
@@ -11,7 +10,6 @@
 // Consensus Diagnostics Snapshot Struct (moved from DiagnosticsCollector)
 struct SConsensusDiagnosticsSnapshot
 {
-    // Root level counters
     ulong rawNone;
     ulong filteredOut;
     ulong quorumFailed;
@@ -97,7 +95,6 @@ struct SConsensusDiagnosticsSnapshot
 class CDiagMgrCounters
 {
 private:
-    // Raw counters
     ulong m_diagRawNone;
     ulong m_diagFilteredOut;
     ulong m_diagQuorumFailed;
@@ -173,7 +170,6 @@ private:
     ulong m_diagSnapshotBaselineUICTNeutralBias;
     ulong m_diagSnapshotBaselineUICTOtherFilters;
 
-    // Interval-gated logging state
     datetime m_lastDiagLogTime;
     int      m_diagLogIntervalSec;
 
@@ -257,10 +253,8 @@ public:
 
     ~CDiagMgrCounters() {}
 
-    // Configuration
     void SetLogIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
 
-    // Counter accessors - Raw counts
     ulong GetRawNone() const { return m_diagRawNone; }
     ulong GetFilteredOut() const { return m_diagFilteredOut; }
     ulong GetQuorumFailed() const { return m_diagQuorumFailed; }
@@ -270,18 +264,15 @@ public:
     ulong GetSignalsAfterQuorum() const { return m_diagSignalsAfterQuorum; }
     ulong GetVoteSuppressed() const { return m_diagVoteSuppressed; }
 
-    // Counter accessors - Role breakdown
     ulong GetRolePrimarySignals() const { return m_diagRolePrimarySignals; }
     ulong GetRoleFeatureSignals() const { return m_diagRoleFeatureSignals; }
     ulong GetRoleShadowSignals() const { return m_diagRoleShadowSignals; }
 
-    // Counter accessors - Cluster breakdown
     ulong GetClusterTrendSignals() const { return m_diagClusterTrendSignals; }
     ulong GetClusterMeanReversionSignals() const { return m_diagClusterMeanReversionSignals; }
     ulong GetClusterStructureSignals() const { return m_diagClusterStructureSignals; }
     ulong GetClusterNoneSignals() const { return m_diagClusterNoneSignals; }
 
-    // Counter accessors - Strategy-specific rejections
     ulong GetMomentumNone() const { return m_diagMomentumNone; }
     ulong GetMomentumCooldown() const { return m_diagMomentumCooldown; }
     ulong GetMomentumLowVolatility() const { return m_diagMomentumLowVolatility; }
@@ -292,7 +283,6 @@ public:
     ulong GetUICTNeutralBias() const { return m_diagUICTNeutralBias; }
     ulong GetUICTOtherFilters() const { return m_diagUICTOtherFilters; }
 
-    // Root baseline accessors
     ulong GetRootBaselineRawNone() const { return m_diagRootBaselineRawNone; }
     ulong GetRootBaselineFilteredOut() const { return m_diagRootBaselineFilteredOut; }
     ulong GetRootBaselineQuorumFailed() const { return m_diagRootBaselineQuorumFailed; }
@@ -318,7 +308,6 @@ public:
     ulong GetRootBaselineUICTNeutralBias() const { return m_diagRootBaselineUICTNeutralBias; }
     ulong GetRootBaselineUICTOtherFilters() const { return m_diagRootBaselineUICTOtherFilters; }
 
-    // Snapshot baseline accessors
     ulong GetSnapshotBaselineRawNone() const { return m_diagSnapshotBaselineRawNone; }
     ulong GetSnapshotBaselineFilteredOut() const { return m_diagSnapshotBaselineFilteredOut; }
     ulong GetSnapshotBaselineQuorumFailed() const { return m_diagSnapshotBaselineQuorumFailed; }
@@ -344,7 +333,6 @@ public:
     ulong GetSnapshotBaselineUICTNeutralBias() const { return m_diagSnapshotBaselineUICTNeutralBias; }
     ulong GetSnapshotBaselineUICTOtherFilters() const { return m_diagSnapshotBaselineUICTOtherFilters; }
 
-    // Increment methods
     void IncrementRawNone() { m_diagRawNone++; }
     void IncrementFilteredOut() { m_diagFilteredOut++; }
     void IncrementQuorumFailed() { m_diagQuorumFailed++; }
@@ -420,10 +408,8 @@ public:
     void IncrementSnapshotBaselineUICTNeutralBias() { m_diagSnapshotBaselineUICTNeutralBias++; }
     void IncrementSnapshotBaselineUICTOtherFilters() { m_diagSnapshotBaselineUICTOtherFilters++; }
 
-    // Role/Cluster diagnostic accumulation
     void AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated);
 
-    // Snapshot methods
     void GetSnapshot(ulong &rawNone,
                      ulong &filteredOut,
                      ulong &quorumFailed,
@@ -440,16 +426,13 @@ public:
                      ulong &clusterStructureSignals,
                      ulong &clusterNoneSignals) const;
 
-    // Full diagnostics snapshot for logging
     void GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot &snapshot) const;
 
     void MaybeLogDiagnostics(const string symbol);
     void LogDiagnostics(const string symbol);
 
-    // Reset
     void ResetConsensusDiagnostics();
 
-    // Convenience method to set snapshot baselines (called at start of new logging interval)
     void SetSnapshotBaselines();
 };
 
@@ -575,7 +558,6 @@ void CDiagMgrCounters::GetSnapshot(ulong &rawNone,
 
 void CDiagMgrCounters::GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot &snapshot) const
 {
-    // Root baseline (summary)
     snapshot.rawNone = m_diagRawNone;
     snapshot.filteredOut = m_diagFilteredOut;
     snapshot.quorumFailed = m_diagQuorumFailed;
@@ -601,7 +583,6 @@ void CDiagMgrCounters::GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot 
     snapshot.uictNeutralBias = m_diagUICTNeutralBias;
     snapshot.uictOtherFilters = m_diagUICTOtherFilters;
 
-    // Root baseline (full)
     snapshot.rootBaselineRawNone = m_diagRootBaselineRawNone;
     snapshot.rootBaselineFilteredOut = m_diagRootBaselineFilteredOut;
     snapshot.rootBaselineQuorumFailed = m_diagRootBaselineQuorumFailed;

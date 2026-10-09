@@ -1,7 +1,5 @@
 // Encapsulates heartbeat/diagnostics logging extracted from
 // MultiStrategyAutonomousEA.mq5 OnTick heartbeat block
-// Blueprint Section 10.1 — Monolith Decomposition (R6b)
-// Consolidated: Includes consensus diagnostics from DiagnosticsCollector (Phase 2 debloating)
 // DECOMPOSED: cohesive responsibilities now live in DiagMgr* modules
 // DiagMgrCounters.mqh        — consensus counter bank + snapshots
 // DiagMgrAggregator.mqh      — manager fan-in + dominant cause
@@ -42,7 +40,6 @@
 #include "DiagMgrHeartbeat.mqh"         // CDiagMgrHeartbeat
 #include "DiagMgrConsensusReport.mqh"   // CDiagMgrConsensusReport
 
-// Forward declarations for AI modules
 class CNeuralNetworkStrategy;
 
 // DiagnosticsManager — replaces the inline heartbeat block in
@@ -67,7 +64,6 @@ private:
         bool                     m_initialized;
             ENUM_LOG_VERBOSITY       m_verbosity;
 
-            // Heartbeat state
     int      m_heartbeatIntervalSec;
     datetime m_lastHeartbeatTime;
     datetime m_lastNoSignalAlertTime;
@@ -106,11 +102,9 @@ private:
     // Consensus diagnostics counter bank (extracted → DiagMgrCounters.mqh)
     CDiagMgrCounters m_counters;
 
-    // AI config for NN health checks
         bool  m_aiEnabled;
         bool  m_nnEnabled;
         bool  m_nnOnlineTraining;
-        // AI type enablement for vote tracking [L11-004]
         bool  m_transformerEnabled;
         bool  m_ensembleEnabled;
         bool  m_onnxEnabled;
@@ -282,7 +276,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         m_hbQuietMissingManager  = quietMissingManager;
     }
 
-// Dependency setters
     void SetScalpEngine(CFastScalpEngine* engine)  { m_scalpEngine = engine; }
     void SetFullMarginMode(CFullMarginMode* mode)  { m_fullMarginMode = mode; }
     void SetSafeMode(CSafeMode* mode)              { m_safeMode = mode; }
@@ -317,7 +310,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                         m_symbols[i] = symbols[i];
                     m_symbolCount = count;
 
-                    // Initialize AI vote tracking array [L11-004]
                     m_aiVoteTracker.ConfigureSymbols(m_symbolCount);
                 }
 
@@ -351,7 +343,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
 
     bool IsInitialized() const { return m_initialized; }
 
-// Verbosity gating helpers
         bool ShouldLogNormal() const { return m_verbosity >= VERBOSITY_NORMAL; }
         bool ShouldLogVerbose() const { return m_verbosity >= VERBOSITY_VERBOSE; }
         bool ShouldLogDebug() const { return m_verbosity >= VERBOSITY_DEBUG; }
@@ -366,10 +357,8 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(m_lastHeartbeatTime != 0 && (hbNow - m_lastHeartbeatTime) < m_heartbeatIntervalSec)
             return;
 
-        // Get current correlation ID from JsonLogger
         string corrId = CJsonLogger::GetCorrelationId();
 
-        //--- Core heartbeat line
         if(ShouldLogNormal())
         {
             CDiagMgrHeartbeat::EmitCoreLines(m_hbScansAttempted, m_hbIntrabarScansExecuted, m_hbNoSignalCount,
@@ -380,7 +369,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                              corrId);
         }
 
-        //--- Scalp engine heartbeat diagnostics
         if(m_scalpEngine != NULL && m_scalpEngine.IsInitialized())
             m_scalpEngine.PrintDiagnostics();
 
@@ -402,7 +390,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             }
         }
 
-        //--- Full-margin / safe mode heartbeat diagnostics
         if(m_riskTier == RISK_TIER_FULL_MARGIN && m_fullMarginMode != NULL && m_fullMarginMode.IsInitialized())
             m_fullMarginMode.PrintDiagnostics();
         if(m_riskTier == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
@@ -423,7 +410,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                                             m_symbols, m_symbolCount,
                                                             ShouldLogVerbose(), corrId);
 
-            //--- Grid-recovery and scalp position counts
             if(ShouldLogNormal())
             {
                 CDiagMgrHeartbeat::EmitPositionCounts(corrId);
@@ -456,7 +442,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                                        rateRiskApproved, rateSent, noSignalRate, corrId);
             }
 
-            //--- No-signal alert
             if(windowScans >= 20 && noSignalRate >= 80.0 &&
                (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
             {
@@ -466,13 +451,11 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                 m_lastNoSignalAlertTime = hbNow;
             }
 
-            //--- Risk budget snapshot
             if(ShouldLogNormal())
             {
                 CDiagMgrHeartbeat::EmitRiskBudget(m_riskManager, corrId);
             }
 
-            //--- Indicator manager cleanup
             CDiagMgrHeartbeat::ReleaseUnusedIndicators();
 
             //--- Update previous-window snapshots
@@ -489,7 +472,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         }
     }
 
-// NN health sub-check
     void EmitNNHealthCheck(CNeuralNetworkStrategy* &strategies[])
     {
         if(!m_aiEnabled || !m_nnEnabled || !m_nnOnlineTraining)
@@ -647,10 +629,8 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     }
 
 // Consensus Diagnostics — forwarded to CDiagMgrCounters
-    // Configuration
     void SetLogIntervalSeconds(const int seconds) { m_counters.SetLogIntervalSeconds(seconds); }
 
-    // Counter accessors - Raw counts
     ulong GetRawNone() const { return m_counters.GetRawNone(); }
     ulong GetFilteredOut() const { return m_counters.GetFilteredOut(); }
     ulong GetQuorumFailed() const { return m_counters.GetQuorumFailed(); }
@@ -660,18 +640,15 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     ulong GetSignalsAfterQuorum() const { return m_counters.GetSignalsAfterQuorum(); }
     ulong GetVoteSuppressed() const { return m_counters.GetVoteSuppressed(); }
 
-    // Counter accessors - Role breakdown
     ulong GetRolePrimarySignals() const { return m_counters.GetRolePrimarySignals(); }
     ulong GetRoleFeatureSignals() const { return m_counters.GetRoleFeatureSignals(); }
     ulong GetRoleShadowSignals() const { return m_counters.GetRoleShadowSignals(); }
 
-    // Counter accessors - Cluster breakdown
     ulong GetClusterTrendSignals() const { return m_counters.GetClusterTrendSignals(); }
     ulong GetClusterMeanReversionSignals() const { return m_counters.GetClusterMeanReversionSignals(); }
     ulong GetClusterStructureSignals() const { return m_counters.GetClusterStructureSignals(); }
     ulong GetClusterNoneSignals() const { return m_counters.GetClusterNoneSignals(); }
 
-    // Counter accessors - Strategy-specific rejections
     ulong GetMomentumNone() const { return m_counters.GetMomentumNone(); }
     ulong GetMomentumCooldown() const { return m_counters.GetMomentumCooldown(); }
     ulong GetMomentumLowVolatility() const { return m_counters.GetMomentumLowVolatility(); }
@@ -682,7 +659,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     ulong GetUICTNeutralBias() const { return m_counters.GetUICTNeutralBias(); }
     ulong GetUICTOtherFilters() const { return m_counters.GetUICTOtherFilters(); }
 
-    // Root baseline accessors
     ulong GetRootBaselineRawNone() const { return m_counters.GetRootBaselineRawNone(); }
     ulong GetRootBaselineFilteredOut() const { return m_counters.GetRootBaselineFilteredOut(); }
     ulong GetRootBaselineQuorumFailed() const { return m_counters.GetRootBaselineQuorumFailed(); }
@@ -708,7 +684,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     ulong GetRootBaselineUICTNeutralBias() const { return m_counters.GetRootBaselineUICTNeutralBias(); }
     ulong GetRootBaselineUICTOtherFilters() const { return m_counters.GetRootBaselineUICTOtherFilters(); }
 
-    // Snapshot baseline accessors
     ulong GetSnapshotBaselineRawNone() const { return m_counters.GetSnapshotBaselineRawNone(); }
     ulong GetSnapshotBaselineFilteredOut() const { return m_counters.GetSnapshotBaselineFilteredOut(); }
     ulong GetSnapshotBaselineQuorumFailed() const { return m_counters.GetSnapshotBaselineQuorumFailed(); }
@@ -734,7 +709,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     ulong GetSnapshotBaselineUICTNeutralBias() const { return m_counters.GetSnapshotBaselineUICTNeutralBias(); }
     ulong GetSnapshotBaselineUICTOtherFilters() const { return m_counters.GetSnapshotBaselineUICTOtherFilters(); }
 
-    // Increment methods
     void IncrementRawNone() { m_counters.IncrementRawNone(); }
     void IncrementFilteredOut() { m_counters.IncrementFilteredOut(); }
     void IncrementQuorumFailed() { m_counters.IncrementQuorumFailed(); }
@@ -810,13 +784,11 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     void IncrementSnapshotBaselineUICTNeutralBias() { m_counters.IncrementSnapshotBaselineUICTNeutralBias(); }
     void IncrementSnapshotBaselineUICTOtherFilters() { m_counters.IncrementSnapshotBaselineUICTOtherFilters(); }
 
-    // Role/Cluster diagnostic accumulation
     void AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
     {
         m_counters.AccumulateRoleClusterSignalDiagnostics(strategyIndex, signalGenerated);
     }
 
-    // Snapshot methods
     void GetSnapshot(ulong &rawNone,
                      ulong &filteredOut,
                      ulong &quorumFailed,
@@ -840,7 +812,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                clusterStructureSignals, clusterNoneSignals);
     }
 
-    // Full diagnostics snapshot for logging
     void GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot &snapshot) const
     {
         m_counters.GetFullDiagnosticsSnapshot(snapshot);
@@ -849,10 +820,8 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     void MaybeLogDiagnostics(const string symbol) { m_counters.MaybeLogDiagnostics(symbol); }
     void LogDiagnostics(const string symbol) { m_counters.LogDiagnostics(symbol); }
 
-    // Reset
     void ResetConsensusDiagnostics() { m_counters.ResetConsensusDiagnostics(); }
 
-    // Convenience method to set snapshot baselines (called at start of new logging interval)
     void SetSnapshotBaselines() { m_counters.SetSnapshotBaselines(); }
 };
 

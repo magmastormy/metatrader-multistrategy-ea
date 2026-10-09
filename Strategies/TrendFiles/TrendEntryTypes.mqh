@@ -47,7 +47,7 @@ private:
     // Configuration
     double              m_pullbackTolerance;    // Pips tolerance for pullback
     int                 m_minConsistencyBars;   // Min bars for continuation entry
-    double              m_minADXForContinuation; // Min ADX for continuation
+    double              m_minADXForContinuation;
     
     // Internal methods
     bool                HasBullishRejection();

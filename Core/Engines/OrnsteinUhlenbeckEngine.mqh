@@ -8,7 +8,6 @@
 
 #include "../Utils/Enums.mqh"
 
-// OU Snapshot — full state capture for downstream consumers
 struct SOUSnapshot
 {
     double theta;            // Mean-reversion speed
@@ -47,7 +46,6 @@ private:
     int             m_lookbackPeriod;
     double          m_significanceLevel;
 
-    // Estimated parameters
     double m_theta;
     double m_mu;
     double m_sigma;
@@ -57,7 +55,6 @@ private:
     bool   m_isMeanReverting;
     double m_signalQuality;
 
-    // Internal state
         datetime m_lastBarTime;
         datetime m_lastLogTime;
         bool     m_warmedUp;
@@ -66,7 +63,6 @@ private:
 
         SOUSnapshot m_lastSnapshot;
 
-        //--- Private estimation methods
         bool EstimateParameters(const double &series[], int count);
         double ComputeSignalQuality(double thetaTStat, double halfLife, const double &residuals[], int resCount);
         double JarqueBeraStatistic(const double &residuals[], int count);
@@ -91,7 +87,6 @@ public:
     //--- Main update — call each bar
     bool Update();
 
-    //--- Accessors
     double GetOUZScore()     const { return m_ouZScore; }
     double GetHalfLife()     const { return m_halfLife; }
     bool   IsMeanReverting() const { return m_isMeanReverting; }
@@ -109,11 +104,9 @@ public:
     //--- Warmup check -- need at least lookbackPeriod+1 bars
         bool IsWarmedUp() const { return m_lastSnapshot.barCount >= m_lookbackPeriod + 1 && m_lastSnapshot.timestamp > 0; }
 
-        //--- Cleanup
         void Deinit();
     };
 
-// Constructor
 COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
     const string symbol,
     const ENUM_TIMEFRAMES timeframe,
@@ -137,16 +130,13 @@ COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
         m_barCount(0),
         m_timeframeResolved(false)
     {
-        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
         ResolveTimeframe();
     }
 
-// Destructor
 COrnsteinUhlenbeckEngine::~COrnsteinUhlenbeckEngine()
 {
 }
 
-// Deinit — explicit cleanup for shutdown
 void COrnsteinUhlenbeckEngine::Deinit()
 {
     // COrnsteinUhlenbeckEngine holds no indicator handles or external resources.
@@ -169,7 +159,6 @@ void COrnsteinUhlenbeckEngine::Deinit()
 // Update — called each bar, estimates OU parameters from closes
 bool COrnsteinUhlenbeckEngine::Update()
 {
-    // Resolve PERIOD_CURRENT on first call
     ResolveTimeframe();
 
     // Bar-change guard — skip if same bar
@@ -231,7 +220,6 @@ bool COrnsteinUhlenbeckEngine::Update()
     m_lastBarTime = currentBarTime;
     m_warmedUp = true;
 
-    // Throttled logging
     datetime now = TimeCurrent();
     if(m_lastLogTime == 0 || (now - m_lastLogTime) >= 60)
     {
@@ -249,7 +237,6 @@ bool COrnsteinUhlenbeckEngine::Update()
         m_lastLogTime = now;
     }
 
-    // Build snapshot
     m_lastSnapshot.theta           = m_theta;
     m_lastSnapshot.mu              = m_mu;
     m_lastSnapshot.sigma           = m_sigma;
@@ -389,7 +376,6 @@ bool COrnsteinUhlenbeckEngine::EstimateParameters(const double &series[], int co
     // Approximate critical value for 5% two-tailed: ~2.0 for large n
     bool isMeanReverting = (theta > 1e-10) && (tStat > 2.0);
 
-    // Store results
     m_theta           = theta;
     m_mu              = mu;
     m_sigma           = sigmaOU;
@@ -422,7 +408,6 @@ double COrnsteinUhlenbeckEngine::ComputeSignalQuality(double thetaTStat,
         thetaScore = 0.5 + 0.5 * ((thetaTStat - 2.0) / 2.0);
     else if(thetaTStat >= 1.0)
         thetaScore = 0.2 * thetaTStat;
-    // else thetaScore stays 0.0
     quality += 0.4 * thetaScore;
 
     // --- Dimension 2: Half-life reasonableness (weight: 0.35)
@@ -463,13 +448,11 @@ double COrnsteinUhlenbeckEngine::JarqueBeraStatistic(const double &residuals[], 
     if(count < 10)
         return 1e6; // insufficient data — assume non-normal
 
-    // Compute mean
     double mean = 0.0;
     for(int i = 0; i < count; i++)
         mean += residuals[i];
     mean /= (double)count;
 
-    // Compute variance, skewness, kurtosis
     double m2 = 0.0; // second central moment
     double m3 = 0.0; // third central moment
     double m4 = 0.0; // fourth central moment

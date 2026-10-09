@@ -43,7 +43,6 @@ struct SSymbolMagicOffset
     }
 };
 
-// Trade Manager Symbol Trade Registry
 class CTradeMgrSymbolTradeRegistry
 {
 private:

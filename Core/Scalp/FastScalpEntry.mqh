@@ -1,14 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the scalp entry path that used to live inline in
-// CFastScalpEngine:
-// PassesEntryGates()     — cooldown / max-positions / budget
-// pre-checks from ShouldEnterScalp()
-// ValidateRiskAndAdjust()— CUnifiedRiskManager gating +
-// adjustedLotSize from ShouldEnterScalp
-// FinalizeLotSize()      — margin cap + symbol min-lot check
-// Execute()              — the whole ExecuteScalpTrade() body
-// (async + synchronous paths)
+// Owns the scalp entry path extracted from CFastScalpEngine: entry gates, risk gating, lot finalization and execution.
 // All methods are `static`; mutable engine state (cooldown stamp,
 // risk budget, trackers) is passed in by reference so the observed
 // side effects and their ordering are identical to the original.
@@ -44,25 +34,21 @@ public:
                                 datetime lastScalpTime,
                                 double usedScalpRiskPct)
    {
-      // Check cooldown
       datetime now = TimeCurrent();
       ulong elapsedMs = (ulong)((now - lastScalpTime) * 1000);
       if(lastScalpTime > 0 && elapsedMs < (ulong)config.scalpCooldownMs)
          return false;
 
-      // Check max scalp positions
       int scalpCount = CFastScalpPositionTracker::CountScalpPositions();
       if(scalpCount >= config.maxScalpPositions)
          return false;
 
-      // Check scalp risk budget
       if(usedScalpRiskPct >= config.scalpRiskPct)
          return false;
 
       return true;
    }
 
-// Risk validation through CUnifiedRiskManager
 // Applies the risk-adjusted lot size in place when provided.
    static bool ValidateRiskAndAdjust(const string symbol,
                                      ENUM_TRADE_SIGNAL signal,
@@ -71,7 +57,6 @@ public:
                                      const SScalpConfig &config,
                                      CUnifiedRiskManager* riskManager)
    {
-      // Risk validation through CUnifiedRiskManager
       if(riskManager != NULL && riskManager.IsInitialized())
       {
          ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -108,7 +93,6 @@ public:
 // Cap lot size to available margin, then enforce symbol minimum
    static bool FinalizeLotSize(const string symbol, double &lotSize)
    {
-      // Cap lot size to available margin and symbol volume limits
       lotSize = CFastScalpSizing::CapLotToMargin(lotSize, symbol);
 
       // Minimum lot check: skip scalp signal if capped lot is below symbol minimum
@@ -123,7 +107,6 @@ public:
       return true;
    }
 
-// Execute a scalp trade (market order)
 // Supports both synchronous and async execution modes
    static bool Execute(const string symbol, ENUM_TRADE_SIGNAL signal,
                        double lotSize, double confidence,
@@ -219,7 +202,6 @@ public:
       {
          int direction = (signal == TRADE_SIGNAL_BUY) ? 1 : -1;
 
-         // Use TradeManager's async method which includes preflight validation
          // Batch 152 (T-01): carry the per-symbol strategy offset like the sync
          // path does, so async scalp positions land in the EA-owned magic range
          // that ownership scans actually match.
@@ -236,7 +218,6 @@ public:
             return false;
          }
 
-         // Track the pending async order locally for management
          // Batch 152 (T-10): the request we just submitted was appended at the END
          // of the pending array - index 0 is the oldest, possibly unrelated entry.
          int lastPendingIdx = tradeManager.GetPendingAsyncCount() - 1;
@@ -276,7 +257,6 @@ public:
       {
          lastScalpTime = TimeCurrent();
 
-         // Track risk usage
          double riskPerTrade = riskManager != NULL ?
                                riskManager.GetActiveRiskPerTradePercent() : 1.0;
 

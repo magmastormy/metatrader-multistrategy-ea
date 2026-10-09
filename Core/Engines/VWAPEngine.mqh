@@ -26,7 +26,6 @@ private:
     double            m_bandMultiplier2;
     double            m_bandMultiplier3;
     
-    // Session tracking
     datetime m_sessionStartDate;
     datetime m_lastProcessedBarTime;  // Batch 117: prevent VWAP re-accumulation
     double   m_cumulativeTPV;  // cumulative (typical price * volume)
@@ -35,7 +34,6 @@ private:
     int      m_barCount;
     int      m_lastProcessedBarIndex;
     
-    // Cached result
     SVWAPResult m_lastResult;
     bool        m_initialized;
     
@@ -156,7 +154,6 @@ public:
         }
         double stdDev = MathSqrt(variance / m_cumulativeVol);
         
-        // Fill result
         m_lastResult.vwap = vwap;
         m_lastResult.upperBand1 = vwap + m_bandMultiplier1 * stdDev;
         m_lastResult.lowerBand1 = vwap - m_bandMultiplier1 * stdDev;
@@ -205,11 +202,9 @@ public:
     bool IsInitialized() const { return m_initialized; }
     SVWAPResult GetLastResult() const { return m_lastResult; }
 
-    // --- Cleanup ---
     void Deinit()
     {
         // CVWAPEngine holds no external resources (no indicator handles, no dynamic arrays)
-        // Reset state for potential re-use
         m_initialized = false;
         m_cumulativeTPV = 0;
         m_cumulativePV = 0;

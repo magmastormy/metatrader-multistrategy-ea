@@ -1,18 +1,8 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the tick-level scalp exit management that used to live as
-// three large public methods on CFastScalpEngine:
-// ManageScalpPositions()      — 1R partial close, breakeven,
-// tight trailing
-// SyncScalpPositionTracking() — reconcile tracker vs terminal
-// FreeScalpRiskBudget()       — tracker lookup + budget release
+// Owns the tick-level scalp exit management: 1R partial close, breakeven, tight trailing, tracker reconciliation and risk-budget release.
 // All methods are `static`; every piece of mutable state lives in
 // the tracker / budget objects passed in by reference.
 // IMPORTANT — original in-place semantics preserved:
-// section 3 (trailing) reads `breakevenSet` AFTER section 2 may
-// have just set it. The local snapshot is therefore mirrored
-// (state.breakevenSet = true) at the same moment the tracker slot
-// is marked, reproducing the original read-after-write exactly.
+// Section 3 (trailing) reads `breakevenSet` after section 2 may have just set it, so the local snapshot is mirrored (state.breakevenSet = true) at the same moment the tracker slot is marked - reproducing the original read-after-write exactly.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_EXIT_MQH
@@ -24,11 +14,9 @@
 #include "FastScalpPositionTracker.mqh"
 #include "FastScalpRiskBudget.mqh"
 
-// CFastScalpExit — stateless scalp position management
 class CFastScalpExit
 {
 public:
-// Free the scalp risk budget consumed by `ticket`.
 // Was CFastScalpEngine::FreeScalpRiskBudget() — the tracker scan is
 // done here, the arithmetic lives in CFastScalpRiskBudget.
    static void FreeScalpRiskBudget(ulong ticket,
@@ -69,15 +57,13 @@ public:
          if(!PositionSelectByTicket(ticket)) continue;
 
          string comment = PositionGetString(POSITION_COMMENT);
-         // Batch 170: prefix test. As a substring, "SCALP" also matched "ATR-SCALP",
+         // Prefix test: as a substring, "SCALP" also matched "ATR-SCALP",
          // so this engine registered the ATR scalp engine's positions and closed them
          // on its own 1R/partial rules. See FastScalpPositionTracker.
          if(StringFind(comment, "SCALP") != 0) continue;
 
-         // Already tracked?
          if(tracker.FindScalpPositionState(ticket) >= 0) continue;
 
-         // Register new scalp position
          string posSymbol = PositionGetString(POSITION_SYMBOL);
          double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
          double sl        = PositionGetDouble(POSITION_SL);
@@ -86,7 +72,7 @@ public:
 
          double oneRPrice = 0.0;
          ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-         // Batch 152 (S-L-03): with SL==0 the old math produced a garbage 1R
+         // With SL==0 the old math produced a garbage 1R
          // (2x open price on buys, 0 on sells) - leave it unset so the partial
          // stage stays disabled for naked positions.
          if(point > 0.0 && sl > 0.0)
@@ -102,7 +88,6 @@ public:
       }
    }
 
-// Manage scalp positions at tick level
 // Quick profit lock, tight trailing, partial close
 // NOT throttled to 1 second like swing trailing
    static void ManageScalpPositions(CFastScalpPositionTracker &tracker,
@@ -111,7 +96,6 @@ public:
                                     CUnifiedRiskManager* riskManager,
                                     const SScalpConfig &config)
    {
-      // Sync tracked positions with actual open positions
       SyncScalpPositionTracking(tracker, budget, riskManager);
 
       for(int i = tracker.Count() - 1; i >= 0; i--)
@@ -140,7 +124,6 @@ public:
          double point       = SymbolInfoDouble(posSymbol, SYMBOL_POINT);
          if(point <= 0.0) continue;
 
-         // Calculate profit in points
          double profitPoints = 0.0;
          if(posType == POSITION_TYPE_BUY)
             profitPoints = (currentPrice - openPrice) / point;

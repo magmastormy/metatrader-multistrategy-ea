@@ -1,10 +1,6 @@
 // Enterprise Strategy Types (Phase G - G1)
-// Shared value types and free helpers extracted verbatim from
-// - struct StrategyEntry      (the 40-field registration record)
-// StrategyClusterShortCode / IntrabarPolicyToString /
-// TradeSignalToString      (enum -> text helpers)
-// - IsInfrastructureNoSignalReasonTag (reason-tag classifier)
-// - ClampUnitValue            (inline [0,1] clamp)
+// Shared value types (struct StrategyEntry, the 40-field registration record) and free
+// enum -> text / reason-tag / [0,1] clamp helpers, extracted verbatim.
 // These are file-scope (non-member) declarations. They are consumed
 // by the Phase C slice modules (CStrategyStateReporter,
 // CStrategyRegistryState, CIntrabarPolicy, CConsensusEngine) which
@@ -20,7 +16,6 @@
 #include "../Utils/Enums.mqh"              // ENUM_STRATEGY_TIER / ROLE / CLUSTER / INTRABAR_POLICY / TRADE_SIGNAL
 #include "../../Interfaces/IStrategy.mqh"  // IStrategy* member of StrategyEntry
 
-// Strategy Registration Entry
 struct StrategyEntry
 {
     IStrategy* strategy;
@@ -45,7 +40,6 @@ struct StrategyEntry
     datetime lastEvaluationTime;
     int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
 
-    // Performance metrics ported from AISO
     int totalTrades;
     int winningTrades;
     double winRate;
@@ -60,24 +54,21 @@ struct StrategyEntry
     int recentTradeCount;
     double recentWinRate;
     
-    // Consecutive performance tracking
     int consecutiveLosses;
     int maxConsecutiveLosses;
     int consecutiveWins;
     
-    // Adaptation flags
     bool temporarilyDisabled;
     datetime disabledUntil;
     datetime lastUpdate;
 
     // Consensus component scores (populated by pipeline/consensus engine)
     double participation;        // Participation multiplier [0-1]
-    double readinessScore;       // Readiness score [0-1]
-    double contextScore;         // Context score [0-1]
-    double costScore;            // Cost score [0-1]
+    double readinessScore;
+    double contextScore;
+    double costScore;
     bool isProbeEligible;        // Eligible for intrabar probe voting
 
-    // Market regime performance
     double regimePerformance[5];
     int regimeTrades[5];
 };

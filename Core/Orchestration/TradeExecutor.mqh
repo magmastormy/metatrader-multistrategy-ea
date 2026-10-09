@@ -25,7 +25,6 @@ private:
     CPositionManager* m_positionManager;
     CNeuralNetRegistry* m_neuralNetRegistry;
     
-// Pending confirmations
     struct SPendingConfirmation
     {
         ulong orderTicket;
@@ -156,7 +155,6 @@ public:
             candidate.lotSize, candidate.stopLossPips, candidate.takeProfitPips,
             candidate.strategyRole, candidate.clusterCode, corrId);
         
-        // Queue for confirmation
         QueueConfirmation(candidate, result);
         
         CJsonLogger::ClearCorrelationId();
@@ -222,13 +220,10 @@ public:
                                 dealSymbol, m_pendingConfirmations[i].orderTicket, dealTicket,
                                 dealPrice, dealVolume, EnumToString(dealType), m_pendingConfirmations[i].checkAttempts);
                     
-                    // Record attribution
                     RecordAttribution(m_pendingConfirmations[i].candidate, dealTicket, dealPrice, dealVolume);
                     
-                    // Record position state
                     RecordPositionState(dealTicket, m_pendingConfirmations[i].candidate, dealPrice, dealVolume);
                     
-                    // Map to NN prediction
                     MapToNeuralNetPrediction(m_pendingConfirmations[i].candidate, dealTicket);
                     
                     resolved = true;
@@ -247,7 +242,6 @@ public:
                     m_totalTimeout++;
                 }
                 
-                // Remove from pending
                 RemovePendingAt(i);
             }
         }

@@ -32,12 +32,12 @@ struct SCompoundingTierConfig
     ENUM_RISK_TIER riskTier;               // Which static risk tier to map to
     double riskPerTradeOverride;           // Override risk % (0 = use tier default)
     double maxRiskPerTradeOverride;        // Explicit max risk per trade (L5-006 fix)
-    double maxDailyRiskOverride;           // Override daily risk %
-    double maxPortfolioRiskOverride;       // Override portfolio risk %
-    double drawdownWarnOverride;           // Override drawdown warning %
-    double drawdownCriticalOverride;       // Override drawdown critical %
+    double maxDailyRiskOverride;
+    double maxPortfolioRiskOverride;
+    double drawdownWarnOverride;
+    double drawdownCriticalOverride;
     int    maxConcurrentOverride;          // Override max concurrent positions
-    double dailyLossLimitOverride;         // Override daily loss limit %
+    double dailyLossLimitOverride;
 };
 
 // Automatically switches risk profile as account grows
@@ -508,7 +508,7 @@ public:
                 return "UNINITIALIZED";
         
             SCompoundingTierConfig tier = m_tiers[m_currentTierIndex];
-            double currentBalance = m_previousEquity; // current equity
+            double currentBalance = m_previousEquity;
             double nextMilestone = tier.maxEquity;
             double distToNext = nextMilestone - currentBalance;
         

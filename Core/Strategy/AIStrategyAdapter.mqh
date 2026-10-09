@@ -17,7 +17,7 @@
      double m_weight;
      datetime m_lastSignalTime;
      string m_lastDecisionReasonTag;
-     CSubsystemLogger* m_logger;  // AI subsystem logger
+     CSubsystemLogger* m_logger;
      int m_logCounter;  // Counter for periodic logging
      bool m_adapterOwnsNN;  // L1-008: Ownership flag - adapter owns NN if true
     

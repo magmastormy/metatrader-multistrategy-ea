@@ -37,7 +37,6 @@ public:
 class CPosLifecyclePyramid
 {
 private:
-    // AGGRESSIVE: Pyramiding config
     bool   m_pyramidingEnabled;
     double m_pyramidingStepPips;
     double m_pyramidingSizeMultiplier;
@@ -57,7 +56,6 @@ public:
 
     ~CPosLifecyclePyramid()
     {
-        // Clean up pyramid states
         for(int i = 0; i < m_pyramidStateCount; i++)
         {
             if(CheckPointer(m_pyramidStates[i]) == POINTER_DYNAMIC)
@@ -67,7 +65,6 @@ public:
         ArrayFree(m_pyramidStates);
     }
 
-    //--- AGGRESSIVE: Configure pyramiding
     void Configure(bool enabled, double stepPips, double sizeMultiplier, int maxLayers)
     {
         m_pyramidingEnabled = enabled;
@@ -78,7 +75,6 @@ public:
 
     bool IsEnabled() const { return m_pyramidingEnabled; }
 
-    //--- AGGRESSIVE: Pyramiding management
     void ManagePyramiding(CTradeManager* tradeManager, const int magicBase, const int magicMax)
     {
         if(!m_pyramidingEnabled)
@@ -107,23 +103,18 @@ public:
             else
                 profitPips = (openPrice - currentPrice) / point;
 
-            // Find or create pyramid state for this position
             CPyramidState* state = GetPyramidState(ticket);
             if(state == NULL)
             {
-                // Initialize pyramid state for new position
                 state = CreatePyramidState(ticket, openPrice, lotSize);
                 if(state == NULL) continue;
             }
 
-            // Check if we should add a pyramid layer
             if(state.active && state.layer < m_pyramidingMaxLayers && profitPips >= state.nextStepPips)
             {
-                // Calculate pyramid lot size
                 double pyramidLotSize = state.baseLotSize * MathPow(m_pyramidingSizeMultiplier, state.layer + 1);
                 pyramidLotSize = NormalizeDouble(pyramidLotSize, 2);
 
-                // Send pyramid order
                 ENUM_ORDER_TYPE orderType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
                 string comment = "Pyramid Layer " + IntegerToString(state.layer + 1);
                 double entryPriceZero = 0.0;
@@ -135,18 +126,15 @@ public:
                     PrintFormat("[PYRAMID] Added layer %d to %s | ticket=%d | lot=%.2f | profit=%.0f pips",
                                 state.layer + 1, symbol, ticket, pyramidLotSize, profitPips);
 
-                    // Update pyramid state
                     state.layer++;
                     state.nextStepPips = profitPips + m_pyramidingStepPips;
                 }
             }
         }
 
-        // Clean up pyramid states for closed positions
         CleanupPyramidStates();
     }
 
-    //--- AGGRESSIVE: Get pyramid state for a position
     CPyramidState* GetPyramidState(ulong ticket)
     {
         for(int i = 0; i < m_pyramidStateCount; i++)
@@ -159,10 +147,8 @@ public:
         return NULL;
     }
 
-    //--- AGGRESSIVE: Create pyramid state for new position
     CPyramidState* CreatePyramidState(ulong ticket, double entryPrice, double lotSize)
     {
-        // Resize array if needed
         if(m_pyramidStateCount >= ArraySize(m_pyramidStates))
             ArrayResize(m_pyramidStates, m_pyramidStateCount + 10);
 
@@ -179,7 +165,6 @@ public:
         return state;
     }
 
-    //--- AGGRESSIVE: Clean up pyramid states for closed positions
     void CleanupPyramidStates()
     {
         int write = 0;

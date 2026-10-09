@@ -10,7 +10,7 @@ struct SSafeModeConfig
 {
    double   minConfidence;           // Min consensus confidence (0.70)
    int      minVoters;               // Min live voters for consensus (3)
-   double   minQuorumThreshold;      // Min quorum threshold (0.65)
+   double   minQuorumThreshold;
    double   minConfluence;           // Min strategy confluence (0.60)
    bool     tradeOnlyKillZones;      // Only trade during London/NY kill zones (true)
    bool     avoidNewsEvents;         // Avoid trades near news events (true, stub)
@@ -173,7 +173,6 @@ public:
    }
 
 // Pre-signal gate: check all safe mode conditions before evaluation
-// Returns true if signal evaluation is allowed
    bool IsSignalEvaluationAllowed(string symbol, double atrValue) const
    {
       if(!m_initialized)

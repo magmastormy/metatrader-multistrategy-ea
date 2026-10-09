@@ -295,14 +295,12 @@ public:
         static long GetFileSizeBytes() { return m_fileSizeBytes; }
         static int GetLineCount() { return m_lineCount; }
     
-        // Check if enabled
         static bool IsEnabled() { return m_enabled; }
     
     // Log with full entry
     static void Log(const SJsonLogEntry &entry) {
         if(!m_enabled) return;
         
-        // Check verbosity
         int entryVerbosity = 0;
         if(entry.level == "DEBUG") entryVerbosity = VERBOSITY_DEBUG;
         else if(entry.level == "INFO") entryVerbosity = VERBOSITY_NORMAL;

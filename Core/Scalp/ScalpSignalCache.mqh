@@ -38,7 +38,6 @@ struct SScalpIndicatorCache
    double            askPrice;
    double            spreadPoints;
 
-   // State tracking
    datetime          lastBarTime;      // For new-bar detection
    bool              isValid;          // Whether cache is populated
    bool              scalpSetupActive; // Pre-qualified for scalping
@@ -79,7 +78,6 @@ struct SScalpIndicatorCache
    }
 };
 
-// CScalpSignalCache — Dedicated tick-level indicator cache
 // UpdateOnNewBar()  = only place CopyBuffer is called
 // UpdateTickValues() = zero computation, only SymbolInfoDouble
 class CScalpSignalCache
@@ -134,7 +132,6 @@ private:
       return true;
    }
 
-// Copy N values from a handle starting at a shift
    bool CopyBufferN(int handle, int shift, int count, double &buf[]) const
    {
       if(handle == INVALID_HANDLE)
@@ -146,7 +143,6 @@ private:
    }
 
 public:
-// Constructor
    CScalpSignalCache() :
       m_cacheCount(0),
       m_emaFastPeriod(5),
@@ -160,13 +156,11 @@ public:
    {
    }
 
-// Destructor
    ~CScalpSignalCache()
    {
       Cleanup();
    }
 
-// Initialize cache for a set of symbols
 // Obtains indicator handles from CIndicatorManager::Instance()
    bool Initialize(const string &symbols[], int symbolCount, ENUM_TIMEFRAMES timeframe)
    {
@@ -184,7 +178,6 @@ public:
          return false;
       }
 
-      // Clean any previous state
       Cleanup();
 
       for(int i = 0; i < symbolCount; i++)
@@ -213,7 +206,6 @@ public:
             }
          }
 
-         // Obtain critical handles from CIndicatorManager with retry
          // iMA/iATR can transiently fail when symbol data is not yet loaded
          int maxHandleRetries = 3;
          for(int attempt = 0; attempt < maxHandleRetries; attempt++)
@@ -241,17 +233,14 @@ public:
          if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE || m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE ||
             m_cache[m_cacheCount].atrHandle == INVALID_HANDLE)
          {
-            // Batch 152 (S-M-06): do NOT alias emaFastHandle to the slow handle.
-            // Two identical series make every crossover comparison degenerate
-            // (fastCurr>slowCurr is never true) and poison downstream consumers
-            // of emaFast values. Exclude the symbol from the cache instead.
+            // Do NOT alias emaFastHandle to the slow handle - two identical series make every crossover comparison degenerate; exclude the symbol from the cache instead.
             if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE &&
                m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
                m_cache[m_cacheCount].atrHandle != INVALID_HANDLE)
             {
                PrintFormat("[SCALP-CACHE] ERROR: emaFast unavailable for %s after retries - symbol excluded | emaFast=%d emaSlow=%d atr=%d",
                            sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
+               // Reset fields individually (ZeroMemory corrupts string reference counting)
                m_cache[m_cacheCount].symbol = "";
                m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
                m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
@@ -266,7 +255,7 @@ public:
             {
                PrintFormat("[SCALP-CACHE] ERROR: Both emaFast and atr missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
                            sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
+               // Reset fields individually (ZeroMemory corrupts string reference counting)
                m_cache[m_cacheCount].symbol = "";
                m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
                m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
@@ -279,7 +268,7 @@ public:
             {
                PrintFormat("[SCALP-CACHE] ERROR: emaSlow missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
                            sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
+               // Reset fields individually (ZeroMemory corrupts string reference counting)
                m_cache[m_cacheCount].symbol = "";
                m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
                m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
@@ -296,7 +285,6 @@ public:
          m_cache[m_cacheCount].adxHandle     = indMgr.GetADXHandle(sym, timeframe, m_adxPeriod);
          m_cache[m_cacheCount].volumeHandle  = indMgr.GetVolumesHandle(sym, timeframe, VOLUME_TICK);
 
-         // Warn on non-critical handle failures
          if(m_cache[m_cacheCount].rsiHandle == INVALID_HANDLE)
             PrintFormat("[SCALP-CACHE] WARNING: RSI handle missing for %s", sym);
          if(m_cache[m_cacheCount].bbHandle == INVALID_HANDLE)
@@ -333,7 +321,6 @@ public:
    {
       for(int i = 0; i < m_cacheCount; i++)
       {
-         // New-bar detection
          datetime barTime = iTime(m_cache[i].symbol, m_cache[i].timeframe, 0);
          if(barTime == 0)
             continue;  // No data yet
@@ -342,7 +329,6 @@ public:
 
          bool anyFailed = false;
 
-         // EMA fast (2 values: current + previous)
          if(!CopyBuffer2(m_cache[i].emaFastHandle, m_cache[i].emaFast, m_cache[i].emaFastPrev))
          {
             m_cache[i].emaFast = 0.0;
@@ -350,7 +336,6 @@ public:
             anyFailed = true;
          }
 
-         // EMA slow (2 values: current + previous)
          if(!CopyBuffer2(m_cache[i].emaSlowHandle, m_cache[i].emaSlow, m_cache[i].emaSlowPrev))
          {
             m_cache[i].emaSlow = 0.0;
@@ -378,7 +363,6 @@ public:
             }
          }
 
-         // RSI (current only)
          if(!CopyBuffer1(m_cache[i].rsiHandle, m_cache[i].rsiValue))
          {
             m_cache[i].rsiValue = 0.0;
@@ -390,19 +374,16 @@ public:
          {
             double bbBuf[];
             ArraySetAsSeries(bbBuf, true);
-            // Buffer 0 = middle line
             if(CopyBuffer(m_cache[i].bbHandle, 0, 0, 1, bbBuf) >= 1)
                m_cache[i].bbMiddle = bbBuf[0];
             else
                m_cache[i].bbMiddle = 0.0;
 
-            // Buffer 1 = upper band
             if(CopyBuffer(m_cache[i].bbHandle, 1, 0, 1, bbBuf) >= 1)
                m_cache[i].bbUpper = bbBuf[0];
             else
                m_cache[i].bbUpper = 0.0;
 
-            // Buffer 2 = lower band
             if(CopyBuffer(m_cache[i].bbHandle, 2, 0, 1, bbBuf) >= 1)
                m_cache[i].bbLower = bbBuf[0];
             else
@@ -475,7 +456,6 @@ public:
       }
    }
 
-// Get cache for a specific symbol (copy values out)
    bool GetCache(string symbol, SScalpIndicatorCache &outCache)
    {
       int idx = FindIndex(symbol);
@@ -485,10 +465,8 @@ public:
       return true;
    }
 
-// Check if cache has been initialized
    bool IsInitialized() const { return m_cacheCount > 0; }
 
-// Lazy init: initialize on first access if not yet done
 // Call from OnTick path with the populated symbol array
    bool EnsureInitialized(const string &symbols[], int symbolCount, ENUM_TIMEFRAMES timeframe)
    {
@@ -499,7 +477,6 @@ public:
       return Initialize(symbols, symbolCount, timeframe);
    }
 
-// Check if a new bar has formed for a symbol
    bool HasNewBar(string symbol)
    {
       int idx = FindIndex(symbol);
@@ -521,12 +498,10 @@ public:
       m_cache[idx].setupType = setupType;
    }
 
-// Release all handles and reset cache
    void Cleanup()
    {
       // Note: handles are owned by CIndicatorManager — do NOT call IndicatorRelease here.
       // CIndicatorManager::DestroyInstance() handles cleanup.
-      // We only reset our references.
       for(int i = 0; i < m_cacheCount; i++)
       {
          m_cache[i].emaFastHandle  = INVALID_HANDLE;

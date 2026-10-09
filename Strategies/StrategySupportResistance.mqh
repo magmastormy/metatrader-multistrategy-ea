@@ -485,7 +485,6 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     bestResult.signal = TRADE_SIGNAL_NONE;
     bestResult.confidence = 0;
     
-    // Check Bounce Strategy
     if((m_mode == SR_MODE_BOUNCE || m_mode == SR_MODE_ALL) && m_bounceStrategy != NULL)
     {
         SSRSignalResult bounceResult = m_bounceStrategy.GetSignal();
@@ -495,7 +494,6 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         }
     }
     
-    // Check Breakout Strategy
     if((m_mode == SR_MODE_BREAKOUT || m_mode == SR_MODE_ALL) && m_breakoutStrategy != NULL)
     {
         SSRSignalResult breakoutResult = m_breakoutStrategy.GetSignal();
@@ -505,7 +503,6 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         }
     }
     
-    // Check Trendline Strategy
     if((m_mode == SR_MODE_TRENDLINE || m_mode == SR_MODE_ALL) && m_trendlineStrategy != NULL)
     {
         SSRSignalResult trendlineResult = m_trendlineStrategy.GetSignal();

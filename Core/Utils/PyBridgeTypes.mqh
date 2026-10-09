@@ -11,7 +11,7 @@
 // Python Bridge Health State Enum
 enum ENUM_PYTHON_BRIDGE_STATE
 {
-   PYTHON_BRIDGE_DISCONNECTED = 0,   // Not connected
+   PYTHON_BRIDGE_DISCONNECTED = 0,
    PYTHON_BRIDGE_CONNECTING   = 1,   // Attempting connection
    PYTHON_BRIDGE_CONNECTED    = 2,   // Connected and healthy
    PYTHON_BRIDGE_ERROR        = 3    // Error state
@@ -39,8 +39,8 @@ struct SPythonBridgeVersion
 struct SPythonBridgeHealthStatus
 {
    ENUM_PYTHON_BRIDGE_STATE state;    // Connection state
-   bool               connected;       // Is connected
-   bool               healthy;         // Is healthy
+   bool               connected;
+   bool               healthy;
    datetime           last_heartbeat;  // Last successful heartbeat
    int                reconnect_attempts; // Number of reconnect attempts
    int                request_count;   // Total requests sent
@@ -67,15 +67,15 @@ struct SPythonBridgeResponse
 {
    bool               success;         // Request successful
    string             error_message;   // Error message if failed
-   double             buy_prob;        // Buy probability
-   double             sell_prob;       // Sell probability
-   double             hold_prob;       // Hold probability
+   double             buy_prob;
+   double             sell_prob;
+   double             hold_prob;
    double             lgbm_buy;        // LGBM buy probability
    double             lgbm_sell;       // LGBM sell probability
-   double             stacker_signal;  // Stacker signal
+   double             stacker_signal;
    string             ts;              // Timestamp
    string             mode;            // Response mode
-   double             adapted_features[]; // Adapted features (for doubleadapt)
+   double             adapted_features[];
    int                family_id;       // Deriv family ID (-1 = universal)
    string             family_name;     // Family name from Python
    double             catboost_buy;    // CatBoost buy probability
@@ -85,7 +85,7 @@ struct SPythonBridgeResponse
    double             onnx_buy;        // ONNX buy probability (family-specific)
    double             onnx_sell;       // ONNX sell probability (family-specific)
    int                asset_class;     // Asset class ID (-1 = not specified)
-   string             asset_class_name; // Asset class name
+   string             asset_class_name;
 
    SPythonBridgeResponse()
    {

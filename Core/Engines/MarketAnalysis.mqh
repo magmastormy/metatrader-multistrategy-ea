@@ -8,7 +8,6 @@
 // Include Enums first to ensure all enums are defined
 #include "../Utils/Enums.mqh"
 
-// Include required MQL5 headers
 #include <Indicators/Indicator.mqh>
 #include <Trade/SymbolInfo.mqh>
 #include <Arrays/ArrayDouble.mqh>
@@ -25,7 +24,6 @@
 #include "MarketAnalysisRegime.mqh"
 
 // Global profiler access declared in OrchestratorFwd.mqh (extern)
-// Forward declarations
 
 class CMarketAnalysis {
 private:
@@ -37,7 +35,6 @@ private:
 
 public:
 
-    // Check if symbol is available for trading/analysis
     bool IsSymbolAvailable(const string symbolName) const {
         return CMarketAnalysisSymbolProfile::IsSymbolAvailable(symbolName);
     }
@@ -50,7 +47,6 @@ public:
         m_metrics.ReleaseAllHandles();
     }
 
-    // Initialize a single indicator and handle errors
     bool InitializeIndicator(int &handle, const string symbolName, const ENUM_TIMEFRAMES period, const string indicatorName,
                             const int param1 = 0, const int param2 = 0, const double param3 = 0, const int param4 = 0) {
         return m_metrics.InitializeIndicator(handle, symbolName, period, indicatorName, param1, param2, param3, param4);
@@ -66,12 +62,10 @@ public:
         return CMarketAnalysisSymbolProfile::RequiresSpecialHandling(symbolName);
     }
 
-    // Initialize all required indicators for the given symbol and period
     bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
         return m_metrics.InitializeIndicators(symbolName, period);
     }
 
-    // Detect market regime for a given symbol
     ENUM_MARKET_REGIME DetectMarketRegime() {
         if(!m_metrics.IsRegimeInputReady())
             return m_regime.GetCurrentRegime();
@@ -103,25 +97,20 @@ public:
         return m_metrics.GetCurrentTrendStrength();
     }
 
-    // Get current market momentum
     double GetMomentum() const {
         return m_metrics.GetMomentum();
     }
 
-    // Get current ATR value
     double GetATRValue();
 
-    // Get ATR value for a specific symbol and period
     double GetATR(const string symbol, int period);
 };
 
-// Get current ATR value
 double CMarketAnalysis::GetATRValue()
 {
     return m_metrics.GetATRValue();
 }
 
-// Get ATR value for a specific symbol and period
 double CMarketAnalysis::GetATR(const string symbol, int period)
 {
     // For now, return the current ATR value

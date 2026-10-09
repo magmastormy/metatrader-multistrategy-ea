@@ -183,11 +183,9 @@ void CSubsystemLogger::RotateIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
     
     bool needRotate = false;
     
-    // Check line count
     if(m_lineCounts[idx] >= MAX_LINES_PER_FILE)
         needRotate = true;
     
-    // Check file size
     if(m_fileSizes[idx] >= MAX_FILE_SIZE_BYTES)
         needRotate = true;
     

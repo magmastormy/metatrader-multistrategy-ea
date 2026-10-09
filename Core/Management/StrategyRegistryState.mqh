@@ -1,16 +1,6 @@
-// Strategy Registry State (Phase C, Slice 4 - C8)
-// Registry bookkeeping and per-strategy enable-state extracted from
-// - RegisterStrategy        (registration bookkeeping: registry
-// gate, capacity gate, strategy Init /
-// AI init / risk-injection validation,
-// entry append, health-monitor
-// enrolment, registration log)
-// - FindStrategyIndexByName (name -> index lookup)
-// - GetStrategyByName       (name -> IStrategy* lookup)
-// - IsStrategyLiveVoter     ("is strategy X an enabled live
-// voter?" enable-state query)
-// SetStrategyGovernanceByName (registry-entry metadata
-// bookkeeping)
+// Registry bookkeeping and per-strategy enable-state: the registration sequence (registry
+// gate, capacity gate, strategy Init / AI init / risk-injection validation, entry append,
+// health-monitor enrolment, registration log), the name lookups and the live-voter query.
 // This module MUTATES the manager, so it holds a NON-const back-
 // pointer and writes through the manager's narrow per-field
 // accessors. It mirrors no injected manager pointer (the registry /
@@ -49,10 +39,7 @@
 #include "../Strategy/StrategyRegistry.mqh"         // CStrategyRegistry::IsStrategyActive
 #include "StrategyHealthMonitor.mqh"                // CStrategyHealthMonitor::RegisterStrategy
 
-// Batch 145: the concrete strategy-class includes were only needed by the dead
-// duplicate AutoRegisterStrategies() that used to live below (never called -
-// the manager's own out-of-line definition is the live one). Both are gone;
-// registration data now lives in Core/Strategy/StrategyCatalog.mqh.
+//--- Registration data lives in Core/Strategy/StrategyCatalog.mqh.
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
@@ -67,7 +54,6 @@ public:
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
-    //--- registration bookkeeping
     bool RegisterStrategy(IStrategy* strategy, const string name,
                           bool enabled, double weight,
                           ENUM_STRATEGY_TIER tier,
@@ -77,11 +63,9 @@ public:
                           ENUM_STRATEGY_CLUSTER cluster,
                           bool liveVotingEnabled);
 
-    //--- lookups
     int        FindStrategyIndexByName(const string name) const;
     IStrategy* GetStrategyByName(const string name) const;
 
-    //--- enable-state query
     bool IsStrategyLiveVoter(const int strategyIndex) const;
 
     //--- registry-entry metadata bookkeeping
@@ -196,7 +180,6 @@ int CStrategyRegistryState::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
-// Get Strategy By Name - Batch 103: returns strategy pointer
 IStrategy* CStrategyRegistryState::GetStrategyByName(const string name) const
 {
     if(m_src == NULL)
@@ -223,7 +206,6 @@ bool CStrategyRegistryState::IsStrategyLiveVoter(const int strategyIndex) const
     return true;
 }
 
-// Registry metadata: role
 bool CStrategyRegistryState::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
 {
     if(m_src == NULL)
@@ -239,7 +221,6 @@ bool CStrategyRegistryState::SetStrategyRoleByName(const string name, ENUM_STRAT
     return true;
 }
 
-// Registry metadata: cluster
 bool CStrategyRegistryState::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
 {
     if(m_src == NULL)

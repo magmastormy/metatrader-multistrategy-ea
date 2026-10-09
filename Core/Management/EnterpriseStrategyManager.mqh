@@ -21,13 +21,10 @@
 #include "../../Core/AI/AIPerformanceFeedback.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
 
-// Batch 145: the whole production strategy inventory now lives in ONE
-// data-driven catalog. StrategyCatalog.mqh pulls in every concrete strategy
-// class header itself, so it is included at the exact position the 12 direct
-// includes occupied and downstream modules still see the concrete types.
+// Included at the position the 12 direct strategy includes occupied, so downstream
+// modules still see the concrete strategy types.
 #include "../Strategy/StrategyCatalog.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CMarketAnalysis;
@@ -46,40 +43,25 @@ class CFourStateRegimeDetector;  // Forward declaration for market regime detect
 // Forward declaration (fallback if include guard prevents inclusion)
 class CStrategyRegistry;
 
-// Phase G / G1: struct StrategyEntry and the shared enum->text free
-// helpers (StrategyRoleToString, StrategyClusterToString,
-// StrategyClusterShortCode, IntrabarPolicyToString,
-// TradeSignalToString, IsInfrastructureNoSignalReasonTag,
-// ClampUnitValue) moved verbatim into EntStrategyTypes.mqh. It is
-// included at the exact position the originals occupied: after the
-// strategy-registry include, before the slice-module includes, so
-// every collaborator still sees them BEFORE its own definition.
+// Included at the position the originals occupied: after the strategy-registry
+// include, before the slice-module includes, so every collaborator still sees
+// struct StrategyEntry and the shared enum->text helpers BEFORE its own definition.
 #include "EntStrategyTypes.mqh"
 
-// Phase C / Slice 1 extracted collaborators. Included here (after the shared
-// free helpers above, before the manager class) so that:
-//   - CStrategyStateReporter / CAttributionDelegator are complete types and can
-//     be held BY VALUE as members of CEnterpriseStrategyManager;
-//   - the reporter's out-of-line bodies may reference the still-incomplete
-//     CEnterpriseStrategyManager (resolved later in this same translation unit).
+// Held BY VALUE as members, so these must be complete types here; the reporter's
+// out-of-line bodies may reference the still-incomplete CEnterpriseStrategyManager
+// (resolved later in this same translation unit).
 #include "StrategyStateReporter.mqh"
 #include "AttributionDelegator.mqh"
-// Phase C / Slice 2 extracted collaborators (same rationale as Slice 1).
 #include "PostConsensusValidator.mqh"
 #include "ConsensusWeightingConfig.mqh"
-// Phase C / Slice 3 extracted collaborators (same rationale as Slice 1).
 #include "StrategyPerformanceHealth.mqh"
 #include "StrategyLifecycle.mqh"
-// Phase C / Slice 4 extracted collaborators (same rationale as Slice 1).
 #include "IntrabarPolicy.mqh"
 #include "StrategyRegistryState.mqh"
-// Phase C / Slice 5 extracted collaborator (same rationale as Slice 1):
-// C9, the consensus decision core, moved wholesale into CConsensusEngine.
 #include "ConsensusEngine.mqh"
 
-// Phase G extracted collaborators. Same rationale as the Phase C slices:
-// each is held BY VALUE by the manager, so its complete type must be visible
-// here. Include order is load-bearing:
+// Include order is load-bearing:
 //   EntStrategyQuorumConfig  -> StrategyMgrInfrastructure::Initialize() takes it
 //                               by reference;
 //   EntStrategyTypes (above) -> StrategyMgrRoster stores StrategyEntry[];
@@ -94,31 +76,23 @@ class CStrategyRegistry;
 class CEnterpriseStrategyManager
 {
 private:
-    // Phase C / Slice 1: extracted collaborators (owned by value, no lifetime management)
     CStrategyStateReporter m_stateReporter;      // C1: read-only telemetry / JSON reporting
     CAttributionDelegator  m_attributionDelegator; // C2: attribution forwarders
 
-    // Phase C / Slice 2: extracted collaborators (owned by value, no lifetime management)
     CPostConsensusValidator  m_postConsensusValidator; // C3: post-consensus validation + its config
     CConsensusWeightingConfig m_weightingConfig;       // C4: weighting / quorum profiles
 
-    // Phase C / Slice 3: extracted collaborators (owned by value, no lifetime management)
     CStrategyPerformanceHealth m_performanceHealth;    // C5: performance accounting / health scoring
     CStrategyLifecycle         m_lifecycle;            // C7: enable/disable lifecycle, per-bar transitions
 
-    // Phase C / Slice 4: extracted collaborators (owned by value, no lifetime management)
     CIntrabarPolicy        m_intrabarPolicy; // C6: intrabar policy table + eligibility gating
     CStrategyRegistryState m_registryState;  // C8: registry bookkeeping + enable-state queries
 
-    // Phase C / Slice 5: extracted collaborator (owned by value, no lifetime management)
     CConsensusEngine       m_consensusEngine; // C9: consensus decision core (owns m_lastDecisionContext)
 
-    // Phase G extracted collaborators (owned by value, no lifetime management).
-    // Together they hold ALL of the manager's former loose state: the
-    // collaborator pointers / symbol / init flags (G5), the registered-strategy
-    // roster (G4), the consensus-quorum configuration (G2), the last-signal and
-    // cycle telemetry (G3) and the magic-ownership window (G6). The manager
-    // itself is now stateless apart from these members.
+    // All collaborators are owned by value (no lifetime management). Together they
+    // hold ALL of the manager's former loose state; the manager itself is stateless
+    // apart from these members.
     CEntStrategyQuorumConfig   m_quorumConfig;   // G2: quorum / adaptation config
     CEntStrategySignalContext  m_signalContext;  // G3: last-signal + cycle telemetry
     CStrategyMgrRoster         m_roster;         // G4: registered-strategy roster
@@ -132,46 +106,22 @@ private:
     void SplitContributors(const string csv, string &contributors[]) const;
     void UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool PopPositionAttribution(const ulong positionId, string &contributors[]);
-    //--- Phase C / Slice 5 (C9): retained as a one-line forwarder because the
-    //--- public read-only accessor GetStrategyIsLiveVoter() (consumed by
-    //--- CStrategyStateReporter) is defined in terms of it. The implementation
-    //--- lives in CConsensusEngine.
+    //--- Kept as a forwarder: CStrategyStateReporter consumes GetStrategyIsLiveVoter().
     bool IsStrategyLiveVoter(const int strategyIndex) const;
 
     // Fallback solo signal when all strategies abstain.
-    // Phase C / Slice 5 (C9): forwarder; implementation in CConsensusEngine.
     ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode, double &outConfidence, int &outConfluence, string &outReason);
 
-    // Consensus decision class to string conversion. Already a shim over
-    // CStrategyStateReporter (Phase C / Slice 1); left in place.
     static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
 
-    //--- Phase C / Slice 5 (C9): the consensus evaluation core
-    //--- (EvaluateConsensusInternal, EvaluateConsensusTwoTierInternal,
-    //--- EvaluateConsensusProbeOnlyInternal, TryFallbackSoloSignalInternal,
-    //--- CalculateEffectiveQuorumParamsInternal) and its vote/weighting helpers
-    //--- (GetStrategyReliabilityMultiplier, GetStrategyParticipationMultiplier,
-    //--- GetStrategyRoleVoteMultiplier, GetRegimeCategoryMultiplier,
-    //--- CalculateDirectionDiversityScore, CalculateAverageStrategyMetric,
-    //--- ClampUnitValue, GetStrategyIntrabarPolicy,
-    //--- IsStrategyIntrabarLiveEligible, IsStrategyIntrabarProbeEligible,
-    //--- IsTrendingRegime, ResolveDominantRole, ResolveDominantCluster,
-    //--- JoinContributorsWithContext, AccumulateRoleClusterSignalDiagnostics,
-    //--- MaybeLogConsensusDiagnostics) moved wholesale into CConsensusEngine.
-    //--- None of them had a caller outside the consensus core, so no forwarder
-    //--- is retained for them.
+    //--- No forwarder is retained for the consensus internals that moved to
+    //--- CConsensusEngine: none of them had a caller outside the consensus core.
 
-    //--- Post-consensus validation: Phase C / Slice 2 (C3).
-    //--- Implementation lives in CPostConsensusValidator; the manager keeps only
-    //--- forwarders for the externally-consumed entry points. The result type is
-    //--- now the top-level struct SPostConsensusValidation (was the nested
-    //--- SValidationResult, which shadowed the unrelated global SValidationResult
-    //--- declared in Core/Utils/Enums.mqh).
-    //--- The internal leaf checks (CheckHardSpreadCutoff, CheckExogenousFilters,
-    //--- CheckOFIConfirmation, CheckVPINFilter, GetATRDirect,
-    //--- GetATRCrisisThreshold, IsSyntheticSymbolForValidation,
-    //--- GetAdaptiveQualityThreshold) had zero callers outside ValidateSignal and
-    //--- moved wholesale - no forwarder is retained for them.
+    //--- ValidateSignal's implementation lives in CPostConsensusValidator; the manager
+    //--- keeps only forwarders for the externally-consumed entry points. The result type
+    //--- is the top-level struct SPostConsensusValidation, because the nested
+    //--- SValidationResult shadowed the unrelated global SValidationResult declared in
+    //--- Core/Utils/Enums.mqh.
 public:
     SPostConsensusValidation ValidateSignal(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
                                             int confluence, ENUM_SIGNAL_EVAL_MODE evalMode,
@@ -187,7 +137,6 @@ public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
     
-    // L1-007: Component accessors (Phase G / G5: storage lives in m_infra)
     CDiagnosticsManager* GetDiagnostics() { return m_infra.GetDiagnostics(); }
     void SetDiagnosticsManager(CDiagnosticsManager* diagnostics) { m_infra.SetDiagnosticsManager(diagnostics); }
     CTradeAttributionManager* GetAttribution() { return m_infra.GetAttribution(); }
@@ -195,9 +144,8 @@ public:
          { m_infra.SetAttributionManager(attribution); m_attributionDelegator.SetAttribution(m_infra.GetAttribution()); }
     CStrategyHealthMonitor* GetHealthMonitor() { return m_infra.GetHealthMonitor(); }
 
-    //--- Phase C / Slice 1: minimal read-only accessor surface consumed by
-    //--- CStrategyStateReporter. These expose existing state verbatim; they add
-    //--- no logic and are the only way the reporter observes this manager.
+    //--- Read-only accessor surface consumed by CStrategyStateReporter: these expose
+    //--- existing state verbatim, add no logic, and are the only way it observes this manager.
     int    GetStrategyCount() const { return m_roster.GetStrategyCount(); }
     bool   IsStrategyEnabled(const int index) const
            { return m_roster.IsStrategyEnabled(index); }
@@ -237,19 +185,14 @@ public:
     int    GetLastCycleSignalsAfterPipelineValue() const { return m_signalContext.GetLastCycleSignalsAfterPipeline(); }
     bool   GetLastCycleSignalAfterQuorumValue() const { return m_signalContext.GetLastCycleSignalAfterQuorum(); }
 
-    //--- Phase G / G3: last-signal contributor telemetry consumed by
-    //--- CStrategyMgrTradeFeedback (G6) through its m_src back-pointer. The
-    //--- storage moved into CEntStrategySignalContext, so these four are the
-    //--- manager-side handles the trade-feedback module reads/writes through.
+    //--- Last-signal contributor telemetry consumed by CStrategyMgrTradeFeedback (G6)
+    //--- through its m_src back-pointer; these are the manager-side handles it uses.
     int  GetLastContributorCountValue() const { return m_signalContext.GetLastContributorCount(); }
     int  GetLastContributorArraySize() const  { return m_signalContext.GetContributorArraySize(); }
     void IncrementSuccessfulSignals()         { m_signalContext.IncrementSuccessfulSignals(); }
     void ResetLastContributorContext()        { m_signalContext.ResetContributorContext(); }
 
-    //--- Phase C / Slice 2: additional read-only accessors consumed by
-    //--- CPostConsensusValidator (C3) and CConsensusWeightingConfig (C4).
-    //--- Same contract as the Slice 1 block: expose existing state verbatim,
-    //--- add no logic.
+    //--- Read-only accessors consumed by CPostConsensusValidator and CConsensusWeightingConfig.
     COrderFlowImbalanceEngine*   GetOFIEngineConst() const          { return m_infra.GetOFIEngine(); }
     CVPINFilter*                 GetVPINFilterConst() const         { return m_infra.GetVPINFilter(); }
     CMultiAssetProfiler*         GetMultiAssetProfilerConst() const { return m_infra.GetMultiAssetProfiler(); }
@@ -261,23 +204,16 @@ public:
            { return m_roster.GetStrategyOriginalWeight(index); }
     int    GetStrategyIndexByName(const string name) const { return FindStrategyIndexByName(name); }
 
-    //--- Narrow raw weight mutator for C4. Mirrors exactly what
-    //--- UpdateStrategyWeights() used to do inline: write the entry weight and
-    //--- push it to the strategy object, WITHOUT touching the health monitor
-    //--- (that is UpdateStrategyWeightByName's behaviour, deliberately distinct).
+    //--- Narrow raw weight mutator: writes the entry weight and pushes it to the strategy
+    //--- object WITHOUT touching the health monitor (that is UpdateStrategyWeightByName's
+    //--- behaviour, deliberately distinct).
     void   ApplyRawStrategyWeight(const int index, const double weight)
            { m_roster.ApplyRawStrategyWeight(index, weight); }
 
-    //--- Phase C / Slice 3: accessor surface consumed by
-    //--- CStrategyPerformanceHealth (C5) and CStrategyLifecycle (C7).
-    //--- Same contract as Slice 1/2: each accessor exposes exactly one
-    //--- existing field verbatim and adds no logic. The mutators are the
-    //--- narrow write half required because both collaborators (like C4)
-    //--- change manager state; they are deliberately dumb field writers so
-    //--- the resulting state transitions stay byte-for-byte identical to the
-    //--- original inline bodies.
+    //--- Accessor surface consumed by CStrategyPerformanceHealth and CStrategyLifecycle:
+    //--- each accessor exposes exactly one existing field verbatim and adds no logic; the
+    //--- mutators are deliberately dumb field writers.
 
-    //--- read half
     int      GetStrategyTotalTrades(const int index) const
              { return m_roster.GetStrategyTotalTrades(index); }
     int      GetStrategyWinningTrades(const int index) const
@@ -364,14 +300,11 @@ public:
     void SetStrategyLastSignalConfidence(const int index, const double value)
          { m_roster.SetStrategyLastSignalConfidence(index, value); }
 
-    //--- Phase C / Slice 5: accessor surface consumed by CConsensusEngine (C9).
-    //--- Same contract as Slice 1/2/3: every accessor exposes exactly one
-    //--- existing field verbatim and adds no logic. The consensus core READS
-    //--- the enable / live-voting / intrabar-policy flags through here; it does
-    //--- NOT own them (they are written by registration, lifecycle and the
-    //--- governance setters, all of which stay in this manager). The single
-    //--- mutator, SetAdxHandleCached, exists only because IsTrendingRegime()
-    //--- lazily caches the ADX handle exactly as the original inline body did.
+    //--- Accessor surface consumed by CConsensusEngine. The consensus core READS the
+    //--- enable / live-voting / intrabar-policy flags through here; it does NOT own them
+    //--- (they are written by registration, lifecycle and the governance setters, all of
+    //--- which stay in this manager). SetAdxHandleCached exists only because
+    //--- IsTrendingRegime() lazily caches the ADX handle.
     CTimeframeConsistency* GetTFConsistencyConst() const   { return m_infra.GetTFConsistency(); }
     CStrategyRegistry*     GetStrategyRegistryConst() const { return m_infra.GetStrategyRegistry(); }
     ENUM_TIMEFRAMES        GetBaseTimeframe() const         { return m_infra.GetBaseTimeframe(); }
@@ -411,7 +344,6 @@ public:
     int    GetAdxHandleCached() const                { return m_infra.GetAdxHandleCached(); }
     void   SetAdxHandleCached(const int handle)      { m_infra.SetAdxHandleCached(handle); }
 
-    // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool usePipeline = true,
                    CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL,
@@ -421,7 +353,6 @@ public:
     // L1-004: Set strategy registry (replaces global singleton)
     void SetStrategyRegistry(CStrategyRegistry* registry) { m_infra.SetStrategyRegistry(registry); }
     
-    // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
                              bool enabled = true, double weight = 1.0,
                              ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3,
@@ -433,7 +364,6 @@ public:
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
     
-    // Signal generation - internal consensus logic
     ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
@@ -443,7 +373,6 @@ public:
     // Two-tier consensus: Tier 1 quick-probe fast path, Tier 2 full evaluation fallback - internal consensus logic
     ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
     
-    // Configuration - internal consensus logic
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum);
@@ -461,13 +390,11 @@ public:
                                      const double minReadyCoverage);
     void SetAllowSparseIntrabarSingleVoter(const bool enabled);
     
-    // Intrabar policy configuration per strategy (L6-007)
     void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
 
-    //--- Phase C / Slice 4 (C8): narrow per-field accessors consumed by
-    //--- CStrategyRegistryState / CIntrabarPolicy back-pointers (m_src).
-    //--- Each is a logic-free forwarder over existing members.
+    //--- Narrow per-field accessors consumed by CStrategyRegistryState / CIntrabarPolicy
+    //--- through their m_src back-pointers. Each is a logic-free forwarder.
     int    GetMaxStrategies() const { return m_roster.GetMaxStrategies(); }
     CTradeManager*        GetTradeManagerConst() const { return m_infra.GetTradeManager(); }
     CPositionSizer*       GetPositionSizerConst() const { return m_infra.GetPositionSizer(); }
@@ -480,7 +407,7 @@ public:
     void SetStrategyIntrabarPolicyRaw(int index, int policy);
     void SetStrategyIntrabarEligible(int index, bool eligible);
 
-    // 35-field StrategyEntry append — single writer behind the registry
+    // 35-field StrategyEntry append ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ single writer behind the registry
     // state module's RegisterStrategy(). Mirrors the original RegisterStrategy
     // append block byte-for-byte (no registry/logic changes).
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
@@ -491,18 +418,14 @@ public:
                                        ENUM_STRATEGY_CLUSTER cluster,
                                        bool liveVotingEnabled);
 
-    //--- Phase C / Slice 4 (C8): registration-time helper consumed by
-    //--- CStrategyRegistryState::AutoRegisterStrategies(). Was private;
-    //--- promoted to public because the slice module calls it via m_src.
+    //--- Promoted to public: CStrategyRegistryState::AutoRegisterStrategies() calls it via m_src.
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
     
-    // Participation formula configuration (L6-008)
     void SetParticipationFormulaBase(const double base);
     void SetParticipationFormulaCoeff(const double coeff);
     void SetParticipationFormulaMin(const double minVal);
     void SetParticipationFormulaMax(const double maxVal);
     
-    // Quorum preset profiles - internal consensus logic
     enum ENUM_QUORUM_PROFILE
     {
         QUORUM_CONSERVATIVE,
@@ -551,7 +474,6 @@ public:
                                          ulong &noneClusterSignals) const;
     void GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
     
-    // L1-007: Delegated to CDiagnosticsCollector
     void GetConsensusDiagnosticsSnapshot(ulong &rawNone,
                                          ulong &filteredOut,
                                          ulong &quorumFailed,
@@ -571,13 +493,11 @@ public:
                                          ulong &intervalReasonTotal);
     bool PopClosedTradeAttribution(string &contributors[], double &netProfit);
     
-    // Utility
     int GetActiveStrategyCount() const;
     int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, double netProfit);
     
-    // Explicit deinitialization
     void Deinit();
 
     // Manager-owned orchestration/adaptation API (AISO consolidation) - delegated to CStrategyHealthMonitor
@@ -594,7 +514,6 @@ public:
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
     
-    // Ported adaptation helpers - delegated to CStrategyHealthMonitor
     double CalculateRecentWinRate(const int index);
     double CalculateSharpeRatio(const int index);
     void UpdateRegimePerformance(const int index, int regime, const double result);
@@ -603,7 +522,6 @@ public:
     bool ShouldReEnableStrategy(const int index);
     void UpdateRecentPerformance(const int index, const double result);
 
-    // Visualization
     void SetDrawingManager(CChartDrawingManager* drawingManager);
     CChartDrawingManager* GetDrawingManager();
     
@@ -613,15 +531,12 @@ public:
     // Trade Feedback - manager-owned trade outcome tracking
     void OnTradeTransaction(const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result);
     
-    // Auto-registration
         void AutoRegisterStrategies(bool &enabledFlags[]);
         // Reconcile enabled flags against the finalized registry (see SyncEnabledWithRegistry definition)
         void SyncEnabledWithRegistry();
 
-        // AI Performance Feedback integration (L6-016)
         void UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics);
 
-        // Deriv family-based engine weighting
     void SetDerivProfiler(CDerivAssetProfiler* profiler);
     void SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix);
     void SetMultiAssetProfiler(CMultiAssetProfiler* profiler);
@@ -631,28 +546,10 @@ public:
     void ApplyAssetClassEngineWeights(const string symbol);
 };
 
-// Constructor
-//--- Phase G: the whole initialiser list moved with the state it initialised.
-//--- Every former scalar now lives in the module that owns it and is set by
-//--- that module's own constructor, VERBATIM:
-//---   CStrategyMgrInfrastructure() - collaborator pointers, m_symbol,
-//---       m_baseTimeframe, m_initialized, m_usePipeline, m_adxHandleCached,
-//---       m_diagnostics, m_attribution, m_healthMonitor, m_drawingManager;
-//---   CStrategyMgrRoster()         - m_strategyCount(0), m_maxStrategies(25)
-//---                                  and ArrayResize(m_strategies, 0);
-//---   CEntStrategyQuorumConfig()   - the entire quorum / adaptation /
-//---       participation block, INCLUDING the [PROFIT-02] conflict deadband
-//---       (0.35) and the two [PROFIT-11] support floors (0.30 / 0.25), which
-//---       are carried over byte-for-byte together with their marker comments;
-//---   CEntStrategySignalContext()  - m_totalSignals, m_successfulSignals,
-//---       m_avgConfidence, m_currentMarketRegime, the last-signal tags and
-//---       ArrayResize of both contributor arrays;
-//---   CStrategyMgrTradeFeedback()  - m_managedMagic, m_managedMagicRangeMax;
-//---   CIntrabarPolicy()            - the 32-slot policy table reset to
-//---                                  INTRABAR_POLICY_OFF.
-//--- Phase C / Slice 2: the post-consensus validator config block (including
-//--- the 15000-pt hard spread cutoff bugfix default) is likewise initialised by
-//--- CPostConsensusValidator's own constructor.
+//--- Every former scalar is initialised by the module that owns it. The [PROFIT-02] conflict
+//--- deadband (0.35), the [PROFIT-11] support floors (0.30 / 0.25), m_maxStrategies(25), the
+//--- 32-slot INTRABAR_POLICY_OFF table and the 15000-pt hard spread cutoff bugfix default are
+//--- carried over byte-for-byte by those module constructors.
 CEnterpriseStrategyManager::CEnterpriseStrategyManager()
 {
     // L1-007: Create component instances. m_diagnostics / m_attribution stay
@@ -660,21 +557,15 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager()
     // the infrastructure module exactly as the inline constructor used to do.
     m_infra.AllocateHealthMonitor();
 
-    // Phase C / Slice 1: bind extracted collaborators at the earliest safe point.
     // The reporter observes this manager read-only; the delegator mirrors the
     // (still NULL) attribution pointer and is re-bound by SetAttributionManager().
     m_stateReporter.SetSource(GetPointer(this));
     m_attributionDelegator.SetAttribution(m_infra.GetAttribution());
 
-    // Phase C / Slice 2: same binding site. Both collaborators point at this
-    // manager for its whole lifetime (unlike the attribution delegator, they
-    // mirror no injected pointer, so they need no re-sync on Deinit).
+    //--- These collaborators mirror no injected pointer, so they need no re-sync on Deinit.
     m_postConsensusValidator.SetSource(GetPointer(this));
     m_weightingConfig.SetSource(GetPointer(this));
 
-    // Phase C / Slice 3: same binding site. Both collaborators mutate this
-    // manager through its narrow per-field accessors and mirror no injected
-    // pointer, so (like Slice 2) they need no re-sync on Deinit.
     m_performanceHealth.SetSource(GetPointer(this));
     m_lifecycle.SetSource(GetPointer(this));
 
@@ -684,9 +575,6 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager()
     m_intrabarPolicy.SetSource(GetPointer(this));
     m_registryState.SetSource(GetPointer(this));
 
-    // Phase C / Slice 5: same binding site. The consensus engine re-reads the
-    // pipeline / registry / diagnostics from this manager on every call and
-    // mirrors no injected pointer, so it needs no re-sync on Deinit either.
     m_consensusEngine.SetSource(GetPointer(this));
 
     // Phase G / G6: the trade-feedback module reads the manager's symbol,
@@ -694,52 +582,34 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager()
     m_tradeFeedback.SetSource(GetPointer(this));
 }
 
-// Destructor
 CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 {
-    // Phase G / G4: the strategy teardown loop moved to the roster (identical
-    // in both call sites). Note the destructor deliberately does NOT reset
-    // m_strategyCount / resize the array afterwards - only Deinit() did that,
-    // so ClearRoster() is intentionally not called here.
+    //--- The destructor deliberately does NOT reset m_strategyCount / resize the array
+    //--- afterwards - only Deinit() did that, so ClearRoster() is intentionally not called here.
     m_roster.DeleteAllStrategies();
 
-    // Phase G / G5: pipeline, cached ADX handle, FourStateRegimeDetector,
-    // TimeframeConsistency and the health monitor are released in the exact
-    // original order. m_diagnostics / m_attribution are injected from
-    // EAOrchestrator and are deliberately NOT deleted here.
+    //--- Released in the exact original order. m_diagnostics / m_attribution are injected from
+    //--- EAOrchestrator and are deliberately NOT deleted here.
     m_infra.ReleaseOnDestruct();
 }
 
-// Two-Phase Initialization Pattern (L2-023):
-// Phase 1 (Required): Core infrastructure - Pipeline,
-// TimeframeConsistency (must succeed or full init fails)
-// Phase 2 (Optional): Enhancements - FourStateRegimeDetector,
-// FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)
-// This pattern ensures core consensus machinery is ready before
-// registering strategies, while allowing optional engines to
-// degrade gracefully without blocking the manager.
-// Ownership: Phase 1 objects owned by manager (deleted in dtor).
-// Phase 2 objects also owned but failure does not roll back Phase 1.
+// Two-phase init: Phase 1 (Pipeline, TimeframeConsistency) must succeed or full init fails;
+// Phase 2 (FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine) is optional and
+// degrades gracefully without blocking the manager or rolling back Phase 1. Both phases' objects
+// are owned by the manager and deleted in the destructor.
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool usePipeline,
                                            CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
                                            CUnifiedRiskManager* unifiedRiskManagerPtr,
                                            const long managedMagic)
 {
-    // Phase G / G6: Initialize() seeded BOTH magic fields from the same
-    // argument (m_managedMagic = m_managedMagicRangeMax = managedMagic);
-    // SetManagedMagic() reproduces that exactly.
+    //--- Initialize() seeded BOTH magic fields from the same argument:
+    //--- m_managedMagic = m_managedMagicRangeMax = managedMagic.
     m_tradeFeedback.SetManagedMagic(managedMagic);
 
-    // Phase G / G5: the two-phase bring-up (symbol/timeframe/pipeline flag and
-    // the injected trade manager, position sizer and unified risk manager;
-    // Phase 1 pipeline + TimeframeConsistency with their rollback paths;
-    // health-monitor re-allocation seeded from the quorum config; Phase 2
-    // FourStateRegimeDetector) moved verbatim into the infrastructure module.
-    // The quorum config is passed by reference because the health monitor is
-    // seeded from GetMinWinRateThreshold / GetMaxConsecutiveLossesLimit /
-    // GetPerformanceDecayFactor / GetRollingWindowSize / GetMaxDrawdownLimit /
-    // GetStrategyActivityDecayRate / GetStrategyInactiveCounterThreshold.
+    //--- The quorum config is passed by reference because the health monitor is seeded from
+    //--- GetMinWinRateThreshold / GetMaxConsecutiveLossesLimit / GetPerformanceDecayFactor /
+    //--- GetRollingWindowSize / GetMaxDrawdownLimit / GetStrategyActivityDecayRate.
     return m_infra.Initialize(symbol, timeframe, usePipeline,
                               tradeManagerPtr, positionSizerPtr, unifiedRiskManagerPtr,
                               m_quorumConfig);
@@ -754,11 +624,8 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                                  ENUM_STRATEGY_CLUSTER cluster,
                                                  bool liveVotingEnabled)
 {
-    // Phase C / Slice 4 (C8): the whole registration sequence (initialized
-    // guard, registry mode-filter override, max-strategy cap, strategy Init /
-    // InitializeAI / ValidateRiskManagerInjection, enabled+weight push, the
-    // 35-field append via AppendRegisteredStrategyEntry and the summary Print)
-    // moved verbatim into CStrategyRegistryState::RegisterStrategy().
+    //--- The initialized guard, registry mode-filter override, max-strategy cap, strategy Init,
+    //--- InitializeAI and ValidateRiskManagerInjection live in CStrategyRegistryState::RegisterStrategy().
     return m_registryState.RegisterStrategy(strategy, name, enabled, weight, tier, tf,
                                             intrabarPolicy, role, cluster, liveVotingEnabled);
 }
@@ -816,7 +683,6 @@ void CEnterpriseStrategyManager::SetAllowSparseIntrabarSingleVoter(const bool en
     m_quorumConfig.SetAllowSparseIntrabarSingleVoter(enabled);
 }
 
-// Intrabar policy configuration per strategy index (L6-007)
 void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy)
 {
     // Phase C / Slice 4 (C6): the 32-slot policy table lives in CIntrabarPolicy.
@@ -829,7 +695,6 @@ ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig
     return m_intrabarPolicy.GetStrategyIntrabarPolicyConfig(strategyIndex);
 }
 
-// Participation formula configuration (L6-008)
 void CEnterpriseStrategyManager::SetParticipationFormulaBase(const double base)
 {
     m_quorumConfig.SetParticipationFormulaBase(base);
@@ -857,11 +722,8 @@ int CEnterpriseStrategyManager::GetMinQuorum() const
     return m_quorumConfig.GetMinQuorum();
 }
 
-// Consensus entry funnel
-// Phase C / Slice 5 (C9): the whole consensus core moved into
-// CConsensusEngine. These public overloads are retained verbatim
-// as one-line forwarders because EAOrchestrator, SignalGenerator,
-// PositionLifecycleManager and TrainingDataExporter call them.
+//--- These public overloads are retained as one-line forwarders because EAOrchestrator,
+//--- SignalGenerator, PositionLifecycleManager and TrainingDataExporter call them.
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confidence)
 {
     return m_consensusEngine.GetConsensusSignal(confidence);
@@ -885,35 +747,29 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
 }
 
-// Two-tier consensus evaluation - uses internal consensus logic
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode)
 {
     return m_consensusEngine.EvaluateConsensusTwoTier(symbol, confidence, confluence, evalMode);
 }
 
-// Get Consensus Signal For Specific Symbol
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const string symbol, double &confidence)
 {
     return m_consensusEngine.GetConsensusSignalForSymbol(symbol, confidence);
 }
 
-// Auto-register Strategies
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx)
 {
     // Phase C / Slice 4 (C6): table lookup + the idx 9/10 LIVE defaults moved.
     return m_intrabarPolicy.GetIntrabarPolicyHelper(idx);
 }
 
-// Batch 145: the hand-written if-chain is replaced by one pass over the
-// shared catalog (Core/Strategy/StrategyCatalog.mqh). Gate order, weights,
-// tiers, clusters, intrabar policies and both Statistical Arbitrage log
-// lines are preserved exactly as the if-chain emitted them.
+//--- Gate order, weights, tiers, clusters, intrabar policies and both Statistical Arbitrage
+//--- log lines are preserved exactly as the hand-written if-chain emitted them.
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
     BuildStrategyCatalog();
 
-    // Batch 147: legacy slot scheme removed; CatalogEnableSlot/CatalogPolicySlot
-    // now resolve the SEMANTIC slots unconditionally.
+    //--- CatalogEnableSlot/CatalogPolicySlot resolve the SEMANTIC slots unconditionally.
     CatalogLogIndexAudit();
 
     const int    size     = ArraySize(flags);
@@ -937,9 +793,8 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             }
         }
 
-        // Enable-flag gate. Batch 147: the slot is the SEMANTIC siIndex, which is
-        // exactly the slot BuildStrategyFlags (the only writer of the flag vector)
-        // populates. Each strategy therefore reads its own enable flag.
+        // Enable-flag gate: the slot is the SEMANTIC siIndex, exactly the slot BuildStrategyFlags
+        // (the only writer of the flag vector) populates, so each strategy reads its own flag.
         const int fi = CatalogEnableSlot(i);
         if(fi >= 0 && !(size > fi && flags[fi]))
         {
@@ -957,10 +812,8 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             continue;
         }
 
-        // Intrabar policy slot. Batch 147: siPolicyIndex is the StrategyConfigBuilder
-        // slot this strategy actually owns (the legacy policyIndex that landed on a
-        // neighbour's row was removed). CIntrabarPolicy's always-LIVE fallback is now
-        // fixed to the semantic slots 7/8.
+        // Intrabar policy slot: siPolicyIndex is the StrategyConfigBuilder slot this strategy owns.
+        // CIntrabarPolicy's always-LIVE fallback is fixed to the semantic slots 7/8.
         const int pIdx = CatalogPolicySlot(i);
         ENUM_INTRABAR_POLICY pol = (pIdx >= 0) ? GetIntrabarPolicyHelper(pIdx)
                                                : g_strategyCatalog[i].fixedPolicy;
@@ -1014,15 +867,11 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
     // even if the pipeline is disabled (identical MathMax/MathMin clamp).
     m_quorumConfig.CachePipelineMinConfidence(settings.confidence.minConfidence);
 
-    // Phase G / G5: the pipeline NULL-guard, SetFilters() call and the summary
-    // Print moved verbatim into the infrastructure module.
     m_infra.ApplyPipelineFilters(settings);
 }
 
 void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxLosses)
 {
-    // Phase G / G2: both adaptation thresholds and the summary PrintFormat
-    // moved verbatim into the quorum-config module.
     m_quorumConfig.SetOrchestratorMode(minWinRate, maxLosses);
 }
 
@@ -1041,25 +890,21 @@ string CEnterpriseStrategyManager::GetConsensusContextJSON() const
     return m_stateReporter.GetConsensusContextJSON();
 }
 
-// Consensus Decision Class to String Conversion
 string CEnterpriseStrategyManager::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
 {
     return CStrategyStateReporter::ConsensusDecisionClassToString(decisionClass);
 }
 
-// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::UpdateStrategyWeights()
 {
     m_weightingConfig.UpdateStrategyWeights();
 }
 
-// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::CheckStrategyDisabling()
 {
     m_lifecycle.CheckStrategyDisabling();
 }
 
-// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::CheckStrategyReEnabling()
 {
     m_lifecycle.CheckStrategyReEnabling();
@@ -1067,44 +912,36 @@ void CEnterpriseStrategyManager::CheckStrategyReEnabling()
 
 bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, const double weight)
 {
-    // Phase G / G4: lookup, 0..10 weight clamp, entry + IStrategy::SetWeight
-    // push and the health-monitor sync moved verbatim into the roster. The
-    // health monitor is owned by G5, so it is passed in explicitly.
+    //--- 0..10 weight clamp, entry + IStrategy::SetWeight push and the health-monitor sync.
+    //--- The health monitor is owned by G5, so it is passed in explicitly.
     return m_roster.UpdateStrategyWeightByName(name, weight, m_infra.GetHealthMonitor());
 }
 
 bool CEnterpriseStrategyManager::SetStrategyIntrabarEligibilityByName(const string name, bool enabled)
 {
-    // Phase C / Slice 4 (C6): same LIVE/OFF mapping, now inside CIntrabarPolicy.
     return m_intrabarPolicy.SetStrategyIntrabarEligibilityByName(name, enabled);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
 {
-    // Phase C / Slice 4 (C6): lookup, raw-policy + eligibility write and the
-    // PrintFormat moved verbatim into CIntrabarPolicy.
     return m_intrabarPolicy.SetStrategyIntrabarPolicyByName(name, policy);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
 {
-    // Phase C / Slice 4 (C8): lookup, role write and PrintFormat moved verbatim.
     return m_registryState.SetStrategyRoleByName(name, role);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
 {
-    // Phase C / Slice 4 (C8): lookup, cluster write and PrintFormat moved verbatim.
     return m_registryState.SetStrategyClusterByName(name, cluster);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled)
 {
-    // Phase C / Slice 4 (C8): lookup, live-vote write and PrintFormat moved.
     return m_registryState.SetStrategyLiveVotingEligibilityByName(name, enabled);
 }
 
-// Phase C / Slice 4 (C8): per-field accessors for slice modules
 void CEnterpriseStrategyManager::SetStrategyRole(int index, int role)
 {
     m_roster.SetStrategyRole(index, role);
@@ -1130,8 +967,6 @@ void CEnterpriseStrategyManager::SetStrategyIntrabarEligible(int index, bool eli
     m_roster.SetStrategyIntrabarEligible(index, eligible);
 }
 
-// Phase C / Slice 4 (C8): 35-field StrategyEntry append
-// Mirrors the original RegisterStrategy append block exactly.
 void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                                               double weight, ENUM_STRATEGY_TIER tier,
                                                               ENUM_TIMEFRAMES resolvedTf,
@@ -1140,10 +975,9 @@ void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strate
                                                               ENUM_STRATEGY_CLUSTER cluster,
                                                               bool liveVotingEnabled)
 {
-    // Phase G / G4: the ArrayResize, all 35 StrategyEntry field writes, the three
-    // ArrayInitialize calls and the m_strategyCount++ moved verbatim into the
-    // roster. The health monitor is owned by G5, so it is passed in explicitly
-    // (the roster performs the same NULL-guarded RegisterStrategy(weight) call).
+    //--- All 35 StrategyEntry field writes and the m_strategyCount++ happen in the roster.
+    //--- The health monitor is owned by G5, so it is passed in explicitly
+    //--- (the roster performs the same NULL-guarded RegisterStrategy(weight) call).
     m_roster.AppendRegisteredStrategyEntry(strategy, name, enabled, weight, tier,
                                            resolvedTf, intrabarPolicy, role, cluster,
                                            liveVotingEnabled, m_infra.GetHealthMonitor());
@@ -1151,7 +985,6 @@ void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strate
 
 bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
-    // Phase G / G4: lookup, NULL-strategy guard and SetConfidenceThreshold moved.
     return m_roster.SetStrategyConfidenceThresholdByName(name, threshold);
 }
 
@@ -1161,8 +994,6 @@ bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
                                                              ENUM_STRATEGY_CLUSTER cluster,
                                                              const bool liveVotingEnabled)
 {
-    // Phase C / Slice 4 (C8): lookup, the three governance writes and the
-    // PrintFormat moved verbatim into CStrategyRegistryState.
     return m_registryState.SetStrategyGovernanceByName(name, role, cluster, liveVotingEnabled);
 }
 
@@ -1202,7 +1033,6 @@ void CEnterpriseStrategyManager::GetLastSignalContributorIndices(int &indices[])
     m_signalContext.GetLastSignalContributorIndices(indices);
 }
 
-// GetConsensusProposedStops - FINDING 0: surface designed stops
 // Walks the consensus contributor indices (highest priority first)
 // and returns the first strategy that stashed a real SL/TP.
 bool CEnterpriseStrategyManager::GetConsensusProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
@@ -1224,15 +1054,13 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
                                                                string &clusterCode,
                                                                string &contributorsCsv) const
 {
-    // Phase G / G3: the role/cluster tags and contributor CSV live in the
-    // signal-context module. JoinContributors() is itself a forwarder to
-    // m_attributionDelegator, so the delegator is handed over directly.
+    //--- JoinContributors() is itself a forwarder to m_attributionDelegator,
+    //--- so the delegator is handed over directly.
     return m_signalContext.GetLastSignalExecutionContext(m_attributionDelegator,
                                                          roleTag, clusterTag,
                                                          clusterCode, contributorsCsv);
 }
 
-// Explicit Deinitialization
 // Called before destructor to ensure proper cleanup order
 void CEnterpriseStrategyManager::Deinit()
 {
@@ -1249,7 +1077,6 @@ void CEnterpriseStrategyManager::Deinit()
     // Phase C / Slice 1: keep the delegator's mirrored pointer from dangling.
     m_attributionDelegator.SetAttribution(m_infra.GetAttribution());
 
-    // Phase G / G5: health monitor teardown + m_initialized = false.
     m_infra.FinishDeinit();
 }
 
@@ -1324,14 +1151,12 @@ bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[
 
 int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 {
-    // Phase G / G4: identical linear name scan, now over the roster's array.
     return m_roster.FindStrategyIndexByName(name);
 }
 
-// Get Strategy By Name �?Batch 103: returns strategy pointer
+// Get Strategy By Name ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¯ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¿ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ½?Batch 103: returns strategy pointer
 IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
-    // Phase C / Slice 4 (C8): same lookup + bounds guard + pointer return.
     return m_registryState.GetStrategyByName(name);
 }
 
@@ -1340,11 +1165,9 @@ IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 
 
 
-// Determine if current regime is trending for cross-cluster conflict
 
-// FALLBACK SOLO SIGNAL: When all strategies abstain, pick best
-// single strategy based on confidence and context quality
-// Prevents trading paralysis during low-signal periods
+//--- When all strategies abstain, pick the best single strategy: prevents trading
+//--- paralysis during low-signal periods.
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string symbol,
                                        ENUM_SIGNAL_EVAL_MODE evalMode,
                                        double &outConfidence,
@@ -1396,11 +1219,8 @@ bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, 
     return m_attributionDelegator.PopPositionAttribution(positionId, contributors);
 }
 
-// Performance / health accounting
-// Phase C / Slice 3 (C5): the implementations moved wholesale into
-// CStrategyPerformanceHealth. The manager keeps only forwarders
-// because every one of these is part of its public API (consumed
-// by EAOrchestrator, AIEngine and OnTradeTransaction below).
+//--- Forwarders only: each of these is part of the public API (consumed by
+//--- EAOrchestrator, AIEngine and OnTradeTransaction below).
 void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, double netProfit)
 {
     m_performanceHealth.UpdatePerformance(strategyName, netProfit);
@@ -1442,25 +1262,19 @@ void CEnterpriseStrategyManager::UpdateRegimePerformance(const int index, int re
 }
 
 
-// OnNewBar - CRITICAL for zone scanning and chart drawings
 // Must be called from main EA on each new bar
-// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_lifecycle.OnNewBar(symbol, timeframe);
 }
 
-// OnTradeTransaction - Handle trade events for AI feedback
 void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& trans,
                                                    const MqlTradeRequest& request,
                                                    const MqlTradeResult& result)
 {
-    // Phase G / G6: the whole DEAL_ADD funnel (magic/symbol ownership guards,
-    // entry-side UpsertPositionAttribution, the partial-close guard, the
-    // net-profit computation, the per-contributor UpdatePerformance +
-    // health-monitor RecordTradeResult loop, the contributor-context reset and
-    // the "Trade Closed" PrintFormat) moved verbatim into the trade-feedback
-    // module, which reads this manager back through its m_src back-pointer.
+    //--- The DEAL_ADD funnel (magic/symbol ownership guards, the partial-close guard,
+    //--- the per-contributor UpdatePerformance loop) lives in the trade-feedback module,
+    //--- which reads this manager back through its m_src back-pointer.
     m_tradeFeedback.OnTradeTransaction(trans, request, result);
 }
 
@@ -1470,7 +1284,6 @@ bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) c
     return m_tradeFeedback.IsPositionIdStillOpen(positionId);
 }
 
-// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 // The nested ENUM_QUORUM_PROFILE stays here (it is a user-facing MT5 `input`
 // type) and is forwarded as an int, whose ordinals match QUORUM_PROFILE_*.
 void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
@@ -1479,14 +1292,12 @@ void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
 }
 
 // Apply family-based engine weights for Deriv synthetic indices
-// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyFamilyEngineWeights(const string symbol)
 {
     m_weightingConfig.ApplyFamilyEngineWeights(symbol);
 }
 
 // Apply asset-class-based engine weights using multi-asset profiler
-// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbol)
 {
     m_weightingConfig.ApplyAssetClassEngineWeights(symbol);
@@ -1494,13 +1305,11 @@ void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbo
 
 bool CEnterpriseStrategyManager::EnableStrategy(const string name)
 {
-    // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
     return m_lifecycle.EnableStrategy(name);
 }
 
 bool CEnterpriseStrategyManager::DisableStrategy(const string name)
 {
-    // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
     return m_lifecycle.DisableStrategy(name);
 }
 
@@ -1516,7 +1325,6 @@ int CEnterpriseStrategyManager::GetRegisteredStrategyCount() const
     return m_stateReporter.GetRegisteredStrategyCount();
 }
 
-// Get Pipeline Pointer
 CUnifiedSignalPipeline* CEnterpriseStrategyManager::GetPipeline()
 {
     return m_infra.GetPipeline();
@@ -1567,26 +1375,18 @@ void CEnterpriseStrategyManager::SetOFIEngine(COrderFlowImbalanceEngine* ofi)
     m_infra.SetOFIEngine(ofi);
 }
 
-// Update AI Performance Metrics for AI Strategies (L6-016)
 void CEnterpriseStrategyManager::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
 {
-    // Phase C / Slice 3 (C5): implementation moved to CStrategyPerformanceHealth.
     m_performanceHealth.UpdateAIPerformanceMetrics(strategyName, metrics);
 }
 
-// Calculate Effective Quorum Parameters (Internal)
 
-// Evaluate Consensus Internal (Main Consensus Logic)
 
-// Evaluate Consensus Two-Tier Internal (Probe + Full)
 
-// Evaluate Consensus Probe Only Internal (Fast Path)
 
-// Try Fallback Solo Signal Internal (When All Strategies Abstain)
 
-// Phase C / Slice 2 (C3): the implementation and the whole
-// validator configuration block now live in CPostConsensusValidator.
-// Only the externally-consumed entry points are forwarded here.
+//--- Only the externally-consumed entry points are forwarded here; the validator
+//--- configuration block lives in CPostConsensusValidator.
 SPostConsensusValidation CEnterpriseStrategyManager::ValidateSignal(const string symbol,
                                                                     ENUM_TRADE_SIGNAL signal,
                                                                     double confidence,

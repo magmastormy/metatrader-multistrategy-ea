@@ -379,8 +379,8 @@ private:
     ITransformerEncoder* m_encoder;             // Interface for encoder implementation
     bool m_ownsEncoder;                         // Track if service owns encoder
     CTransformerBrain* m_universalEncoder;      // Backward compat - legacy direct access
-    CArrayObj m_symbolAdaptationHeads;         // Per-symbol adaptation heads
-    CArrayString m_registeredSymbols;          // Registered symbols
+    CArrayObj m_symbolAdaptationHeads;
+    CArrayString m_registeredSymbols;
     SSymbolFeatureCache m_featureCache[20];    // Cache for recent features
     int m_cacheSize;
     datetime m_lastCacheCleanup;

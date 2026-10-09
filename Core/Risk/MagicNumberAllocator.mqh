@@ -235,9 +235,8 @@ public:
         int strategyOffset = GetStrategyOffset(strategyType);
         
         int clusterOffset = GetClusterOffset(cluster);
-        int clusterCode = clusterOffset; // Use offset as cluster code
+        int clusterCode = clusterOffset;
         
-        // Check for existing allocation
         int existingIdx = FindAllocation(symbol, familyOffset, strategyOffset, clusterCode);
         if(existingIdx >= 0)
         {

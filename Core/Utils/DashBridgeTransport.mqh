@@ -19,13 +19,13 @@ private:
    bool                m_enabled;           // Whether dashboard push is enabled
    bool                m_controlEnabled;    // Whether control channel is enabled
    int                 m_pushInterval;      // Push interval in seconds
-   int                 m_requestTimeout;    // Request timeout (ms)
+   int                 m_requestTimeout;
    int                 m_pushTimeout;       // Push-specific timeout (ms) — Issue #34
    datetime            m_lastPushTime;      // Last successful state push
    datetime            m_lastPollTime;      // Last command poll time
    bool                m_pushInProgress;    // Guard against stacked pushes
    int                 m_pushCount;         // Total pushes sent
-   int                 m_pushSuccessCount;  // Successful pushes
+   int                 m_pushSuccessCount;
    int                 m_pushErrorCount;    // Failed pushes
    bool                m_connected;         // Whether server is reachable
    string              m_lastError;         // Last error message

@@ -26,7 +26,7 @@ struct SExitConfig
     double ouMaxTargetBars;       // Max bars for OU target (default: 50)
 
     bool   useTimeExit;           // Enable time-based exit (default: true)
-    int    maxHoldingBarsDefault; // Default max holding bars (default: 48 on M5)
+    int    maxHoldingBarsDefault;
     int    maxHoldingBarsHighVol; // Max holding bars in high vol (default: 24)
 
     bool   useVolAdjustedTP;      // Enable vol-adjusted TP (default: true)

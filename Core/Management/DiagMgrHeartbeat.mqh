@@ -1,4 +1,3 @@
-// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
 // Stateless emitters for the individual heartbeat sub-blocks plus
 // the windowed-delta / conversion-rate arithmetic.
 // Every log tag, format string and field order is byte-identical to
@@ -40,7 +39,6 @@ public:
         return (denominator > 0) ? (100.0 * (double)numerator / (double)denominator) : 0.0;
     }
 
-// Core heartbeat line + funnel line
     static void EmitCoreLines(const ulong scansAttempted,
                               const ulong intrabarScansExecuted,
                               const ulong noSignalCount,
@@ -126,7 +124,6 @@ public:
         {
             if(multiAssetProfiler != NULL && !multiAssetProfiler.IsDerivSymbol(symbols[i]))
             {
-                // Non-Deriv symbol: log asset class info
                 if(logVerbose)
                 {
                     string assetClassName = multiAssetProfiler.GetAssetClassName(symbols[i]);
@@ -143,7 +140,6 @@ public:
             }
             else
             {
-                // Deriv synthetic: log family info
                 string familyName = derivProfiler.GetFamilyName(symbols[i]);
                 if(logVerbose)
                 {
@@ -209,7 +205,6 @@ public:
                 quietNoNewBar, quietCadenceHold, quietMissingManager), corrId);
     }
 
-// Risk budget snapshot
     static void EmitRiskBudget(CUnifiedRiskManager* riskManager, const string corrId)
     {
         if(riskManager != NULL)
@@ -227,7 +222,6 @@ public:
         }
     }
 
-// Indicator manager cleanup
     static void ReleaseUnusedIndicators()
     {
         CIndicatorManager* indicatorManager = CIndicatorManager::Instance();

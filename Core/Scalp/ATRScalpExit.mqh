@@ -13,7 +13,6 @@
 
 #include <Trade\Trade.mqh>
 
-// CATRScalpExit — stateless scalp position management
 class CATRScalpExit
 {
 private:
@@ -47,7 +46,6 @@ private:
    }
 
 public:
-// Manage open scalp positions: partial close, breakeven, trailing
    static void ManageScalpPositions(const string symbol, CTrade &trade)
    {
       PrunePartialedLatches();
@@ -78,7 +76,6 @@ public:
          double volume       = PositionGetDouble(POSITION_VOLUME);
          ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
 
-         // Calculate profit in points
          double profitPoints = 0.0;
          if(posType == POSITION_TYPE_BUY)
             profitPoints = (currentPrice - openPrice) / point;

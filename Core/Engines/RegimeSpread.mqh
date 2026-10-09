@@ -61,7 +61,6 @@ public:
                        bool &cooldownActive);
 };
 
-// Sample the live spread and derive shock / cooldown state
 void CRegimeSpreadTracker::CaptureSpread(const string symbol,
                                          const SRegimeConfig &config,
                                          double &spreadPrice,

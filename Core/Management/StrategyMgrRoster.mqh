@@ -1,12 +1,7 @@
-// Strategy Manager Roster (Phase G - G4)
-// Owns the registered-strategy roster that used to be loose state
-// - StrategyEntry m_strategies[]  (the dynamic entry array)
-// - int           m_strategyCount (live entry count)
-// - int           m_maxStrategies (hard capacity gate, 25)
-// together with EVERY narrow per-field accessor the Phase C slice
-// modules already used (they keep calling the manager, whose
-// accessors are now one-line forwarders into this object), the
-// 35-field append block and the roster teardown loops.
+// Owns the registered-strategy roster (entry array, live entry count and the hard
+// capacity gate of 25) plus EVERY narrow per-field accessor the slice modules call
+// through the manager's one-line forwarders, the 35-field append block and the
+// roster teardown loops.
 // *** BEHAVIOUR CONTRACT ***
 // Every body below is a byte-for-byte relocation of the manager's
 // original inline body, including the bounds checks, the fallback
@@ -50,11 +45,9 @@ private:
 public:
     CStrategyMgrRoster();
 
-    //--- roster shape --------------------------------------------------------
     int  GetStrategyCount() const { return m_strategyCount; }
     int  GetMaxStrategies() const { return m_maxStrategies; }
 
-    //--- name lookup ---------------------------------------------------------
     int  FindStrategyIndexByName(const string name) const;
 
     //=== read half (each accessor exposes exactly one field, verbatim) =======
@@ -198,7 +191,6 @@ public:
     void SetStrategyIntrabarEligible(const int index, const bool eligible)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].intrabarEligible = eligible; }
 
-    //=== roster mutation ====================================================
     //--- 35-field StrategyEntry append. Mirrors the original RegisterStrategy
     //--- append block byte-for-byte (no registry/logic changes).
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
@@ -227,7 +219,6 @@ public:
     void ClearRoster();
 };
 
-// Constructor - relocated from the manager's initialiser list
 CStrategyMgrRoster::CStrategyMgrRoster() :
     m_strategyCount(0),
     m_maxStrategies(25)
@@ -246,7 +237,6 @@ int CStrategyMgrRoster::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
-// Narrow raw weight mutator (C4)
 void CStrategyMgrRoster::ApplyRawStrategyWeight(const int index, const double weight)
 {
     if(index < 0 || index >= m_strategyCount)
@@ -256,8 +246,6 @@ void CStrategyMgrRoster::ApplyRawStrategyWeight(const int index, const double we
         m_strategies[index].strategy.SetWeight(weight);
 }
 
-// 35-field StrategyEntry append
-// Mirrors the original RegisterStrategy append block exactly.
 void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                                        double weight, ENUM_STRATEGY_TIER tier,
                                                        ENUM_TIMEFRAMES resolvedTf,
@@ -319,8 +307,6 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategyCount++;
 }
 
-// By-name weight mutator (relocated verbatim)
-// Original: CEnterpriseStrategyManager::UpdateStrategyWeightByName
 // The health monitor is supplied by the caller because the roster
 // does not own it; everything else is byte-identical.
 bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const double weight,
@@ -335,15 +321,12 @@ bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const dou
     if(m_strategies[index].strategy != NULL)
         m_strategies[index].strategy.SetWeight(sanitizedWeight);
 
-    // L1-007: Update health monitor
     if(healthMonitor != NULL)
         healthMonitor.SetStrategyWeight(index, sanitizedWeight);
 
     return true;
 }
 
-// By-name confidence threshold mutator (relocated verbatim)
-// Original: CEnterpriseStrategyManager::
 bool CStrategyMgrRoster::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
     int index = FindStrategyIndexByName(name);
@@ -357,7 +340,6 @@ bool CStrategyMgrRoster::SetStrategyConfidenceThresholdByName(const string name,
     return true;
 }
 
-// Clean up strategies with explicit Deinit call
 void CStrategyMgrRoster::DeleteAllStrategies()
 {
     for(int i = 0; i < m_strategyCount; i++)

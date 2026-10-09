@@ -70,7 +70,6 @@ public:
     double              CalculateTrailingStop(STradeTrailInfo &trade);
     double              CalculateBreakevenStop(const STradeTrailInfo &trade);
     
-    // Check for early exit
     bool                ShouldExitEarly(const STradeTrailInfo &trade);
     
     // Configuration

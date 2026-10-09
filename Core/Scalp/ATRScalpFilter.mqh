@@ -11,7 +11,6 @@
 
 #include "ATRScalpTypes.mqh"
 
-// CATRScalpFilter — stateless signal gates
 class CATRScalpFilter
 {
 public:
@@ -41,7 +40,6 @@ public:
       return inWindow;
    }
 
-// RSI confirmation for the pending EMA cross direction
 // crossDir: 1 = bullish cross (BUY), otherwise bearish cross (SELL)
    static bool PassesRsiConfirmation(const SATRScalpSymbolState &state, const SATRScalpingConfig &config, int crossDir)
    {

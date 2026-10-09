@@ -19,12 +19,12 @@ enum ENUM_INDICATOR_TYPE
    INDICATOR_MACD,       // MACD
    INDICATOR_ATR,        // Average True Range
    INDICATOR_BB,         // Bollinger Bands
-   INDICATOR_STOCH,      // Stochastic
+   INDICATOR_STOCH,
    INDICATOR_ICHIMOKU,   // Ichimoku Cloud
    INDICATOR_ADX,        // ADX
    INDICATOR_CCI,        // CCI
-   INDICATOR_VOLUMES,    // Volumes
-   INDICATOR_CUSTOM      // Custom indicator
+   INDICATOR_VOLUMES,
+   INDICATOR_CUSTOM
 };
 
 // Indicator Manager - Singleton Pattern
@@ -39,9 +39,9 @@ private:
    {
       int            handle;        // Indicator handle
       datetime       lastAccess;    // Last time this handle was accessed
-      string         symbol;        // Symbol
-      ENUM_TIMEFRAMES timeframe;    // Timeframe
-      ENUM_INDICATOR_TYPE type;     // Indicator type
+      string         symbol;
+      ENUM_TIMEFRAMES timeframe;
+      ENUM_INDICATOR_TYPE type;
       int            paramCount;    // Number of meaningful params
       int            parameters[5]; // Store common parameters
    };

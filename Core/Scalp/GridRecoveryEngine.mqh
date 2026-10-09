@@ -18,10 +18,8 @@
 
 class CUnifiedRiskManager;
 
-// Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-// Extracted modules (structural debloat â€?no behaviour change)
 #include "GridRecoveryTypes.mqh"
 #include "GridRecoveryLevels.mqh"
 #include "GridRecoverySequence.mqh"
@@ -30,7 +28,6 @@ class CAIAdapter;
 #include "GridRecoveryAtr.mqh"
 #include "GridRecoveryExecution.mqh"
 
-// CGridRecoveryEngine â€?Grid recovery for mean-reverting synthetics
 class CGridRecoveryEngine
 {
 private:
@@ -45,19 +42,16 @@ private:
    CGridRecoveryMetrics      m_metrics;     // Statistics
    CGridRecoveryExecution    m_execution;   // Risk gate + trade execution
 
-// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const
    {
       return CGridRecoveryLevels::FindSymbolIndex(m_symbolStates, m_symbolCount, symbol);
    }
 
-// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol)
    {
       CGridRecoveryLevels::InitializeSymbolState(m_symbolStates[idx], symbol, m_config.maxGridLevels);
    }
 
-// Update ATR value for a symbol
    void UpdateATR(int idx)
    {
       m_atr.UpdateATR(idx, m_symbolStates[idx]);
@@ -88,7 +82,6 @@ private:
    }
 
 public:
-// Constructor
    CGridRecoveryEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
@@ -96,13 +89,11 @@ public:
    {
    }
 
-// Destructor
    ~CGridRecoveryEngine()
    {
       Deinit();
    }
 
-// Initialize the engine with config and dependencies
    bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
    {
       m_config         = config;
@@ -125,17 +116,14 @@ public:
       return true;
    }
 
-// Add a symbol to monitor for grid recovery
    bool AddSymbol(const string symbol)
    {
-      // Check for duplicate
       if(FindSymbolIndex(symbol) >= 0)
       {
          PrintFormat("[GRID-RECOVERY] Symbol %s already registered", symbol);
          return false;
       }
 
-      // Create ATR indicator handle
       int atrHandle = CGridRecoveryAtr::CreateHandle(symbol, m_config.atrPeriod);
       if(atrHandle == INVALID_HANDLE)
       {
@@ -156,7 +144,6 @@ public:
 
       m_atr.Resize(newSize);
 
-      // Initialize new slot
       m_symbolStates[m_symbolCount].symbol = symbol;
       InitializeSymbolState(m_symbolCount, symbol);
       m_atr.SetHandle(m_symbolCount, atrHandle);
@@ -193,14 +180,12 @@ public:
       if(atr <= 0.0)
          return;
 
-      // Check if grid should be activated
       if(!IsGridActive(symbol))
       {
          if(ShouldActivateGrid(idx))
          {
             int direction = CGridRecoverySequence::DetermineGridDirection(symbol, bid, ask);
 
-            // Open the first grid level
             if(OpenGridLevel(idx, direction, 0))
             {
                m_symbolStates[idx].direction = direction;
@@ -215,7 +200,6 @@ public:
          return;
       }
 
-      // Grid is active â€?manage existing positions
       ManageGridPositions(idx);
 
       // Check if all levels are in profit (close entire grid)
@@ -228,7 +212,6 @@ public:
       }
    }
 
-// Check if grid should be activated
 // Requires: Hurst regime confirmed, no existing grid, cooldown ok
    bool ShouldActivateGrid(int idx)
    {
@@ -236,11 +219,9 @@ public:
       if(!m_symbolStates[idx].hurstRegimeConfirmed)
          return false;
 
-      // No existing active grid
       if(m_symbolStates[idx].activeLevelCount > 0)
          return false;
 
-      // Check cooldown
       datetime now = TimeCurrent();
       if(m_symbolStates[idx].lastGridEntryTime > 0)
       {
@@ -249,7 +230,6 @@ public:
             return false;
       }
 
-      // Check max drawdown
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
          return false;
 
@@ -260,7 +240,6 @@ public:
       return true;
    }
 
-// Open a grid level order
    bool OpenGridLevel(int idx, int direction, int level)
    {
       if(level < 0 || level >= m_config.maxGridLevels)
@@ -282,7 +261,6 @@ public:
       // Calculate grid spacing
       double gridSpacing = m_config.gridFactorATR * atr;
 
-      // Calculate entry price
       double entryPrice = 0.0;
       if(level == 0)
       {
@@ -321,7 +299,6 @@ public:
       double baseLot = m_symbolStates[idx].baseLotSize;
       if(baseLot <= 0.0)
       {
-         // Calculate base lot using position sizer
          if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
          {
             double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -350,13 +327,11 @@ public:
       if(!CGridRecoveryLevels::PassesCumulativeLotCap(m_config, level, baseLot, cumulativeLotRatio))
          return false;
 
-      // Debug: log lot calculation details
       PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | baseLot=%.2f progressionType=%s factor=%.2f rawLot=%.2f cumRatio=%.2f/%.2f",
                   symbol, level, baseLot,
                   m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
                   m_config.progressionFactor, lotSize, cumulativeLotRatio, m_config.maxCumulativeLotMultiplier);
 
-      // Normalize and cap lot
       ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       lotSize = NormalizeLot(symbol, lotSize);
       PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | after NormalizeLot: %.2f (minVol=%.2f maxVol=%.2f step=%.4f)",
@@ -408,7 +383,6 @@ public:
          m_symbolStates[idx].lastGridEntryTime         = TimeCurrent();
          m_metrics.RecordLevelPlaced();
 
-         // Update total grid risk
          double risk = lotSize * slDistance;
          m_symbolStates[idx].totalGridRisk += risk;
       }
@@ -439,7 +413,6 @@ public:
       datetime now = TimeCurrent();
       ulong elapsedMs = (ulong)((now - m_symbolStates[idx].lastGridEntryTime) * 1000);
 
-      // Scan active levels and check if we need to add the next one
       int lastActiveLevel = -1;
       int currentActiveCount = CGridRecoverySequence::ScanActiveLevels(m_symbolStates[idx], lastActiveLevel);
 
@@ -454,7 +427,6 @@ public:
          return;
       }
 
-      // Check if we should add the next level
       if(lastActiveLevel >= 0 && elapsedMs >= (ulong)m_config.cooldownMs)
       {
          int nextLevel = lastActiveLevel + 1;
@@ -486,7 +458,6 @@ public:
       return CGridRecoveryLevels::CalculateGridLot(m_config, level, baseLot);
    }
 
-// Check if a grid is currently running for a symbol
    bool IsGridActive(const string symbol)
    {
       int idx = FindSymbolIndex(symbol);
@@ -532,7 +503,6 @@ public:
          m_symbolStates[idx].levels[l].ticket = 0;
       }
 
-      // Reset grid state
       m_symbolStates[idx].activeLevelCount = 0;
       m_symbolStates[idx].direction = 0;
       m_symbolStates[idx].totalGridRisk = 0.0;
@@ -550,7 +520,6 @@ public:
       return CGridRecoveryMetrics::GetActiveGridPositions();
    }
 
-// Update config parameters for family
    void SetFamilyConfig(double gridFactorATR, int maxGridLevels, double progressionFactor,
                         double slAtrMult, double tpAtrMult, int magicOffset)
    {
@@ -565,7 +534,6 @@ public:
                   gridFactorATR, maxGridLevels, progressionFactor, slAtrMult, tpAtrMult, magicOffset);
    }
 
-// Set Hurst regime confirmation for a symbol
 // Called externally by Hurst calculator or indicator bridge
    void SetHurstRegime(const string symbol, double hurstExponent)
    {
@@ -603,7 +571,6 @@ public:
                      m_symbolStates[i].hurstRegimeConfirmed ? "MR" : "TR",
                      CalculateGridDrawdownPercent(i));
 
-         // Log individual level details
          for(int l = 0; l < m_symbolStates[i].activeLevelCount; l++)
          {
             if(m_symbolStates[i].levels[l].isActive)

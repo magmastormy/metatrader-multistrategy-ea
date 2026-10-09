@@ -1,13 +1,11 @@
 // Flexible Least Squares (FLS) engine for dynamic mean-reversion
 // Algebraically equivalent to Kalman filter (Su & White 2007)
 // No Gaussian assumption — robust for non-Gaussian synthetic idx
-// Batch 114: Replaces static OU-OLS with adaptive parameters
 #ifndef KALMAN_MEAN_REVERSION_MQH
 #define KALMAN_MEAN_REVERSION_MQH
 
 #include "../Utils/Enums.mqh"
 
-// Kalman MR Snapshot — full state for downstream consumers
 struct SKalmanMRSnapshot
 {
     double mu;               // Dynamic long-run mean (time-varying)
@@ -35,7 +33,6 @@ struct SKalmanMRSnapshot
     {}
 };
 
-// CKalmanMeanReversion — FLS-based dynamic OU estimator
 // State: [mu, kappa] — long-run mean and reversion speed
 // Observation: price_t = mu_t + noise
 // Transition: mu_{t+1} = mu_t + kappa_t * (mu_t - price_t) + w
@@ -52,7 +49,6 @@ private:
     double          m_lambda;        // FLS smoothing parameter
     double          m_forgettingFactor; // Exponential decay for old data
 
-    // FLS state
     double m_mu;               // Current estimate of long-run mean
     double m_kappa;            // Current estimate of reversion speed
     double m_P_mu_mu;          // Variance of mu estimate
@@ -63,7 +59,6 @@ private:
     double m_lastZScore;       // Cached z-score for accessor
     double m_lastInnovation;   // Most recent innovation for diagnostics
 
-    // Internal state
     datetime m_lastBarTime;
     datetime m_lastLogTime;
     bool     m_warmedUp;
@@ -71,7 +66,6 @@ private:
 
     SKalmanMRSnapshot m_lastSnapshot;
 
-    //--- Private helpers
     double ComputeResidual(double price, double mu, double kappa, double prevPrice) const
     {
         double predictedMu = mu + kappa * (mu - prevPrice);
@@ -149,20 +143,18 @@ public:
                 m_warmedUp(false),
                 m_barCount(0)
             {
-                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
                 ResolveTimeframe();
             }
 
             ~CKalmanMeanReversion() {}
 
-            // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+            // Resolve PERIOD_CURRENT to actual chart timeframe
             void ResolveTimeframe()
             {
                 if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
                     m_timeframe = Period();
             }
 
-            //--- Configure FLS parameters
     void Configure(double lambda, double forgettingFactor)
     {
         m_lambda = MathMax(10.0, lambda);
@@ -172,7 +164,6 @@ public:
     //--- Initialize from historical data (cold start)
     bool InitializeFromHistory()
     {
-        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
         if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
             m_timeframe = Period();
         
@@ -273,7 +264,6 @@ public:
         // Kalman gain for kappa (uses cross-covariance)
         double K_kappa = (innovationVariance > 1e-15) ? m_P_mu_kappa / innovationVariance : 0.0;
 
-        // Update state
         m_mu = predictedMu + K_mu * innovation;
         m_kappa = m_kappa + K_kappa * innovation;
 
@@ -289,11 +279,9 @@ public:
         double pullRate = MathMin(0.2, 0.05 + 0.1 * (1.0 - MathMin(1.0, m_kappa)));
         m_mu = m_mu + pullRate * (price - m_mu);
 
-        // Cache z-score
         m_lastZScore = (m_sigma > 1e-15) ? (price - m_mu) / m_sigma : 0.0;
     }
 
-    //--- Compute z-score from current Kalman state
     double ComputeZScore(double currentPrice) const
     {
         if(m_sigma < 1e-15)
@@ -313,7 +301,6 @@ public:
         return 1.96 * totalUncertainty;
     }
 
-    //--- Compute signal quality (0-1)
     double ComputeSignalQuality() const
     {
         double quality = 0.0;
@@ -363,7 +350,6 @@ public:
             }
         }
 
-        // Copy close prices for batch update
         double closes[];
         ArraySetAsSeries(closes, true);
         int copied = CopyClose(m_symbol, m_timeframe, 0, MathMin(5, m_lookbackPeriod), closes);
@@ -376,7 +362,6 @@ public:
         m_lastBarTime = currentBarTime;
         m_barCount = copied;
 
-        // Build snapshot
         m_lastSnapshot.mu = m_mu;
         m_lastSnapshot.kappa = m_kappa;
         m_lastSnapshot.sigma = m_sigma;
@@ -401,7 +386,6 @@ public:
         return true;
     }
 
-    //--- Accessors
     double GetMu() const              { return m_mu; }
     double GetKappa() const           { return m_kappa; }
     double GetSigma() const           { return m_sigma; }
@@ -414,7 +398,6 @@ public:
 
     bool IsWarmedUp() const { return m_warmedUp && m_barCount >= 10; }
 
-        // --- Cleanup ---
         void Deinit()
         {
             // CKalmanMeanReversion holds no indicator handles or external resources.

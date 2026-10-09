@@ -1,28 +1,10 @@
-// Strategy Manager Trade Feedback (Phase G - G6)
-// Owns the EA magic-number ownership window and the trade-outcome
-// feedback loop that used to be loose members / bodies of
-// - m_managedMagic / m_managedMagicRangeMax  (ownership window)
-// - IsEAOwnedMagic          (ownership predicate)
-// - IsPositionIdStillOpen   (partial-close guard)
-// - OnTradeTransaction      (deal -> attribution -> performance)
+// Owns the EA magic-number ownership window (m_managedMagic / m_managedMagicRangeMax)
+// and the trade-outcome feedback loop: the ownership predicate, the partial-close
+// guard and OnTradeTransaction (deal -> attribution -> performance).
 // *** BEHAVIOUR CONTRACT ***
 // Every body is a byte-for-byte relocation of the original manager
-// body. The only mechanical substitutions are the manager-member
-// reads, which now go through the manager's existing public
-// accessors:
-// m_symbol                  -> m_src.GetManagedSymbol()
-// m_attribution             -> m_src.GetAttribution()
-// m_healthMonitor           -> m_src.GetHealthMonitor()
-// m_successfulSignals++     -> m_src.IncrementSuccessfulSignals()
-// m_lastContributorCount    -> m_src.GetLastContributorCountValue()
-// ArraySize(m_lastSignalContributors)
-// -> m_src.GetLastContributorArraySize()
-// m_lastSignalContributors  -> m_src.GetLastSignalContributors()
-// (read-only copy; the callee only
-// reads the array)
-// the 3-statement contributor reset
-// -> m_src.ResetLastContributorContext()
-// FindStrategyIndexByName   -> m_src.GetStrategyIndexByName()
+// body; the only mechanical substitutions are the manager-member
+// reads, which now go through the manager's existing public accessors.
 // No comparison, no arithmetic and no log string was altered.
 // This module MUTATES the manager, so it holds a NON-const back-
 // pointer. It mirrors no injected manager pointer (the attribution
@@ -77,7 +59,6 @@ public:
                             const MqlTradeResult& result);
 };
 
-// Check if magic number is owned by this EA
 bool CStrategyMgrTradeFeedback::IsEAOwnedMagic(long magic) const
 {
     if(m_managedMagic <= 0)
@@ -109,7 +90,6 @@ bool CStrategyMgrTradeFeedback::IsPositionIdStillOpen(const ulong positionId) co
     return false;
 }
 
-// OnTradeTransaction - Handle trade events for AI feedback
 void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& trans,
                                                    const MqlTradeRequest& request,
                                                    const MqlTradeResult& result)
@@ -164,7 +144,6 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                 if(success)
                     m_src.IncrementSuccessfulSignals();
 
-                // Pop position attribution from trade attribution manager
                 string contributors[];
                 CTradeAttributionManager* attribution = m_src.GetAttribution();
                 if(positionId > 0 && attribution != NULL && attribution.PopPositionAttribution(positionId, contributors))
@@ -176,7 +155,6 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                         if(contributors[contributorIdx] == "")
                             continue;
                         m_src.UpdatePerformance(contributors[contributorIdx], netProfit);
-                        // Also update health monitor
                         CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
                         if(healthMonitor != NULL)
                         {

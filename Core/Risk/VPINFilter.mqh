@@ -1,4 +1,3 @@
-// Volume-Synchronized Probability of Informed Trading filter
 // Detects toxic order flow via volume-bucket imbalance analysis
 #ifndef CORE_RISK_VPIN_FILTER_MQH
 #define CORE_RISK_VPIN_FILTER_MQH
@@ -26,7 +25,7 @@ struct SVPINSnapshot
 {
     double             vpinValue;              // Current VPIN value [0–1]
     ENUM_VPIN_TOXICITY toxicityRegime;         // Current toxicity regime
-    double             positionSizeMultiplier; // Size multiplier [0–1]
+    double             positionSizeMultiplier;
     int                bucketCount;            // Total buckets allocated
     int                completedBuckets;       // Number of completed buckets
     double             buyVolumeRatio;         // Buy volume / total volume in latest bucket
@@ -43,7 +42,6 @@ struct SVPINSnapshot
     {}
 };
 
-// Constants
 #define VPIN_MAX_BUCKETS          200   // Rolling window ring-buffer size
 #define VPIN_DEFAULT_NUM_BUCKETS  50    // Default number of buckets for VPIN average
 #define VPIN_DEFAULT_EXTREME      0.7   // Default extreme toxicity threshold
@@ -138,15 +136,13 @@ private:
                 break;
                 
             case VPIN_CLASSIFY_VOLUME_WEIGHTED:
-                // Weight classification by tick volume
-                // Higher volume ticks have more influence
+                // Weight classification by tick volume (higher volume ticks have more influence)
                 if(tickPrice > m_prevTickPrice)
                     isBuy = true;
                 else if(tickPrice < m_prevTickPrice)
                     isBuy = false;
                 else
                     isBuy = m_prevTickIsBuy;
-                // Could add volume weighting logic here
                 break;
                 
             case VPIN_CLASSIFY_TICK_RULE:
@@ -212,15 +208,13 @@ private:
 
         double imbalance = MathAbs(m_currentBucketBuyVol - m_currentBucketSellVol) / totalVol;
 
-        // Store in ring buffer
-        m_imbalances[m_imbalanceWriteIdx] = imbalance;
+            m_imbalances[m_imbalanceWriteIdx] = imbalance;
         m_imbalanceWriteIdx = (m_imbalanceWriteIdx + 1) % m_imbalanceCapacity;
         if(m_imbalanceCount < m_imbalanceCapacity)
             m_imbalanceCount++;
 
         m_completedBuckets++;
 
-        // Reset current bucket
         m_currentBucketBuyVol = 0.0;
         m_currentBucketSellVol = 0.0;
         m_currentBucketTotalVol = 0.0;
@@ -342,7 +336,6 @@ public:
             PrintFormat("[VPIN] Classification mode set to %d", mode);
         }
 
-// Destructor
     ~CVPINFilter()
     {
         ArrayFree(m_imbalances);
@@ -365,13 +358,11 @@ public:
                 }
             }
 
-            // Classify tick direction
             bool isBuy = ClassifyTick(tickPrice, tickVolume, bid, ask);
 
             // When tick volume is 0 (synthetic CFDs, some forex), use unit volume per tick
             double effectiveVolume = (tickVolume > 0.0) ? tickVolume : 1.0;
 
-            // Accumulate into current bucket
             if(isBuy)
                 m_currentBucketBuyVol += effectiveVolume;
             else
@@ -385,14 +376,11 @@ public:
                 double excessVolume = m_currentBucketTotalVol - m_bucketVolumeSize;
                 double excessRatio  = excessVolume / m_currentBucketTotalVol;
 
-                // Batch 152 (H-03): snapshot the side volumes BEFORE CompleteBucket()
-                // zeroed them - the old code multiplied the already-zeroed members,
-                // so every overflow bucket carried buy=sell=0 (imbalance 0) and
-                // diluted VPIN exactly during high-volume bursts.
+                // Batch 152 (H-03): snapshot the side volumes BEFORE CompleteBucket() zeroed them; multiplying
+                // the already-zeroed members made every overflow bucket carry buy=sell=0 and diluted VPIN in bursts.
                 double carryBuyVol  = m_currentBucketBuyVol * excessRatio;
                 double carrySellVol = m_currentBucketSellVol * excessRatio;
 
-                // Complete one bucket with the exact bucket size
                 CompleteBucket();
 
                 // Carry overflow to next bucket proportionally

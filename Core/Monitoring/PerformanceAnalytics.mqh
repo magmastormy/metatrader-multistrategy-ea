@@ -224,7 +224,6 @@ SPerformanceMetrics CPerformanceAnalytics::GetPerformanceMetrics(void)
     return CPerfAnalyticsReport::BuildPerformanceMetrics(m_stats, m_equity);
 }
 
-// Check if Performance is Acceptable
 bool CPerformanceAnalytics::IsPerformanceAcceptable(void)
 {
     if(!m_initialized)

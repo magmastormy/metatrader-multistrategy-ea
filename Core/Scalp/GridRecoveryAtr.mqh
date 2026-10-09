@@ -11,20 +11,17 @@
 
 #include "GridRecoveryTypes.mqh"
 
-// CGridRecoveryAtr — owns the per-symbol ATR indicator handles
 class CGridRecoveryAtr
 {
 private:
    int   m_atrHandles[];
 
 public:
-// Create an ATR indicator handle for a symbol
    static int CreateHandle(const string symbol, int atrPeriod)
    {
       return iATR(symbol, PERIOD_M1, atrPeriod);
    }
 
-// Grow the handle storage to hold newSize entries
    void Resize(int newSize)
    {
       ArrayResize(m_atrHandles, newSize);
@@ -54,13 +51,11 @@ public:
       }
    }
 
-// Update ATR value for a symbol
    void UpdateATR(int idx, SGridSymbolState &state)
    {
       if(m_atrHandles[idx] == INVALID_HANDLE)
          return;
 
-      // Read current ATR value
       double atrBuf[];
       ArraySetAsSeries(atrBuf, true);
       if(CopyBuffer(m_atrHandles[idx], 0, 0, 1, atrBuf) <= 0)

@@ -1,5 +1,4 @@
 // Step-size distribution analyzer for Skew Step indices
-// Implements I4 from problems.md
 #ifndef CORE_ENGINES_SKEW_STEP_ANALYZER_MQH
 #define CORE_ENGINES_SKEW_STEP_ANALYZER_MQH
 

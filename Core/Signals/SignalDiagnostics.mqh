@@ -161,7 +161,7 @@ public:
                          const double price,
                          const bool successful);
                          
-    void LogBOSCHOCH(const bool isBOS, // true=BOS, false=CHOCH
+    void LogBOSCHOCH(const bool isBOS,
                     const double level,
                     const bool bullish);
     

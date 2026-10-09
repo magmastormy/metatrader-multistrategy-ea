@@ -1,4 +1,3 @@
-// Enterprise Strategy Quorum / Adaptation Config (Phase G - G2)
 // Pure STORAGE object for the consensus-quorum, sparse-intrabar,
 // adaptive-quorum, regime-relax, decay and participation-formula
 // configuration that used to live as loose members of
@@ -175,7 +174,6 @@ CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
 {
 }
 
-// Configuration Setters - Store in mirrored config variables
 void CEntStrategyQuorumConfig::SetMinQuorum(int quorum)
 {
     m_minQuorum = MathMax(1, quorum);
@@ -231,7 +229,6 @@ void CEntStrategyQuorumConfig::SetAllowSparseIntrabarSingleVoter(const bool enab
     m_allowSparseIntrabarSingleVoter = enabled;
 }
 
-// Participation formula configuration (L6-008)
 void CEntStrategyQuorumConfig::SetParticipationFormulaBase(const double base)
 {
     m_participationFormulaBase = MathMax(0.0, MathMin(1.0, base));
@@ -258,7 +255,6 @@ void CEntStrategyQuorumConfig::SetOrchestratorMode(double minWinRate, int maxLos
                 m_maxConsecutiveLosses_Limit);
 }
 
-// Cache pipeline base confidence floor (SetPipelineFilters)
 void CEntStrategyQuorumConfig::CachePipelineMinConfidence(const double minConfidence)
 {
     m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));

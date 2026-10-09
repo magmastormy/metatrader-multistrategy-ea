@@ -46,7 +46,7 @@ class CMeanReversionStrategy : public CStrategyBase
 private:
     // Indicator Handles
     int m_bbHandle;           // Bollinger Bands (20, 2.0)
-    int m_rsiHandle;          // RSI (14)
+    int m_rsiHandle;
     int m_volumeHandle;       // Volume for confirmation
     
     // Configuration Parameters
@@ -59,7 +59,7 @@ private:
     
     // Synthetic mode parameters
     bool m_isSynthetic;       // Synthetic mode flag
-    double m_syntheticBbDeviation; // BB deviation for synthetics (1.5σ)
+    double m_syntheticBbDeviation;
     int m_syntheticBbHandle;  // Cached BB handle for synthetic mode (created once, released in Cleanup)
     
         // v2.0 additions

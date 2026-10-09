@@ -225,7 +225,6 @@ public:
     bool IsInitialized() const { return m_initialized; }
     SVolumeProfileResult GetLastResult() const { return m_lastResult; }
 
-    // --- Cleanup ---
     void Deinit()
     {
         // CVolumeProfileEngine owns dynamic arrays m_levelPrices[] and m_levelVolumes[]

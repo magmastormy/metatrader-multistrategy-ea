@@ -59,7 +59,6 @@ public:
     //--- Throttled generic fault line
     void LogFault(const string tag, const int errorCode, const string contextSymbol, const ENUM_TIMEFRAMES contextTimeframe);
 
-    //--- Count a fault; returns true once the handle-reset threshold is hit
     bool RegisterDataFault(const string tag,
                            const int errorCode,
                            const string contextSymbol,
@@ -83,7 +82,6 @@ public:
                                 const SRegimeConfig &config);
 };
 
-// Throttled generic fault line
 void CRegimeFaultTracker::LogFault(const string tag, const int errorCode, const string contextSymbol, const ENUM_TIMEFRAMES contextTimeframe)
 {
     datetime nowTime = TimeCurrent();
@@ -107,7 +105,6 @@ bool CRegimeFaultTracker::RegisterDataFault(const string tag,
     return (m_consecutiveDataFaults >= 3);
 }
 
-// Throttled fallback-rates notice
 void CRegimeFaultTracker::LogFallbackRates(const string symbol,
                                            const ENUM_TIMEFRAMES timeframe,
                                            const double atrValue,
@@ -125,7 +122,6 @@ void CRegimeFaultTracker::LogFallbackRates(const string symbol,
     }
 }
 
-// Reuse the last valid snapshot when it is still representative
 bool CRegimeFaultTracker::TryReuseRecentSnapshot(SRegimeSnapshot &snapshot,
                                                  const string contextSymbol,
                                                  const ENUM_TIMEFRAMES contextTimeframe,
@@ -148,7 +144,6 @@ bool CRegimeFaultTracker::TryReuseRecentSnapshot(SRegimeSnapshot &snapshot,
     ENUM_REGIME_STATE currentRegimeState = REGIME_TREND;
     if(CRegimeVolatility::BuildFallbackIndicators(symbol, timeframe, config, atrValue, bbUpperValue, bbLowerValue))
     {
-        // Estimate regime state using fallback data
         currentRegimeState = CRegimeComposite::EstimateRegimeStateFromFallback(symbol, atrValue, bbUpperValue, bbLowerValue, config);
 
         // Invalidate snapshot if regime state differs

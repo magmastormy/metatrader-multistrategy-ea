@@ -10,7 +10,6 @@
 
 #include "../Strategy/StrategyBase.mqh"
 
-// CScalpVolatilityBreakout — Squeeze breakout scalper
 class CScalpVolatilityBreakout : public CStrategyBase
 {
 private:
@@ -20,7 +19,7 @@ private:
     int      m_rsiPeriod;
     int      m_squeezeLookback;       // Bars to check ATR low (20)
     double   m_bodyATRRatio;          // Bar body > 0.5 * ATR threshold
-    double   m_tpATRRatio;            // TP = 2.0 * ATR
+    double   m_tpATRRatio;
 
     double   m_lastSLPips;
     double   m_lastTPPips;
@@ -48,10 +47,8 @@ public:
 
     ~CScalpVolatilityBreakout() {}
 
-// Get SL in pips from last signal
     double GetLastSLPips() const { return m_lastSLPips; }
 
-// Get TP in pips from last signal
     double GetLastTPPips() const { return m_lastTPPips; }
 
     virtual ENUM_STRATEGY_TYPE GetType(void) const override
@@ -59,7 +56,6 @@ public:
         return STRATEGY_VOLATILITY_BREAKOUT;
     }
 
-// Execute signal — core logic
 // Base class GetSignal() already applies regime/volatility/HTF
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence) override
     {
@@ -117,7 +113,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        //--- Read RSI
         int rsiHandle = indMgr.GetRSIHandle(m_symbol, m_timeframe, m_rsiPeriod, PRICE_CLOSE);
         if(rsiHandle == INVALID_HANDLE)
         {
@@ -198,10 +193,8 @@ public:
         if(strongBar)       confidence += 0.10;
         if(rsiConfirmed)    confidence += 0.10;
 
-        //--- Cap confidence
         confidence = MathMin(confidence, 0.90);
 
-        //--- Calculate SL/TP in pips
         //    TP: 2.0 * ATR(14)
         //    SL: BB middle band distance from current price
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -218,7 +211,6 @@ public:
             m_lastTPPips = tpDistance / point;
         }
 
-        //--- Set reason tag
         string dirStr = (direction == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
         SetDecisionReasonTag(StringFormat("SCALP_VBRK_%s|SQZ=%d|STR=%d|RSI=%.1f",
                                            dirStr, atrAtLow ? 1 : 0, strongBar ? 1 : 0, rsi[0]));

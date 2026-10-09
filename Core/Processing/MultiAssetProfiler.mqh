@@ -19,7 +19,7 @@ enum ENUM_ASSET_CLASS
    ASSET_METALS,           // 1 - XAUUSD, XAGUSD
    ASSET_INDICES,          // 2 - US30, US100, GER40, UK100
    ASSET_ENERGIES,         // 3 - WTI, BRENT, NG
-   ASSET_DERIV_CRASHBOOM,  // 4 - Crash/Boom
+   ASSET_DERIV_CRASHBOOM,
    ASSET_DERIV_VOLATILITY, // 5 - VIX 10-300
    ASSET_DERIV_STEP,       // 6 - Step 10-200
    ASSET_DERIV_JUMP,       // 7 - Jump 10-100
@@ -35,8 +35,8 @@ struct SAssetProfile
 {
    ENUM_ASSET_CLASS  assetClass;          // Asset class enum value
    string            className;           // Human-readable class name
-   double            atrMultiplierSL;     // SL = ATR * this
-   double            atrMultiplierTP;     // TP = ATR * this
+   double            atrMultiplierSL;
+   double            atrMultiplierTP;
    double            hurstThreshold;      // Hurst exponent threshold
    double            riskPerTrade;        // Risk % per trade (0-100 scale)
    int               magicOffset;         // Magic number offset from base

@@ -1,17 +1,7 @@
-// Strategy Manager Infrastructure (Phase G - G5)
-// Owns the collaborator "plumbing" of CEnterpriseStrategyManager -
-// every engine / profiler / manager pointer it holds, the symbol &
-// timeframe context, the init flags and the cached ADX handle -
-// together with the two-phase Initialize() body and both teardown
+// Owns the collaborator "plumbing" of CEnterpriseStrategyManager - every engine /
+// profiler / manager pointer it holds, the symbol & timeframe context, the init flags
+// and the cached ADX handle - plus the two-phase Initialize() body and both teardown
 // paths (destructor + explicit Deinit).
-// Relocated state (was loose members of the manager):
-// m_pipeline, m_tfConsistency, m_tradeManager, m_positionSizer,
-// m_unifiedRiskManager, m_derivProfiler, m_multiAssetProfiler,
-// m_drawingManager, m_vpinFilter, m_ofiEngine,
-// m_familyWeightMatrix, m_fourStateRegimeDetector,
-// m_strategyRegistry, m_diagnostics, m_attribution,
-// m_healthMonitor, m_regimeDetectorInitialized, m_symbol,
-// m_baseTimeframe, m_initialized, m_usePipeline, m_adxHandleCached
 // *** BEHAVIOUR CONTRACT ***
 // Initialize(), the destructor teardown and the Deinit teardown are
 // byte-for-byte relocations, including every Print() string, the
@@ -52,7 +42,6 @@
 class CTradeManager;
 class CPositionSizer;
 
-// Collaborator plumbing / lifecycle for CEnterpriseStrategyManager
 class CStrategyMgrInfrastructure
 {
 private:
@@ -67,11 +56,10 @@ private:
     CVPINFilter*                 m_vpinFilter;           // VPIN toxicity filter for consensus (Batch 104)
     COrderFlowImbalanceEngine*   m_ofiEngine;            // OFI for regime integration (Batch 104)
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;   // I1: Per-family cluster weight multipliers
-    CFourStateRegimeDetector*    m_fourStateRegimeDetector; // Four-state regime detector
+    CFourStateRegimeDetector*    m_fourStateRegimeDetector;
     CStrategyRegistry*           m_strategyRegistry;     // L1-004: Injected registry (no global singleton)
     bool                         m_regimeDetectorInitialized;
 
-    // L1-007: Component delegation
     CDiagnosticsManager*      m_diagnostics;
     CTradeAttributionManager* m_attribution;
     CStrategyHealthMonitor*   m_healthMonitor;
@@ -86,7 +74,6 @@ private:
 public:
     CStrategyMgrInfrastructure();
 
-    //=== lifecycle ==========================================================
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                     bool usePipeline,
                     CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
@@ -104,13 +91,11 @@ public:
     //--- creates the health monitor the manager's constructor used to allocate
     void AllocateHealthMonitor();
 
-    //=== configuration ======================================================
     //--- pipeline half of SetPipelineFilters() (the confidence-floor cache
     //--- stays with the quorum config object, as it always did)
     void ApplyPipelineFilters(SignalFilterSettings &settings);
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
 
-    //=== injection setters ==================================================
     void SetStrategyRegistry(CStrategyRegistry* registry)          { m_strategyRegistry = registry; }
     void SetDiagnosticsManager(CDiagnosticsManager* diagnostics)   { m_diagnostics = diagnostics; }
     void SetAttributionManager(CTradeAttributionManager* attrib)   { m_attribution = attrib; }
@@ -122,7 +107,6 @@ public:
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi)              { m_ofiEngine = ofi; }
     void SetAdxHandleCached(const int handle)                      { m_adxHandleCached = handle; }
 
-    //=== read accessors =====================================================
     CUnifiedSignalPipeline*      GetPipeline() const               { return m_pipeline; }
     CTimeframeConsistency*       GetTFConsistency() const          { return m_tfConsistency; }
     CTradeManager*               GetTradeManager() const           { return m_tradeManager; }
@@ -148,7 +132,6 @@ public:
     int             GetAdxHandleCached() const          { return m_adxHandleCached; }
 };
 
-// Constructor - relocated from the manager's initialiser list
 CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_pipeline(NULL),
     m_tfConsistency(NULL),
@@ -175,24 +158,15 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_symbol = "";
 }
 
-// L1-007: Create the health monitor instance
-// (the manager's constructor used to do this inline)
 void CStrategyMgrInfrastructure::AllocateHealthMonitor()
 {
     m_healthMonitor = new CStrategyHealthMonitor();
 }
 
-// Initialize Manager
-// Two-Phase Initialization Pattern (L2-023):
-// Phase 1 (Required): Core infrastructure - Pipeline,
-// TimeframeConsistency (must succeed or full init fails)
-// Phase 2 (Optional): Enhancements - FourStateRegimeDetector,
-// FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)
-// This pattern ensures core consensus machinery is ready before
-// registering strategies, while allowing optional engines to
-// degrade gracefully without blocking the manager.
-// Ownership: Phase 1 objects owned by manager (deleted in dtor).
-// Phase 2 objects also owned but failure does not roll back Phase 1.
+// Two-phase init: Phase 1 (Pipeline, TimeframeConsistency) must succeed or full init fails;
+// Phase 2 (FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine) is optional,
+// degrades gracefully and does not roll back Phase 1. Both phases' objects are owned here
+// and deleted in the destructor.
 bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                             bool usePipeline,
                                             CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
@@ -206,7 +180,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_positionSizer = positionSizerPtr; // CRITICAL FIX: Store for strategy initialization
     m_unifiedRiskManager = unifiedRiskManagerPtr; // ARCHITECTURAL FIX: Inject unified risk manager
 
-    // Initialize pipeline
     if(m_usePipeline)
     {
         m_pipeline = new CUnifiedSignalPipeline();
@@ -289,7 +262,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     // L6-008: Health monitor is used directly by internal consensus logic
     // No separate consensus engine to wire
 
-    // Initialize FourStateRegimeDetector
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
     if(m_fourStateRegimeDetector != NULL)
     {
@@ -317,7 +289,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     return true;
 }
 
-// Destructor teardown (verbatim relocation)
 void CStrategyMgrInfrastructure::ReleaseOnDestruct()
 {
     if(m_pipeline != NULL)
@@ -326,14 +297,12 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_pipeline = NULL;
     }
 
-    // Batch 116: Release cached ADX handle
     if(m_adxHandleCached != INVALID_HANDLE)
     {
         IndicatorRelease(m_adxHandleCached);
         m_adxHandleCached = INVALID_HANDLE;
     }
 
-    // Clean up FourStateRegimeDetector
     if(m_fourStateRegimeDetector != NULL)
     {
         delete m_fourStateRegimeDetector;
@@ -346,7 +315,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_tfConsistency = NULL;
     }
 
-    // L1-007: Clean up components
     // m_diagnostics is injected from EAOrchestrator - do not delete
     // m_attribution is injected from EAOrchestrator - do not delete
     if(m_healthMonitor != NULL)
@@ -356,7 +324,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
     }
 }
 
-// Explicit-Deinit teardown, part 1 (verbatim relocation)
 void CStrategyMgrInfrastructure::ReleaseOnDeinit()
 {
     // Clean up components
@@ -366,14 +333,12 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
         m_pipeline = NULL;
     }
 
-    // Batch 116: Release cached ADX handle
     if(m_adxHandleCached != INVALID_HANDLE)
     {
         IndicatorRelease(m_adxHandleCached);
         m_adxHandleCached = INVALID_HANDLE;
     }
 
-    // Clean up FourStateRegimeDetector
     if(m_fourStateRegimeDetector != NULL)
     {
         delete m_fourStateRegimeDetector;
@@ -386,7 +351,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
         m_tfConsistency = NULL;
     }
 
-    // L1-007: Clean up components
     if(m_diagnostics != NULL)
     {
         delete m_diagnostics;

@@ -93,7 +93,6 @@ public:
     // Process and resolve conflicts
     ENUM_TRADE_SIGNAL ResolveSignals(double &finalConfidence, string &reasoning);
     
-    // Check for conflicts
     bool HasConflicts() const;
     int GetConflictCount() const;
     string GetConflictDetails() const;
@@ -206,7 +205,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveSignals(double &finalConfidence,
     
     m_totalChecks++;
     
-    // Check for conflicts
     if(HasConflicts())
     {
         m_conflictsDetected++;
@@ -247,7 +245,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveSignals(double &finalConfidence,
     return result;
 }
 
-// Check for Conflicts
 bool CTimeframeConsistency::HasConflicts() const
 {
     if(m_signalCount < 2) return false;
@@ -337,7 +334,6 @@ double CTimeframeConsistency::CalculateAlignment() const
     return alignment;
 }
 
-// Check if Aligned
 bool CTimeframeConsistency::IsAligned() const
 {
     double alignment = CalculateAlignment();

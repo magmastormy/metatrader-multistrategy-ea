@@ -54,7 +54,6 @@ public:
                              const int errorCode,
                              const datetime metricTime);
 
-    //--- Accessors
     double   LastValidTrendStrength()  const { return m_lastValidTrendStrength; }
     datetime LastValidTrendTime()      const { return m_lastValidTrendTime; }
     double   LastValidVolatility()     const { return m_lastValidVolatility; }
@@ -64,7 +63,6 @@ public:
     double   LastValidAtrValue()       const { return m_lastValidAtrValue; }
     datetime LastValidAtrTime()        const { return m_lastValidAtrTime; }
 
-    //--- Mutators
     void StoreValidTrend(const double value, const datetime when)
     {
         m_lastValidTrendStrength = value;
@@ -90,7 +88,6 @@ public:
     }
 };
 
-// Drop every cached metric
 void CMarketAnalysisMetricCache::ResetMetricCaches()
 {
     m_lastValidTrendStrength = 0.0;
@@ -104,7 +101,6 @@ void CMarketAnalysisMetricCache::ResetMetricCaches()
     m_lastMetricReuseLogTime = 0;
 }
 
-// Reuse window derived from the active timeframe
 int CMarketAnalysisMetricCache::GetMetricReuseWindowSeconds(const ENUM_TIMEFRAMES period) const
 {
     int barSeconds = PeriodSeconds(period);
@@ -114,13 +110,11 @@ int CMarketAnalysisMetricCache::GetMetricReuseWindowSeconds(const ENUM_TIMEFRAME
     return MathMax(60, MathMin(3600, barSeconds * 3));
 }
 
-// True while a cached metric is still young enough to be reused
 bool CMarketAnalysisMetricCache::CanReuseMetric(const datetime metricTime, const ENUM_TIMEFRAMES period) const
 {
     return (metricTime > 0 && (TimeCurrent() - metricTime) <= GetMetricReuseWindowSeconds(period));
 }
 
-// Throttled diagnostic emitted when a cached metric is reused
 void CMarketAnalysisMetricCache::MaybeLogMetricReuse(const string symbol,
                                                      const ENUM_TIMEFRAMES period,
                                                      const string metricName,

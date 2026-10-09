@@ -483,7 +483,6 @@ public:
         }
     }
 
-    // IModelHealth
     virtual double GetHealthScore(void) const override
     {
         if(m_transformer == NULL)
@@ -491,7 +490,6 @@ public:
         return IsModelHealthy() ? 1.0 : 0.0;
     }
 
-    // IOnlineTraining
     virtual void EnableOnlineTraining(const bool enable) override
     {
         // Transformer doesn't support online training
@@ -507,7 +505,6 @@ public:
         return "NOT_SUPPORTED";
     }
 
-    // IRegimeAware
     virtual void OnRegimeChange(const int newRegime) override
     {
         // Transformer doesn't have regime awareness

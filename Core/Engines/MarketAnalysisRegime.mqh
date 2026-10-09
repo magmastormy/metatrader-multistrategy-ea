@@ -14,18 +14,15 @@
 class CMarketAnalysisRegime
 {
 private:
-    // Market regime detection variables
     ENUM_MARKET_REGIME m_currentRegime;
     ENUM_MARKET_REGIME m_previousRegime;
     datetime m_lastRegimeChange;
     int m_regimeStability; // Counter for regime stability
 
-    // Historical regime data
     ENUM_MARKET_REGIME m_regimeHistory[20];
     datetime m_regimeChangeTime[20];
     int m_regimeHistoryCount;
 
-    // Regime detection thresholds
     double m_trendThreshold;
     double m_volatilityThreshold;
 
@@ -51,7 +48,6 @@ public:
     void SetMarketRegime(ENUM_MARKET_REGIME regime) { m_currentRegime = regime; }
 };
 
-// Classify the supplied metrics and roll the regime history
 ENUM_MARKET_REGIME CMarketAnalysisRegime::UpdateRegime(const string symbol, const double trendStrength, const double volatility)
 {
     ENUM_MARKET_REGIME detectedRegime = MARKET_REGIME_RANGING;
@@ -65,14 +61,12 @@ ENUM_MARKET_REGIME CMarketAnalysisRegime::UpdateRegime(const string symbol, cons
         detectedRegime = MARKET_REGIME_RANGING;
     }
 
-    // Update regime state and history
     if(detectedRegime != m_currentRegime) {
         m_previousRegime = m_currentRegime;
         m_currentRegime = detectedRegime;
         m_lastRegimeChange = TimeCurrent();
         m_regimeStability = 0;
 
-        // Store in history
         if(m_regimeHistoryCount < ArraySize(m_regimeHistory)) {
             m_regimeHistory[m_regimeHistoryCount] = m_currentRegime;
             m_regimeChangeTime[m_regimeHistoryCount] = m_lastRegimeChange;

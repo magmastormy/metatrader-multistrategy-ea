@@ -1,12 +1,10 @@
 // Per-family cluster weight multipliers for synthetics
-// Implements I1 from problems.md
 #ifndef CORE_ENGINES_FAMILY_STRATEGY_WEIGHT_MATRIX_MQH
 #define CORE_ENGINES_FAMILY_STRATEGY_WEIGHT_MATRIX_MQH
 
 #include "../Processing/DerivAssetProfiler.mqh"
 #include "../Utils/Enums.mqh"
 
-// Per-family cluster weight multipliers
 struct SFamilyClusterWeights
 {
    double trend;
@@ -101,7 +99,6 @@ public:
       PrintFormat("[FAMILY-WEIGHT-MATRIX] Initialized for %d Deriv families", 19);
    }
 
-// Get cluster weight multiplier for a given family
    double GetClusterWeight(ENUM_DERIV_FAMILY family, ENUM_STRATEGY_CLUSTER cluster) const
    {
       if(!m_initialized)

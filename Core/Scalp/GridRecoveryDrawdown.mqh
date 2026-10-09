@@ -11,7 +11,6 @@
 
 #include "GridRecoveryTypes.mqh"
 
-// CGridRecoveryDrawdown — stateless drawdown / equity-floor guards
 class CGridRecoveryDrawdown
 {
 public:
@@ -44,11 +43,7 @@ public:
 // the floor is enforced on subsequent levels via initialEquity.
    static bool PassesActivationEquityFloor(double equityFloorPercent)
    {
-      // Batch 152 (S-M-01): the old check computed the floor from CURRENT equity
-      // itself (equity*pct% >= equity whenever pct<=100), so it could never
-      // reject. Baseline on BALANCE instead - equity well below balance means
-      // floating losses already exist, which is exactly when a recovery grid
-      // must not activate.
+      // The floor baseline must be BALANCE, not CURRENT equity (equity*pct% >= equity whenever pct<=100, so it could never reject). Equity well below balance means floating losses already exist - exactly when a recovery grid must not activate.
       double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       if(currentEquity > 0.0 && balance > 0.0 && equityFloorPercent > 0.0)

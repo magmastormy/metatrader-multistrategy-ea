@@ -495,7 +495,6 @@ public:
         upper = MathMin(1.0, conf + unc);
     }
 
-    // IOnlineTraining
     virtual void EnableOnlineTraining(const bool enable) override
     {
         // ONNX models don't support online training
@@ -511,13 +510,11 @@ public:
         return "NOT_SUPPORTED";
     }
 
-    // IRegimeAware
     virtual void OnRegimeChange(const int newRegime) override
     {
         // ONNX doesn't have regime awareness
     }
 
-    // IModelHealth
     virtual double GetHealthScore(void) const override
     {
         return IsModelHealthy() ? 1.0 : 0.0;

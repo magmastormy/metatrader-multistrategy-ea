@@ -13,7 +13,7 @@
 enum ENUM_VB_ENTRY_TYPE
 {
     VB_ENTRY_NONE = 0,
-    VB_ENTRY_SQUEEZE_BREAKOUT,     // Breakout from BB squeeze
+    VB_ENTRY_SQUEEZE_BREAKOUT,
     VB_ENTRY_ATR_EXPANSION,        // ATR expansion breakout
     VB_ENTRY_COMBINED_SIGNAL,       // Squeeze + ATR + Volume (highest confidence)
     VB_ENTRY_DOUBLE_SQUEEZE,       // BB + KC double squeeze (TTM Squeeze)
@@ -523,7 +523,7 @@ private:
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
                 signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR); // Below middle band
-                signal.takeProfit = price + m_atrTargetMult * curATR; // 2.5x ATR target
+                signal.takeProfit = price + m_atrTargetMult * curATR;
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05; // Boost with volume
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
@@ -541,7 +541,7 @@ private:
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
                 signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
-                signal.takeProfit = price + m_atrTargetMult * curATR; // 2x ATR target
+                signal.takeProfit = price + m_atrTargetMult * curATR;
                 signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";

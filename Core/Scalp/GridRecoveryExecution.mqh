@@ -18,10 +18,8 @@
 
 class CUnifiedRiskManager;
 
-// Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-// CGridRecoveryExecution �?owns the trade execution dependencies
 class CGridRecoveryExecution
 {
 private:
@@ -31,7 +29,6 @@ private:
    CAIAdapter*               m_aiAdapter;       // L10-018: AI adapter for voting
 
 public:
-// Constructor
    CGridRecoveryExecution() :
       m_riskManager(NULL),
       m_tradeManager(NULL),
@@ -39,7 +36,6 @@ public:
    {
    }
 
-// Wire up the execution dependencies
    void Configure(CUnifiedRiskManager *pRiskManager, CTradeManager *pTradeManager, CAIAdapter *pAIAdapter)
    {
       m_riskManager    = pRiskManager;
@@ -92,10 +88,7 @@ public:
    {
       ticketOut = 0;
 
-      // Batch 170: shared stop-feasibility and expectancy gate (see ATRScalpEntry).
-      // Grid levels are added into a moving market, so a level whose stop sits
-      // inside the broker minimum or whose target cannot clear the spread is the
-      // worst place to discover it.
+      // Grid levels are added into a moving market - a level whose stop sits inside the broker minimum or whose target cannot clear the spread is the worst place to discover it.
       ENUM_ORDER_TYPE gridOrderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       string gridStopError = "";
       if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, gridOrderType, entryPrice, tp, sl, tp, gridStopError))
@@ -111,7 +104,6 @@ public:
          slippage = m_tradeManager.GetDynamicSlippage(symbol);
       }
 
-      // Set up trade object
       m_trade.SetExpertMagicNumber(magic);
       m_trade.SetDeviationInPoints(slippage);
       // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
@@ -120,7 +112,6 @@ public:
                                          (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
       m_trade.SetTypeFilling(scalpFill);
 
-      // Execute trade
       bool result = false;
       string comment = "GRID-RECOVERY|L:" + IntegerToString(level) + "|D:" + IntegerToString(direction);
 
@@ -143,10 +134,7 @@ public:
          PrintFormat("[GRID-RECOVERY-FAILED] %s L%d %s lot=%.2f retcode=%u | price=%.5f SL=%.5f TP=%.5f magic=%d",
                      symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode, entryPrice, sl, tp, magic);
 
-         // Additional debug info for common errors
-         // Batch 152 (T-11): these branches tested MQL4-era numbers against MQL5
-         // retcodes (10016 is TRADE_DISABLED, 10014 is INVALID_VOLUME, 10008 is
-         // PLACED) - use the official symbolic codes and drop the stale comments.
+         // These branches must test MQL5 retcodes via the official symbolic codes (10016 TRADE_DISABLED, 10014 INVALID_VOLUME, 10008 PLACED).
          if(retcode == TRADE_RETCODE_INVALID_VOLUME)
          {
             PrintFormat("[GRID-RECOVERY-ERROR] %s TRADE_RETCODE_INVALID_VOLUME: lot=%.2f minVol=%.2f maxVol=%.2f step=%.4f | freeMargin=%.2f leverage=%d",

@@ -1,9 +1,5 @@
-// Enterprise Strategy Signal Context (Phase G - G3)
-// Owns the "last decided signal" bookkeeping and the cycle/lifetime
-// signal counters that used to be loose members of
-// / m_lastContributorCount
-// / m_lastCycleSignalAfterQuorum   (EA heartbeat funnel)
-// - m_totalSignals / m_successfulSignals / m_avgConfidence
+// Owns the last-decided-signal bookkeeping and the cycle/lifetime signal counters
+// that used to be loose members of CEnterpriseStrategyManager.
 // BEHAVIOUR NOTE (verified against the pre-extraction source):
 // every one of these fields is WRITE-ONCE-AT-CONSTRUCTION in the
 // current codebase except m_lastContributorCount /
@@ -52,7 +48,6 @@ private:
     int  m_lastCycleSignalsAfterPipeline;
     bool m_lastCycleSignalAfterQuorum;
 
-    // Statistics
     int    m_totalSignals;
     int    m_successfulSignals;
     double m_avgConfidence;
@@ -62,7 +57,6 @@ private:
 public:
     CEntStrategySignalContext();
 
-    //--- contributor context -------------------------------------------------
     void GetLastSignalContributors(string &contributors[]) const;
     void GetLastSignalContributorIndices(int &indices[]) const;
     //--- `delegator` is the manager's m_attributionDelegator, i.e. exactly the
@@ -80,13 +74,11 @@ public:
     //--- reset performed by the trade-close path (verbatim relocation)
     void ResetContributorContext();
 
-    //--- statistics ----------------------------------------------------------
     int    GetTotalSignals() const      { return m_totalSignals; }
     int    GetSuccessfulSignals() const { return m_successfulSignals; }
     double GetAvgConfidence() const     { return m_avgConfidence; }
     void   IncrementSuccessfulSignals() { m_successfulSignals++; }
 
-    //--- last-cycle funnel ---------------------------------------------------
     int  GetLastCycleSignalsGenerated() const     { return m_lastCycleSignalsGenerated; }
     int  GetLastCycleSignalsAfterPipeline() const { return m_lastCycleSignalsAfterPipeline; }
     bool GetLastCycleSignalAfterQuorum() const    { return m_lastCycleSignalAfterQuorum; }
@@ -94,7 +86,6 @@ public:
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const { return m_currentMarketRegime; }
 };
 
-// Constructor - mirrors the manager's constructor initialisation
 CEntStrategySignalContext::CEntStrategySignalContext() :
     m_lastContributorCount(0),
     m_lastSignalSymbol(""),
@@ -114,13 +105,11 @@ CEntStrategySignalContext::CEntStrategySignalContext() :
     ArrayResize(m_lastSignalContributorIndices, 0);
 }
 
-// Copy the cached contributor names out (verbatim)
 void CEntStrategySignalContext::GetLastSignalContributors(string &contributors[]) const
 {
     ArrayCopy(contributors, m_lastSignalContributors);
 }
 
-// Copy the cached contributor indices out (verbatim)
 void CEntStrategySignalContext::GetLastSignalContributorIndices(int &indices[]) const
 {
     ArrayCopy(indices, m_lastSignalContributorIndices);
@@ -142,7 +131,6 @@ bool CEntStrategySignalContext::GetLastSignalExecutionContext(const CAttribution
     return (m_lastContributorCount > 0 && ArraySize(m_lastSignalContributors) > 0);
 }
 
-// Reset cached contributor context after close
 void CEntStrategySignalContext::ResetContributorContext()
 {
     m_lastContributorCount = 0;

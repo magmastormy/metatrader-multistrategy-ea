@@ -62,7 +62,6 @@ struct STrendReadinessSnapshot
     }
 };
 
-// Multi-Timeframe Trend
 struct MTFTrendState
 {
     TrendState htf;            // Higher timeframe trend
@@ -70,7 +69,7 @@ struct MTFTrendState
     TrendState ltf;            // Lower timeframe trend
     double alignment;          // 0-100 alignment score
     bool isAligned;           // All timeframes aligned
-    ENUM_TREND_TYPE consensus; // Consensus trend
+    ENUM_TREND_TYPE consensus;
 };
 
 #endif // TREND_TYPES_MQH

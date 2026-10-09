@@ -7,7 +7,6 @@
 #include "../Utils/ErrorHandling.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CMarketAnalysis;
@@ -59,7 +58,6 @@ struct SAIQueryResponse {
     }
 };
 
-// AI Weight Modification Request
 struct SAIWeightModification {
     string strategyName;        // Strategy to modify
     double newWeight;           // New weight value
@@ -81,7 +79,7 @@ struct SAIWeightModification {
 struct SAIDecisionExplanation {
     ENUM_TRADE_SIGNAL signal;         // The signal being explained
     string primaryReason;             // Main reason for decision
-    string contributingFactors[10];   // Contributing factors
+    string contributingFactors[10];
     int factorCount;                  // Number of factors
     double factorWeights[10];         // Weight of each factor
     string riskAssessment;            // Risk assessment explanation
@@ -99,14 +97,13 @@ struct SAIDecisionExplanation {
     }
 };
 
-// AI Adaptive Mode Configuration
 struct SAIAdaptiveConfig {
     bool enabled;                     // Adaptive mode enabled
-    double learningRate;              // Learning rate (0-1)
+    double learningRate;
     int adaptationInterval;           // Bars between adaptations
     double minConfidenceThreshold;    // Min confidence to trade
     double maxRiskMultiplier;         // Max risk multiplier in adaptive mode
-    bool useMarketRegimeAdaptation;   // Adapt to market regime
+    bool useMarketRegimeAdaptation;
     bool usePerformanceAdaptation;    // Adapt based on performance
     bool useSentimentAdaptation;      // Adapt based on sentiment (future)
     bool useExternalLLM;              // Use external LLM for advanced reasoning (default: false)
@@ -133,28 +130,23 @@ private:
     
     SAIAdaptiveConfig m_adaptiveConfig;       // Adaptive mode configuration
     
-    // State tracking
     bool m_initialized;
     bool m_adaptiveModeActive;
     datetime m_lastAdaptation;
     int m_queryCount;
     int m_successfulQueries;
     
-    // Weight modification tracking
     SAIWeightModification m_pendingMods[20];
     int m_pendingModCount;
     
-    // Decision history for explanations
     SAIDecisionExplanation m_recentDecisions[50];
     int m_decisionIndex;
     int m_decisionCount;
     
-    // Performance feedback
     double m_predictionAccuracy;
     int m_totalPredictions;
     int m_correctPredictions;
     
-    // External AI connection state
     bool m_externalAIConnected;
     string m_externalAIEndpoint;
     int m_externalLLMQueryCount;
@@ -165,7 +157,6 @@ private:
     string m_lastExternalLLMPhase;
     string m_lastExternalReasoning;
     
-    // Log AI event
     void LogAI(ENUM_ERROR_LEVEL level, string message) {
         CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level, "AIEngine", message, 0);
     }
@@ -206,16 +197,13 @@ private:
         return symbol + "::" + strategyName;
     }
     
-    // Calculate prediction accuracy
     void UpdatePredictionAccuracy(bool wasCorrect) {
         m_totalPredictions++;
         if(wasCorrect) m_correctPredictions++;
         m_predictionAccuracy = (double)m_correctPredictions / (double)m_totalPredictions;
     }
     
-    // Apply weight modification to all managers for a given symbol
         bool ApplyWeightModification(const string symbol, const string strategyName, const double newWeight) {
-            // Find manager for this symbol
             for(int i = 0; i < m_managerCount; i++) {
                 if(m_managerSymbols[i] == symbol && m_managers[i] != NULL) {
                     // Pass simple strategy name since each manager is per-symbol
@@ -226,7 +214,6 @@ private:
         }
 
 public:
-    // Constructor
     CAIEngine() {
         m_initialized = false;
         m_adaptiveModeActive = false;
@@ -250,7 +237,6 @@ public:
         m_lastExternalReasoning = "";
     }
     
-    // Destructor
     ~CAIEngine() {
         if(m_initialized) {
             LogAI(ERROR_LEVEL_INFO, StringFormat("AIEngine shutdown - Queries: %d, Accuracy: %.2f%%", 
@@ -262,7 +248,6 @@ public:
         }
     }
     
-    // Initialize with manager references (supports multiple symbols)
     bool Initialize(CEnterpriseStrategyManager* &managers[], const string &symbols[], int count, const SAIAdaptiveConfig &config) {
         if(count <= 0) {
             LogAI(ERROR_LEVEL_ERROR, "No managers provided");
@@ -284,7 +269,6 @@ public:
         m_adaptiveModeActive = config.enabled;
         m_initialized = true;
         
-        // Configure external LLM based on config
         ConfigureExternalLLM();
         LogExternalLLM("INIT",
                        m_adaptiveConfig.useExternalLLM ?
@@ -312,7 +296,6 @@ public:
         m_adaptiveModeActive = config.enabled;
         m_initialized = true;
         
-        // Configure external LLM based on config
         ConfigureExternalLLM();
         LogExternalLLM("INIT",
                        m_adaptiveConfig.useExternalLLM ?
@@ -337,7 +320,6 @@ public:
         
         m_queryCount++;
         
-        // Route query based on type
         if(request.queryType == "prediction") {
             response = ProcessPredictionQuery(request);
         }
@@ -365,8 +347,6 @@ public:
         return response;
     }
     
-// AI_ModifyWeights - Dynamic Strategy Weight Modification
-// Allows AI to adjust strategy weights based on predictions
     bool AI_ModifyWeights(const SAIWeightModification &modifications[], int modCount) {
         if(!m_initialized || m_managerCount <= 0) {
             LogAI(ERROR_LEVEL_WARNING, "Cannot modify weights - not initialized");
@@ -378,7 +358,6 @@ public:
         for(int i = 0; i < modCount && i < 20; i++) {
             SAIWeightModification mod = modifications[i];
             
-            // Validate modification
             if(mod.newWeight < 0.0 || mod.newWeight > 5.0) {
                 LogAI(ERROR_LEVEL_WARNING, StringFormat("Invalid weight %.2f for %s", 
                       mod.newWeight, mod.strategyName));
@@ -404,7 +383,6 @@ public:
                         }
             
             if(anySuccess) {
-                // Track pending modification if temporary
                 if(mod.temporary && m_pendingModCount < 20) {
                     m_pendingMods[m_pendingModCount] = mod;
                     m_pendingModCount++;
@@ -417,7 +395,6 @@ public:
         return (successCount > 0);
     }
     
-// Provides human-readable explanations for trading decisions
     SAIDecisionExplanation AI_ExplainDecision(const string &symbol, ENUM_TRADE_SIGNAL signal) {
         SAIDecisionExplanation explanation;
         explanation.signal = signal;
@@ -427,7 +404,6 @@ public:
             return explanation;
         }
         
-        // Find manager for this symbol
         CEnterpriseStrategyManager* manager = NULL;
         for(int i = 0; i < m_managerCount; i++) {
             if(m_managers[i] != NULL && m_managerSymbols[i] == symbol) {
@@ -447,7 +423,6 @@ public:
         
         ENUM_MARKET_REGIME regime = manager.GetCurrentMarketRegime();
         
-        // Build explanation based on signal type
         if(signal == TRADE_SIGNAL_NONE) {
             explanation.primaryReason = "No clear directional signal detected";
             explanation.marketContext = "Market conditions do not favor entry at this time";
@@ -473,15 +448,12 @@ public:
             explanation.factorWeights[2] = 0.25;
         }
         
-// Add risk assessment
         double activeStrategyCount = (double)manager.GetActiveStrategyCount();
         explanation.riskAssessment = StringFormat("Active strategies: %.0f, Regime: %s", 
                                                       activeStrategyCount, EnumToString(regime));
         
-        // Calculate overall confidence
         explanation.overallConfidence = manager.GetEnsembleConfidence();
         
-        // Store in history
         m_recentDecisions[m_decisionIndex] = explanation;
         m_decisionIndex = (m_decisionIndex + 1) % 50;
         if(m_decisionCount < 50) m_decisionCount++;
@@ -489,8 +461,6 @@ public:
         return explanation;
     }
     
-// AI_AdaptiveMode - Adaptive Trading Mode Control
-// Enables real-time adaptation based on market conditions
     bool AI_AdaptiveMode(bool enable, const SAIAdaptiveConfig &config) {
         m_adaptiveConfig = config;
         m_adaptiveModeActive = enable && config.enabled;
@@ -512,7 +482,6 @@ public:
         
         datetime nowTime = TimeCurrent();
         
-        // Check adaptation interval
         if(nowTime - m_lastAdaptation < m_adaptiveConfig.adaptationInterval * PeriodSeconds()) {
             return;
         }
@@ -529,7 +498,6 @@ public:
             }
         }
         
-        // Performance-based adaptation
         if(m_adaptiveConfig.usePerformanceAdaptation) {
             AdaptToPerformance();
         }
@@ -538,7 +506,6 @@ public:
             MaybeCaptureExternalReasoning();
         }
         
-        // Process expired temporary weight modifications
         ProcessExpiredModifications();
     }
     
@@ -550,7 +517,6 @@ public:
                        true);
     }
     
-// Configure External LLM based on config flag
     void ConfigureExternalLLM() {
         if(m_adaptiveConfig.useExternalLLM) {
             if(m_externalAIEndpoint == "")
@@ -562,13 +528,11 @@ public:
         }
     }
     
-// Enable/Disable External LLM
     void SetExternalLLMEnabled(bool enabled) {
         m_adaptiveConfig.useExternalLLM = enabled;
         ConfigureExternalLLM();
     }
     
-// Check if External LLM is enabled
     bool IsExternalLLMEnabled() const {
         return m_adaptiveConfig.useExternalLLM;
     }
@@ -584,7 +548,6 @@ public:
         string escapedPrompt = EscapeJson(prompt);
         string jsonRequest = "{\"model\":\"phi3\",\"prompt\":\"" + escapedPrompt + "\",\"stream\":false}";
         
-        // Create HTTP request
         uchar request[];
         uchar responseData[];
         string resultHeaders;
@@ -633,11 +596,9 @@ public:
         }
     }
     
-// Provide Performance Feedback
     void ProvideFeedback(ENUM_TRADE_SIGNAL predictedSignal, bool wasCorrect, double profit) {
         UpdatePredictionAccuracy(wasCorrect);
         
-        // Send feedback to external AI
         if(m_externalAIConnected) {
             string feedbackPrompt = StringFormat("Trade result: %s, Correct: %s, Profit: %.2f. Learn from this outcome.",
                                                   TradeSignalToString(predictedSignal), wasCorrect ? "Yes" : "No", profit);
@@ -652,7 +613,6 @@ public:
         }
     }
     
-// Synthesize Signals using External LLM
     bool SynthesizeSignals(const string &signals, const string &regime, string &recommendation, double &confidence) {
         if(!m_externalAIConnected) {
             return false;
@@ -666,7 +626,6 @@ public:
             return false;
         }
         
-        // Parse response for recommendation and confidence
         StringToUpper(llmResponse);
         if(StringFind(llmResponse, "BUY") >= 0) {
             recommendation = "BUY";
@@ -695,7 +654,6 @@ public:
         return true;
     }
     
-// Generate Trade Explanation using External LLM
     bool GenerateTradeExplanation(const string &signals, const string &decision, string &explanation) {
         if(!m_externalAIConnected) {
             explanation = "External LLM not connected";
@@ -714,7 +672,6 @@ public:
         return true;
     }
     
-// Assess Risk using External LLM
     bool AssessRisk(const string &symbol, double entryPrice, double stopLoss, double takeProfit, string &riskReport) {
         if(!m_externalAIConnected) {
             riskReport = "External LLM not connected";
@@ -736,7 +693,6 @@ public:
         return true;
     }
     
-// Reason Strategy Weights using External LLM
     bool ReasonStrategyWeights(const string &regime, const string &currentWeights, string &reasoning) {
         if(!m_externalAIConnected) {
             reasoning = "External LLM not connected";
@@ -757,7 +713,6 @@ public:
         return true;
     }
     
-    // Getters
     bool IsInitialized() const { return m_initialized; }
     bool IsAdaptiveModeActive() const { return m_adaptiveModeActive; }
     double GetPredictionAccuracy() const { return m_predictionAccuracy; }
@@ -769,7 +724,6 @@ private:
         SAIQueryResponse response;
         response.success = true;
         
-        // Aggregate predictions from all managers
         double totalConfidence = 0.0;
         int totalStrategies = 0;
         string regimes[];
@@ -798,7 +752,6 @@ private:
                 regimes[size] = regime;
             }
             
-            // Build explanation parts
             string part = StringFormat("%s: conf=%.2f strategies=%d regime=%s",
                                        m_managerSymbols[m], conf, stratCount, regime);
             int size = ArraySize(explanationParts);
@@ -980,7 +933,6 @@ private:
         if(manager == NULL || reasoning == "")
             return;
 
-        // Parse LLM reasoning for weight adjustments
         // Expected format: "Increase MOMENTUM weight to 1.5, decrease MEAN_REVERSION to 0.8"
         // or JSON-like format: {"MOMENTUM": 1.5, "MEAN_REVERSION": 0.8}
         
@@ -988,7 +940,6 @@ private:
         StringToLower(adjustedReasoning);
         
         // Simple keyword-based parsing
-        // Look for strategy names and weight suggestions
         string strategies[] = {"momentum", "trend", "supportresistance", "ict", "candlestick", "unicorn", "powerofthree", 
                               "meanreversion", "volatilitybreakout", "fvgscalper", "turtlesoup", "breakerblock",
                               "nyopengap", "asianrangebreak", "statisticalarbitrage", "liquiditysweep",
@@ -999,8 +950,6 @@ private:
             string strat = strategies[s];
             int pos = StringFind(adjustedReasoning, strat);
             if(pos >= 0) {
-                // Look for numbers near the strategy name
-                // Extract a number after the strategy name
                 string afterStrat = StringSubstr(adjustedReasoning, pos + StringLen(strat));
                 StringTrimLeft(afterStrat);
                 
@@ -1016,7 +965,6 @@ private:
                 
                 if(numStart >= 0) {
                     string numStr = StringSubstr(afterStrat, numStart);
-                    // Extract just the number
                     int numEnd = 0;
                     for(int i = 0; i < StringLen(numStr); i++) {
                         ushort c = StringGetCharacter(numStr, i);
@@ -1030,7 +978,6 @@ private:
                     
                     double newWeight = StringToDouble(numStr);
                     if(newWeight > 0.0 && newWeight <= 5.0) {
-                        // Apply weight change with confidence check
                         string properName = GetProperStrategyName(strat);
                         if(properName != "") {
                             bool success = manager.UpdateStrategyWeight(properName, newWeight);
@@ -1045,7 +992,6 @@ private:
         }
     }
 
-    // Helper to convert lowercase strategy name to proper name
     string GetProperStrategyName(const string &lowerName) {
         if(lowerName == "momentum") return "Momentum";
         if(lowerName == "trend") return "Trend";
@@ -1076,7 +1022,6 @@ private:
         return "";
     }
     
-    // Adaptation helpers
     void AdaptToRegime(ENUM_MARKET_REGIME regime) {
         double adjustedThreshold = m_adaptiveConfig.minConfidenceThreshold;
         
@@ -1097,7 +1042,6 @@ private:
         if(regime == MARKET_REGIME_UNKNOWN && adjustedThreshold < 0.0)
             LogAI(ERROR_LEVEL_WARNING, "AdaptToRegime unexpected threshold");
         
-        // Apply adjusted threshold to all managers' AI strategies
         for(int m = 0; m < m_managerCount; m++) {
             if(m_managers[m] == NULL) continue;
             // AI strategies will pick up new threshold on next evaluation
@@ -1105,11 +1049,9 @@ private:
     }
     
     void AdaptToPerformance() {
-        // Adjust risk based on recent performance
         if(m_managerCount <= 0)
             return;
 
-        // Performance-driven strategy adaptation hooks
         for(int m = 0; m < m_managerCount; m++) {
             if(m_managers[m] == NULL) continue;
             m_managers[m].UpdateStrategyWeights();
@@ -1123,10 +1065,8 @@ private:
     }
     
     void ProcessExpiredModifications() {
-        // Simplified expiration check - clear old modifications periodically
         // In a production system, this would track timestamps properly
         if(m_pendingModCount > 0) {
-            // Clear modifications if too many accumulate
             if(m_pendingModCount >= 18) {
                 PrintFormat("[AI-ENGINE] Clearing accumulated modifications");
                 m_pendingModCount = 0;
@@ -1135,10 +1075,8 @@ private:
     }
 };
 
-// Global AI Engine instance
 CAIEngine* g_AIEngine = NULL;
 
-// Helper functions for global access
 bool InitializeAIEngine(CEnterpriseStrategyManager* manager) {
     if(g_AIEngine == NULL)
         g_AIEngine = new CAIEngine();

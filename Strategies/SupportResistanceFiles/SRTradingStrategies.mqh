@@ -209,7 +209,6 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     return result;
 }
 
-// Check for Bullish Rejection
 bool CSRBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
@@ -238,7 +237,6 @@ bool CSRBounceStrategy::HasBullishRejection()
     return false;
 }
 
-// Check for Bearish Rejection
 bool CSRBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
@@ -265,7 +263,6 @@ bool CSRBounceStrategy::HasBearishRejection()
     return false;
 }
 
-// Check Trend Aligned Bullish
 bool CSRBounceStrategy::IsTrendAlignedBullish()
 {
     double ema50 = GetEMA(m_emaFastHandle);
@@ -274,7 +271,6 @@ bool CSRBounceStrategy::IsTrendAlignedBullish()
     return (ema50 > ema200);
 }
 
-// Check Trend Aligned Bearish
 bool CSRBounceStrategy::IsTrendAlignedBearish()
 {
     double ema50 = GetEMA(m_emaFastHandle);
@@ -427,7 +423,6 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
         return result;
 
     double atr = GetATR(14);
-    // Check if price is retesting the broken level
     double retestDistance = MathAbs(price - brokenLevel.price);
     double retestTolerance = (atr > 0) ? (atr * 0.15) : (15 * point);
 
@@ -494,7 +489,6 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     return result;
 }
 
-// Check Volume Confirmation
 bool CSRBreakoutStrategy::HasVolumeConfirmation()
 {
     long vol0 = iVolume(m_symbol, m_timeframe, 0);
@@ -740,7 +734,6 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
     return result;
 }
 
-// Check for Bullish Rejection
 bool CTrendlineBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
@@ -764,7 +757,6 @@ bool CTrendlineBounceStrategy::HasBullishRejection()
     return false;
 }
 
-// Check for Bearish Rejection
 bool CTrendlineBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];

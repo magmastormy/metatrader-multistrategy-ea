@@ -42,7 +42,7 @@ private:
     double m_weakMultiplier;        // 0.5x for weak trends
     double m_normalMultiplier;      // 1.0x for normal trends
     double m_strongMultiplier;      // 1.3x for strong trends
-    double m_veryStrongMultiplier;  // 1.5x for very strong
+    double m_veryStrongMultiplier;
 
     // L5-011/L5-008: Minimum multiplier when no trend (prevents 0x blocking trades)
         double m_minMultiplier;
@@ -233,13 +233,9 @@ public:
 };
 
 // Bayesian Kelly Lot Modifier
-// Uses Beta-Binomial conjugate priors to estimate win rate, then
-// applies the Kelly Criterion with a configurable fraction.
-// Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD
-// vs 62% at full Kelly. Self-contained — tracks its own stats.
-// L5-013 FIX: Uses confidence parameter as prior weight for the
-// Bayesian update — higher confidence = stronger belief in observed
-// win rate, lower confidence = more weight on prior.
+// Uses Beta-Binomial conjugate priors to estimate win rate, then applies the Kelly Criterion with a configurable
+// fraction. Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD vs 62% at full Kelly. Self-contained.
+// L5-013: confidence is the prior weight for the Bayesian update - higher confidence = less prior weight.
 class CBayesianKellyModifier : public CPositionSizerModifier
 {
 private:
@@ -252,9 +248,7 @@ private:
     int    m_totalTrades;     // Total trades observed
     int    m_wins;            // Win count
 
-    // L5-013: Confidence-weighted prior strength
-    // Higher confidence = stronger belief in observed stats = less prior weight
-    // Lower confidence = more prior weight = more conservative
+    // L5-013: Confidence-weighted prior strength: higher confidence = less prior weight = more conservative
     double m_priorAlpha;      // Prior alpha (wins)
     double m_priorBeta;       // Prior beta (losses)
 
@@ -280,16 +274,13 @@ public:
         if(m_totalTrades <= 0)
             return baseLot;
 
-        // L5-013: Use confidence as prior weight
-        // High confidence (near 1.0) = trust observed stats more = weaker prior influence
-        // Low confidence (near 0.0) = trust prior more = more conservative
+        // L5-013: Use confidence as prior weight (high confidence = weaker prior influence)
         double effectiveAlpha, effectiveBeta;
         double confidenceWeight = MathMax(0.0, MathMin(1.0, confidence));
         
         if(confidenceWeight > 0.0)
         {
             // Blend observed stats with prior based on confidence
-            // As confidence increases, observed data gets more weight
             double priorWeight = 1.0 - confidenceWeight;
             effectiveAlpha = m_priorAlpha * priorWeight + m_alpha * confidenceWeight;
             effectiveBeta = m_priorBeta * priorWeight + m_beta * confidenceWeight;
@@ -382,10 +373,8 @@ public:
     }
 };
 
-// Wraps CEquityCurveManager to scale lot size based on whether
-// equity is above or below its EMA. Below EMA → reduce position
-// size by reductionFactor. Above EMA → normal sizing.
-// L5-014 FIX: Added per-strategy equity curve support
+// Wraps CEquityCurveManager to scale lot size by equity position vs its EMA (below EMA -> reductionFactor).
+// L5-014: Added per-strategy equity curve support
 class CEquityCurveLotModifier : public CPositionSizerModifier
 {
 private:
@@ -462,12 +451,10 @@ public:
 
     void AddStrategyEquityCurve(const string strategyName, CEquityCurveManager* manager, bool own = false)
     {
-        // Check if already exists
         for(int i = 0; i < m_curveCount; i++)
         {
             if(m_strategyCurves[i].strategyName == strategyName)
             {
-                // Replace existing
                 if(m_strategyCurves[i].ownsManager && m_strategyCurves[i].manager != NULL)
                     delete m_strategyCurves[i].manager;
                 m_strategyCurves[i].manager = manager;
@@ -477,7 +464,6 @@ public:
             }
         }
         
-        // Add new
         int newSize = m_curveCount + 1;
         ArrayResize(m_strategyCurves, newSize);
         m_strategyCurves[m_curveCount] = SStrategyEquityCurve(strategyName, manager, own);
@@ -543,8 +529,7 @@ public:
 };
 
 // Volatility Targeting Lot Modifier
-// Adjusts position size to target a specific annualized volatility
-// Uses ATR-based volatility estimation
+// Adjusts position size to target a specific annualized volatility (ATR-based estimation)
 class CVolatilityTargetingModifier : public CPositionSizerModifier
 {
 private:
@@ -577,7 +562,6 @@ private:
         if(CopyBuffer(m_atrHandle, 0, 0, m_volatilityLookback, atr) <= 0)
             return 0.0;
         
-        // Calculate annualized volatility from ATR
         // ATR is average true range, we need to convert to volatility
         double sumATR = 0.0;
         int count = MathMin(m_volatilityLookback, ArraySize(atr));
@@ -637,9 +621,6 @@ public:
         if(currentVol <= 0.0)
             return baseLot; // No data, pass through unchanged
         
-        // Scale position size to target volatility
-        // If current vol is higher than target, reduce size
-        // If current vol is lower than target, increase size (capped)
         double volRatio = m_volatilityTarget / currentVol;
         
         // Clamp ratio to reasonable bounds (0.25x to 2.0x)

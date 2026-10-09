@@ -254,7 +254,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Get prediction from Python Bridge
         SPythonBridgeResponse response = m_pythonBridge.Predict(features, ArraySize(features), m_predictionMode, m_familyId, m_symbol);
         
         if(!response.success)

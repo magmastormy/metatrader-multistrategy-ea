@@ -9,7 +9,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Signals/SignalDiagnostics.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CMarketAnalysis;
@@ -115,7 +114,6 @@ public:
     bool IsVolatilityHigh() const { return m_metrics.state >= VOLATILITY_HIGH; }
     bool IsVolatilityExpanding() const { return m_metrics.isExpanding; }
     
-    // Filters
     bool ShouldTradeInCurrentVolatility(double maxVolatility = 3.0);
     double GetVolatilityAdjustedStopLoss(double baseStop);
     double GetVolatilityAdjustedTakeProfit(double baseTp);

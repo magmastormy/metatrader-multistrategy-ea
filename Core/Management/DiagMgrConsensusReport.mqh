@@ -1,4 +1,3 @@
-// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
 // Stateless emitters for the consensus diagnostics report lines
 // produced during EmitConsensusDiagnostics().
 // Log tags ([CONSENSUS-SNAPSHOT], [STRATEGY-REJECTS], [ROLE-CLUSTER]

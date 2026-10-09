@@ -13,21 +13,17 @@
 #include "ATRScalpTypes.mqh"
 #include "ATRScalpFilter.mqh"
 
-// CATRScalpSignal — indicator handles + signal evaluation
 class CATRScalpSignal
 {
 private:
-   // Indicator handles per symbol
    int   m_atrHandles[];
    int   m_emaFastHandles[];
    int   m_emaSlowHandles[];
    int   m_rsiHandles[];
 
-   // Statistics
    int   m_totalSpikeWindowBlocks;
 
 public:
-// Constructor
    CATRScalpSignal() :
       m_totalSpikeWindowBlocks(0)
    {
@@ -64,13 +60,10 @@ public:
       }
    }
 
-// Spike-window block counter
    int TotalSpikeWindowBlocks() const { return m_totalSpikeWindowBlocks; }
 
-// Update indicator values for a symbol
    bool UpdateIndicators(int idx, SATRScalpSymbolState &state)
    {
-      // ATR
       if(m_atrHandles[idx] != INVALID_HANDLE)
       {
          double atrBuf[];
@@ -105,7 +98,6 @@ public:
          }
       }
 
-         // Detect EMA crossover direction
          if(fastOk && slowOk)
          {
             double fastCurr = emaFastBuf[0], fastPrev = emaFastBuf[1];
@@ -127,7 +119,6 @@ public:
             // Keep previous cross direction if no new cross
          }
 
-      // RSI
       if(m_rsiHandles[idx] != INVALID_HANDLE)
       {
          double rsiBuf[];

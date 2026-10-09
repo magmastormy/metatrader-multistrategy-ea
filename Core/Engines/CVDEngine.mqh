@@ -23,7 +23,6 @@ private:
     double            m_extremeThreshold;
     int               m_cvdMALength;
     
-    // Session tracking
     datetime m_sessionStartDate;
     datetime m_lastProcessedBarTime;  // Batch 117: prevent CVD re-accumulation
     double   m_sessionCVD;
@@ -114,7 +113,6 @@ public:
             
             m_sessionCVD += delta;
             
-            // Store in history
             int idx = (m_historyIndex + m_historySize - i) % m_historySize;
             m_cvdHistory[idx] = m_sessionCVD;
             m_priceHistory[idx] = close;
@@ -145,7 +143,6 @@ public:
         double cvdStdDev = (count > 1) ? MathSqrt(cvdVariance / (count - 1)) : 1;
         m_lastResult.isExtreme = (cvdStdDev > 0 && MathAbs(m_sessionCVD - cvdMean) > m_extremeThreshold * cvdStdDev);
         
-        // Check for divergences
         m_lastResult.bullDivergence = false;
         m_lastResult.bearDivergence = false;
         
@@ -191,7 +188,6 @@ public:
     bool IsInitialized() const { return m_initialized; }
     SCVDResult GetLastResult() const { return m_lastResult; }
 
-    // --- Cleanup ---
     void Deinit()
     {
         // CCVDEngine owns dynamic arrays m_cvdHistory[] and m_priceHistory[]

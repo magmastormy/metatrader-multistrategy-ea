@@ -47,7 +47,7 @@ private:
 
     // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
     ENUM_TIMEFRAMES     m_htf;  // Higher timeframe for trend confirmation
-    int                 m_htfHandleADX;  // ADX handle for HTF
+    int                 m_htfHandleADX;
     int                 m_tradeParamATRHandle;  // Cached ATR handle for GetTradeParameters
     int                 m_macdHandle;  // MACD histogram momentum confirmation
 

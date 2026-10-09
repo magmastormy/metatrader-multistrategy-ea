@@ -652,7 +652,6 @@ double CLiquidityDetector::CalculateLiquidityStrength(int bar1, int bar2)
     if(IsAtPsychologicalLevel(price))
         strength += 0.15;
     
-    // Volume check
     long vol1 = iVolume(m_symbol, m_timeframe, bar1);
     long vol2 = iVolume(m_symbol, m_timeframe, bar2);
     long avgVol = GetAverageVolume(20);

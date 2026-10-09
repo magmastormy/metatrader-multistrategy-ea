@@ -94,7 +94,6 @@ public:
         return m_entries[idx].neuralNet;
     }
     
-    // Get or create AI adapter for symbol
     CAIStrategyAdapter* GetOrCreateAIAdapter(const string symbol, CNeuralNetworkStrategy* neuralNet)
     {
         if(symbol == "" || neuralNet == NULL) return NULL;

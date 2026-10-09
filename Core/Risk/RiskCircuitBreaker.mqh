@@ -1,19 +1,6 @@
-// Drawdown / daily-loss circuit breakers plus graduated
-// auto-recovery and emergency-close escalation state.
-// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-F):
-// m_tradingEnabled, m_peakEquity, m_maxDrawdownFromPeak,
-// m_drawdownBreachCount, m_dailyLossHaltActive,
-// m_dailyLossHaltDate, m_cbTriggeredAt, m_cbRecoveryAttempts,
-// m_cbMaxRecoveryAttempts, m_cbRecoveryCooldownMin,
-// m_cbLastRecoverySuccessTime, m_cbRecoveryLevel,
-// m_emergencyCloseRequested
-// CUnifiedRiskManager::CheckDailyLossLimit (P&L half)
-// + all circuit-breaker getters
-// Behaviour is byte-identical to the original member functions;
-// CUnifiedRiskManager keeps thin forwarders with the original
-// signatures so that all call sites remain unchanged.
-// OWNERSHIP NOTES (deliberately NOT moved here, to avoid
-// back-pointers and to keep behaviour identical):
+// Drawdown / daily-loss circuit breakers plus graduated auto-recovery and emergency-close escalation state.
+// CUnifiedRiskManager keeps thin forwarders with the original signatures so all call sites remain unchanged.
+// OWNERSHIP NOTES (deliberately NOT moved here, to avoid back-pointers and to keep behaviour identical):
 // * m_config           -> thresholds are passed in as arguments.
 // * m_initialized      -> the `if(!m_initialized)` guards stay in
 // the forwarders.
@@ -33,17 +20,15 @@
 class CRiskCircuitBreaker
 {
 private:
-    // Drawdown circuit breaker (Batch 93 - Week 1)
     bool     m_tradingEnabled;           // Master switch for trading
     double   m_peakEquity;               // Highest equity reached
     double   m_maxDrawdownFromPeak;      // Current max drawdown from peak
     int      m_drawdownBreachCount;      // Number of times drawdown limit hit
 
     // Daily P&L Loss Limit circuit breaker
-    bool     m_dailyLossHaltActive;      // Daily loss halt is active
+    bool     m_dailyLossHaltActive;
     datetime m_dailyLossHaltDate;        // Date when halt was triggered (for reset on new day)
 
-    // Circuit Breaker Auto-Recovery (Phase 2.4)
     datetime m_cbTriggeredAt;            // When circuit breaker was triggered
     int      m_cbRecoveryAttempts;       // Number of auto-recovery attempts made
     int      m_cbMaxRecoveryAttempts;    // Max auto-recovery attempts (default 3)
@@ -55,8 +40,6 @@ private:
     bool     m_emergencyCloseRequested;
 
 public:
-    //--- Constructor performs the zero-init that used to live in the
-    //--- CUnifiedRiskManager initialiser list (identical values).
     CRiskCircuitBreaker() :
         m_tradingEnabled(true),
         m_peakEquity(0.0),
@@ -82,10 +65,8 @@ public:
 // Lifecycle
 
     //--- Re-arm the breaker at CUnifiedRiskManager::Initialize time.
-    //--- Mirrors the original inline block verbatim.
     void InitializeState(const double dailyStartEquity)
     {
-        // ENHANCEMENT: Initialize drawdown circuit breaker (Batch 93 - Week 1)
         m_peakEquity = dailyStartEquity;
         m_maxDrawdownFromPeak = 0.0;
         m_drawdownBreachCount = 0;
@@ -100,7 +81,6 @@ public:
     }
 
     //--- Peak / drawdown refresh performed on every runtime cycle.
-    //--- Mirrors the original inline block in RefreshRuntimeState verbatim.
     void RefreshPeakAndDrawdown()
     {
         // Update peak equity and drawdown from peak - ensures m_maxDrawdownFromPeak is always current
@@ -117,7 +97,6 @@ public:
     }
 
     //--- Reset the auto-recovery counter when a new trading day starts.
-    //--- Mirrors the original inline block in CheckAndResetDailyLimits verbatim.
     void ResetRecoveryCounterForNewDay()
     {
         // Reset circuit breaker recovery counter on new trading day
@@ -130,7 +109,6 @@ public:
     }
 
 
-    //--- ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)
     //--- Checks if drawdown from peak equity exceeds limits.
     //--- Returns: true if trading is allowed, false if circuit breaker hit.
     //--- `conservativeMode` is the owner's shared conservative-mode flag.
@@ -251,10 +229,8 @@ public:
 
     //--- Restore circuit breaker state from crash recovery file.
     //--- `dailyStartEquity` is the owner's shared daily-start equity field.
-    //--- Batch 168: the halt flags are now part of the restore. They were not
-    //--- persisted at all, so any restart (recompile, param change, VPS reboot)
-    //--- silently re-armed a daily-loss halt that had already been earned, letting
-    //--- the EA trade a second full daily budget on the same day.
+    //--- Batch 168: the halt flags are now part of the restore - they were not persisted at all, so any
+    //--- restart silently re-armed a daily-loss halt that had already been earned, letting the EA trade a second full daily budget.
     void RestoreCircuitBreakerState(const double savedPeakEquity,
                                     const double savedDailyStartEquity,
                                     const int savedBreachCount,
@@ -290,7 +266,6 @@ public:
 
 // Auto-recovery
 
-    //--- Circuit Breaker Auto-Recovery (Phase 2.4).
     //--- Attempts to re-enable trading after cooldown if drawdown recovers.
     //--- L5-010 FIX: Uses bar-based cooldown instead of wall-clock minutes.
     bool CheckCircuitBreakerRecovery(const double drawdownCriticalPercent,
@@ -405,7 +380,6 @@ public:
         Print("[RISK-DAILY-LOSS] Daily loss halt RESET — new trading day");
     }
 
-    //--- Daily P&L Loss Limit circuit breaker.
     //--- Halts all trading when daily realized + unrealized loss exceeds the
     //--- configured percentage of daily starting equity.
     //--- Returns true when trading may continue.
@@ -418,11 +392,9 @@ public:
             return false;
 
         // Calculate daily P&L: realized deals today + current unrealized P&L.
-        // Batch 168: EA-scoped. This previously summed every deal on the account
-        // and took account-wide floating P&L, so a user's profitable manual trades
-        // masked EA losses (the halt never fired) and, conversely, another EA's or
-        // the user's loss could halt this EA for someone else's drawdown. When the
-        // ownership authority is not yet configured it counts everything, because
+        // Batch 168: EA-scoped. This previously summed every deal on the account and took account-wide floating
+        // P&L, so a user's profitable manual trades masked EA losses (the halt never fired) and another EA's loss
+        // could halt this EA. When the ownership authority is not yet configured it counts everything, because
         // excluding rows there would fail open.
         bool scopeToEA = IsMagicOwnershipConfigured();
         double dailyRealizedPL = 0.0;
@@ -495,8 +467,7 @@ public:
 // Cross-module escalation hooks
 
     //--- Hard halt requested by the margin-health monitor when the account
-    //--- margin level breaches the emergency threshold. Mirrors the original
-    //--- inline assignment pair in MonitorMarginHealth verbatim.
+    //--- margin level breaches the emergency threshold.
     void HaltForMarginEmergency()
     {
         m_tradingEnabled = false;

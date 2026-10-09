@@ -41,7 +41,6 @@ struct SOFIWindowState
     double cumBuyVolume;         // Cumulative buy-pressure volume in window
     double cumSellVolume;        // Cumulative sell-pressure volume in window
 
-    // Circular buffer indices for volume deque
     int    head;                 // Next write position
     int    count;                // Items currently in buffer
 
@@ -53,7 +52,6 @@ struct SOFIWindowState
     double lastOFINormalized;   // Most recent OFI_normalized value
     double lastOFIZScore;       // Most recent z-score
 
-    // Volume circular buffer
     double buyVolumes[];        // Ring buffer of buy volumes per tick
     double sellVolumes[];       // Ring buffer of sell volumes per tick
 
@@ -101,7 +99,6 @@ struct SOFIWindowState
             count++;
         }
 
-        // Write new entry
         buyVolumes[head]  = buyVol;
         sellVolumes[head] = sellVol;
         cumBuyVolume  += buyVol;
@@ -181,7 +178,6 @@ public:
     void              Deinit();
 };
 
-// Constructor / Destructor
 COrderFlowImbalanceEngine::COrderFlowImbalanceEngine() :
     m_symbol(""),
     m_fastWindow(5),
@@ -203,10 +199,8 @@ COrderFlowImbalanceEngine::~COrderFlowImbalanceEngine()
 {
 }
 
-// Parse comma-separated composite weights string
 void COrderFlowImbalanceEngine::ParseCompositeWeights(const string weightsStr)
 {
-    // Default weights
     m_weightFast   = 0.5;
     m_weightMedium = 0.3;
     m_weightSlow   = 0.2;
@@ -214,7 +208,6 @@ void COrderFlowImbalanceEngine::ParseCompositeWeights(const string weightsStr)
     if(weightsStr == "")
         return;
 
-    // Split by comma
     string parts[];
     ushort separator = StringGetCharacter(",", 0);
     int count = StringSplit(weightsStr, separator, parts);
@@ -238,7 +231,6 @@ void COrderFlowImbalanceEngine::ParseCompositeWeights(const string weightsStr)
     }
 }
 
-// Initialise engine with parameters
 void COrderFlowImbalanceEngine::Init(const string symbol,
                                       int fastWindow,
                                       int mediumWindow,
@@ -294,21 +286,17 @@ int COrderFlowImbalanceEngine::ClassifyTick(double price, double bidAskMid)
     return m_lastClassification;
 }
 
-// Process each incoming tick
 void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double bid, double ask)
 {
     if(price <= 0.0)
         return;
 
-    // Compute bid-ask midpoint if available
     double bidAskMid = 0.0;
     if(bid > 0.0 && ask > 0.0)
         bidAskMid = (bid + ask) / 2.0;
 
-    // Classify tick direction
     int classification = ClassifyTick(price, bidAskMid);
 
-    // Distribute tick volume to buy/sell side
     // When tick volume is 0 (synthetic CFDs, some forex), use unit volume per tick
     double effectiveVolume = (tickVolume > 0.0) ? tickVolume : 1.0;
     double buyVol  = 0.0;
@@ -324,12 +312,10 @@ void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double b
     m_prevBidAskMid   = bidAskMid;
     m_tickCount++;
 
-    // Push into all three rolling windows
     m_fast.PushTick(buyVol, sellVol);
     m_medium.PushTick(buyVol, sellVol);
     m_slow.PushTick(buyVol, sellVol);
 
-    // Build composite OFI
     double compositeOFI = m_weightFast   * m_fast.lastOFIZScore
                         + m_weightMedium * m_medium.lastOFIZScore
                         + m_weightSlow   * m_slow.lastOFIZScore;
@@ -338,14 +324,12 @@ void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double b
     double totalVol = m_slow.cumBuyVolume + m_slow.cumSellVolume;
     double buyPressureRatio = (totalVol > 0.0) ? (m_slow.cumBuyVolume / totalVol) : 0.5;
 
-    // Discretise signal
     ENUM_TRADE_SIGNAL sig = TRADE_SIGNAL_NONE;
     if(compositeOFI > m_signalThreshold)
         sig = TRADE_SIGNAL_BUY;
     else if(compositeOFI < -m_signalThreshold)
         sig = TRADE_SIGNAL_SELL;
 
-    // Update snapshot
     m_snapshot.compositeOFI    = compositeOFI;
     m_snapshot.fastOFI         = m_fast.lastOFIZScore;
     m_snapshot.mediumOFI       = m_medium.lastOFIZScore;
@@ -375,13 +359,11 @@ void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double b
     }
 }
 
-// Get current composite OFI z-score
 double COrderFlowImbalanceEngine::GetOFI() const
 {
     return m_snapshot.compositeOFI;
 }
 
-// Get individual OFI levels (fast / medium / slow)
 bool COrderFlowImbalanceEngine::GetOFILevels(double &fast, double &medium, double &slow) const
 {
     fast   = m_snapshot.fastOFI;
@@ -395,7 +377,6 @@ double COrderFlowImbalanceEngine::GetBuyPressureRatio() const
     return m_snapshot.buyPressureRatio;
 }
 
-// Get discretised signal
 ENUM_TRADE_SIGNAL COrderFlowImbalanceEngine::GetSignal() const
 {
     if(!IsWarmedUp())
@@ -403,7 +384,6 @@ ENUM_TRADE_SIGNAL COrderFlowImbalanceEngine::GetSignal() const
     return m_snapshot.signal;
 }
 
-// Get full snapshot
 bool COrderFlowImbalanceEngine::GetSnapshot(SOFISnapshot &snap) const
 {
     snap = m_snapshot;
@@ -416,7 +396,6 @@ bool COrderFlowImbalanceEngine::IsWarmedUp() const
     return (m_tickCount >= m_slowWindow);
 }
 
-// Reset all state
 void COrderFlowImbalanceEngine::Reset()
 {
     m_fast.Init(m_fastWindow);
@@ -433,7 +412,6 @@ void COrderFlowImbalanceEngine::Reset()
     PrintFormat("[OFI] RESET | symbol=%s", m_symbol);
 }
 
-// Cleanup external resources
 void COrderFlowImbalanceEngine::Deinit()
 {
     // COrderFlowImbalanceEngine owns dynamic arrays in SOFIWindowState structs

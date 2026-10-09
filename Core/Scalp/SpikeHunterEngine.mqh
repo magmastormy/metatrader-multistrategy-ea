@@ -1,10 +1,7 @@
 // Spike hunting engine for synthetic CFD indices
 // Detects pre-spike conditions and opens trades IN the spike
 // direction, independent of existing long-term positions
-// DECOMPOSED: CSpikeHunterEngine is now a thin coordinator. The
-// implementation lives in focused SpikeHunter* modules, each owning
-// one cohesive concern. Every public method below is a signature-
-// identical forwarder â€?no behaviour, threshold or log tag changed.
+// CSpikeHunterEngine is a thin coordinator: every public method is a signature-identical forwarder into a focused SpikeHunter* module - no behaviour, threshold or log tag changed.
 // SpikeHunterTypes.mqh      SSpikeHunterConfig + state structs
 // SpikeHunterOverrides.mqh  Batch-102 family override table
 // SpikeHunterDirection.mqh  PainX/GainX/Boom/Crash direction map
@@ -26,10 +23,8 @@
 
 class CUnifiedRiskManager;
 
-// Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-//--- Decomposed SpikeHunter* modules (each header is self-guarded)
 #include "SpikeHunterTypes.mqh"
 #include "SpikeHunterOverrides.mqh"
 #include "SpikeHunterDirection.mqh"
@@ -37,8 +32,6 @@ class CAIAdapter;
 #include "SpikeHunterAlerts.mqh"
 #include "SpikeHunterExecutor.mqh"
 
-// CSpikeHunterEngine â€?Spike hunting engine for synthetic CFDs
-// (coordinator)
 class CSpikeHunterEngine
 {
 private:
@@ -49,16 +42,12 @@ private:
    CSpikeHunterAlerts              m_alerts;     // was m_lastPushAlertTick/m_pushAlertCount
    CSpikeHunterExecutor            m_executor;   // was m_baseMagic/m_positionSizer/m_riskManager/m_tradeManager/m_trade/m_aiAdapter
 
-   // Statistics
    int                             m_totalDetections;
    int                             m_totalTradesSkipped;
 
-   //--- Forwarders into CSpikeHunterDetector (signatures unchanged) ---
 
-// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const { return m_detector.FindSymbolIndex(symbol); }
 
-// Find family override index for a symbol (Batch 102)
    int FindFamilyOverrideIndex(const string symbol) const { return m_detector.FindFamilyOverrideIndex(symbol); }
 
 // Effective (override-aware) parameters for a symbol (Batch 102)
@@ -71,7 +60,6 @@ private:
    int    GetEffectiveCooldownMs(int idx) const { return m_detector.GetEffectiveCooldownMs(idx); }
    int    GetEffectiveMinConfluence(int idx) const { return m_detector.GetEffectiveMinConfluence(idx); }
 
-// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol) { m_detector.InitializeSymbolState(idx, symbol); }
 
 // Detection layers 1-3 and confluence count
@@ -87,7 +75,6 @@ private:
                                                             m_detector.GetDirectionSign(idx));
    }
 
-// Check if symbol has a certain spike direction
 // Returns true and sets direction for PainX/Crash/Boom/GainX
    bool IsSpikeSymbolDirectionCertain(const string symbol, int &direction) const
    {
@@ -102,20 +89,17 @@ private:
    void SendThrottledAlert(const string message) { m_alerts.SendThrottledAlert(message); }
 
 public:
-// Constructor
    CSpikeHunterEngine() :
       m_totalDetections(0),
       m_totalTradesSkipped(0)
    {
    }
 
-// Destructor
    ~CSpikeHunterEngine()
    {
       Deinit();
    }
 
-// Initialize the engine with config and dependencies
    bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
    {
       m_config         = config;
@@ -135,13 +119,11 @@ public:
                   m_config.minConfluence,
                   m_config.magicOffset);
 
-      // Log effective confluence config per symbol family
       m_detector.LogOverridesSummary();
 
       return true;
    }
 
-// Add a symbol to monitor for spikes
    bool AddSymbol(const string symbol) { return m_detector.AddSymbol(symbol); }
 
 // Release all indicator handles and clean up
@@ -173,7 +155,6 @@ public:
       // Check if spike is confirmed
       if(m_detector.GetConfluenceCount(idx) < GetEffectiveMinConfluence(idx))
       {
-         // Diagnostic: log near-miss confluence once per minute per symbol
          m_detector.LogNearMissDiagnostic(idx);
          return;
       }
@@ -194,12 +175,10 @@ public:
       string dirStr = (direction == 1) ? "BUY" : "SELL";
       m_detector.LogSpikeDetected(idx, dirStr);
 
-      // Send push alert
       string alertMsg = "SPIKE DETECTED: " + symbol + " " + dirStr +
                         " (" + IntegerToString(m_detector.GetConfluenceCount(idx)) + "/3 confluence)";
       SendThrottledAlert(alertMsg);
 
-      // Check if we can open a trade
       if(!CanOpenSpikeTrade(idx))
       {
          PrintFormat("[SPIKE-HUNT-SKIP] %s â€?cooldown or max positions reached", symbol);
@@ -220,10 +199,8 @@ public:
 // Count active spike positions (positions with SPIKE-HUNT comment)
    int GetActiveSpikePositions() const { return CSpikeHunterExecutor::GetActiveSpikePositions(); }
 
-// Get total spike detections
    int GetTotalDetections() const { return m_totalDetections; }
 
-// Get total spike trades opened
    int GetTotalTradesOpened() const { return m_executor.GetTotalTradesOpened(); }
    int GetTotalTradesSkipped() const { return m_totalTradesSkipped; }
 

@@ -45,7 +45,6 @@
 #define AI_MLP_OUTPUT             2
 #endif
 
-//--- Normalization
 #ifndef AI_DEFAULT_NORM_DECAY
 #define AI_DEFAULT_NORM_DECAY    0.02
 #endif
@@ -78,7 +77,6 @@
 #define AI_MIN_RESOLVED_LABELS   3
 #endif
 
-//--- Barrier defaults
 #ifndef AI_DEFAULT_BARRIER_K
 #define AI_DEFAULT_BARRIER_K      1.5
 #endif
@@ -89,7 +87,6 @@
 #define AI_MIN_BARRIER_WIDTH_POINTS  5
 #endif
 
-//--- MetaLabeler training
 #ifndef AI_META_TRAIN_COOLDOWN
 #define AI_META_TRAIN_COOLDOWN    50
 #endif
@@ -108,7 +105,6 @@
 #define AI_KELLY_UPDATE_INTERVAL   3
 #endif
 
-//--- Feature importance
 #ifndef AI_FEATURE_IMPORTANCE_INTERVAL
 #define AI_FEATURE_IMPORTANCE_INTERVAL  200
 #endif

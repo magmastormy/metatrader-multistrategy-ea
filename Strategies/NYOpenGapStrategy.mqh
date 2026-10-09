@@ -163,7 +163,7 @@ public:
         }
 
         // --- Determine gap direction ---
-        bool gapUp = (todayOpen > prevDayClose);  // Gap up = open > prev close
+        bool gapUp = (todayOpen > prevDayClose);
         // Fade the gap: gap UP → SELL, gap DOWN → BUY
         bool bullish = !gapUp;
 

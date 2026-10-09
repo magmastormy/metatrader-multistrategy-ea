@@ -674,7 +674,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
         }
     }
     
-    // Check for conflicts
     if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
     {
         // Resolve conflicts based on settings

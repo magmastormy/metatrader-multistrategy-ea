@@ -54,7 +54,6 @@ private:
     //--- Helper methods (private)
     bool    IsPositionIdStillOpen(const ulong positionId);
 
-    //--- Check if a contributor name is an AI strategy
     bool IsAIContributorName(const string strategyName) const;
 
 public:
@@ -533,7 +532,6 @@ for(int i = 0; i < count; i++)
 return count;
 }
 
-// Position open check
 bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
 {
     if(positionId == 0)

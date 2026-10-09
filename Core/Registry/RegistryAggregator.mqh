@@ -32,25 +32,18 @@ class CStrategyRegistry;
 class CRegistryAggregator
 {
 private:
-    // Mathematical engines
     CMathematicalEngineRegistry* m_mathRegistry;
     
-    // Institutional engines
     CInstitutionalEngineRegistry* m_institutionalRegistry;
     
-    // Neural networks
     CNeuralNetRegistry* m_neuralNetRegistry;
     
-    // Drawing managers
     CDrawingManagerRegistry* m_drawingRegistry;
     
-    // Scanning
     CScanSchedulerRegistry* m_scanRegistry;
     
-    // Symbol state
         CSymbolStateTracker* m_symbolStateTracker;
     
-        // Strategy registry
         CStrategyRegistry* m_strategyRegistry;
 
     public:

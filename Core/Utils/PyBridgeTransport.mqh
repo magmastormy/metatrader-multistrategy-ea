@@ -19,8 +19,8 @@ class CPyBridgeTransport
 {
 private:
    string                   m_endpoint;        // Server endpoint (http://host:port)
-   ENUM_PYTHON_BRIDGE_MODE  m_mode;            // Bridge mode
-   int                      m_request_timeout; // Request timeout (ms)
+   ENUM_PYTHON_BRIDGE_MODE  m_mode;
+   int                      m_request_timeout;
    ENUM_PYTHON_BRIDGE_STATE m_state;           // Current bridge state
    bool                     m_initialized;     // Initialized flag
    int                      m_request_count;   // Total requests count

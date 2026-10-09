@@ -1,9 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Pure stateless entry gates / market-quality filters that used to
-// live as private methods on CFastScalpEngine:
-// RefreshScalpPrice(), IsMomentumBurst(), IsSpreadAcceptable(),
-// IsSyntheticSymbol(), IsScalpCostViable()
+// Pure stateless entry gates / market-quality filters for the scalp pipeline.
 // All methods are `static`. The two ATR-dependent gates now take
 // the ATR as an argument; the engine forwarder resolves it through
 // GetATRCached(symbol) exactly as before, so the call sequence and
@@ -21,11 +16,9 @@
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-// CFastScalpFilters — stateless scalp gates
 class CFastScalpFilters
 {
 public:
-// Refresh market price with tick-level freshness check
 // Returns true if valid prices obtained, false otherwise
 // Prevents retcode=10015 (Invalid price) by ensuring latest tick
    static bool RefreshScalpPrice(const string symbol, double &ask, double &bid)
@@ -53,7 +46,6 @@ public:
          return false;
       }
 
-      // Batch 117: removed debug log — fires on every tick, creates excessive output
       return true;
    }
 
@@ -89,7 +81,6 @@ public:
       return (spreadPrice <= maxSpreadATRRatio * atr);
    }
 
-// Check if Symbol is Synthetic Index
    static bool IsSyntheticSymbol(const string symbol)
    {
       if(symbol == "") return false;
@@ -129,7 +120,6 @@ public:
 // SYNTHETIC SYMBOLS: More permissive thresholds (wider spreads)
    static bool IsScalpCostViable(const string symbol, double slPoints, double tpPoints)
    {
-      // Get total transaction cost
       double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
 
       // MQL5 does not have SYMBOL_TRADE_COMMISSION — estimate commission from
@@ -142,12 +132,8 @@ public:
       double tickValueLoss   = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
 
       // Total cost = spread + estimated commission (round-trip)
-      // Batch 152 (L-01): commissionPerTick is money/tick/lot; converting to points
+      // Unit conversion: commissionPerTick is money/tick/lot; to points, divide by tickValue (money/tick/lot) -> ticks, then multiply by tickSize/point -> points.
       // means dividing by tickValue (money/tick/lot) -> ticks, then tickSize/point
-      // -> points. The old chain built "commissionPerLot" by dividing by tickSize
-      // and then multiplied by pointValue (money/price), producing garbage units
-      // that hard-rejected every candidate on any symbol reporting asymmetric
-      // tick values (symmetric values short-circuit to comm=0, masking the bug).
       double commissionPoints = 0.0;
       double commissionPerTick = MathAbs(tickValueProfit - tickValueLoss);
       if(commissionPerTick > 0.0)
@@ -164,14 +150,12 @@ public:
       // Breakeven win rate
       double breakevenWR = totalCostPoints / (totalCostPoints + tpPoints);
 
-      // Check if symbol is synthetic - use more permissive thresholds
       bool isSynthetic = IsSyntheticSymbol(symbol);
 
       // Thresholds: standard vs synthetic
       double maxBreakevenWR = isSynthetic ? 0.85 : 0.70;   // Allow up to 85% breakeven WR for synthetics
       double maxCostRatioTP = isSynthetic ? 0.60 : 0.25;   // Allow up to 60% of TP for synthetics
 
-      // Reject if cost is too high relative to target
       if(breakevenWR > maxBreakevenWR)
       {
          Print("[SCALP-COST-REJECTED] ", symbol, " cost too high: spread=", spreadPoints,

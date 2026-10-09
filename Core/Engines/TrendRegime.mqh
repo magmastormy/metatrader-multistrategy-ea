@@ -86,28 +86,24 @@ ENUM_TREND_TYPE CTrendRegime::DetermineTrendType(double strength,
     return TREND_NONE;
 }
 
-// Check if Trend is Bullish
 bool CTrendRegime::IsBullish(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BULLISH_STRONG || 
            type == TREND_BULLISH_WEAK;
 }
 
-// Check if Trend is Bearish
 bool CTrendRegime::IsBearish(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BEARISH_STRONG || 
            type == TREND_BEARISH_WEAK;
 }
 
-// Check if Strong Trend
 bool CTrendRegime::IsStrong(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BULLISH_STRONG || 
            type == TREND_BEARISH_STRONG;
 }
 
-// Check if Ranging
 bool CTrendRegime::IsRanging(const ENUM_TREND_TYPE type)
 {
     return type == TREND_RANGING;

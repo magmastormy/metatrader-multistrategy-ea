@@ -326,7 +326,6 @@ public:
         candidate.clusterCode = clusterCode;
         candidate.contributorSummary = contribSummary;
         
-        // Check contributors
         candidate.hasAIContributor = ContributorsIncludeAI(contributorsList);
         candidate.hasONNXContributor = ContributorsIncludeONNX(contributorsList);
         candidate.hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
@@ -390,7 +389,6 @@ public:
             candidate.confidence = confidence;
         }
         
-        // Get entry price
         candidate.entryPrice = (signal == TRADE_SIGNAL_BUY) 
             ? SymbolInfoDouble(symbol, SYMBOL_ASK) 
             : SymbolInfoDouble(symbol, SYMBOL_BID);

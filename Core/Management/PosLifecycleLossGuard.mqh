@@ -15,7 +15,6 @@
 class CPosLifecycleLossGuard
 {
 private:
-    // EXECUTION REFINEMENT: Loss minimization config
     bool   m_adverseMomentumExitEnabled;
     double m_adverseMomentumATRMultiplier;
     int    m_consecutiveLossLimit;
@@ -23,7 +22,6 @@ private:
     double m_dailyLossCircuitBreakerPercent;
     double m_positionLossLimitPercent;
 
-    // EXECUTION REFINEMENT: Loss tracking
     int      m_consecutiveLossCount;
     datetime m_lastLossTime;
     datetime m_consecutiveLossCooldownUntil;
@@ -58,7 +56,6 @@ public:
         m_dailyRiskBudgetPercent = MathMax(0.0, percent);
     }
 
-    //--- EXECUTION REFINEMENT: Configure loss minimization
     void Configure(bool adverseMomentumExit, double adverseMomentumATR,
                    int consecutiveLossLimit, int consecutiveLossCooldown,
                    double dailyLossCircuitBreaker, double positionLossLimit)
@@ -75,15 +72,11 @@ public:
     bool IsAdverseMomentumExitEnabled() const { return m_adverseMomentumExitEnabled; }
     int  GetConsecutiveLossLimit()      const { return m_consecutiveLossLimit; }
 
-    //--- EXECUTION REFINEMENT: Loss minimization management
     void ManageLossMinimization(CTradeManager* tradeManager, const int magicBase, const int magicMax)
     {
-        // Reset daily loss tracking at server midnight.
-        // Batch 168: the old test was `now >= midnight + 86400` with midnight
-        // derived from `now`, which can never be true - so m_dailyLossAmount
-        // accumulated across days and, once the daily breaker had a budget to
-        // compare against, it would halt trading permanently instead of for one
-        // day. Compare the anchored day boundary instead.
+        // Reset daily loss tracking at server midnight: the old test was `now >= midnight + 86400`
+        // with midnight derived from `now`, which can never be true - m_dailyLossAmount accumulated
+        // across days and the daily breaker halted trading permanently instead of for one day.
         datetime now = TimeCurrent();
         datetime todayMidnight = now - (now % 86400);
         if(m_dailyResetTime != todayMidnight)
@@ -104,7 +97,6 @@ public:
             return;  // Skip trading during cooldown
         }
 
-        // Check daily loss circuit breaker
         if(m_dailyLossCircuitBreakerPercent > 0 && m_dailyRiskBudgetPercent > 0)
         {
             // CRiskMath-consistent denominator: a falling equity must not raise the

@@ -91,7 +91,6 @@ public:
         if(m_consecutiveLossCooldownUntil > 0 && now < m_consecutiveLossCooldownUntil)
             return;
 
-        // Check daily loss circuit breaker
         if(m_dailyRiskBudget > 0 && m_dailyLossAmount >= m_dailyRiskBudget * (m_dailyLossCircuitBreakerPercent / 100.0))
         {
             PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered: %.2f%% of budget used",

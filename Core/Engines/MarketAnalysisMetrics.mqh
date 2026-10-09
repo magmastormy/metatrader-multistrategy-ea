@@ -21,19 +21,15 @@ private:
     CMarketAnalysisIndicators  m_indicators;
     CMarketAnalysisMetricCache m_cache;
 
-    // Market metrics tracking
     double m_trendStrength;
     double m_volatility;
     double m_momentum;
     double m_volumeProfile;
 
-    // Calculate trend strength using multiple indicators
     double CalculateTrendStrength();
 
-    // Calculate market volatility using multiple metrics
     double CalculateVolatility();
 
-    // Calculate market momentum
     double CalculateMomentum();
 
 public:
@@ -45,7 +41,6 @@ public:
     {
     }
 
-    //--- Indicator lifecycle (delegated to the indicator context)
     void ReleaseAllHandles() { m_indicators.ReleaseAllHandles(); }
 
     bool InitializeIndicator(int &handle, const string symbolName, const ENUM_TIMEFRAMES period, const string indicatorName,
@@ -59,7 +54,6 @@ public:
         return m_indicators.InitializeIndicators(symbolName, period, m_cache);
     }
 
-    //--- Indicator context accessors
     string Symbol() const { return m_indicators.Symbol(); }
 
     //--- Pre-flight validation for regime detection (verbatim guards)
@@ -78,11 +72,9 @@ public:
     double GetCurrentTrendStrength() const;
     double GetMomentum() const { return m_momentum; }
 
-    //--- Current ATR value
     double GetATRValue();
 };
 
-// Calculate trend strength using multiple indicators
 double CMarketAnalysisMetrics::CalculateTrendStrength()
 {
     double trendStrength = 0.0;
@@ -95,7 +87,6 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     string reuseReason = "";
     int reuseErrorCode = 0;
 
-    // Attempt re-init if handles invalid
     if(!m_indicators.EnsureIndicatorsReady(m_cache))
     {
         if(!m_indicators.IsInWarmup())
@@ -107,7 +98,6 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     if(m_indicators.AdxHandle() != INVALID_HANDLE && BarsCalculated(m_indicators.AdxHandle()) > adxPeriod) {
         double adxValues[];
         ArraySetAsSeries(adxValues, true);
-        // Wait for ADX indicator to initialize
         int attempts = 0;
         bool dataReady = false;
         while(attempts < 5 && !dataReady)
@@ -185,11 +175,9 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     if(CopyHigh(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceActionBars, high) >= priceActionBars &&
        CopyLow(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceActionBars, low) >= priceActionBars) {
 
-        // Check for higher highs and higher lows (uptrend)
         bool higherHighs = high[0] > high[2] && high[2] > high[4];
         bool higherLows = low[0] > low[2] && low[2] > low[4];
 
-        // Check for lower highs and lower lows (downtrend)
         bool lowerHighs = high[0] < high[2] && high[2] < high[4];
         bool lowerLows = low[0] < low[2] && low[2] < low[4];
 
@@ -221,7 +209,6 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     return trendStrength;
 }
 
-// Calculate market volatility using multiple metrics
 double CMarketAnalysisMetrics::CalculateVolatility()
 {
     double volatility = 0.0;
@@ -231,7 +218,6 @@ double CMarketAnalysisMetrics::CalculateVolatility()
     string reuseReason = "";
     int reuseErrorCode = 0;
 
-    // Attempt re-init if handles invalid
     if(!m_indicators.EnsureIndicatorsReady(m_cache))
     {
         if(!m_indicators.IsInWarmup())
@@ -448,7 +434,6 @@ double CMarketAnalysisMetrics::CalculateMomentum()
     return momentum;
 }
 
-// Pre-flight validation for regime detection
 bool CMarketAnalysisMetrics::IsRegimeInputReady() const
 {
     // Ensure indicators are initialized for the analysed symbol/period
@@ -458,7 +443,6 @@ bool CMarketAnalysisMetrics::IsRegimeInputReady() const
         return false;
     }
 
-    // Check if at least some core indicators are available
     if (m_indicators.AtrHandle() == INVALID_HANDLE && m_indicators.RsiHandle() == INVALID_HANDLE && m_indicators.Ma20Handle() == INVALID_HANDLE) {
         PrintFormat("[ERROR] CMarketAnalysis::DetectMarketRegime - No indicators initialized for %s. Call InitializeIndicators first.", m_indicators.Symbol());
         return false;
@@ -467,10 +451,8 @@ bool CMarketAnalysisMetrics::IsRegimeInputReady() const
     return true;
 }
 
-// Recompute and publish the three tracked metrics, in order
 void CMarketAnalysisMetrics::RefreshCurrentMetrics()
 {
-    // Calculate current market metrics
     m_trendStrength = CalculateTrendStrength();
     m_volatility = CalculateVolatility();
     m_momentum = CalculateMomentum();
@@ -494,7 +476,6 @@ double CMarketAnalysisMetrics::GetCurrentTrendStrength() const
     return m_trendStrength; // m_trendStrength is updated by DetectMarketRegime via CalculateTrendStrength
 }
 
-// Get current ATR value
 double CMarketAnalysisMetrics::GetATRValue()
 {
     if(m_indicators.AtrHandle() == INVALID_HANDLE) return 0.0;

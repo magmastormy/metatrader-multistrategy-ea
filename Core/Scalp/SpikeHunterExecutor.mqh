@@ -1,22 +1,6 @@
-// Decomposition extraction from CSpikeHunterEngine (behaviour
-// preserving).
-// Owns the trade-execution collaborators and counters that used to
-// be the loose member group:
+// Owns the trade-execution collaborators and counters:
 // m_baseMagic, m_positionSizer, m_riskManager, m_tradeManager,
 // m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened
-// Moved logic (verbatim):
-// GetActiveSpikePositions() �?SPIKE-HUNT comment scan (static,
-// it never touched engine state)
-// CanOpenSpikeTrade()       �?cooldown + max concurrent gate
-// OpenSpikeTrade()          �?ATR SL/TP, position sizing, margin
-// cap, lot-step normalisation, magic
-// composition, UnifiedRiskManager
-// pre-trade gate (AGENTS.md #1),
-// TradeManager path (L10-008) and
-// the raw CTrade fallback, plus the
-// L10-014 dynamic slippage and the
-// L10-018 AI-VOTE lines on BOTH
-// paths.
 // Per-symbol state reads/writes are routed through the detector
 // pointer (symbol, ATR, confluence, cooldown stamps) so the state
 // stays single-owned by CSpikeHunterDetector. Every threshold,
@@ -40,10 +24,8 @@
 
 class CUnifiedRiskManager;
 
-// Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-// CSpikeHunterExecutor �?stateful spike trade gating + execution
 class CSpikeHunterExecutor
 {
 private:
@@ -57,7 +39,6 @@ private:
 
    CSpikeHunterDetector*           m_detector;             // Per-symbol state owner (not owned)
 
-   // Statistics
    int                             m_totalTradesOpened;
 
 public:
@@ -113,7 +94,6 @@ public:
       return count;
    }
 
-// Check if we can open a spike trade for this symbol
    bool CanOpenSpikeTrade(int idx) const
    {
       // Check cooldown (use family-specific cooldown)
@@ -125,14 +105,12 @@ public:
             return false;
       }
 
-      // Check max spike positions
       if(GetActiveSpikePositions() >= m_config.maxSpikePositions)
          return false;
 
       return true;
    }
 
-// Open a spike trade in the given direction
    bool OpenSpikeTrade(int idx, int direction)
    {
       string symbol = m_detector.GetSymbolName(idx);
@@ -159,7 +137,6 @@ public:
       double slPips = slDistance / point;
       double tpPips = tpDistance / point;
 
-      // Get current price
       double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
       double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
       if(bid <= 0.0 || ask <= 0.0)
@@ -208,7 +185,6 @@ public:
       if(lotSize < minVol)
          lotSize = minVol;
 
-      // Calculate entry, SL, TP
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       double entryPrice = (direction == 1) ? ask : bid;
       double sl = 0.0, tp = 0.0;
@@ -224,7 +200,7 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Batch 170: shared stop-feasibility and expectancy gate (see ATRScalpEntry).
+      // Shared stop-feasibility and expectancy gate (see ATRScalpEntry).
       string spikeStopError = "";
       if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, spikeStopError))
       {
@@ -235,7 +211,6 @@ public:
       // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
       int magic = m_baseMagic + m_detector.GetEffectiveMagicOffset(idx) + idx;
 
-      // Direction string for logging
       string dirStr = (direction == 1) ? "BUY" : "SELL";
 
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
@@ -263,7 +238,6 @@ public:
       // L10-008: Use TradeManager for safety checks and execution
       if(m_tradeManager != NULL)
       {
-         // Use TradeManager's OpenPosition which includes preflight validation
          bool result = m_tradeManager.OpenPosition(
              symbol,
              orderType,
@@ -302,8 +276,7 @@ public:
       }
       else
       {
-         // Fallback to raw trade object if TradeManager not available (backward compatibility)
-         // Batch 170: this is the branch that actually runs - EAOrchestrator's
+         // NOTE: this is the branch that actually runs - EAOrchestrator's
          // m_spikeHunter.Init(...) passes no CTradeManager, so the governed send
          // path above is unreachable and the stop gate had to be added here too.
          m_trade.SetExpertMagicNumber(magic);

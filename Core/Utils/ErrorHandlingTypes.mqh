@@ -100,8 +100,8 @@ enum ENUM_COMPONENT_STATUS
 // Retry Strategy Types
 enum ENUM_RETRY_STRATEGY
 {
-    RETRY_NONE = 0,             // No retry
-    RETRY_IMMEDIATE = 1,        // Immediate retry
+    RETRY_NONE = 0,
+    RETRY_IMMEDIATE = 1,
     RETRY_LINEAR = 2,           // Linear backoff
     RETRY_EXPONENTIAL = 3       // Exponential backoff
 };
@@ -114,7 +114,7 @@ struct SErrorContext
     int errorCode;              // System error code
     string additionalInfo;      // Additional context information
     datetime timestamp;         // Error timestamp
-    ENUM_ERROR_SEVERITY severity; // Error severity
+    ENUM_ERROR_SEVERITY severity;
     
     SErrorContext() :
         component(""), operation(""), symbol(""), errorCode(0),

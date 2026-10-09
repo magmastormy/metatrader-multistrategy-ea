@@ -1,15 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the async (OrderSendAsync) confirmation state that used to
-// be four loose members on CFastScalpEngine:
-// SScalpPendingAsync m_pendingAsync[20];
-// int                m_pendingAsyncCount;
-// bool               m_asyncMode;
-// uint               m_maxLatencyMs;
-// Moved methods (bodies verbatim):
-// SetAsyncMode(), SetMaxLatencyMs(), OnAsyncOrderSent(),
-// OnDealConfirmed(), CheckPendingAsyncOrders(),
-// RemovePendingAsync()
+// Owns the async (OrderSendAsync) confirmation state for scalp orders.
 // OnDealConfirmed() registers the filled position through the
 // position tracker; CheckPendingAsyncOrders() releases one
 // risk-per-trade unit through the risk budget — both are the same
@@ -24,11 +13,9 @@
 #include "FastScalpPositionTracker.mqh"
 #include "FastScalpRiskBudget.mqh"
 
-// CFastScalpAsyncTracker — stateful async scalp order tracking
 class CFastScalpAsyncTracker
 {
 private:
-   // Async order tracking (moved verbatim from CFastScalpEngine)
    SScalpPendingAsync        m_pendingAsync[20];
    int                       m_pendingAsyncCount;
    bool                      m_asyncMode;            // Whether async mode is enabled
@@ -45,14 +32,11 @@ public:
          m_pendingAsync[i].Reset();
    }
 
-   //--- Was CFastScalpEngine::GetPendingAsyncCount()
    int  Count() const { return m_pendingAsyncCount; }
 
-   //--- Was the m_asyncMode / m_maxLatencyMs readers
    bool IsAsyncMode() const { return m_asyncMode; }
    uint GetMaxLatencyMs() const { return m_maxLatencyMs; }
 
-// Set async mode for scalp order execution
    void SetAsyncMode(bool enabled)
    {
       m_asyncMode = enabled;
@@ -99,15 +83,12 @@ public:
       if(m_pendingAsyncCount <= 0)
          return;
 
-      // Find the matching pending async order
       for(int i = 0; i < m_pendingAsyncCount; i++)
       {
          if(m_pendingAsync[i].orderTicket == orderTicket && !m_pendingAsync[i].confirmed)
          {
-            // Calculate execution latency
             uint latencyMs = GetTickCount() - m_pendingAsync[i].sendTimestampMs;
 
-            // Check for stale fill
             if(latencyMs > m_maxLatencyMs)
             {
                PrintFormat("[SCALP-ASYNC-LATENCY] %s: Execution latency %u ms exceeds max %u ms. Stale fill detected.",
@@ -118,7 +99,6 @@ public:
 
             m_pendingAsync[i].confirmed = true;
 
-            // Register the position in m_scalpPositions for tick-level management
             // Use the position ID from the deal as the tracking ticket
             ulong positionId = 0;
             if(HistoryDealSelect(dealTicket))
@@ -128,9 +108,7 @@ public:
             {
                double point = SymbolInfoDouble(m_pendingAsync[i].symbol, SYMBOL_POINT);
                double oneRPrice = 0.0;
-               // Batch 152 (S-L-03): with scalpSLPips==0 this used to collapse
-               // oneRPrice onto the entry price, triggering the 50% partial on
-               // the very first tick after the fill.
+               // Guard: config.scalpSLPips must be > 0 here, else oneRPrice collapses onto the entry price and fires the 50% partial close on the first tick after the fill.
                if(point > 0.0 && config.scalpSLPips > 0.0)
                {
                   if(m_pendingAsync[i].direction == 1)  // BUY
@@ -152,7 +130,6 @@ public:
                         m_pendingAsync[i].lotSize,
                         latencyMs);
 
-            // Remove from pending array
             RemovePendingAsync(i);
             return;
          }
@@ -196,7 +173,6 @@ public:
       }
    }
 
-// Remove a pending async order from tracking array by index
    void RemovePendingAsync(int index)
    {
       if(index < 0 || index >= m_pendingAsyncCount)

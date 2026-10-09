@@ -1,16 +1,8 @@
-// Decomposition extraction from CSpikeHunterEngine (behaviour
-// preserving).
-// Owns the Batch-102 family override table that used to be the
-// loose member pair:
-// CSpikeHunterEngine::m_familyOverrides[]
-// CSpikeHunterEngine::m_familyOverrideCount
-// Moved logic (verbatim):
+// Owns the per-symbol family override table.
 // FindFamilyOverrideIndex()
 // the eight GetEffectiveXxx() resolvers — here they take the
 // symbol plus the base-config fallback instead of a state index,
 // so the table has no dependency on the symbol-state array.
-// SetFamilyOverrides()  (temp-struct resize pattern preserved)
-// the [SPIKE-HUNTER-CONFIG] summary loop out of Init()
 // Comparison operators (> 0.0 / > 0) and the hasOverrides gate are
 // reproduced verbatim, so a zero override still falls back to the
 // base config value exactly as before.
@@ -21,7 +13,6 @@
 
 #include "SpikeHunterTypes.mqh"
 
-// CSpikeHunterOverrides — stateful per-symbol override table
 class CSpikeHunterOverrides
 {
 private:
@@ -31,10 +22,8 @@ private:
 public:
    CSpikeHunterOverrides() : m_familyOverrideCount(0) {}
 
-   //--- Accessor (was CSpikeHunterEngine::m_familyOverrideCount)
    int Count() const { return m_familyOverrideCount; }
 
-// Find family override index for a symbol (Batch 102)
    int FindFamilyOverrideIndex(const string symbol) const
    {
       for(int i = 0; i < m_familyOverrideCount; i++)
@@ -45,7 +34,6 @@ public:
       return -1;
    }
 
-// Get effective velocity multiplier for a symbol (Batch 102)
    double GetEffectiveVelocityMultiplier(const string symbol, double baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -54,7 +42,6 @@ public:
       return baseValue;
    }
 
-// Get effective min consecutive ticks for a symbol (Batch 102)
    int GetEffectiveMinConsecutiveTicks(const string symbol, int baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -63,7 +50,6 @@ public:
       return baseValue;
    }
 
-// Get effective ATR compression ratio for a symbol (Batch 102)
    double GetEffectiveATRCompressionRatio(const string symbol, double baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -72,7 +58,6 @@ public:
       return baseValue;
    }
 
-// Get effective SL ATR multiplier for a symbol (Batch 102)
    double GetEffectiveSLAtrMultiplier(const string symbol, double baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -81,7 +66,6 @@ public:
       return baseValue;
    }
 
-// Get effective TP ATR multiplier for a symbol (Batch 102)
    double GetEffectiveTPAtrMultiplier(const string symbol, double baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -90,7 +74,6 @@ public:
       return baseValue;
    }
 
-// Get effective magic offset for a symbol (Batch 102)
    int GetEffectiveMagicOffset(const string symbol, int baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -99,7 +82,6 @@ public:
       return baseValue;
    }
 
-// Get effective cooldown for a symbol (Batch 102)
    int GetEffectiveCooldownMs(const string symbol, int baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -108,7 +90,6 @@ public:
       return baseValue;
    }
 
-// Get effective min confluence for a symbol (Batch 102)
    int GetEffectiveMinConfluence(const string symbol, int baseValue) const
    {
       int oi = FindFamilyOverrideIndex(symbol);
@@ -117,15 +98,12 @@ public:
       return baseValue;
    }
 
-// Set family-specific overrides for a symbol (Batch 102)
    void SetFamilyOverrides(const string symbol, double velMult, int minTicks, double atrRatio,
                            double slMult, double tpMult, int magicOff, int cooldown, int minConf)
    {
-      // Check if override already exists for this symbol
       int oi = FindFamilyOverrideIndex(symbol);
       if(oi >= 0)
       {
-         // Update existing override
          m_familyOverrides[oi].velocityMultiplier  = velMult;
          m_familyOverrides[oi].minConsecutiveTicks = minTicks;
          m_familyOverrides[oi].atrCompressionRatio = atrRatio;
@@ -167,7 +145,6 @@ public:
    }
 
 // Log effective confluence config per symbol family
-// (was the trailing block of CSpikeHunterEngine::Init)
    void LogConfigSummary(int baseMinConfluence) const
    {
       PrintFormat("[SPIKE-HUNTER-CONFIG] Base minConfluence=%d/3 | familyOverrides=%d",

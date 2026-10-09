@@ -31,7 +31,7 @@ struct SFeaturePipelineConfig
 struct SFeaturePipelineMetadata
 {
     string name;                    // Pipeline name/identifier
-    SFeaturePipelineConfig config;  // Configuration
+    SFeaturePipelineConfig config;
     double performanceScore;        // Historical performance metric
     int usageCount;                 // How many times used
     bool isActive;                  // Currently active for A/B testing

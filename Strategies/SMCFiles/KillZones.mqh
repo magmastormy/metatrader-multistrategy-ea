@@ -302,7 +302,6 @@ ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
     if(m_enableNYAM && IsInSession(m_sessions[2]))
         return KZ_NY_AM;
     
-    // Check London
     if(m_enableLondon && IsInSession(m_sessions[1]))
         return KZ_LONDON;
     
@@ -310,7 +309,6 @@ ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
     if(m_enableNYPM && IsInSession(m_sessions[3]))
         return KZ_NY_PM;
     
-    // Check Asian
     if(m_enableAsian && IsInSession(m_sessions[0]))
         return KZ_ASIAN;
     
@@ -343,7 +341,6 @@ string CICTKillZones::GetKillZoneName()
     return "No Session";
 }
 
-// Session Checks
 bool CICTKillZones::IsAsianSession()
 {
     return IsInSession(m_sessions[0]);

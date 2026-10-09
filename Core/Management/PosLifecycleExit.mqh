@@ -14,12 +14,10 @@
 class CPosLifecycleExit
 {
 private:
-    // EXECUTION REFINEMENT: Partial profit taking config
     bool   m_partialProfitTakingEnabled;
     double m_partialProfitATRMultiplier;
     double m_partialProfitPercent;
 
-    // Issue #44: Maximum position hold time config
     bool   m_maxHoldTimeEnabled;
     int    m_maxHoldHoursIntraday;   // Max hold time for intraday (H1 and lower) — default 24h
     int    m_maxHoldHoursSwing;      // Max hold time for swing (H4 and higher) — default 120h (5 days)
@@ -43,7 +41,6 @@ public:
         m_partialDoneCount(0)
     {}
 
-    //--- EXECUTION REFINEMENT: Configure partial profit taking
     void ConfigurePartialProfitTaking(bool enabled, double atrMultiplier, double profitPercent)
     {
         m_partialProfitTakingEnabled = enabled;
@@ -51,7 +48,6 @@ public:
         m_partialProfitPercent = profitPercent;
     }
 
-    //--- Issue #44: Configure maximum position hold time
     void ConfigureMaxHoldTime(bool enabled, int maxHoldHoursIntraday, int maxHoldHoursSwing, bool onlyIfLoss)
     {
         m_maxHoldTimeEnabled = enabled;
@@ -64,7 +60,6 @@ public:
     bool IsPartialProfitTakingEnabled() const { return m_partialProfitTakingEnabled; }
     bool IsMaxHoldTimeEnabled()         const { return m_maxHoldTimeEnabled; }
 
-    //--- EXECUTION REFINEMENT: Partial profit taking management
     bool PartialAlreadyTaken(const ulong ticket) const
     {
         for(int i = 0; i < m_partialDoneCount; i++)
@@ -117,10 +112,8 @@ public:
             double currentVolume = PositionGetDouble(POSITION_VOLUME);
             double currentTP = PositionGetDouble(POSITION_TP);
 
-            // Skip if no TP set or already took partial profit
             if(currentTP == 0) continue;
 
-            // Calculate profit distance
             double profitDistance = 0.0;
             if(type == POSITION_TYPE_BUY)
                 profitDistance = currentPrice - openPrice;
@@ -130,11 +123,9 @@ public:
             double atr = CPosLifecycleVolatility::GetATR(symbol, 14);
             if(atr <= 0) continue;
 
-            // Check if reached partial profit target
             double partialTarget = atr * m_partialProfitATRMultiplier;
             if(profitDistance >= partialTarget && currentVolume > 0.01)
             {
-                // Calculate partial close amount
                 double closeAmount = currentVolume * (m_partialProfitPercent / 100.0);
                 closeAmount = NormalizeDouble(closeAmount, 2);
 
@@ -149,7 +140,6 @@ public:
         }
     }
 
-    //--- Issue #44: Maximum position hold time management
     void ManageMaxHoldTime(CTradeManager* tradeManager, const int magicBase, const int magicMax)
     {
         if(!m_maxHoldTimeEnabled)
@@ -168,14 +158,12 @@ public:
             datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
             double currentProfit = PositionGetDouble(POSITION_PROFIT);
 
-            // Calculate hours open
             int hoursOpen = (int)((TimeCurrent() - openTime) / 3600);
 
             // Determine max hold time based on timeframe
             ENUM_TIMEFRAMES currentTF = (ENUM_TIMEFRAMES)Period();
             int maxHoldHours = (currentTF <= PERIOD_H1) ? m_maxHoldHoursIntraday : m_maxHoldHoursSwing;
 
-            // Check if position exceeds max hold time
             if(hoursOpen > maxHoldHours)
             {
                 // If only close on loss, check profit

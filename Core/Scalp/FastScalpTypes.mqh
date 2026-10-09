@@ -1,9 +1,4 @@
-// Decomposition extraction from CFastScalpEngine (behaviour
-// preserving).
-// Owns the four plain-data structs that used to be declared inline
-// inside FastScalpEngine.mqh:
-// SScalpConfig, SPendingScalpOrder, SScalpPendingAsync,
-// SScalpPositionState
+// Owns the four plain-data structs of the scalp pipeline.
 // FastScalpEngine.mqh #includes this header, so every existing
 // consumer of these types keeps seeing them unchanged.
 // Field order, defaults and comments are reproduced verbatim.
@@ -21,7 +16,7 @@ struct SScalpConfig
    int      scalpCooldownMs;         // Cooldown between scalps in ms (5000)
    int      fastEMA;                 // Fast EMA period (5)
    int      slowEMA;                 // Slow EMA period (13)
-   int      rsiPeriod;               // RSI period (7)
+   int      rsiPeriod;
    double   rsiOverbought;           // RSI overbought level (75)
    double   rsiOversold;             // RSI oversold level (25)
    double   maxSpreadATRRatio;       // Reject if spread > 30% ATR (0.30)
@@ -31,7 +26,7 @@ struct SScalpConfig
    bool     partialCloseEnabled;     // Close 50% at 1R profit (true)
    int      breakevenProfitPoints;   // Points profit to trigger BE (10)
    int      breakevenBufferPoints;   // Buffer past entry for BE (5)
-   int      trailingDistancePoints;  // Trailing distance in points (15)
+   int      trailingDistancePoints;
 
    // Default constructor with production defaults
    SScalpConfig()
@@ -57,7 +52,6 @@ struct SScalpConfig
    }
 };
 
-// Pending scalp order tracking
 struct SPendingScalpOrder
 {
    ulong    ticket;
@@ -89,8 +83,8 @@ struct SPendingScalpOrder
 // Async scalp order tracking (for OrderSendAsync confirmation)
 struct SScalpPendingAsync
 {
-   ulong    orderTicket;      // Order ticket from OrderSendAsync
-   string   symbol;           // Symbol
+   ulong    orderTicket;
+   string   symbol;
    int      direction;        // 1=BUY, -1=SELL
    double   lotSize;          // Requested lots
    double   entryPrice;       // Expected entry price

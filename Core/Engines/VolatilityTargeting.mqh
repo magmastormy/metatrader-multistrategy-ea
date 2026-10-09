@@ -1,7 +1,5 @@
 // Volatility targeting position sizing (Moreira & Muir 2017)
 // Adjusts position size inversely proportional to realized vol
-// Expected improvement: +40% Sharpe, -30% max drawdown
-// Batch 114: Integrates with position sizer chain
 #ifndef VOLATILITY_TARGETING_MQH
 #define VOLATILITY_TARGETING_MQH
 
@@ -47,7 +45,6 @@ private:
     string          m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
 
-    // Configuration
     double m_targetVol;         // Annualized target vol (default 0.15 = 15%)
     int    m_volLookback;       // Bars for realized vol calculation
     double m_ewmaDecay;         // EWMA decay factor (0.94 = RiskMetrics standard)
@@ -55,7 +52,6 @@ private:
     double m_maxScale;          // Maximum scale factor (prevent undersized in high vol)
     int    m_atrPeriod;         // ATR period for vol estimation
 
-    // State
     double m_ewmaVol;           // Running EWMA volatility
     double m_volHistory[];      // Rolling history for percentile calculation
     int    m_volHistorySize;    // Batch 119: size of vol history array
@@ -199,7 +195,7 @@ public:
     //--- Initialize ATR handle
     bool Initialize()
     {
-        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+        // Resolve PERIOD_CURRENT to actual chart timeframe
         if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
             m_timeframe = Period();
         
@@ -248,7 +244,6 @@ public:
         if(copied >= 20)
             realizedVol = ComputeRealizedVol(closes, copied);
 
-        // EWMA vol update
         if(m_ewmaVol <= 0.0)
             m_ewmaVol = realizedVol;
         else if(realizedVol > 0.0)
@@ -267,7 +262,6 @@ public:
 
         double volPctile = ComputeVolPercentile();
 
-        // Compute scale factor
         double volScalar = 1.0;
         if(primaryVol > 1e-10)
         {
@@ -275,7 +269,6 @@ public:
             volScalar = MathMax(m_minScale, MathMin(m_maxScale, volScalar));
         }
 
-        // Build snapshot
         m_lastSnapshot.realizedVol = realizedVol;
         m_lastSnapshot.targetVol = m_targetVol;
         m_lastSnapshot.volScalar = volScalar;
@@ -302,13 +295,11 @@ public:
     //--- Get the position scaling factor (multiply base size by this)
     double GetVolScalar() const { return m_lastSnapshot.volScalar; }
 
-    //--- Get scaled position size
     double GetScaledSize(double baseSize) const
     {
         return baseSize * m_lastSnapshot.volScalar;
     }
 
-    //--- Accessors
     double GetRealizedVol() const   { return m_lastSnapshot.realizedVol; }
     double GetTargetVol() const     { return m_lastSnapshot.targetVol; }
     double GetEwmaVol() const       { return m_lastSnapshot.ewmaVol; }
@@ -317,7 +308,6 @@ public:
 
     SVolTargetSnapshot GetSnapshot() const { return m_lastSnapshot; }
 
-        // --- Cleanup ---
         void Deinit()
         {
             // CVolatilityTargeting owns ATR handle — release it
@@ -326,7 +316,6 @@ public:
                 IndicatorRelease(m_atrHandle);
                 m_atrHandle = INVALID_HANDLE;
             }
-            // Reset state
             m_ewmaVol = 0.0;
             m_volCursor = 0;
             m_volCount = 0;

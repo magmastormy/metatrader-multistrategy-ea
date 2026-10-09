@@ -1,11 +1,6 @@
-// Strategy Lifecycle (Phase C, Slice 3 - C7)
-// Enable/disable lifecycle, governance-driven activation and the
-// per-bar strategy state transition extracted from
-// - EnableStrategy          (manual activation by name)
-// - DisableStrategy         (manual deactivation by name)
-// - CheckStrategyDisabling  (governance/AI-degeneration sweep)
-// - CheckStrategyReEnabling (cooldown/AI-recovery sweep)
-// - OnNewBar                (per-bar readiness + state reset)
+// Enable/disable lifecycle, governance-driven activation and the per-bar strategy
+// state transition: manual activation / deactivation by name, the governance and
+// AI-degeneration sweeps, the cooldown / AI-recovery sweep and per-bar readiness reset.
 // Like C4/C5 this module MUTATES the manager, so it holds a
 // NON-const back-pointer and writes through the manager's narrow
 // per-field accessors.
@@ -103,13 +98,11 @@ bool CStrategyLifecycle::DisableStrategy(const string name)
     return true;
 }
 
-// Governance sweep: disable degraded strategies
 void CStrategyLifecycle::CheckStrategyDisabling()
 {
     if(m_src == NULL)
         return;
 
-    // L1-007: Delegate to CStrategyHealthMonitor
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
@@ -153,7 +146,6 @@ void CStrategyLifecycle::CheckStrategyDisabling()
     }
 }
 
-// Governance sweep: re-enable recovered strategies
 void CStrategyLifecycle::CheckStrategyReEnabling()
 {
     if(m_src == NULL)
@@ -182,7 +174,6 @@ void CStrategyLifecycle::CheckStrategyReEnabling()
         // no NULL guard here. Preserved as-is - no behaviour change.
         if(!m_src.GetStrategyPtr(i).ShouldDisableModel())
         {
-            // Model recovered - check if we should re-enable
             if(m_src.ShouldReEnableStrategy(i))
             {
                 m_src.SetStrategyTemporarilyDisabled(i, false);
@@ -205,7 +196,6 @@ void CStrategyLifecycle::CheckStrategyReEnabling()
     }
 }
 
-// OnNewBar - CRITICAL for zone scanning and chart drawings
 // Must be called from main EA on each new bar
 void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
@@ -226,7 +216,6 @@ void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe
     if(barTime <= 0)
         barTime = TimeCurrent();
 
-    // Update FourStateRegimeDetector on each new bar
     CFourStateRegimeDetector* regimeDetector = m_src.GetFourStateRegimeDetectorConst();
     if(regimeDetector != NULL && m_src.IsRegimeDetectorInitialized())
     {

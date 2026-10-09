@@ -1,6 +1,5 @@
 // Encapsulates position lifecycle management extracted from
 // MultiStrategyAutonomousEA.mq5 ManageOpenPositionsIfNeeded()
-// Blueprint Section 10.1 — Monolith Decomposition (R6a)
 // Phase H decomposition: the pyramiding registry, volatility-regime
 // / dynamic SL-TP engine, loss-minimisation guard and scheduled
 // exit rules now live in dedicated PosLifecycle* modules that are
@@ -41,7 +40,6 @@ private:
     bool                        m_initialized;
     uint                        m_lastManageTimeMs;
 
-    // SRE config
     bool   m_sreEnabled;
     double m_sreMinConfidence;
     bool   m_sreProfitGuard;
@@ -50,7 +48,6 @@ private:
     int    m_sreMinTimeSec;
     bool   m_structuralInvalidationEnabled;
 
-    // Lifecycle config
     bool   m_lifecycleEnabled;
     double m_breakevenBufferPts;
     double m_trailingDistancePts;
@@ -58,14 +55,12 @@ private:
     bool   m_useATRTrailing;
     double m_atrMultiplier;
 
-    // Magic number for position filtering
         int    m_magicNumber;
         int    m_maxClusterCode;  // L7-008: Dynamic max cluster code from MagicNumberAllocator
 
     CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
 
-    // Phase H: extracted lifecycle modules (owned by value)
     CPosLifecyclePyramid    m_pyramid;      // pyramiding registry + config
     CPosLifecycleVolatility m_volatility;   // volatility regimes + dynamic SL/TP + ATR
     CPosLifecycleLossGuard  m_lossGuard;    // loss minimisation + loss tracking
@@ -160,19 +155,16 @@ public:
         m_atrMultiplier = atrMult;
     }
 
-    // AGGRESSIVE: Configure pyramiding
     void ConfigurePyramiding(bool enabled, double stepPips, double sizeMultiplier, int maxLayers)
     {
         m_pyramid.Configure(enabled, stepPips, sizeMultiplier, maxLayers);
     }
 
-    // AGGRESSIVE: Configure dynamic SL/TP
     void ConfigureDynamicSL(bool enabled, double slATRMultiplier, double tpATRMultiplier, bool volAdjust)
     {
         m_volatility.Configure(enabled, slATRMultiplier, tpATRMultiplier, volAdjust);
     }
 
-    // EXECUTION REFINEMENT: Configure loss minimization
     void ConfigureLossMinimization(bool adverseMomentumExit, double adverseMomentumATR,
                                    int consecutiveLossLimit, int consecutiveLossCooldown,
                                    double dailyLossCircuitBreaker, double positionLossLimit)
@@ -182,13 +174,11 @@ public:
                               dailyLossCircuitBreaker, positionLossLimit);
     }
 
-    // EXECUTION REFINEMENT: Configure partial profit taking
     void ConfigurePartialProfitTaking(bool enabled, double atrMultiplier, double profitPercent)
     {
         m_exitRules.ConfigurePartialProfitTaking(enabled, atrMultiplier, profitPercent);
     }
 
-    // Issue #44: Configure maximum position hold time
     void ConfigureMaxHoldTime(bool enabled, int maxHoldHoursIntraday, int maxHoldHoursSwing, bool onlyIfLoss)
     {
         m_exitRules.ConfigureMaxHoldTime(enabled, maxHoldHoursIntraday, maxHoldHoursSwing, onlyIfLoss);
@@ -236,23 +226,18 @@ public:
         CheckSignalReversalExit();
         ManageBreakevenAndTrailing();
 
-        // AGGRESSIVE: Manage pyramiding
         if(m_pyramid.IsEnabled())
             ManagePyramiding();
 
-        // AGGRESSIVE: Manage dynamic SL/TP
         if(m_volatility.IsEnabled())
             ManageDynamicSLTP();
 
-        // EXECUTION REFINEMENT: Manage loss minimization
         if(m_lossGuard.IsAdverseMomentumExitEnabled() || m_lossGuard.GetConsecutiveLossLimit() > 0)
             ManageLossMinimization();
 
-        // EXECUTION REFINEMENT: Manage partial profit taking
         if(m_exitRules.IsPartialProfitTakingEnabled())
             ManagePartialProfitTaking();
 
-        // Issue #44: Manage maximum position hold time
         if(m_exitRules.IsMaxHoldTimeEnabled())
             ManageMaxHoldTime();
     }
@@ -469,19 +454,16 @@ public:
         m_pyramid.ManagePyramiding(m_tradeManager, m_magicNumber, MagicMax());
     }
 
-    // AGGRESSIVE: Get pyramid state for a position
     CPyramidState* GetPyramidState(ulong ticket)
     {
         return m_pyramid.GetPyramidState(ticket);
     }
 
-    // AGGRESSIVE: Create pyramid state for new position
     CPyramidState* CreatePyramidState(ulong ticket, double entryPrice, double lotSize)
     {
         return m_pyramid.CreatePyramidState(ticket, entryPrice, lotSize);
     }
 
-    // AGGRESSIVE: Clean up pyramid states for closed positions
     void CleanupPyramidStates()
     {
         m_pyramid.CleanupPyramidStates();
@@ -494,25 +476,21 @@ public:
                                        m_magicNumber, MagicMax());
     }
 
-    // AGGRESSIVE: Update volatility regimes for all symbols
     void UpdateVolatilityRegimes()
     {
         m_volatility.UpdateVolatilityRegimes(m_symbols, m_symbolCount);
     }
 
-    // AGGRESSIVE: Get volatility regime for a symbol
     CVolatilityRegime* GetVolatilityRegime(const string symbol)
     {
         return m_volatility.GetVolatilityRegime(symbol);
     }
 
-    // AGGRESSIVE: Create volatility regime for a symbol
     CVolatilityRegime* CreateVolatilityRegime(const string symbol)
     {
         return m_volatility.CreateVolatilityRegime(symbol);
     }
 
-    // AGGRESSIVE: Get ATR value for a symbol using IndicatorManager
     double GetATR(const string symbol, int period)
     {
         return CPosLifecycleVolatility::GetATR(symbol, period);
