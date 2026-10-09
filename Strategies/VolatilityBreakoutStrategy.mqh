@@ -9,13 +9,12 @@
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
-// Volatility Breakout Entry Types
 enum ENUM_VB_ENTRY_TYPE
 {
     VB_ENTRY_NONE = 0,
     VB_ENTRY_SQUEEZE_BREAKOUT,
-    VB_ENTRY_ATR_EXPANSION,        // ATR expansion breakout
-    VB_ENTRY_COMBINED_SIGNAL,       // Squeeze + ATR + Volume (highest confidence)
+    VB_ENTRY_ATR_EXPANSION,
+    VB_ENTRY_COMBINED_SIGNAL,       // Squeeze + ATR + Volume: highest confidence tier
     VB_ENTRY_DOUBLE_SQUEEZE,       // BB + KC double squeeze (TTM Squeeze)
     VB_ENTRY_RETEST,               // Breakout + retest confirmation
     VB_ENTRY_FAILURE_REVERSAL      // Breakout failure reversal
@@ -41,61 +40,55 @@ struct SVolatilityBreakoutSignal
         reason("") {}
 };
 
-// Institutional approach: Trade explosive moves from contraction
 class CVolatilityBreakoutStrategy : public CStrategyBase
 {
 private:
-    // Indicator Handles
-    int m_bbHandle;           // Bollinger Bands for squeeze detection
-    int m_atrHandle;          // ATR for volatility measurement
-    int m_volumeHandle;       // Volume for confirmation
+    int m_bbHandle;           // squeeze detection
+    int m_atrHandle;
+    int m_volumeHandle;
     
-    // Configuration Parameters
-    int m_bbPeriod;           // Bollinger Bands period (default: 20)
-    double m_bbDeviation;     // Standard deviations (default: 2.0)
-    int m_atrPeriod;          // ATR period (default: 14)
-    double m_squeezeThreshold;// BB width percentile threshold (default: 0.20 = 20th percentile)
-    double m_volumeMultiplier;// Volume surge multiplier (default: 1.5x average)
-    double m_atrExpansionMult;// ATR expansion multiplier (default: 1.3x)
-    int m_lookbackPeriods;    // Lookback for squeeze detection (default: 10)
-    double m_atrStopMult;      // ATR-based stop distance (default: 1.5) — F6: capital-efficient SL
-    double m_atrTargetMult;    // ATR-based target distance (default: 3.0) — 2.0R designed profile
+    int m_bbPeriod;
+    double m_bbDeviation;     // in standard deviations
+    int m_atrPeriod;
+    double m_squeezeThreshold;// BB width percentile (0.20 = 20th percentile)
+    double m_volumeMultiplier;// multiple of the average volume
+    double m_atrExpansionMult;
+    int m_lookbackPeriods;    // squeeze lookback, in bars
+    double m_atrStopMult;      // stop distance, in ATRs
+    double m_atrTargetMult;    // target distance, in ATRs (3.0 vs 1.5 stop = 2.0R)
     
-    // Risk Management (AGENTS.md invariant #1)
+    // AGENTS.md invariant #1: every trade is gated by this
     CUnifiedRiskManager* m_riskManager;
     
-    // State Tracking
     datetime m_lastSignalBar;
     int m_signalsGenerated;
-    bool m_inSqueeze;         // Track if we're in a squeeze state
-    int     m_kcEmaHandle;        // Keltner Channel EMA midline (v2.0)
-    int     m_adxHandle;          // ADX rising filter (v2.0)
+    bool m_inSqueeze;
+    int     m_kcEmaHandle;        // Keltner Channel EMA midline
+    int     m_adxHandle;          // ADX rising filter
     double  m_squeezeHighPrice;   // Price level when squeeze detected (for retest)
     double  m_squeezeLowPrice;    // Price level when squeeze detected (for retest)
     int     m_squeezeBar;         // Bar index when squeeze was detected
-    bool    m_breakoutFailed;     // Breakout failure reversal flag
-    ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of failed breakout reversal
+    bool    m_breakoutFailed;
+    ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of the failed breakout
     
-    // Fallback BB calculation from raw price data when indicator handle fails
+    // BB fallback for when the indicator handle fails
     bool CalculateFallbackBB(double &outUpper, double &outMiddle, double &outLower)
     {
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
         int needed = m_bbPeriod + 5;
-        // Batch 169: copy from shift 1. Copying from 0 put the still-forming
-        // bar in rates[0], so the band was stretched by a bar whose close had
-        // not happened yet - the breakout level moved as the bar moved.
+        // Copy from shift 1: copying from 0 puts the still-forming bar in rates[0], so the
+        // band would stretch on a close that has not happened yet and the breakout level
+        // would move with the forming bar.
         int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
         if(copied < m_bbPeriod)
             return false;
 
-        // Compute mean of close prices over bbPeriod closed bars
         double sum = 0;
         for(int i = 0; i < m_bbPeriod; i++)
             sum += rates[i].close;
         double mean = sum / m_bbPeriod;
 
-        // Compute standard deviation
         double sumSqDiff = 0;
         for(int i = 0; i < m_bbPeriod; i++)
         {
@@ -110,20 +103,19 @@ private:
         return true;
     }
 
-    // Fallback ATR calculation from raw price data when indicator handle fails
+    // ATR fallback for when the indicator handle fails
     bool CalculateFallbackATR(double &outATR)
     {
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
         int needed = m_atrPeriod + 5;
-        // Batch 169: shift 1 so the forming bar cannot inflate ATR - this
-        // feeds the stop distance, so an inflated reading widened stops and
-        // the risk charged for them.
+        // Shift 1 so the forming bar cannot inflate ATR: this feeds the stop distance, so
+        // an inflated reading widens the stop and the risk charged for it.
         int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
         if(copied < m_atrPeriod + 1)  // Need prev close for True Range
             return false;
 
-        // Compute True Range for each closed bar, then average over atrPeriod bars
+        // Simple average true range over atrPeriod closed bars
         double sumTR = 0;
         for(int i = 0; i < m_atrPeriod; i++)
         {
@@ -168,16 +160,14 @@ public:
         m_minConfidence = 0.65; // Higher threshold for breakout trades
     }
     
-    // Destructor
     ~CVolatilityBreakoutStrategy()
     {
         Cleanup();
     }
     
-    // Cleanup helper
     void Cleanup()
     {
-        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        // CIndicatorManager owns these handles - never IndicatorRelease them here
         m_bbHandle = INVALID_HANDLE;
         m_atrHandle = INVALID_HANDLE;
         m_volumeHandle = INVALID_HANDLE;
@@ -192,12 +182,11 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
         
-        // Create indicator handles via CIndicatorManager
         m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, m_atrPeriod);
         m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
 
-        // v2.0: Keltner Channel EMA and ADX handles
+        // Keltner Channel midline (EMA 20) and ADX(14)
         m_kcEmaHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
         m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
         
@@ -207,7 +196,7 @@ public:
             return false;
         }
         
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+        // Injected through Init(); without it every trade would bypass risk validation
         m_riskManager = GetUnifiedRiskManager();
         if(m_riskManager == NULL)
             Print("[VOLBREAK] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
@@ -225,7 +214,6 @@ public:
         CStrategyBase::Deinit();
     }
     
-    // New Bar Handler
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(!IsEnabled() || !m_is_initialized)
@@ -239,7 +227,6 @@ public:
         m_lastSignalBar = currentBar;
     }
     
-    // Main Signal Generation
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -248,14 +235,12 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("VOLBREAK_DISABLED_OR_UNINIT");
         
-        // Fetch BB indicator data (with fallback)
         double bbUpper[2], bbMiddle[2], bbLower[2];
         bool bbFromFallback = false;
         if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
            !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
            !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower))    // Lower band
         {
-            // Fallback: compute BB from raw price data
             double fbUpper, fbMiddle, fbLower;
             if(CalculateFallbackBB(fbUpper, fbMiddle, fbLower))
             {
@@ -275,16 +260,14 @@ public:
             }
         }
 
-        // Fetch ATR indicator data (with fallback)
         double atrBuffer[12];  // Current + lookback for comparison
         bool atrFromFallback = false;
         if(!SafeCopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer))
         {
-            // Fallback: compute ATR from raw price data
             double fbATR;
             if(CalculateFallbackATR(fbATR))
             {
-                // Fill buffer with fallback value for current and historical comparison
+                // Flat fill: all 12 slots hold the same ATR, so the expansion ratio reads 1.0
                 for(int i = 0; i < 12; i++)
                     atrBuffer[i] = fbATR;
                 atrFromFallback = true;
@@ -297,16 +280,15 @@ public:
             }
         }
 
-        // Fetch volume data (confirmation-only — treat failure as volume unavailable)
+        // Volume is confirmation-only: a copy failure leaves volRatio at its neutral 1.0
         double volumeBuffer[11];
         bool volumeAvailable = SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer);
         
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
-        // --- VOLUME CONFIRMATION ---
-        // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
-        // copied window. count=11,start=1 -> newest (shift 1) is index 10.
+        // Static arrays are NOT as-series: [0] is the OLDEST of the copied window, so with
+        // count=11, start=1 the newest bar (shift 1) is index 10.
         double volRatio = 1.0;
         if(volumeAvailable)
         {
@@ -318,7 +300,7 @@ public:
             volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
         }
 
-        // --- VOLATILITY ANALYSIS --- (same ordering rule: newest ATR = index 11)
+        // Same ordering rule: the newest ATR is index 11
         double curATR = atrBuffer[11];
         double avgATR = 0;
         for(int i = 1; i < 11; i++)
@@ -327,16 +309,15 @@ public:
 
         double atrRatio = (avgATR > 0) ? (curATR / avgATR) : 1.0;
 
-        // Calculate BB width for squeeze detection (bb buffers: count=2,start=1 -> newest = [1])
+        // BB width drives squeeze detection; bb buffers: count=2, start=1 -> newest is [1]
         double bbWidth = bbUpper[1] - bbLower[1];
         double bbWidthPercent = (bbMiddle[1] > 0) ? (bbWidth / bbMiddle[1]) : 0;
         
         bool isInSqueeze = DetectSqueezeState(bbWidthPercent);
         
-        // --- SIGNAL DETECTION ---
-        // Batch 155: pass the newest closed-bar bands ([1]); [0] is shift-2
-        // under SafeCopyBuffer's oldest-first layout, which fed two-bars-old
-        // levels into the breach test and missed real breakouts.
+        // Pass the newest closed-bar bands ([1]). Under SafeCopyBuffer's oldest-first
+        // layout [0] is shift 2, which would test the breach against two-bars-old levels
+        // and miss real breakouts.
         SVolatilityBreakoutSignal signal = DetectBreakoutSignal(
             currentPrice, prevPrice,
             bbUpper[1], bbMiddle[1], bbLower[1],
@@ -348,7 +329,6 @@ public:
         if(signal.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("VOLBREAK_NO_SIGNAL");
         
-        // Apply minimum confidence filter
         if(signal.confidence < m_minConfidence)
         {
             PrintFormat("[VOLBREAK] Low confidence | %.1f%% < %.1f%%", 
@@ -356,11 +336,9 @@ public:
             return RejectSignal("VOLBREAK_LOW_CONFIDENCE");
         }
         
-        // v2.0: ADX rising filter for breakout entries
+        // Breakouts need ADX rising (volatility expanding); failure reversals are exempt
         if(signal.entryType != VB_ENTRY_FAILURE_REVERSAL && !ADXRising())
         {
-            // ADX not rising = volatility not expanding, skip breakout entries
-            // Exception: failure reversals don't need ADX rising
             return RejectSignal("VOLBREAK_ADX_NOT_RISING");
         }
         
@@ -374,11 +352,10 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips);
         if(!ValidateWithRiskManager(request, "VOLBREAK", confidence))
             return TRADE_SIGNAL_NONE;
         
-        // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
         m_inSqueeze = isInSqueeze;
         m_signalsGenerated++;
@@ -386,7 +363,7 @@ public:
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "VOLBREAK_SIGNAL_BUY" : "VOLBREAK_SIGNAL_SELL");
         confidence = signal.confidence;
         
-        // CONSENSUS LOGGING (AGENTS.md requirement)
+        // [CONSENSUS-DIAG] log required by AGENTS.md §6
         LogConsensusDiag(signal.direction, StringFormat("Type: %s | BB_Width=%.4f%% | ATR_Ratio=%.2f | Vol=%.2fx | Squeeze=%s", EnumToString(signal.entryType), bbWidthPercent * 100, atrRatio, volRatio, isInSqueeze ? "YES" : "NO"), confidence);
         
         PrintFormat("[VOLBREAK] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
@@ -404,10 +381,8 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_VOLATILITY_BREAKOUT; }
     
 private:
-    // Detect if market is in squeeze state
     bool DetectSqueezeState(double currentBBWidthPercent)
     {
-        // Fetch historical BB widths
         double bbUpperHist[], bbLowerHist[], bbMiddleHist[];
         int historySize = m_lookbackPeriods + 2;
         
@@ -415,10 +390,9 @@ private:
            !SafeCopyBuffer(m_bbHandle, 2, 1, historySize, bbLowerHist) ||
            !SafeCopyBuffer(m_bbHandle, 0, 1, historySize, bbMiddleHist))
         {
-            return false; // Cannot determine
+            return false; // squeeze history unavailable
         }
         
-        // Calculate BB width percentiles
         double widths[];
         ArrayResize(widths, m_lookbackPeriods);
         
@@ -429,15 +403,14 @@ private:
             widths[i] = widthPct;
         }
         
-        // Sort to find percentile
         ArraySort(widths);
         
-        // Find 20th percentile threshold
+        // Squeeze line = m_squeezeThreshold percentile of the window's BB widths
         int percentileIndex = (int)(m_lookbackPeriods * m_squeezeThreshold);
         percentileIndex = MathMax(0, MathMin(percentileIndex, m_lookbackPeriods - 1));
         double squeezeThreshold = widths[percentileIndex];
         
-        // Current width below threshold = squeeze
+        // Width at or below that percentile counts as a squeeze
         bool inSqueeze = (currentBBWidthPercent <= squeezeThreshold);
         
         if(inSqueeze && !m_inSqueeze)
@@ -458,7 +431,7 @@ private:
     {
         SVolatilityBreakoutSignal signal;
 
-        // v2.0: Breakout Failure Reversal
+        // Failure reversal is evaluated first: it overrides a fresh breakout
         ENUM_TRADE_SIGNAL failureDirection;
         if(DetectBreakoutFailure(failureDirection))
         {
@@ -474,7 +447,7 @@ private:
             return signal;
         }
 
-        // v2.0: Retest entry after breakout
+        // Retest entry is evaluated before fresh breakouts
         ENUM_TRADE_SIGNAL retestDirection = (m_squeezeBar > 0 && price >= m_squeezeHighPrice) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
         if(BreakoutWithRetest(retestDirection))
         {
@@ -490,14 +463,14 @@ private:
             return signal;
         }
 
-        // Check for bullish breakout
+        // Breakout confirmation: this closed bar breaches the band, the previous one did not
         bool brokeAboveBB = (price > bbUpper && prevPrice <= bbUpper);
         bool atrExpanding = (atrRatio >= m_atrExpansionMult);
         bool volumeSurge = (volRatio >= m_volumeMultiplier);
         
         if(brokeAboveBB)
         {
-            // v2.0: Double Squeeze (BB + KC) - highest confidence
+            // Double Squeeze (BB inside KC): highest confidence tier
             if(DoubleSqueeze() && isInSqueeze)
             {
                 signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
@@ -518,13 +491,12 @@ private:
             }
             else if(isInSqueeze && atrExpanding && volumeSurge)
             {
-                // COMBINED SIGNAL: Highest confidence
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
-                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR); // Below middle band
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
                 signal.takeProfit = price + m_atrTargetMult * curATR;
-                signal.confidence = 0.80 + (volRatio - 1.0) * 0.05; // Boost with volume
+                signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
                 
@@ -536,7 +508,6 @@ private:
             
             if(isInSqueeze || atrExpanding)
             {
-                // Squeeze or ATR breakout
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
@@ -549,7 +520,7 @@ private:
                 return signal;
             }
             
-            // Simple BB breakout
+            // Plain band breakout: only valid with a volume surge
             if(volumeSurge)
             {
                 signal.entryType = VB_ENTRY_ATR_EXPANSION;
@@ -564,12 +535,11 @@ private:
             }
         }
         
-        // Check for bearish breakout
         bool brokeBelowBB = (price < bbLower && prevPrice >= bbLower);
         
         if(brokeBelowBB)
         {
-            // v2.0: Double Squeeze (BB + KC) - highest confidence
+            // Double Squeeze (BB inside KC): highest confidence tier
             if(DoubleSqueeze() && isInSqueeze)
             {
                 signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
@@ -590,11 +560,10 @@ private:
             }
             else if(isInSqueeze && atrExpanding && volumeSurge)
             {
-                // COMBINED SIGNAL: Highest confidence
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
-                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR); // Above middle band
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
                 signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
@@ -608,7 +577,6 @@ private:
             
             if(isInSqueeze || atrExpanding)
             {
-                // Squeeze or ATR breakout
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
@@ -621,7 +589,7 @@ private:
                 return signal;
             }
             
-            // Simple BB breakout
+            // Plain band breakout: only valid with a volume surge
             if(volumeSurge)
             {
                 signal.entryType = VB_ENTRY_ATR_EXPANSION;
@@ -639,7 +607,7 @@ private:
         return signal;
     }
 
-    // Double Squeeze Detection: BB inside KC = TTM Squeeze (v2.0)
+    // Double Squeeze: the whole BB sits inside the Keltner Channel (TTM Squeeze)
     bool DoubleSqueeze()
     {
         if(m_bbHandle == INVALID_HANDLE || m_kcEmaHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
@@ -652,18 +620,16 @@ private:
            !SafeCopyBuffer(m_atrHandle, 0, 1, 1, atr))
             return false;
 
-        // Keltner Channels: EMA ± 2*ATR
+        // Keltner Channel: EMA(20) +/- 2*ATR
         double kcUpper = kcEma[0] + 2.0 * atr[0];
         double kcLower = kcEma[0] - 2.0 * atr[0];
 
-        // BB inside KC = strong squeeze
         return (bbUpper[0] < kcUpper && bbLower[0] > kcLower);
     }
 
-    // ADX Rising Filter (v2.0)
     bool ADXRising()
     {
-        // Batch 169: fail closed - missing ADX is not "expanding volatility".
+        // Fail closed: missing ADX is not "expanding volatility".
         if(m_adxHandle == INVALID_HANDLE)
             return false;
 
@@ -671,16 +637,14 @@ private:
         if(!SafeCopyBuffer(m_adxHandle, 0, 1, 2, adx))
             return false;
 
-        // Batch 155: SafeCopyBuffer lands oldest-first ([0]=shift 2, [1]=shift 1),
-        // so the old "adx[0] > adx[1]" tested ADX FALLING and blocked every
-        // breakout entry. Rising = newer above older.
-        return adx[1] > adx[0];  // ADX increasing = volatility expanding
+        // SafeCopyBuffer lands oldest-first ([0]=shift 2, [1]=shift 1), so rising means
+        // the newer value is the larger one.
+        return adx[1] > adx[0];
     }
 
-    // Breakout with Retest Confirmation (v2.0)
+    // Retest confirmation: price broke the squeeze level and traded back to it
     bool BreakoutWithRetest(ENUM_TRADE_SIGNAL direction)
     {
-        // Check if we recently detected a squeeze and price broke out
         if(m_squeezeBar == 0) return false;
 
         int barsSinceSqueeze = iBars(m_symbol, m_timeframe) - m_squeezeBar;
@@ -692,17 +656,17 @@ private:
 
         if(direction == TRADE_SIGNAL_BUY)
         {
-            // Broke above squeeze high, now retesting (price near squeeze high)
+            // Closed above the squeeze high with the low within 0.2% of it
             return (close1 > m_squeezeHighPrice && low1 <= m_squeezeHighPrice * 1.002);
         }
         else
         {
-            // Broke below squeeze low, now retesting
+            // Closed below the squeeze low with the high within 0.2% of it
             return (close1 < m_squeezeLowPrice && high1 >= m_squeezeLowPrice * 0.998);
         }
     }
 
-    // Breakout Failure Reversal Detection (v2.0)
+    // Failed breakout: the level broke but price closed back inside it
     bool DetectBreakoutFailure(ENUM_TRADE_SIGNAL &outDirection)
     {
         if(m_squeezeBar == 0) return false;
@@ -736,5 +700,5 @@ private:
     }
 };
 
-#endif // __VOLATILITY_BREAKOUT_STRATEGY_MQH__
+#endif
 

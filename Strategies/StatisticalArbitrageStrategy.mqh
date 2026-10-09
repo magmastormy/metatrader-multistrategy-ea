@@ -13,14 +13,14 @@
 
 struct SStatArbSignal
 {
-    ENUM_TRADE_SIGNAL direction;        // BUY = Long spread, SELL = Short spread
-    string leg1Symbol;                  // First symbol in pair (e.g., Vol75)
-    string leg2Symbol;                  // Second symbol in pair (e.g., Vol100)
+    ENUM_TRADE_SIGNAL direction;        // BUY = long spread, SELL = short spread
+    string leg1Symbol;                  // pair leg 1 (e.g. Vol75)
+    string leg2Symbol;                  // pair leg 2, hedged against leg 1
     double leg1LotSize;
-    double leg2LotSize;                 // Lot size for leg 2 (hedged ratio)
-    double zScore;                      // Current z-score of spread
+    double leg2LotSize;                 // hedge-ratio adjusted
+    double zScore;                      // spread z-score, in sigma
     double entryZScore;
-    double exitZScore;                  // Target z-score for exit (mean reversion)
+    double exitZScore;                  // exit target z-score (reversion to the mean)
     double confidence;
     string reason;
     
@@ -37,38 +37,29 @@ struct SStatArbSignal
         reason("") {}
 };
 
-// Institutional approach: Trade mean-reverting spreads between
-// highly correlated synthetic indices
 class CStatisticalArbitrageStrategy : public CStrategyBase
 {
 private:
-    // Configuration Parameters
-    double m_entryZThreshold;       // Z-score threshold for entry (default: 2.0)
-    double m_exitZThreshold;        // Z-score threshold for exit (default: 0.5)
-    int m_lookbackPeriods;          // Lookback for z-score calculation (default: 50)
-    double m_minCorrelation;        // Minimum correlation to consider pair (default: 0.85)
-    double m_hedgeRatio;            // Fixed hedge ratio (default: 1.0)
-    double m_slZBuffer;             // Adverse SL distance in z (sigma) for stat arb (default: 1.0)
-    // NOTE (2026-08-14): a m_useDynamicHedgeRatio flag was previously declared/initialized
-    // but never read anywhere; it has been removed. Hedge ratio is currently fixed at m_hedgeRatio.
+    double m_entryZThreshold;       // entry |z| threshold
+    double m_exitZThreshold;        // exit z threshold (reversion target)
+    int m_lookbackPeriods;          // bars in the z-score window
+    double m_minCorrelation;        // the pair must correlate at least this much
+    double m_hedgeRatio;            // fixed: no dynamic hedge ratio is applied
+    double m_slZBuffer;             // adverse SL distance in z (sigma)
 
-    // State Tracking
     datetime m_lastSignalBar;
     
-    // Active pair tracking
     string m_activeLeg1Symbol;
     string m_activeLeg2Symbol;
     double m_activeSpreadMean;
     double m_activeSpreadStdDev;
     datetime m_pairLastUpdateTime;
     
-        // Python Bridge reference (for correlation matrix)
         CPythonBridge* m_pythonBridge;
     
-        // Batch 100: OU Process Engine for mean-reversion-aware z-scores
+        // OU engine: mean-reversion-aware z-scores
         COrnsteinUhlenbeckEngine* m_ouEngine;
     
-    // Helper: Validate and retrieve SYMBOL_VOLUME_MIN with fallback
     double GetValidatedMinLot(const string symbol)
     {
         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -81,7 +72,6 @@ private:
         return minLot;
     }
     
-    // Helper: Validate and retrieve SYMBOL_VOLUME_STEP with fallback
     double GetValidatedLotStep(const string symbol)
     {
         double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
@@ -116,22 +106,21 @@ public:
         m_minConfidence = 0.70; // High threshold for stat arb (complex strategy)
     }
     
-    // Destructor
     ~CStatisticalArbitrageStrategy()
     {
         Cleanup();
     }
     
-    // Cleanup helper
         void Cleanup()
         {
-            // CIndicatorManager handles are managed centrally, no manual release needed
-            // Risk manager and Python bridge are not owned by this strategy - do NOT delete
+            // CIndicatorManager owns the indicator handles centrally - no manual release
+            // Risk manager, Python bridge and OU engine are not owned here: null the
+            // references, never delete them.
             m_pythonBridge = NULL;
-            m_ouEngine = NULL;  // Not owned - do NOT delete
+            m_ouEngine = NULL;
         }
     
-    // Batch 100: Set OU engine reference for mean-reversion-aware z-scores
+    // Injects the OU engine used for mean-reversion-aware z-scores
     void SetOUEngine(COrnsteinUhlenbeckEngine* ouEngine) { m_ouEngine = ouEngine; }
     
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
@@ -139,11 +128,11 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
         
-        // Note: Stat Arb doesn't use traditional indicators on chart symbol
-                // It trades spreads between pairs, so we initialize ATR handles for risk management
+        // Stat arb trades spreads between two instruments: it holds no indicator handles
+        // on the chart symbol.
         
-                // Python Bridge and OU Engine references are set via SetPythonBridge() and SetOUEngine()
-                // called by the EA after construction. If not set, strategy will reject signals gracefully.
+        // Python Bridge and OU engine are injected by the EA after construction via
+        // SetPythonBridge() / SetOUEngine(); without them the strategy rejects signals.
                 if(m_pythonBridge == NULL)
                     Print("[STATARB] WARNING: Python Bridge not set - call SetPythonBridge() from EA initialization");
                 if(m_ouEngine == NULL)
@@ -162,7 +151,6 @@ public:
         CStrategyBase::Deinit();
     }
     
-    // New Bar Handler
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(!IsEnabled() || !m_is_initialized)
@@ -175,11 +163,9 @@ public:
             return;
         m_lastSignalBar = currentBar;
         
-        // Update correlation matrix from Python Bridge (if available)
         UpdateCorrelationMatrix();
     }
     
-    // Main Signal Generation
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -188,14 +174,12 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("STATARB_DISABLED_OR_UNINIT");
         
-        // Check if Python Bridge is available for correlation data
         if(!IsPythonBridgeAvailable())
         {
             return RejectSignal("STATARB_PYTHON_BRIDGE_UNAVAILABLE");
         }
         
-        // Find best correlated pair for current symbol
-        string leg1Symbol = m_symbol;  // Primary symbol
+        string leg1Symbol = m_symbol;
         string leg2Symbol = FindBestCorrelatedPair(leg1Symbol);
         
         if(leg2Symbol == "")
@@ -203,25 +187,23 @@ public:
             return RejectSignal("STATARB_NO_CORRELATED_PAIR");
         }
         
-        // Calculate spread statistics
         double spreadMean, spreadStdDev;
         if(!CalculateSpreadStatistics(leg1Symbol, leg2Symbol, spreadMean, spreadStdDev))
         {
             return RejectSignal("STATARB_SPREAD_CALC_FAILED");
         }
         
-        // Calculate current z-score
         double currentSpread = GetCurrentSpread(leg1Symbol, leg2Symbol);
         double zScore = (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0;
         
-        // Batch 100: Use OU-adjusted z-score when OU engine is available and mean-reverting
+        // OU-adjusted z-score only when the engine is warmed up and sees mean reversion
         if(m_ouEngine != NULL && m_ouEngine.IsWarmedUp() && m_ouEngine.IsMeanReverting())
         {
             double ouZScore = m_ouEngine.GetOUZScore();
             double ouQuality = m_ouEngine.GetSignalQuality();
             if(ouQuality > 0.5)  // Only use OU z-score if quality is reasonable
             {
-                // Blend: weight OU z-score by quality, simple z-score by (1-quality)
+                // OU z takes at most 60% of the weight, scaled by quality
                 zScore = zScore * (1.0 - ouQuality * 0.6) + ouZScore * (ouQuality * 0.6);
                 PrintFormat("[STATARB-OU] %s | simple_z=%.2f ou_z=%.2f quality=%.2f blended_z=%.2f",
                            m_symbol, (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0,
@@ -243,7 +225,6 @@ public:
         if(signal.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("STATARB_NO_SIGNAL");
         
-        // Apply minimum confidence filter
         if(signal.confidence < m_minConfidence)
         {
             PrintFormat("[STATARB] Low confidence | %.1f%% < %.1f%%", 
@@ -262,10 +243,10 @@ public:
                     validationReq.symbol = m_symbol;
                     validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
                     validationReq.lotSize = minLot;
-                    // FINDING 0 LIVE (2026-08-14): these proposed stops NOW reach the
-                    // execution path. Derive SL/TP from the spread's volatility (sigma)
-                    // instead of fixed pips — adverse move = m_slZBuffer sigma, target =
-                    // reversion to the exit z-threshold. R:R is inherently >= mean-rev floor.
+                    // These proposed stops reach the execution path. SL/TP are derived from the
+                    // spread's own sigma, not fixed pips: adverse move = m_slZBuffer sigma,
+                    // target = reversion to the exit z-threshold, so R:R stays above the
+                    // mean-reversion floor.
                     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
                     if(point <= 0) point = 0.00001;
                     double spreadStdDevPips = (spreadStdDev > 0) ? (spreadStdDev / point) : 0.0;
@@ -278,7 +259,7 @@ public:
                     validationReq.strategy = m_name;
                     validationReq.requestTime = TimeCurrent();
 
-                    SetProposedStops(validationReq.stopLossPips, validationReq.takeProfitPips); // FINDING 0
+                    SetProposedStops(validationReq.stopLossPips, validationReq.takeProfitPips);
                     SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq);
                     if(!validationResult.approved)
                     {
@@ -289,7 +270,6 @@ public:
                         return TRADE_SIGNAL_NONE;
                     }
 
-                    // Update lot sizes with minimum lot sizing
                     double minLot2 = GetValidatedMinLot(signal.leg2Symbol);
                     double lotStep2 = GetValidatedLotStep(signal.leg2Symbol);
                     signal.leg1LotSize = minLot;
@@ -297,7 +277,6 @@ public:
                                                   MathFloor(m_hedgeRatio * minLot / lotStep2) * lotStep2);
                 }
         
-        // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
         m_activeLeg1Symbol = leg1Symbol;
         m_activeLeg2Symbol = leg2Symbol;
@@ -309,7 +288,7 @@ public:
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "STATARB_SIGNAL_LONG_SPREAD" : "STATARB_SIGNAL_SHORT_SPREAD");
         confidence = signal.confidence;
         
-        // CONSENSUS LOGGING (AGENTS.md requirement)
+        // [CONSENSUS-DIAG] log required by AGENTS.md §6
         PrintFormat("[CONSENSUS-DIAG] %s+%s | %s Spread | Z=%.2f | Corr=%.2f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
                    leg1Symbol, leg2Symbol,
                    signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
@@ -353,13 +332,11 @@ private:
         return m_pythonBridge.IsConnected();
     }
     
-    // Update correlation matrix from Python Bridge
     void UpdateCorrelationMatrix()
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return;
         
-        // Fetch correlation matrix from Python Bridge
         double corrMatrix[];
         int size;
         string corrSymbols[];
@@ -370,13 +347,12 @@ private:
         }
     }
     
-    // Find best correlated pair for given symbol
+    // Returns "" unless a pair correlates at least m_minCorrelation
     string FindBestCorrelatedPair(const string symbol)
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return "";
         
-        // Query Python Bridge for best correlated pair
         string bestPair;
         double correlation;
         
@@ -392,7 +368,6 @@ private:
         return "";
     }
     
-    // Get correlation between two symbols
     double GetPairCorrelation(const string symbol1, const string symbol2)
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
@@ -401,13 +376,11 @@ private:
         return m_pythonBridge.GetPairCorrelation(symbol1, symbol2);
     }
     
-    // Calculate spread statistics (mean, std dev) over lookback period
     bool CalculateSpreadStatistics(const string leg1, const string leg2, 
                                    double &mean, double &stdDev)
     {
-        // Fetch historical prices for both legs
-        // Batch 158: static arrays from CopyClose with shift>0 fill OLDEST-first ([0]=oldest).
-        // Use dynamic arrays + ArraySetAsSeries(true) so [0]=newest closed bar.
+        // CopyClose into a static array fills OLDEST-first ([0]=oldest); dynamic arrays +
+        // ArraySetAsSeries(true) make [0] the newest closed bar.
         double prices1[], prices2[];
         ArraySetAsSeries(prices1, true);
         ArraySetAsSeries(prices2, true);
@@ -417,23 +390,20 @@ private:
             return false;
         }
         
-        // Calculate spread series
         double spreads[];
         ArrayResize(spreads, m_lookbackPeriods);
         
         for(int i = 0; i < m_lookbackPeriods; i++)
         {
-            // With AS_SERIES=true, [i] = i bars ago from last closed bar
+            // With AS_SERIES=true, [i] = i bars ago from the last closed bar
             spreads[i] = prices1[i] - (prices2[i] * m_hedgeRatio);
         }
         
-        // Calculate mean
         mean = 0;
         for(int i = 0; i < m_lookbackPeriods; i++)
             mean += spreads[i];
         mean /= m_lookbackPeriods;
         
-        // Calculate standard deviation
         double variance = 0;
         for(int i = 0; i < m_lookbackPeriods; i++)
             variance += MathPow(spreads[i] - mean, 2);
@@ -443,7 +413,6 @@ private:
         return true;
     }
     
-    // Get current spread value
     double GetCurrentSpread(const string leg1, const string leg2)
     {
         double price1 = iClose(leg1, PERIOD_CURRENT, 1);
@@ -503,7 +472,7 @@ private:
         return signal;
     }
     
-    // Execute pair trade with hedge ratio sizing
+    // Validates and logs the pair intent only - CTradeManager owns order execution
         bool ExecutePairTrade(const string symbol1, const string symbol2, double hedgeRatio, ENUM_TRADE_SIGNAL direction)
         {
             CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
@@ -520,43 +489,38 @@ private:
                        symbol2, lot2, direction == TRADE_SIGNAL_BUY ? "SELL" : "BUY",
                        hedgeRatio);
         
-            // Note: Actual order execution is handled by CTradeManager after consensus approval
-            // This method validates and logs the pair trade intent
             return true;
         }
     
-    // Validate OU half-life for mean reversion speed filter
+    // OU half-life filter: reversion speed must sit inside the 2.0 - 20.0 band
     bool ValidHalfLife()
     {
-        // Batch 169: no engine = feature not wired, so don't block; but an
-        // engine that exists and has not warmed up has no half-life estimate,
-        // and trading on an unestimated reversion speed is a blind trade.
+        // No engine = the filter is not wired, so don't block. An engine that exists but
+        // has not warmed up has no half-life estimate, so it cannot clear this gate:
+        // the filter fails closed during warmup.
         if(m_ouEngine == NULL)
             return true;
         if(!m_ouEngine.IsWarmedUp())
             return false;
         
         double halfLife = m_ouEngine.GetHalfLife();
-        // Only trade if mean reversion speed is in reasonable range
         return (halfLife >= 2.0 && halfLife <= 20.0);
     }
     
-    // Check cointegration via Python Bridge (fallback to correlation)
+    // Cointegration stand-in: both paths gate on the Python correlation matrix, so a pair
+    // needs correlation >= m_minCorrelation. No cointegration test is actually run here.
     bool IsCointegrated(const string symbol1, const string symbol2)
     {
         if(m_pythonBridge != NULL && m_pythonBridge.IsConnected())
         {
-            // Try Python bridge cointegration test
-            // If endpoint not available, falls back to correlation check
             double correlation = GetPairCorrelation(symbol1, symbol2);
             return correlation >= m_minCorrelation;
         }
         
-        // Fallback: correlation-based check
         double correlation = GetPairCorrelation(symbol1, symbol2);
         return correlation >= m_minCorrelation;
     }
 };
 
-#endif // __STATISTICAL_ARBITRAGE_STRATEGY_MQH__
+#endif
 

@@ -7,17 +7,16 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
-// Hurst Engine for regime lockout (v2.0)
+// Hurst engine for regime lockout
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
-// Mean Reversion Entry Types
 enum ENUM_MR_ENTRY_TYPE
 {
     MR_ENTRY_NONE = 0,
-    MR_ENTRY_BB_TOUCH,      // Price touches outer Bollinger Band
-    MR_ENTRY_RSI_EXTREME,   // RSI overbought/oversold
-    MR_ENTRY_DOUBLE_SIGNAL  // BB touch + RSI extreme (highest confidence)
+    MR_ENTRY_BB_TOUCH,
+    MR_ENTRY_RSI_EXTREME,
+    MR_ENTRY_DOUBLE_SIGNAL  // BB touch + RSI extreme: highest confidence tier
 };
 
 struct SMeanReversionSignal
@@ -40,33 +39,28 @@ struct SMeanReversionSignal
         reason("") {}
 };
 
-// Institutional approach: Fade extremes with confirmation
 class CMeanReversionStrategy : public CStrategyBase
 {
 private:
-    // Indicator Handles
-    int m_bbHandle;           // Bollinger Bands (20, 2.0)
+    int m_bbHandle;
     int m_rsiHandle;
-    int m_volumeHandle;       // Volume for confirmation
+    int m_volumeHandle;
     
-    // Configuration Parameters
-    int m_bbPeriod;           // Bollinger Bands period (default: 20)
-    double m_bbDeviation;     // Standard deviations (default: 2.0)
-    int m_rsiPeriod;          // RSI period (default: 14)
-    double m_rsiOverbought;   // Overbought threshold (default: 70)
-    double m_rsiOversold;     // Oversold threshold (default: 30)
-    double m_minVolumeRatio;  // Minimum volume spike ratio (default: 1.2)
+    int m_bbPeriod;
+    double m_bbDeviation;     // in standard deviations
+    int m_rsiPeriod;
+    double m_rsiOverbought;
+    double m_rsiOversold;
+    double m_minVolumeRatio;  // current volume vs 10-bar mean
     
-    // Synthetic mode parameters
-    bool m_isSynthetic;       // Synthetic mode flag
+    bool m_isSynthetic;
     double m_syntheticBbDeviation;
-    int m_syntheticBbHandle;  // Cached BB handle for synthetic mode (created once, released in Cleanup)
+    int m_syntheticBbHandle;  // created directly, released in Cleanup
     
-        // v2.0 additions
-    int     m_stochHandle;        // Stochastic extreme confirmation (v2.0)
-    int     m_adxHandle;        // ADX for trend filter (Issue #27)
-    CHurstEngine* m_hurstEngine;  // Hurst engine for regime lockout (v2.0)
-    double  m_bbWidthLookback;    // Lookback for BB width average (v2.0)
+    int     m_stochHandle;
+    int     m_adxHandle;        // gates entries out of trending markets
+    CHurstEngine* m_hurstEngine;
+    double  m_bbWidthLookback;    // in bars
 
     // State Tracking
     datetime m_lastSignalBar;
@@ -98,22 +92,20 @@ public:
         m_minConfidence = 0.60; // Higher threshold for mean reversion
     }
     
-    // Destructor
     ~CMeanReversionStrategy()
     {
         Cleanup();
     }
     
-    // Cleanup helper
     void Cleanup()
     {
-        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        // CIndicatorManager owns these - never IndicatorRelease them here
         m_bbHandle = INVALID_HANDLE;
         m_rsiHandle = INVALID_HANDLE;
         m_volumeHandle = INVALID_HANDLE;
-        // v2.0: Stochastic handle is self-managed
         if(m_stochHandle != INVALID_HANDLE) { IndicatorRelease(m_stochHandle); m_stochHandle = INVALID_HANDLE; }
-        // Synthetic BB handle is self-managed (not via CIndicatorManager due to custom deviation)
+        // Stochastic and synthetic BB handles are self-managed: the BB one uses a custom
+        // deviation, so CIndicatorManager cannot own it. Both must be released explicitly.
                 if(m_syntheticBbHandle != INVALID_HANDLE) { IndicatorRelease(m_syntheticBbHandle); m_syntheticBbHandle = INVALID_HANDLE; }
     }
     
@@ -122,15 +114,12 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
         
-        // Create indicator handles via CIndicatorManager
         m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
         m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
 
-        // v2.0: Stochastic for extreme confirmation (via CIndicatorManager)
         m_stochHandle = CIndicatorManager::Instance().GetStochasticHandle(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
 
-        // NEW: ADX for trend filter (Issue #27)
         m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
 
         if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE || m_adxHandle == INVALID_HANDLE)
@@ -151,7 +140,6 @@ public:
         CStrategyBase::Deinit();
     }
     
-    // New Bar Handler
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(!IsEnabled() || !m_is_initialized)
@@ -165,7 +153,6 @@ public:
         m_lastSignalBar = currentBar;
     }
     
-    // Main Signal Generation
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -174,11 +161,9 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("MEANREV_DISABLED_OR_UNINIT");
         
-        // Route to synthetic mode if enabled (Batch 105)
         if(m_isSynthetic)
             return GetSignalSynthetic(confidence);
         
-        // Fetch indicator data
         double bbUpper[2], bbMiddle[2], bbLower[2];
         double rsiBuffer[2];
         double volumeBuffer[11];
@@ -195,10 +180,9 @@ public:
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
-        // --- VOLUME CONFIRMATION ---
-        // Current volume vs average of last 10 bars
-        // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
-        // copied window. count=11,start=1 -> newest (shift 1) is index 10.
+        // Current volume vs the mean of the last 10 bars
+        // CopyBuffer into a static array is NOT as-series: [0] is the OLDEST of the
+        // copied window, so shift 1 (newest) lands at the last index.
         double currentVol = volumeBuffer[10];
         double avgVol = 0;
         for(int i = 0; i < 10; i++)
@@ -213,7 +197,7 @@ public:
             return RejectSignal("MEANREV_LOW_VOLUME");
         }
 
-        // --- SIGNAL DETECTION --- (bb/rsi buffers: count=2,start=1 -> newest = [1])
+        // bb/rsi buffers: count=2, start=1 -> newest closed bar is index 1
         SMeanReversionSignal signal = DetectMeanReversionSignal(
             currentPrice, prevPrice,
             bbUpper[1], bbMiddle[1], bbLower[1],
@@ -224,7 +208,6 @@ public:
         if(signal.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("MEANREV_NO_SIGNAL");
         
-        // Apply minimum confidence filter
         if(signal.confidence < m_minConfidence)
         {
             PrintFormat("[MEANREV] Low confidence | %.1f%% < %.1f%%", 
@@ -232,16 +215,16 @@ public:
             return RejectSignal("MEANREV_LOW_CONFIDENCE");
         }
         
-        // v2.0: Hurst regime lockout - only trade mean reversion in mean-reverting regime
+        // Hurst regime lockout: only fade extremes in a mean-reverting regime
         if(!MeanRevertingRegime())
         {
             return RejectSignal("MEANREV_HURST_NOT_MEANREVERTING");
         }
         
-        // NEW: Block mean reversion in trending markets (ADX > 25)
+        // Trending market (ADX above 25) must stand aside instead of fading
         double adx = GetADX(14);
-        // Batch 169: ADX unknown (-1) must block, not pass. Standing aside when the
-        // trend filter cannot be evaluated is the safe reading of "not trending".
+        // ADX unknown (-1) blocks rather than passes: with the trend filter unevaluated,
+        // "not trending" cannot be asserted.
         if(adx < 0.0)
         {
             SetDecisionReasonTag("MEANREV_ADX_UNAVAILABLE");
@@ -254,52 +237,49 @@ public:
             return RejectSignal("MEANREV_TRENDING_MARKET");
         }
         
-        // v2.0: Band width filter - avoid trading in choppy/narrow bands
+        // Band width filter: skip when bands are narrower than their recent average
         if(!SufficientBandWidth())
         {
             return RejectSignal("MEANREV_BAND_WIDTH_INSUFFICIENT");
         }
         
-        // v2.0: Divergence filter - don't trade if divergence present
+        // Divergence filter: don't fade while price and RSI diverge
         if(!NoDivergence(signal.direction))
         {
             return RejectSignal("MEANREV_DIVERGENCE_DETECTED");
         }
         
-        // Calculate volatility-based SL from signal structure
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
-        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // No fallback - skip if SL invalid
+        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // no fallback: unmeasurable SL stays 0 pips
         double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
         double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 2.0;
 
-        // v2.0: Dynamic TP at BB middle (mean reversion target)
-        // If dynamic TP is available, prefer it over fixed ATR-based TP
+        // Dynamic TP at BB middle (the mean)
         double dynamicTP = GetDynamicTP(signal.direction);
-        // Note: dynamicTP is logged for reference; actual TP is still set by risk manager
+        // Not sent here: the risk manager owns the actual TP, dynamicTP is reference only
 
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum instead of hardcoded 0.01
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
         request.stopLossPips = slPips;
         request.takeProfitPips = tpPips;
         request.confidence = signal.confidence;
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips);
         if(!ValidateWithRiskManager(request, "MEANREV", confidence))
             return TRADE_SIGNAL_NONE;
         
-        // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
         m_signalsGenerated++;
         RecordSignal();
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "MEANREV_SIGNAL_BUY" : "MEANREV_SIGNAL_SELL");
         confidence = signal.confidence;
         
-        // CONSENSUS LOGGING (AGENTS.md requirement)
+        // [CONSENSUS-DIAG] log required by AGENTS.md §6
         LogConsensusDiag(signal.direction, StringFormat("Type: %s | Z: %.2f | Stoch: %s | BW: %s", signal.entryType == MR_ENTRY_DOUBLE_SIGNAL ? "DOUBLE" : signal.entryType == MR_ENTRY_BB_TOUCH ? "BB" : "RSI", signal.confidence, StochasticExtreme(signal.direction) ? "EXT" : "NORM", SufficientBandWidth() ? "OK" : "NARROW"), confidence);
         
         PrintFormat("[MEANREV] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
@@ -316,15 +296,11 @@ public:
     
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_MEAN_REVERSION; }
 
-    // Set Hurst engine for regime lockout (v2.0)
     void SetHurstEngine(CHurstEngine* engine) { m_hurstEngine = engine; }
     
-    // Set synthetic mode for synthetic indices (Batch 105)
     void SetSyntheticMode(bool enabled) { m_isSynthetic = enabled; }
 
-// Synthetic mode signal generation (Batch 105)
-// Simplified for synthetic indices: BB touch + spike detection
-// No RSI, no volume filters, uses 1.5σ BB
+    // Synthetic-indices path: 1.5σ BB touch + spike only, no RSI or volume filters
     ENUM_TRADE_SIGNAL GetSignalSynthetic(double &confidence)
     {
         confidence = 0.0;
@@ -333,7 +309,6 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("MEANREV_DISABLED_OR_UNINIT");
         
-        // For synthetic mode, use cached BB handle with 1.5σ (created once, released in Cleanup)
         if(m_syntheticBbHandle == INVALID_HANDLE)
         {
             m_syntheticBbHandle = iBands(m_symbol, m_timeframe, m_bbPeriod, 0, m_syntheticBbDeviation, PRICE_CLOSE);
@@ -355,7 +330,7 @@ public:
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
-        // Calculate ATR for spike detection (via CIndicatorManager — no per-call release)
+        // ATR(14) via CIndicatorManager - do not release the handle per call
         int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
         if(atrHandle == INVALID_HANDLE)
             return RejectSignal("MEANREV_SYN_ATR_HANDLE");
@@ -372,9 +347,8 @@ public:
         double price5BarsAgo = iClose(m_symbol, m_timeframe, 6);
         bool spiked = MathAbs(currentPrice - price5BarsAgo) > 2.0 * atr14;
         
-        // 1.5σ BB touch (main signal condition)
-        // Batch 155: [1] is the newest closed bar under oldest-first layout;
-        // [0] was shift-2, so touches were judged against two-bars-old bands.
+        // 1.5σ BB touch (primary signal). Oldest-first layout: [1] is the newest closed
+        // bar, [0] is shift 2.
         bool touchLower = currentPrice <= bbLower[1];
         bool touchUpper = currentPrice >= bbUpper[1];
 
@@ -458,13 +432,10 @@ public:
     }
 
 private:
-    // Stochastic Extreme Confirmation (v2.0)
     bool StochasticExtreme(ENUM_TRADE_SIGNAL direction)
     {
-        // Batch 169: fail closed. Returned true when the handle was invalid or the
-        // copy failed, and callers read true as confirmation - so a data outage
-        // granted the +0.05 confidence boost and skipped the x0.90 weakening penalty.
-        // Missing evidence must never raise confidence.
+        // Fail closed: a data outage must not read as confirmation. Missing evidence can
+        // never grant the +0.05 boost nor bypass the x0.90 weakening penalty.
         if(m_stochHandle == INVALID_HANDLE)
             return false;
         
@@ -478,12 +449,11 @@ private:
             return stochK[0] > 80.0;  // Overbought
     }
     
-    // Divergence Filter (v2.0)
-    // Returns true if NO divergence (safe to trade)
+    // True when NO divergence is present (safe to fade)
     bool NoDivergence(ENUM_TRADE_SIGNAL direction)
     {
-        // Batch 169: fail closed - "no divergence" cannot be concluded from missing
-        // data, and this is used as an entry gate.
+        // Fail closed: missing data cannot prove the absence of divergence, and this
+        // gates entries.
         if(m_rsiHandle == INVALID_HANDLE)
             return false;
         
@@ -493,11 +463,9 @@ private:
            CopyBuffer(m_rsiHandle, 0, 1, 11, rsi) < 11)
             return false;
         
-        // Check for divergence over last 5-10 bars
-        // Batch 155: non-series copies are OLDEST-first - [10] is the newest
-        // closed bar, not [0]. The old comparison tested price recovering
-        // across the window instead of making a fresh extreme, rejecting
-        // healthy fade continuations at random.
+        // Divergence over the last 5-10 bars. Non-series copies are OLDEST-first, so the
+        // newest closed bar is [10] and the reference is [10 - lookback]: the test needs a
+        // fresh extreme, not price recovering across the window.
         for(int lookback = 5; lookback <= 10; lookback++)
         {
             if(direction == TRADE_SIGNAL_BUY)
@@ -506,7 +474,7 @@ private:
                 bool priceLowerLow = (priceLow[10] < priceLow[10 - lookback]);
                 bool rsiHigherLow = (rsi[10] > rsi[10 - lookback]);
                 if(priceLowerLow && rsiHigherLow)
-                    return false;  // Divergence present = don't trade
+                    return false;
             }
             else
             {
@@ -518,29 +486,26 @@ private:
             }
         }
         
-        return true;  // No divergence
+        return true;
     }
     
-    // Hurst Regime Lockout (v2.0)
-    // Returns true if market is in mean-reverting regime (Hurst < 0.45)
+    // True only in a mean-reverting regime (Hurst < 0.45)
     bool MeanRevertingRegime()
     {
         if(m_hurstEngine == NULL)
-            return true;  // Feature not wired for this roster - not this strategy's gate
-        // Batch 169: an engine that IS wired but has not warmed up has no regime
-        // opinion, so it cannot certify "mean reverting". Previously warmup returned
-        // true and every entry passed the regime lockout during the whole warmup.
+            return true;  // engine not wired for this roster: no regime gate applies here
+        // An engine that is wired but not warmed up has no regime opinion, so it cannot
+        // certify "mean reverting": the lockout fails closed during warmup.
         if(!m_hurstEngine.IsWarmedUp())
             return false;
         return m_hurstEngine.GetRegime() == HURST_MEAN_REVERTING;
     }
     
-    // Band Width Filter (v2.0)
-    // Returns true if BB width is sufficient (above 50-period average)
+    // True when the current BB width exceeds its m_bbWidthLookback average
     bool SufficientBandWidth()
     {
         if(m_bbHandle == INVALID_HANDLE)
-            return false;  // Batch 169: fail closed - BB width is this strategy's premise
+            return false;  // fail closed: BB width is this strategy's premise
         
         double bbUpper[1], bbLower[1];
         if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) <= 0 ||
@@ -549,7 +514,6 @@ private:
         
         double currentWidth = bbUpper[0] - bbLower[0];
         
-        // Calculate average BB width over lookback
         double avgWidth = 0;
         int validBars = 0;
         for(int i = 1; i <= (int)m_bbWidthLookback; i++)
@@ -563,13 +527,13 @@ private:
             }
         }
         
-        if(validBars < 10) return false;  // Batch 169: not enough history to judge width
+        if(validBars < 10) return false;  // not enough history to judge the width
         avgWidth /= validBars;
         
-        return currentWidth > avgWidth;  // Current width > average = sufficient
+        return currentWidth > avgWidth;
     }
     
-// Dynamic TP at BB middle (v2.0)
+    // Dynamic TP target: BB middle (the 20-EMA mean)
     double GetDynamicTP(ENUM_TRADE_SIGNAL direction)
     {
         if(m_bbHandle == INVALID_HANDLE)
@@ -579,15 +543,12 @@ private:
         if(CopyBuffer(m_bbHandle, 0, 1, 1, bbMiddle) <= 0)
             return 0.0;
         
-        return bbMiddle[0];  // TP at BB middle (20 EMA = mean)
+        return bbMiddle[0];
     }
     
-    // Get ADX value for trend filter (Issue #27)
-    // Batch 169: returns -1 when ADX is unavailable. The old 0.0 sentinel made the
-    // `adx > 25` trend lockout pass on missing data, i.e. the filter that is supposed
-    // to stop mean reversion inside a trend was disabled by exactly the outage that
-    // should make it stand aside. Also reads the closed bar (shift 1) instead of the
-    // forming one.
+    // ADX for the trend lockout. Returns -1 when unavailable and the caller must treat -1
+    // as "block": a 0.0 sentinel would silently pass the adx > 25 gate during an outage.
+    // Reads the closed bar (shift 1), never the forming bar.
     double GetADX(int period)
     {
         if(m_adxHandle == INVALID_HANDLE)
@@ -608,26 +569,23 @@ private:
     {
         SMeanReversionSignal signal;
         
-        // Check for bullish mean reversion (price oversold)
         bool priceAtLowerBB = (price <= bbLower);
         bool rsiOversold = (rsi <= m_rsiOversold);
         
         if(priceAtLowerBB && rsiOversold)
         {
-            // DOUBLE SIGNAL: Highest confidence
             signal.entryType = MR_ENTRY_DOUBLE_SIGNAL;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
-            signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5; // Below lower band
-            signal.takeProfit = bbMiddle; // Target middle band
-            signal.confidence = 0.75 + (volRatio - 1.0) * 0.1; // Boost with volume
+            signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5; // 0.5 band-width below the lower band
+            signal.takeProfit = bbMiddle;
+            signal.confidence = 0.75 + (volRatio - 1.0) * 0.1;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "Double signal: BB lower + RSI oversold";
             
-            // v2.0: Stochastic extreme confirmation boosts confidence
             if(StochasticExtreme(signal.direction))
             {
-                signal.confidence += 0.05;  // Stochastic confirms = slight boost
+                signal.confidence += 0.05;
                 signal.reason += " +Stoch";
             }
             
@@ -639,24 +597,20 @@ private:
         
         if(priceAtLowerBB)
         {
-            // Single signal: BB touch only
-            // Batch 155: base was 0.60 with a x0.85 no-Stochastic penalty -
-            // every no-Stoch variant landed at 0.51-0.58, under the 0.60
-            // floor, so the path only ever fired WITH a Stochastic extreme.
-            // Rebased so the weakened tier survives the floor as designed.
+            // BB touch only: 0.70 base, because the x0.90 no-Stochastic tier must still
+            // clear the 0.60 confidence floor.
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
             signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5;
-            signal.takeProfit = bbMiddle; // Target middle band
+            signal.takeProfit = bbMiddle;
             signal.confidence = 0.70 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB lower band touch";
 
-            // v2.0: Require Stochastic confirmation for BB-only entries
+            // BB-only entries need a Stochastic extreme; without one the tier is weakened
             if(!StochasticExtreme(signal.direction))
             {
-                // No Stochastic confirmation: reduce confidence
                 signal.confidence *= 0.90;
                 signal.reason += " (no Stoch confirm)";
             }
@@ -666,14 +620,11 @@ private:
 
         if(rsiOversold)
         {
-            // Single signal: RSI oversold only
-            // Batch 155: base 0.58 + volume bonus maxed out just under the
-            // 0.60 floor - this entry class could never fire. 0.65 keeps it
-            // the weakest viable tier.
+            // RSI oversold only: 0.65 is the weakest tier that still clears the 0.60 floor
             signal.entryType = MR_ENTRY_RSI_EXTREME;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
-            signal.stopLoss = price - (bbUpper - bbLower) * 0.3; // ATR-based SL
+            signal.stopLoss = price - (bbUpper - bbLower) * 0.3;
             signal.takeProfit = bbMiddle;
             signal.confidence = 0.65 + (volRatio - 1.0) * 0.07;
             signal.confidence = MathMin(1.0, signal.confidence);
@@ -682,26 +633,23 @@ private:
             return signal;
         }
         
-        // Check for bearish mean reversion (price overbought)
         bool priceAtUpperBB = (price >= bbUpper);
         bool rsiOverbought = (rsi >= m_rsiOverbought);
         
         if(priceAtUpperBB && rsiOverbought)
         {
-            // DOUBLE SIGNAL: Highest confidence
             signal.entryType = MR_ENTRY_DOUBLE_SIGNAL;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
-            signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5; // Above upper band
-            signal.takeProfit = bbMiddle; // Target middle band
+            signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5; // 0.5 band-width above the upper band
+            signal.takeProfit = bbMiddle;
             signal.confidence = 0.75 + (volRatio - 1.0) * 0.1;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "Double signal: BB upper + RSI overbought";
             
-            // v2.0: Stochastic extreme confirmation boosts confidence
             if(StochasticExtreme(signal.direction))
             {
-                signal.confidence += 0.05;  // Stochastic confirms = slight boost
+                signal.confidence += 0.05;
                 signal.reason += " +Stoch";
             }
 
@@ -713,20 +661,19 @@ private:
 
         if(priceAtUpperBB)
         {
-            // Single signal: BB touch only (Batch 155: rebased, see BUY side)
+            // BB touch only: rebased like the BUY side so the weakened tier clears 0.60
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
             signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5;
-            signal.takeProfit = bbMiddle; // Target middle band
+            signal.takeProfit = bbMiddle;
             signal.confidence = 0.70 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB upper band touch";
 
-            // v2.0: Require Stochastic confirmation for BB-only entries
+            // BB-only entries need a Stochastic extreme; without one the tier is weakened
             if(!StochasticExtreme(signal.direction))
             {
-                // No Stochastic confirmation: reduce confidence
                 signal.confidence *= 0.90;
                 signal.reason += " (no Stoch confirm)";
             }
@@ -736,7 +683,7 @@ private:
 
         if(rsiOverbought)
         {
-            // Single signal: RSI overbought only (Batch 155: rebased, see BUY side)
+            // RSI overbought only: weakest tier that still clears the 0.60 floor
             signal.entryType = MR_ENTRY_RSI_EXTREME;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
@@ -753,5 +700,5 @@ private:
     }
 };
 
-#endif // __MEAN_REVERSION_STRATEGY_MQH__
+#endif
 
