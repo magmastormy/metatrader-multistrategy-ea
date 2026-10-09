@@ -1,5 +1,4 @@
-// Main coordination class - replaces monolithic EA logic
-// Single composition root (Factory/Builder pattern) - Batch 123
+// EA composition root: owns and wires every trading subsystem (Factory/Builder).
 #property strict
 
 #ifndef CORE_ORCHESTRATION_EA_ORCHESTRATOR_MQH
@@ -21,7 +20,7 @@
 #include "../../Core/Risk/UnifiedRiskManager.mqh"
 #include "../../Core/Risk/PositionSizer.mqh"
 #include "../../Core/Trading/TradeManager.mqh"
-#include "../../Core/Risk/BasketEquityStop.mqh"      // Theme 3: basket-level equity stop (article 23662)
+#include "../../Core/Risk/BasketEquityStop.mqh"      // basket-level equity stop (article 23662)
 #include "../../Core/Engines/RegimeEngine.mqh"
 #include "../../Core/Risk/RiskTierManager.mqh"
 #include "../../Core/Risk/SafeModeConfig.mqh"
@@ -84,14 +83,11 @@
 #include <Trade\AccountInfo.mqh>
 #include <Object.mqh>
 
-// Magic number constants for EA-owned position management
-// Batch 168: guarded, because CMagicRange in Core/Utils/MagicRange.mqh is now
-// the single owner of this arithmetic and is included earlier.
+// Guarded: CMagicRange (Core/Utils/MagicRange.mqh) is the single owner of this arithmetic.
 #ifndef MAGIC_SYMBOL_MULTIPLIER
 #define MAGIC_SYMBOL_MULTIPLIER 100
 #endif
 
-// Strategy constants
 #define STRATEGY_COUNT 21  // Number of indicator strategies in flags array (0-20, max enum value is STRATEGY_EXIT_OPTIMIZER=20)
 
 // AI Strategy types (registered separately via AI adapters)
@@ -101,26 +97,20 @@
 #define STRATEGY_ONNX_AI 20
 #define STRATEGY_PYTHON_BRIDGE_AI 21
 
-// L2-003/L2-013: Crash recovery state file
 #define CRASH_RECOVERY_STATE_FILE "CrashRecoveryState.json"
 
 #include "OrchestratorConfig.mqh"
 #include "StrategyConfigBuilder.mqh"
 
-// Phase F decomposition modules.
-// Every cluster below was extracted out of CEAOrchestrator verbatim; the
-// orchestrator keeps thin forwarders with the original signatures so no
-// caller (internal or external) had to change. Included here - after the
-// engine/profiler/registry headers above - because the two stateful hubs
-// are held BY VALUE and therefore need their complete type.
+// Included after the engine/profiler/registry headers above because the two stateful
+// decomposition hubs are held BY VALUE and need their complete type.
 #include "OrchestratorSymbolClassifier.mqh"     // static: symbol / roster classification
 #include "OrchestratorStrategyFlagBuilder.mqh"  // static: global + per-symbol strategy flags
 #include "OrchestratorIntrabarPolicy.mqh"       // static: L7-009/L7-010 intrabar + timeframe policy
 #include "OrchestratorModeResolver.mqh"         // static: EA-mode degradation + topology logs
 #include "OrchestratorProfitGuard.mqh"          // stateful: daily profit target / trading halt
-#include "OrchestratorMathEngineHub.mqh"        // stateful: Batch 100/114/107 engine fleets
+#include "OrchestratorMathEngineHub.mqh"        // stateful: mathematical + institutional engine fleets
 
-// CEAOrchestratorBuilder - Builder pattern for orchestrator
 class CEAOrchestratorBuilder
 {
     private:
@@ -131,7 +121,6 @@ class CEAOrchestratorBuilder
 
     CEAOrchestratorBuilder* WithConfig(const SOrchestratorConfig &config) { m_config = config; return GetPointer(this); }
 
-    // Individual setters for fluent API
     CEAOrchestratorBuilder* WithMagicNumber(long v) { m_config.magicNumber = v; return GetPointer(this); }
     CEAOrchestratorBuilder* WithLotSize(double v) { m_config.lotSize = v; return GetPointer(this); }
     CEAOrchestratorBuilder* WithRiskSettings(double maxRisk, double maxDaily, double maxPortfolio, double maxDD)
@@ -143,13 +132,11 @@ class CEAOrchestratorBuilder
         CEAOrchestratorBuilder* WithLogLevel(int v) { m_config.logLevel = v; return GetPointer(this); }
         CEAOrchestratorBuilder* WithLogVerbosity(int v) { m_config.logVerbosity = v; return GetPointer(this); }
 
-        // Build the orchestrator
     void* Build();
 
     SOrchestratorConfig GetConfig() const { return m_config; }
 };
 
-// Builder implementation
 void* CEAOrchestratorBuilder::Build()
 {
     return new CEAOrchestrator();
@@ -158,7 +145,6 @@ void* CEAOrchestratorBuilder::Build()
 class CEAOrchestrator
 {
     private:
-    // ============ Core Subsystems (Owned) ============
     CSymbolInfo                 m_globalSymbol;
     CAccountInfo                m_accountInfo;
     CEnhancedErrorHandler       m_errorHandler;
@@ -167,7 +153,7 @@ class CEAOrchestrator
     CRiskTierManager            m_riskTierManager;
     CCompoundingTierManager     m_compoundingTierManager;
     CFamilyStrategyWeightMatrix m_familyWeightMatrix;
-    CMagicNumberAllocator     m_magicNumberAllocator;  // L1-015: Centralized magic number allocation
+    CMagicNumberAllocator     m_magicNumberAllocator;  // centralized magic-number allocation
     CSessionWeightManager       m_sessionWeightManager;
     CSkewStepAnalyzer           m_skewStepAnalyzer;
     CPerformanceAnalytics       m_performanceAnalytics;
@@ -187,8 +173,6 @@ class CEAOrchestrator
     CTickSafetyMonitor          m_tickSafetyMonitor;
     CSyntheticSpikeMonitor      m_spikeMonitor;
         // ONNX session init retry/backoff state machine (Core/AI/ONNXInitManager.mqh).
-        // Replaces the former m_onnxSessionDisabled / m_onnxInitRetryCount /
-        // m_lastOnnxInitAttempt members; thresholds and intervals are unchanged.
         CONNXInitManager            m_onnxInit;
         CPythonBridge*              m_pythonBridge;
     CDashboardBridge*           m_dashboardBridge;
@@ -211,60 +195,41 @@ class CEAOrchestrator
     CChartDrawingManager*       m_drawingManagers[];
     string                      m_drawingManagerSymbols[];
 
-    // Batch 99: Bayesian Kelly / Equity Curve / CVaR subsystems
+    // Bayesian Kelly / equity-curve / ADX / CVaR sizing subsystems
     CEquityCurveManager*        m_equityCurveManager;
     CBayesianKellyModifier*     m_bayesianKellyModifier;
     CEquityCurveLotModifier*    m_equityCurveLotModifier;
     CADXLotModifier*            m_adxModifier;
     datetime                    m_lastCvarLogTime;
 
-    // Phase F: the sixteen per-symbol engine arrays (Batch 100 Hurst/OU/OFI/VPIN,
-    // Batch 114 Kalman/CPD/FourState/VolTarget/ExitOpt/LiquiditySweep/RangeComp,
-    // Batch 107 VWAP/VolumeProfile/CVD), the parallel symbol + bridge-log
-    // bookkeeping arrays and the m_mathEngineCount cursor now live in
-    // COrchestratorMathEngineHub (Core/Orchestration/OrchestratorMathEngineHub.mqh).
-    // Held BY VALUE so construction/teardown order is unchanged; the hub OWNS
-    // every engine pointer and releases them in ReleaseAll().
+    // Per-symbol mathematical/institutional engine arrays live in the hub below. Held BY
+    // VALUE so construction/teardown order is fixed; the hub OWNS every engine pointer.
     COrchestratorMathEngineHub  m_mathEngineHub;
 
-    // Core components
     CSignalGenerator            m_signalGenerator;
     CCandidateBuilder           m_candidateBuilder;
     CTradeExecutor              m_tradeExecutor;
     CLiveAuthorityResolver      m_liveAuthority;
     CPositionManager            m_positionManager;
 
-    // Registries
     CRegistryAggregator             m_registryAggregator;
 
-    // Heartbeat status-text aggregation (Core/Orchestration/OrchestratorStatusReporter.mqh).
-    // Wired once from WireAndValidateDependencies(); read-only, no trading impact.
+    // Heartbeat status text. Wired once by WireAndValidateDependencies(); read-only, no trading impact.
     COrchestratorStatusReporter     m_statusReporter;
 
-    // ============ State Variables ============
-    // NOTE (Phase B-1): the legacy performance-tracking block (m_peakEquity,
-    // m_initialBalance, m_accountBalance, m_accountEquity, m_currentEquity,
-    // m_currentDrawdown, m_totalProfit, m_totalLoss, m_totalTrades,
-    // m_winningTrades, m_losingTrades, m_maxDrawdown), m_currentTime and
-    // m_currentRiskPerTrade were removed: they were only ever declared and
-    // constructor-initialized, never read or written. Live equity/PnL state is
-    // owned by CPerformanceAnalytics and CUnifiedRiskManager.
+    // Live equity/PnL state is owned by CPerformanceAnalytics and CUnifiedRiskManager.
 
-    // Risk management
     ENUM_MARKET_REGIME m_currentRegime;
     datetime m_lastTradeTime;
     int    m_totalActivePositions;
     string m_activePairs[];
     bool   m_systemInitialized;
     bool   m_tradingEnabled;
-    // EXEC-01: set true only after WireAndValidateDependencies() confirms every
-    // trading-path manager received all of its required dependencies. Initialize()
-    // aborts (returns false -> OnInit fails) when this stays false.
+    // Set only after WireAndValidateDependencies() confirms every trading-path manager got
+    // all required deps. While false, Initialize() fails and OnInit fails (fail-closed).
     bool   m_dependenciesValid;
 
-    // Phase B-2: the 18 runtime heartbeat / rejection funnel counters now live in
-    // CHeartbeatTelemetry (Core/Orchestration/HeartbeatTelemetry.mqh). They are
-    // write-only telemetry - no control flow branches on them.
+    // Heartbeat / rejection funnel counters. Write-only telemetry; no control flow branches on them.
     CHeartbeatTelemetry m_heartbeat;
 
     ulong    m_scanCycleSequence;
@@ -273,43 +238,28 @@ class CEAOrchestrator
     int      m_consecutiveZeroSignalCycles;
     int      m_zeroSignalFallbackThreshold;
 
-    // Batch 154: provenance of AI-contributed executed trades, keyed by open
-    // position id. Fed when the position fully closes into
-    // CLiveAuthorityResolver::RecordOutcome so PROVEN_AI promotion accumulates
-    // evidence (the resolver's 30-trade/expectancy gate was unreachable because
-    // RecordOutcome had zero callers). Parallel arrays: MQL5 forbids dynamic
-    // arrays of structs that themselves contain arrays.
+    // Provenance of AI-contributed executed trades, keyed by open position id and fed into
+    // CLiveAuthorityResolver::RecordOutcome on full close so PROVEN_AI promotion accumulates
+    // evidence. Parallel arrays because MQL5 forbids dynamic arrays of structs holding arrays.
     ulong    m_execProvPositionIds[];
     int      m_execProvManagerIdx[];
     string   m_execProvContributorCsv[];
     string   m_execProvIndicesCsv[];
     int      m_execProvCount;
 
-    // Diagnostics logger (Blueprint 3.6: off-journal logging)
-    // RETAINED (Phase B-1): no LogXxx()/WriteToFile() calls exist, but InitializeEx()
-    // opens "MultiStrategyEA_diagnostics.log" and emits [DIAG-LOGGER] journal lines,
-    // so removing it WOULD change observable runtime output. See report.
+    // Off-journal diagnostics logger. Do NOT remove: InitializeEx() writes
+    // "MultiStrategyEA_diagnostics.log" and emits [DIAG-LOGGER] journal lines.
     CDiagnosticsLogger m_diagLogger;
 
-    // NOTE (Phase B-1): the cached diagnostic strings (m_cachedConsensusDiag,
-    // m_consensusDiagTime, m_cachedRoleClusterDiag, m_roleClusterDiagTime) were
-    // removed - declared and constructor-initialized only, never read or written.
-
-    // Phase F: portfolio profit target tracking (m_lastProfitTargetDay,
-    // m_dailyProfitTargetReached, m_dailyProfitPeakPct, m_trailingProfitFloor,
-    // m_dailyTradingHalt, m_dailyTradingHaltStartTime) now lives in
-    // COrchestratorProfitGuard (Core/Orchestration/OrchestratorProfitGuard.mqh).
-    // Held BY VALUE; its constructor reproduces the original initialiser list.
+    // Daily profit-target / trading-halt state lives in COrchestratorProfitGuard (BY VALUE).
     COrchestratorProfitGuard m_profitGuard;
-    CBasketEquityStop      m_basketEquityStop;   // Theme 3: basket-level equity stop (article 23662)
+    CBasketEquityStop      m_basketEquityStop;   // basket-level equity stop
     bool   m_shuttingDown;
     bool   m_bridgesReady;
     datetime m_lastPush;
 
-    // === Batch 168: crash-recovery state ==================================
-    // Read at the top of Initialize() and applied only after
-    // CUnifiedRiskManager::Initialize(), which resets breaker state. Applying
-    // earlier let that reset win and silently discarded the restore.
+    // Crash-recovery state: read at the top of Initialize(), applied only AFTER
+    // CUnifiedRiskManager::Initialize() (its breaker reset would discard an early restore).
     bool     m_recoveryStateLoaded;
     double   m_savedEquityBaseline;
     double   m_savedPeakEquity;
@@ -319,24 +269,22 @@ class CEAOrchestrator
     int      m_savedTradingDayKey;  // broker trading day the saved state belongs to
     uint     m_lastStatePersistTime; // GetTickCount() ms, wall clock
 
-    // === Production Monitoring Components ===
     CLiveConfigReloader      m_configReloader;
     CRiskDashboardPanel      m_riskDashboard;
     CSymbolHealthMonitor     m_symbolHealth;
     string                   m_currentCorrId;
 
-    // Dual-mode auto-switching
     enum ENUM_AUTO_SWITCH_MODE { AUTO_MODE_CONSERVATIVE = 0, AUTO_MODE_AGGRESSIVE = 1, AUTO_MODE_EMERGENCY = 2 };
     ENUM_AUTO_SWITCH_MODE m_currentTradingMode;
 
-    // Issue 7: Dormancy cooldown tracking per symbol
+    // Dormancy cooldown tracking per symbol
     int    m_dormantConsecutiveCount[];
     datetime m_dormantCooldownUntil[];
     string m_dormantCooldownSymbols[];
     int m_dormantCooldownThreshold;
     int m_dormantCooldownMinutes;
 
-    // Issue 15: Scalp blacklist tracking per symbol (time-based cooldown)
+    // Scalp blacklist tracking per symbol (time-based cooldown)
     int    m_scalpBlacklistFailCount[];
     bool   m_scalpBlacklisted[];
     datetime m_scalpBlacklistUntil[];
@@ -345,7 +293,6 @@ class CEAOrchestrator
     int m_scalpBlacklistCooldownMinutes;
     int m_scalpBlacklistCooldownMinutesStd;
 
-    // Call counter for diagnostics
     int m_callCount;
     int m_managerCount;
 
@@ -356,8 +303,6 @@ class CEAOrchestrator
         m_dependenciesValid(false),
         m_managerCount(0), m_aiEngine(NULL),
         m_pythonBridge(NULL),
-        // Phase F: the six profit-target initialisers moved verbatim into the
-        // COrchestratorProfitGuard constructor (m_profitGuard is a by-value member).
         m_lastTradeTime(0), m_scanCycleSequence(0), m_cyclesSinceIndicatorSignal(0),
     m_execProvCount(0),
         m_hybridGateRelaxed(false), m_callCount(0),
@@ -374,8 +319,7 @@ class CEAOrchestrator
         m_aiBrainReady(false), m_aiEngineReady(false), m_aiFeedbackReady(false),
         m_aiTopologyLogged(false),
         m_adxModifier(NULL)
-        // ONNX retry/backoff state is initialised by CONNXInitManager's own
-        // constructor (disabled=false, retryCount=0, lastAttempt=0).
+        // m_onnxInit initialises itself (disabled=false, retryCount=0, lastAttempt=0).
         {
             ArrayResize(m_enterpriseManagers, 0);
         ArrayResize(m_enterpriseManagerSymbols, 0);
@@ -393,33 +337,26 @@ class CEAOrchestrator
 
     void Shutdown()
     {
-        // L2-001: Set shutdown flag FIRST to prevent OnTimer from accessing invalid resources
+        // Set the shutdown flag FIRST: OnTimer must not touch resources being released.
         m_shuttingDown = true;
 
-        // Cleanup dynamically allocated resources
-
-        // Cleanup mathematical / Batch 114 / institutional engines
-        // (Deinit()+delete ordering unchanged - see COrchestratorMathEngineHub::ReleaseAll)
+        // Math + institutional engine Deinit()/delete ordering owned by ReleaseAll().
         m_mathEngineHub.ReleaseAll();
 
-        // Cleanup Batch 99 subsystems
-        // L5-004 fix: EA owns modifiers, PositionSizer holds non-owning refs
+        // EA owns the modifiers; PositionSizer holds only non-owning refs
         if(m_positionSizer.IsInitialized())
         {
             m_positionSizer.ClearModifiers();
         }
 
-        // Now delete modifiers owned by EA
         if(m_bayesianKellyModifier != NULL) { delete m_bayesianKellyModifier; m_bayesianKellyModifier = NULL; }
         if(m_equityCurveLotModifier != NULL) { delete m_equityCurveLotModifier; m_equityCurveLotModifier = NULL; }
         if(m_adxModifier != NULL) { delete m_adxModifier; m_adxModifier = NULL; }
         if(m_equityCurveManager != NULL) { delete m_equityCurveManager; m_equityCurveManager = NULL; }
 
-        // Cleanup Python and Dashboard bridges
         if(m_pythonBridge != NULL) { m_pythonBridge.Shutdown(); delete m_pythonBridge; m_pythonBridge = NULL; }
         if(m_dashboardBridge != NULL) { m_dashboardBridge.Shutdown(); delete m_dashboardBridge; m_dashboardBridge = NULL; }
 
-        // Cleanup neural net strategies
         for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
         {
             if(m_neuralNetStrategies[i] != NULL) { delete m_neuralNetStrategies[i]; m_neuralNetStrategies[i] = NULL; }
@@ -427,7 +364,6 @@ class CEAOrchestrator
         ArrayResize(m_neuralNetStrategies, 0);
         ArrayResize(m_neuralNetStrategySymbols, 0);
 
-        // Cleanup drawing managers
         for(int i = 0; i < ArraySize(m_drawingManagers); i++)
         {
             if(m_drawingManagers[i] != NULL) { delete m_drawingManagers[i]; m_drawingManagers[i] = NULL; }
@@ -435,16 +371,13 @@ class CEAOrchestrator
         ArrayResize(m_drawingManagers, 0);
         ArrayResize(m_drawingManagerSymbols, 0);
 
-        // L2-002: Cleanup AI subsystems using helper method
         CleanupAISubsystems();
 
         CJsonLogger::Shutdown();
         
-        // Shutdown production monitoring components
         m_riskDashboard.Destroy();
         m_symbolHealth.SetEnabled(false);
 
-        // Shutdown Signal Diagnostics
         if(m_signalDiagnostics != NULL)
         {
             m_signalDiagnostics.Shutdown();
@@ -454,13 +387,11 @@ class CEAOrchestrator
 
         m_diagLogger.Deinit();
 
-        // L2-015: Call attribution diag print BEFORE releasing enterprise managers (which clears data)
+        // Attribution diag print BEFORE releasing enterprise managers (which clears the data)
         m_attributionManager.NNDiagPrintSummary("deinit");
 
-        // Cleanup enterprise managers
         ReleaseEnterpriseManagers();
 
-        // Cleanup strategy registry
         CStrategyRegistry* strategyRegistry = m_registryAggregator.GetStrategyRegistry();
         if(strategyRegistry != NULL)
         strategyRegistry.Reset();
@@ -468,23 +399,18 @@ class CEAOrchestrator
         // Destroy error handler singleton (must be before IndicatorManager destruction)
         CEnhancedErrorHandler::DestroyInstance();
 
-        // Cleanup extra engines
         m_spikeHunter.Deinit();
         m_gridRecovery.Deinit();
         m_atrScalping.Deinit();
 
-        // Cleanup TradeManager (L8-025: explicit Deinit for async trade persistence)
+        // Explicit Deinit flushes async trade persistence
         m_tradeManager.Deinit();
 
         m_scalpCache.Cleanup();
 
         UncertaintyDeinit();
 
-        // L2-003/L2-013: Write crash recovery state on shutdown.
-        // Batch 168: same helper the periodic writer uses, forced. Previously this
-        // was the ONLY write in the program, so a real crash (terminal kill, VPS
-        // reboot, power loss) left no state at all - the file named
-        // CrashRecoveryState.json was only ever produced by a graceful deinit.
+        // Forced write: the 30 s throttle never applies here, and deinit must leave a record.
         PersistRiskRuntimeState(true);
 
     m_systemInitialized = false;
@@ -494,16 +420,14 @@ class CEAOrchestrator
     Print("[EAOrchestrator] Shutdown complete");
 }
 
-// Batch 168: apply crash-recovery state after risk-manager init
+// Apply crash-recovery state; call only after CUnifiedRiskManager::Initialize().
 void RestoreRiskRuntimeState()
 {
     if(!m_recoveryStateLoaded)
         return;
 
-    // The daily-start baseline and the daily-loss halt are day-scoped. A saved
-    // state from a previous broker day must not re-anchor today's budget, and
-    // must not carry yesterday's halt into today either. version:1 files carry no
-    // day key, so they restore only the non-day-scoped fields.
+    // Day-scoped fields (daily-start baseline, daily-loss halt) must not cross broker days.
+    // version:1 files carry no day key, so they restore only the non-day-scoped fields.
     int currentDayKey = m_unifiedRiskManager.GetCurrentTradingDayKey();
     bool dayMatches = (m_savedTradingDayKey != 0 && m_savedTradingDayKey == currentDayKey);
 
@@ -518,8 +442,7 @@ void RestoreRiskRuntimeState()
         restoreDailyLossHalt,
         restoreTradingHalt);
 
-    // Batch 168: without this the first CheckAndResetDailyLimits() of the restart
-    // would overwrite the restored baseline as if a new broker day had begun.
+    // Otherwise the first CheckAndResetDailyLimits() would re-anchor the restored baseline.
     if(dayMatches)
         m_unifiedRiskManager.SeedTradingDayKey(m_savedTradingDayKey);
 
@@ -532,13 +455,11 @@ void RestoreRiskRuntimeState()
     m_recoveryStateLoaded = false;
 }
 
-// Batch 168: persist circuit-breaker state. Throttled unless forced
+// Persist circuit-breaker state. Throttled unless forced.
 void PersistRiskRuntimeState(const bool force)
 {
-    // Wall-clock throttle. TimeCurrent() only advances with ticks, so gating a
-    // crash-recovery write on it would stall persistence on a quiet symbol or over
-    // a weekend - the same defect the audit flagged in the remediation throttle.
-    // The day key below stays on TimeCurrent(), which is the broker-day basis.
+    // Wall-clock throttle: TimeCurrent() only advances with ticks, so gating on it would stall
+    // persistence on a quiet symbol or over a weekend. The day key stays on TimeCurrent().
     uint nowMs = GetTickCount();
     if(!force && m_lastStatePersistTime != 0 && (nowMs - m_lastStatePersistTime) < 30000)
         return;
@@ -569,15 +490,10 @@ void PersistRiskRuntimeState(const bool force)
     }
 }
 
-// L7-018: Cleanup helper for init failure paths
 void CleanupOnInitFailure()
 {
-    // Batch 153: mirror the resource releases Shutdown() performs. Init can
-    // fail AFTER the EA-owned modifiers, math engines, scalp cache and neural
-    // nets were created (e.g. WireAndValidateDependencies failure) - those
-    // objects and their indicator handles previously survived a failed init.
+    // Must mirror every release Shutdown() performs; init can fail after those objects exist.
 
-    // Cleanup mathematical / institutional engines
     m_mathEngineHub.ReleaseAll();
 
     // EA-owned position-sizing modifiers (PositionSizer holds non-owning refs)
@@ -602,7 +518,6 @@ void CleanupOnInitFailure()
     ArrayResize(m_drawingManagers, 0);
     ArrayResize(m_drawingManagerSymbols, 0);
 
-    // Deriv engines + async trade persistence + scalp cache
     m_spikeHunter.Deinit();
     m_gridRecovery.Deinit();
     m_atrScalping.Deinit();
@@ -610,29 +525,25 @@ void CleanupOnInitFailure()
     m_scalpCache.Cleanup();
     UncertaintyDeinit();
 
-    // Cleanup registry aggregator (which owns strategy registry and other sub-registries)
+    // RegistryAggregator owns the strategy registry and the other sub-registries
     m_registryAggregator.Deinitialize();
 
     CleanupAISubsystems();
 
-    // Destroy error handler singleton
     CEnhancedErrorHandler::DestroyInstance();
 
-    // Cleanup Python Bridge
     if(CheckPointer(m_pythonBridge) == POINTER_DYNAMIC)
     {
         delete m_pythonBridge;
         m_pythonBridge = NULL;
     }
 
-    // Cleanup Dashboard Bridge
     if(CheckPointer(m_dashboardBridge) == POINTER_DYNAMIC)
     {
         delete m_dashboardBridge;
         m_dashboardBridge = NULL;
     }
 
-    // Cleanup Signal Diagnostics
     if(CheckPointer(m_signalDiagnostics) == POINTER_DYNAMIC)
     {
         m_signalDiagnostics.Shutdown();
@@ -641,18 +552,13 @@ void CleanupOnInitFailure()
     }
 }
 
-// L7-009/L7-010: Initialize strategy timeframe/intrabar configs from individual config fields
-// Centralizes configuration to replace hardcoded switch statements and duplicate resolution functions
 void InitializeStrategyConfigs() { CStrategyConfigBuilder::Initialize(m_config); }
 
-// ============ Initialization ============
-
-// Initialize with config only - orchestrator creates its own managers
+// Initialize from config only: the orchestrator creates and owns every manager.
 bool Initialize(const SOrchestratorConfig& config)
 {
-    // Read now (before anything can fail), apply after CUnifiedRiskManager::Initialize
-    // - that init resets peak equity, breach count and both halts, so restoring here
-    // was a no-op on every restart. The file is the crash record: never delete it.
+    // Read now, before anything can fail; apply after CUnifiedRiskManager::Initialize, which
+    // resets peak equity, breach count and both halts. The crash file is a record: never delete it.
     m_recoveryStateLoaded = false;
     m_savedEquityBaseline = 0.0;
     m_savedPeakEquity     = 0.0;
@@ -679,7 +585,7 @@ bool Initialize(const SOrchestratorConfig& config)
 
 m_config = config;
 
-// Initialize structured JSON logger with verbosity gating (L9-008, L9-009)
+// Structured JSON logger: its own verbosity gate controls what gets written
 string jsonLogFile = "EA_" + _Symbol + "_json.log";
 ENUM_LOG_VERBOSITY jsonVerbosity = (ENUM_LOG_VERBOSITY)m_config.logVerbosity;
 if(!CJsonLogger::Initialize(jsonLogFile, jsonVerbosity))
@@ -691,19 +597,10 @@ else
     PrintFormat("[JSON-LOGGER] Initialized: %s (verbosity=%s)", jsonLogFile, EnumToString(jsonVerbosity));
 }
 
-// Initialize DiagnosticsLogger with verbosity (L9-008, L9-009)
-// This is instantiated in DiagnosticsManager, so we'll pass the config there
-
-// L7-009/L7-010: Initialize centralized strategy timeframe/intrabar configs
 InitializeStrategyConfigs();
 
-// L7-003: Build validated symbol universe using SymbolUniverseBuilder
-// Batch 169: restore the intended source for this limit. "Unify spread limits"
-// pointed the universe filter at maxEntrySpreadPoints (15000), so nothing was
-// ever rejected at init; the builder's own comment ("1500 -> 15000 for
-// synthetics") shows it was written against symbolMaxSpreadPoints, which is the
-// knob the config exposes for this. The 15000-point figure stays where it
-// belongs - a catastrophic-quote backstop at send time.
+// The universe filter uses symbolMaxSpreadPoints, the config knob for this. The 15000-point
+// maxEntrySpreadPoints stays where it belongs - a catastrophic-quote backstop at send time.
 SSymbolValidationConfig symConfig;
 symConfig.maxSpreadPoints = m_config.symbolMaxSpreadPoints;
 symConfig.minDailyVolumeLots = m_config.symbolMinDailyVolumeLots;
@@ -726,46 +623,39 @@ if(symbolCount <= 0)
     return false;
 }
 
-// Resize manager arrays
 m_managerCount = symbolCount;
 ArrayResize(m_enterpriseManagers, symbolCount);
 ArrayResize(m_enterpriseManagerSymbols, symbolCount);
-// Batch 152 (ORCH-16): duplicate ArrayResize pair removed.
 
 for(int i = 0; i < symbolCount; i++)
 {
     m_enterpriseManagerSymbols[i] = validatedSymbols[i];
 }
 
-// Also update m_activePairs for compatibility
+// m_activePairs mirrors the validated universe for legacy consumers
 ArrayResize(m_activePairs, symbolCount);
 ArrayCopy(m_activePairs, validatedSymbols);
 
-// Initialize all owned subsystems from config
 if(!InitializeSubsystems())
 {
     CleanupOnInitFailure();
     return false;
 }
 
-// INIT-01 FIX: allocate the strategy registry BEFORE any consumer.
-// BuildStrategyRegistry (~line 707) calls GetStrategyRegistry() which was NULL until now,
-// causing a silent OnInit failure. The aggregator must exist first.
+// The registry aggregator must exist BEFORE BuildStrategyRegistry(): its
+// GetStrategyRegistry() would return NULL and OnInit would fail silently.
 if(!m_registryAggregator.Initialize())
 {
     Print("[CRITICAL] RegistryAggregator initialization FAILED");
     return false;
 }
 
-// Initialize enterprise managers for each symbol
 if(!InitializeEnterpriseManagers())
 {
-    // L2-002: Cleanup AI subsystems on failure after AI init
     CleanupOnInitFailure();
     return false;
 }
 
-// L2-012: Consolidated AI subsystem initialization (single ownership hierarchy)
 if(!InitializeAISubsystems())
 {
     Print("[CRITICAL] AI subsystem initialization failed");
@@ -773,7 +663,6 @@ if(!InitializeAISubsystems())
     return false;
 }
 
-// Build strategy flags with curated defaults
 bool strategyFlags[];
 BuildStrategyFlags(strategyFlags);
 CStrategyRegistry* strategyRegistry = m_registryAggregator.GetStrategyRegistry();
@@ -787,9 +676,7 @@ if(!BuildStrategyRegistry(strategyFlags))
 LogAIRuntimeTopology();
 LogPositionLifecycleConfig();
 
-// Initialize Python Bridge
-// Batch 152 (ORCH-14): new can return NULL under memory pressure - guard
-// instead of dereferencing.
+// new can return NULL under memory pressure - guard instead of dereferencing.
 m_pythonBridge = new CPythonBridge();
 if(m_pythonBridge == NULL)
 {
@@ -806,8 +693,6 @@ m_config.pythonBridgeMaxReconnectAttempts,
 m_config.pythonBridgeReconnectBackoffMs
 );
 
-// Initialize Dashboard Bridge
-// Batch 152 (ORCH-14): allocation guard, same as the Python bridge.
 m_dashboardBridge = new CDashboardBridge();
 if(m_dashboardBridge == NULL)
 {
@@ -853,13 +738,8 @@ else {
     Print("[HEALTH-CHECK] Risk manager: OK");
 }
 
-// EXEC-01: lifecycle/diagnostics manager wiring moved to WireAndValidateDependencies()
-// (called once at the end of Initialize) so all cross-manager wiring lives in one place.
-
-// Initialize sub-components
 if(!InitializeComponents())
 {
-    // L2-002: Cleanup AI subsystems on failure after AI init
     CleanupOnInitFailure();
     return false;
 }
@@ -867,20 +747,16 @@ if(!InitializeComponents())
     m_systemInitialized = true;
     m_tradingEnabled = true;
 
-    // Reconcile per-symbol strategy enabled flags with the finalized registry.
-    // AutoRegisterStrategies runs before BuildStrategyRegistry populates registry
-    // definitions, so strategies were locked disabled against an empty registry.
-    // Re-apply the registry's active state now that the mode is settled.
+    // AutoRegisterStrategies ran before BuildStrategyRegistry populated the registry, so
+    // strategies were locked disabled against an empty registry; re-apply its state now.
     for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
     {
         if(m_enterpriseManagers[mi] != NULL)
             m_enterpriseManagers[mi].SyncEnabledWithRegistry();
     }
 
-    // EXEC-01: single, centralized dependency-wiring + validation pass.
-    // Every cross-manager SetDependencies/SetManagers call lives here, and the
-    // validation block at its end fails init loudly if any required dep is NULL,
-    // so a forgotten wiring can never surface as a mid-trade NULL dereference.
+    // All cross-manager SetDependencies/SetManagers calls plus their validation live here;
+    // a forgotten wiring fails init loudly instead of dereferencing NULL mid-trade.
     WireAndValidateDependencies();
     if(!m_dependenciesValid)
     {
@@ -891,10 +767,8 @@ if(!InitializeComponents())
         return false;
     }
 
-    // Initialize production monitoring components
     m_configReloader.Init("Config/live_overrides.json", 30);
     
-    // Create callback objects for config sections (IConfigCallback interface)
     class CRiskConfigCallback : public IConfigCallback
     {
     public:
@@ -949,13 +823,8 @@ if(!InitializeComponents())
     return true;
 }
 
-// NOTE (Phase B-1): ParseSymbols() was removed - it had zero callers repo-wide and
-// was superseded by CSymbolUniverseBuilder::Build(), which performs the same
-// comma-splitting plus symbol validation (see Initialize()).
-
 bool InitializeSubsystems()
 {
-    // Initialize core trading components
     m_tradeManager.SetOrderFillMode(m_config.orderFillingMode);
     m_tradeManager.SetSlippage((uint)MathMax(1, m_config.tradeSlippagePoints));
     m_tradeManager.SetExecutionCostLimits(m_config.maxEntrySpreadPoints, m_config.maxEntryDriftPoints);
@@ -968,14 +837,12 @@ bool InitializeSubsystems()
         Print("[CRITICAL] Failed to initialize TradeManager");
         return false;
     }
-    // Batch 168: configure the ownership window as early as possible so no
-    // consumer ever evaluates magic numbers against an unset range. Re-run
-    // below with the real symbol count once the universe exists.
+    // Configure the magic ownership window as early as possible so no consumer evaluates
+    // magic numbers against an unset range; re-run below with the real symbol count.
     ConfigureMagicOwnership(m_config.magicNumber, 0);
     m_tradeManager.SetMagicRangeMax(g_magicMax);
     m_tradeManager.SetLogLevel(m_config.logLevel);
 
-    // Initialize risk manager
     SUnifiedRiskConfig unifiedRiskConfig;
     unifiedRiskConfig.baseRiskPerTradePercent = m_config.maxRiskPerTrade;
     unifiedRiskConfig.minRiskPerTradePercent  = 0.1;
@@ -1001,14 +868,11 @@ bool InitializeSubsystems()
         return false;
     }
 
-    // Batch 168: apply crash-recovery state only now that the risk manager has
-    // finished resetting it. This is the ordering fix - the same restore used to
-    // run at the top of Initialize() and be overwritten here.
+    // Applied only after the risk manager reset breakers/halts; restoring earlier gets overwritten.
     RestoreRiskRuntimeState();
     m_unifiedRiskManager.SetEAMagicNumber(m_config.magicNumber);
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
-    // Initialize position sizer
     SPositionSizingParams sizingParams;
     sizingParams.sizingMode       = POSITION_SIZING_FIXED_RISK;
     sizingParams.fixedLotSize     = m_config.lotSize;
@@ -1030,14 +894,13 @@ else
     Print("[INIT] PositionSizer initialized — Mode: RISK_PERCENT, Risk: ", DoubleToString(sizingParams.riskPercent, 2), "%");
 }
 
-// Apply risk tier configuration
 m_riskTierManager.SetTier(m_config.riskTier);
 m_riskTierManager.ApplyToRiskManager(m_unifiedRiskManager, &m_performanceAnalytics,
 m_config.maxDailyRisk, m_config.maxPortfolioRisk,
 m_config.maxDrawdown * 0.7, m_config.maxDrawdown,
 m_config.dailyLossLimitPercent);
 
-// L2-008: Wire correlation engine BEFORE applying tier to PositionSizer
+// Wire the correlation engine BEFORE applying the tier to PositionSizer
 m_positionSizer.SetCorrelationEngine(m_unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
 m_positionSizer.SetLogLevel(m_config.logLevel);
 m_positionSizer.SetAllowMinLotRoundUp(m_config.allowMinLotRoundUp);
@@ -1046,20 +909,18 @@ m_positionSizer.SetMinLotRiskMultiplier(m_config.minLotRiskMultiplier);
 m_riskTierManager.ApplyToPositionSizer(m_positionSizer, m_config.maxRiskPerTrade);
 m_riskTierManager.ApplyToTradeManager(m_tradeManager);
 
-// Initialize equity curve manager (Batch 99)
 m_equityCurveManager = new CEquityCurveManager(m_config.equityCurveEmaPeriod, m_config.equityCurveReductionFactor, 1.0);
 if(m_equityCurveManager != NULL)
 PrintFormat("[RISK] EquityCurveManager initialized with emaPeriod=%d", m_config.equityCurveEmaPeriod);
 else
 Print("[RISK] WARNING: Failed to create EquityCurveManager — equity curve sizing disabled");
 
-// Theme 3: basket-level equity stop (article 23662) — configure before trading loop
+// Basket equity stop: configure before the trading loop
 m_basketEquityStop.Configure(m_config.basketEquityStopEnabled,
                              m_config.basketEquityStopDrawdownPct,
                              m_config.basketEquityStopCloseOnBreach,
                              GetPointer(m_tradeManager), (int)m_config.magicNumber);
 
-// Initialize BayesianKellyModifier (Batch 99)
 m_bayesianKellyModifier = new CBayesianKellyModifier(m_config.kellyFraction);
 if(m_bayesianKellyModifier != NULL)
 {
@@ -1071,7 +932,6 @@ else
     Print("[RISK] WARNING: Failed to create BayesianKelly modifier");
 }
 
-// Initialize EquityCurveLotModifier (Batch 99)
 m_equityCurveLotModifier = new CEquityCurveLotModifier(m_equityCurveManager);
 if(m_equityCurveLotModifier != NULL)
 {
@@ -1083,7 +943,6 @@ else
     Print("[RISK] WARNING: Failed to create EquityCurveLotModifier");
 }
 
-// Initialize ADX Lot Modifier (P11.2)
 m_adxModifier = new CADXLotModifier();
 if(m_adxModifier != NULL)
 {
@@ -1106,7 +965,6 @@ MathMax(0.1, m_config.riskMaxClusterExposurePct),
 m_config.enableClusterMutex);
 m_unifiedRiskManager.SyncClusterPositionCounts();
 
-// Initialize CompoundingTierManager (I2/I9)
 if(m_config.enableCompoundingTiers)
 {
     if(m_compoundingTierManager.Initialize(true))
@@ -1125,18 +983,12 @@ else
     Print("[INIT] CompoundingTierManager disabled — using static tier");
 }
 
-// Batch 152 (ORCH-16): first of two identical FamilyStrategyWeightMatrix init
-// blocks removed - Initialize() is idempotent and the later block below owns it.
-
-// L1-015: Initialize Magic Number Allocator
 m_magicNumberAllocator.Initialize((int)m_config.magicNumber, MAGIC_SYMBOL_MULTIPLIER);
-// Configure family offsets from multi-asset profiler
 if(m_config.multiAssetProfilerEnabled)
 {
     CDerivAssetProfiler* derivProfiler = m_multiAssetProfiler.GetDerivProfiler();
     if(derivProfiler != NULL)
     {
-        // Add family-specific offsets
         m_magicNumberAllocator.AddFamilyOffset("VOLATILITY", 1000);
         m_magicNumberAllocator.AddFamilyOffset("BOOM_CRASH", 2000);
         m_magicNumberAllocator.AddFamilyOffset("JUMP", 3000);
@@ -1151,7 +1003,6 @@ m_magicNumberAllocator.AddFamilyOffset("CRYPTO", 8000);
 m_magicNumberAllocator.AddFamilyOffset("METALS", 9000);
 Print("[MAGIC-ALLOC] MagicNumberAllocator initialized with base=", m_config.magicNumber);
 
-// Initialize Session Weight Manager (I3)
 if(m_config.enableSessionWeights)
 {
     m_sessionWeightManager.Initialize(true, m_config.sessionDSTOffsetHours);
@@ -1162,7 +1013,6 @@ else
     Print("[INIT] SessionWeightManager disabled");
 }
 
-// Initialize Skew Step Analyzer (I4)
 if(m_config.enableSkewStepAnalyzer)
 {
     m_skewStepAnalyzer.Initialize(m_config.skewStepBufferSize, m_config.skewStepCalmThreshold, m_config.skewStepSmallThreshold, m_config.skewStepLargeThreshold);
@@ -1174,7 +1024,6 @@ else
     Print("[INIT] SkewStepAnalyzer disabled");
 }
 
-// Initialize Family Strategy Weight Matrix (I1)
 if(m_config.enableFamilyWeightMatrix)
 {
     m_familyWeightMatrix.Initialize();
@@ -1185,16 +1034,11 @@ else
     Print("[INIT] FamilyStrategyWeightMatrix disabled");
 }
 
-// Initialize unprotected position tracker
-// Batch 168: no magic arguments. The previous call passed
-// ArraySize(m_enterpriseManagerSymbols) as maxMagicNumber while the universe was
-// still empty, yielding the empty range [base, 13]; the tracker then classified
-// every no-SL position as external and its SL/force-close escalation never ran.
-// Ownership now resolves through CMagicRange, configured just below.
+// No magic-range arguments here: with an empty universe they yielded [base, 13], so every
+// no-SL position looked external. Ownership resolves through CMagicRange, set below.
 m_unprotectedTracker.Initialize(&m_tradeManager, &m_unifiedRiskManager,
 m_config.unprotectedRemediationIntervalSec, m_config.unprotectedMaxRestoreAttempts);
 
-// Initialize FullMarginMode or SafeMode (Phase 6)
 if(m_config.riskTier == RISK_TIER_FULL_MARGIN)
 {
     SFullMarginConfig fmConfig = m_riskTierManager.GetFullMarginConfig();
@@ -1212,8 +1056,7 @@ else
 Print("[INIT] Conservative safe mode ENABLED");
 }
 
-// Initialize PositionLifecycleManager (Blueprint R6a)
-// L7-008: Pass max cluster code from MagicNumberAllocator for dynamic magic number range
+// Pass the allocator's max cluster code so the dynamic magic-number range is exact
 if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTierManager, &m_safeMode, (int)m_config.magicNumber, m_magicNumberAllocator.GetMaxClusterCode()))
 {
     m_lifecycleManager.ConfigureSRE(m_config.enableSignalReversalExit, m_config.signalReversalMinConfidence,
@@ -1229,9 +1072,8 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
     m_config.maxHoldHoursIntraday,
     m_config.maxHoldHoursSwing,
     m_config.maxHoldOnlyIfLoss);
-    // Batch 170: the loss guard's daily-loss circuit breaker compares realised
-    // losses against maxDailyRisk x its own trigger percent. The budget had no
-    // writer, so the breaker could never arm on the live path.
+    // The loss guard's daily-loss circuit breaker compares realised losses against
+    // maxDailyRisk x its own trigger percent; without this writer it could never arm.
     m_lifecycleManager.SetDailyRiskBudgetPercent(m_config.maxDailyRisk);
     PrintFormat("[INIT] PositionLifecycleManager initialized (Blueprint R6a) | dailyRiskBudget=%.2f%% of equity",
                 m_config.maxDailyRisk);
@@ -1239,7 +1081,6 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
     else
     Print("[INIT] WARNING: PositionLifecycleManager initialization failed");
 
-    // Initialize DiagnosticsLogger (off-journal diagnostic logging)
         ENUM_LOG_VERBOSITY diagVerbosity = (ENUM_LOG_VERBOSITY)m_config.logVerbosity;
         int diagLogLevel = (diagVerbosity >= VERBOSITY_VERBOSE) ? 3 : (diagVerbosity >= VERBOSITY_NORMAL) ? 2 : (diagVerbosity >= VERBOSITY_WARNING) ? 2 : (diagVerbosity >= VERBOSITY_ERRORS_ONLY) ? 1 : 0;
         if(!m_diagLogger.InitializeEx("MultiStrategyEA", "ORCHESTRATOR", diagLogLevel, 5))
@@ -1251,7 +1092,6 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
             PrintFormat("[DIAG-LOGGER] Initialized with verbosity=%s (component=ORCHESTRATOR)", EnumToString(diagVerbosity));
         }
 
-    // Initialize DiagnosticsManager (Blueprint R6b)
 if(m_diagnosticsManager.Initialize(&m_unifiedRiskManager, &m_riskTierManager, &m_compoundingTierManager, m_config.heartbeatInterval, (ENUM_LOG_VERBOSITY)m_config.logVerbosity))
 {
     m_diagnosticsManager.SetScalpEngine(&m_scalpEngine);
@@ -1260,17 +1100,14 @@ if(m_diagnosticsManager.Initialize(&m_unifiedRiskManager, &m_riskTierManager, &m
     m_diagnosticsManager.SetAIConfig(m_config.enableAIMode, m_config.enableNeuralNetwork, m_config.enableNNOnlineTraining,
                                                  m_config.enableTransformer, m_config.enableEnsemble, m_config.enableOnnxAI);
     m_diagnosticsManager.SetRiskTier(m_config.riskTier);
-    // Wire SessionWeightManager if enabled
         if(m_config.enableSessionWeights)
         {
             m_diagnosticsManager.SetSessionWeightManager(&m_sessionWeightManager);
         }
-        // Wire SkewStepAnalyzer if enabled
                         if(m_config.enableSkewStepAnalyzer)
                         {
                             m_diagnosticsManager.SetSkewStepAnalyzer(&m_skewStepAnalyzer);
                         }
-                        // Wire FamilyWeightMatrix if enabled
                         if(m_config.enableFamilyWeightMatrix)
                         {
                             m_diagnosticsManager.SetFamilyWeightMatrix(&m_familyWeightMatrix);
@@ -1280,19 +1117,16 @@ if(m_diagnosticsManager.Initialize(&m_unifiedRiskManager, &m_riskTierManager, &m
 else
 Print("[INIT] WARNING: DiagnosticsManager initialization failed");
 
-// Initialize tick safety monitor
 m_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
 m_tickSafetyMonitor.SetMinMarginLevel(150.0);
 m_tickSafetyMonitor.SetEmergencyStop(false);
 
 m_spikeMonitor.Initialize(m_tradeManager, m_unifiedRiskManager, m_tickSafetyMonitor);
 
-// Initialize AI subsystems if enabled
 if(m_config.enableAIMode)
 {
     Print("[AI] Initializing AI subsystems...");
 
-    // NextGen Strategy Brain
     if(!m_aiNextGenBrain.Initialize(Symbol(), Period()))
     {
         Print("[INIT] WARNING: NextGen AI Brain failed to initialize");
@@ -1304,7 +1138,6 @@ else
     Print("[AI] Runtime AI voters are adapter-owned and registered per symbol");
 }
 
-// Initialize AI Performance Feedback
 if(!m_aiFeedback.Initialize(1000))
 {
     Print("[WARNING] AIPerformanceFeedback failed to initialize");
@@ -1319,7 +1152,6 @@ else
 Print("[AI-DASHBOARD] AI Health Monitoring initialized");
 }
 
-// Initialize Fast Scalp Engine
 if(m_config.enableScalpEngine)
 {
     if(!m_scalpEngine.Initialize(&m_tradeManager, &m_unifiedRiskManager, &m_positionSizer, &m_riskTierManager))
@@ -1330,7 +1162,6 @@ else
     m_scalpEngine.SetAsyncMode(m_config.scalpAsyncMode);
     m_scalpEngine.SetMaxLatencyMs(m_config.scalpMaxLatencyMs);
 
-    // Initialize scalp signal cache
     if(m_scalpCache.Initialize(m_enterpriseManagerSymbols, m_managerCount, PERIOD_M1))
     {
         m_scalpEngine.SetSignalCache(GetPointer(m_scalpCache));
@@ -1343,7 +1174,6 @@ Print("[SCALP-CACHE] WARNING: Cache initialization failed");
 }
 }
 
-// Initialize Spike Hunter
 if(m_config.spikeHunterEnabled)
 {
     SSpikeHunterConfig spikeConfig;
@@ -1358,9 +1188,8 @@ if(m_config.spikeHunterEnabled)
     spikeConfig.maxSpikePositions        = m_config.spikeHunterMaxPositions;
     spikeConfig.cooldownMs               = m_config.spikeHunterCooldownMs;
     spikeConfig.spikeCooldownForLongTermMs = m_config.spikeHunterLongTermCooldownMs;
-    // Batch 152 (S-M-05): must stay 9150 - the old hardcoded 9000 collides with
-    // DERIV_CRASH_BOOM's family offset, so spike-hunter orders could share magics
-    // with crash-boom profile orders on the same symbol.
+    // Must stay 9150: the old hardcoded 9000 collides with DERIV_CRASH_BOOM's family
+    // offset, so spike-hunter orders could share magics with crash-boom orders.
     spikeConfig.magicOffset              = 9150;
     spikeConfig.enablePushAlerts         = m_config.spikeHunterPushAlerts;
     spikeConfig.alertThrottleSeconds     = m_config.spikeHunterAlertThrottle;
@@ -1380,16 +1209,12 @@ else
 Print("[SPIKE-HUNTER] Initialization FAILED");
 }
 
-// Initialize Multi-Asset Profiler (Batch 103)
 if(m_config.multiAssetProfilerEnabled)
 {
     Print("[MULTI-ASSET-PROFILER] Initializing multi-asset class auto-detection...");
 
-    // Re-bind the shared global profiler to THIS instance's valid member BEFORE any
-    // consumer (e.g. IsSyntheticIndexSymbolName) touches it. This function can be
-    // re-entered at runtime (first tick) under multi-instance deployment; without this
-    // re-bind the global may still point at a stale/dangling profiler from an earlier
-    // orchestrator (re)initialization, causing an invalid pointer access.
+    // Re-bind the shared global profiler to THIS instance BEFORE any consumer touches it: this
+    // re-runs at runtime under multi-instance deployment, and a stale global is an invalid pointer.
     g_multiAssetProfiler = &m_multiAssetProfiler;
 
     for(int i = 0; i < m_managerCount; i++)
@@ -1410,7 +1235,6 @@ if(m_config.multiAssetProfilerEnabled)
         Print("[DERIV-PROFILER] Initializing Deriv asset family auto-detection...");
         CDerivAssetProfiler* derivProfiler = m_multiAssetProfiler.GetDerivProfiler();
 
-        // L7-013: Set family detection logging flag
         if(derivProfiler != NULL)
         {
             derivProfiler.SetLogFamilyDetection(m_config.logDerivFamilyDetection);
@@ -1441,10 +1265,8 @@ if(m_config.multiAssetProfilerEnabled)
                     }
                 }
 
-                // Set global profiler access for static utility functions
                 g_multiAssetProfiler = &m_multiAssetProfiler;
 
-                // Initialize Grid Recovery Engine
         if(m_config.gridRecoveryEnabled)
         {
             SGridRecoveryConfig gridConfig;
@@ -1489,7 +1311,6 @@ if(m_config.multiAssetProfilerEnabled)
         Print("[GRID-RECOVERY] Initialization FAILED");
     }
 
-    // Initialize ATR Scalping Engine
     if(m_config.atrScalpingEnabled)
     {
         SATRScalpingConfig scalpConfig;
@@ -1546,7 +1367,6 @@ for(int i = 0; i < m_managerCount; i++)
 profilerSymbols[i] = m_enterpriseManagerSymbols[i];
 m_diagnosticsManager.SetSymbols(profilerSymbols, m_managerCount);
 
-// Initialize global profiler access for static utility functions
 g_multiAssetProfiler = &m_multiAssetProfiler;
 
 Print("[MULTI-ASSET-PROFILER] Batch 103 initialization complete");
@@ -1554,17 +1374,9 @@ Print("[MULTI-ASSET-PROFILER] Batch 103 initialization complete");
 return true;
 }
 
-// ============ Private Helper Methods ============
-
 private:
 
-// Validation helper for WireAndValidateDependencies(). Emits a
-// uniform [INIT-FAIL] diagnostic when a required dependency is
-// missing and returns whether the dependency is present.
-// isPresent   - result of the caller's non-NULL test
-// managerName - manager that needed the dependency
-// depName     - human-readable name of the missing dependency
-// returns     - true when present, false when missing
+// Emits a uniform [INIT-FAIL] diagnostic for a missing dependency; returns whether it was present.
 bool RequireDependency(const bool isPresent, const string managerName, const string depName)
 {
     if(isPresent)
@@ -1577,35 +1389,18 @@ bool RequireDependency(const bool isPresent, const string managerName, const str
     return false;
 }
 
-// EXEC-01: single, centralized dependency-wiring pass followed by
-// an init-time validation block.
-// Every cross-manager dependency injection the orchestrator performs
-// lives here. Previously these calls were scattered through
-// Initialize() and InitializeComponents(); a forgotten
-// SetDependencies() left manager fields NULL and crashed mid-trade
-// (CandidateBuilder.mqh:552, TradeExecutor.mqh:109). Centralizing
-// the wiring and validating it converts that latent runtime crash
-// into a loud, deterministic startup failure.
-// Ordering contract - this method MUST run:
-// * after m_registryAggregator.Initialize() (REGISTRY-SYNC fix),
-// so GetNeuralNetRegistry() returns a live pointer;
-// * after InitializeSubsystems()/InitializeComponents(), so the
-// PositionManager, CandidateBuilder and lifecycle/diagnostics
-// managers already exist.
-// It is therefore called exactly once, at the end of Initialize().
-// Sets m_dependenciesValid = true only when every required
-// dependency is non-NULL. On any failure it logs, leaves the flag
-// false and returns early; Initialize() then aborts and OnInit fails.
+// Centralized dependency-wiring pass plus init-time validation: every cross-manager
+// SetDependencies/SetManagers call lives here.
+// Ordering: MUST run after m_registryAggregator.Initialize() (so GetNeuralNetRegistry() is live)
+// and after InitializeSubsystems()/InitializeComponents(); called exactly once, at the end of Initialize().
+// Sets m_dependenciesValid only when every required dependency is non-NULL; otherwise OnInit fails.
 void WireAndValidateDependencies()
 {
     m_dependenciesValid = false;
 
-    // ---------------- Resolve dependency pointers ----------------
-    // The risk/sizer/trade/analytics/attribution/position managers are value
-    // sub-objects of the orchestrator, so GetPointer() yields a stable pointer.
-    // The two genuinely nullable dependencies are the Deriv profiler (owned by
-    // CMultiAssetProfiler) and the neural-net registry (owned by the registry
-    // aggregator, populated by m_registryAggregator.Initialize()).
+    // Risk/sizer/trade/analytics/attribution/position managers are value sub-objects, so
+    // GetPointer() yields a stable pointer. Only the Deriv profiler and the neural-net registry
+    // (owned by the registry aggregator) are genuinely nullable.
     CUnifiedRiskManager*      riskManager     = GetPointer(m_unifiedRiskManager);
     CPositionSizer*           positionSizer   = GetPointer(m_positionSizer);
     CTradeManager*            tradeManager    = GetPointer(m_tradeManager);
@@ -1615,67 +1410,51 @@ void WireAndValidateDependencies()
     CDerivAssetProfiler*      derivProfiler   = m_multiAssetProfiler.GetDerivProfiler();
     CNeuralNetRegistry*       neuralRegistry  = m_registryAggregator.GetNeuralNetRegistry();
 
-    // ---------------- Wiring ----------------
-
-    // CandidateBuilder <- risk manager, position sizer, trade manager,
-    // performance analytics, Deriv profiler. These are NOT set by
-    // CandidateBuilder::Initialize() and were the original NULL-deref source.
+    // CandidateBuilder: none of these deps are set by its Initialize(), so they must be wired here.
     m_candidateBuilder.SetDependencies(riskManager, positionSizer, tradeManager,
                                        perfAnalytics, derivProfiler);
 
-    // TradeExecutor <- trade manager, attribution manager, position manager,
-    // neural-net registry (same crash class as CandidateBuilder).
+    // TradeExecutor: same rule - its Initialize() sets none of these deps.
     m_tradeExecutor.SetDependencies(tradeManager, attributionMgr,
                                     positionManager, neuralRegistry);
 
-    // TradeAttributionManager <- PositionManager, for position state tracking.
     // SetPositionManager takes a reference, so pass the sub-object directly.
     m_attributionManager.SetPositionManager(m_positionManager);
 
-    // PositionLifecycleManager <- per-symbol enterprise managers (Blueprint R6a).
-    // Guarded exactly as before: only wired once the lifecycle manager is up.
+    // Lifecycle manager gets the per-symbol enterprise managers, only once it is up.
     if(m_lifecycleManager.IsInitialized())
     {
         m_lifecycleManager.SetManagers(m_enterpriseManagers, m_enterpriseManagerSymbols,
                                        ArraySize(m_enterpriseManagers));
     }
 
-    // DiagnosticsManager <- per-symbol enterprise managers (consensus diagnostics).
+    // DiagnosticsManager takes the per-symbol enterprise managers (consensus diagnostics).
     m_diagnosticsManager.SetManagers(m_enterpriseManagers, ArraySize(m_enterpriseManagers));
 
-    // StatusReporter <- registry aggregator, live-authority resolver, position
-    // manager and enterprise manager slot 0 (heartbeat status text only, no
-    // trading impact). Guarded exactly like the enterprise-array setters above:
-    // slot 0 is only passed once the array is populated, and the reporter
-    // NULL-checks it, matching the original `if(m_enterpriseManagers[0] != NULL)`.
+    // Status reporter: heartbeat status text only, no trading impact. Slot 0 is passed only
+    // once the manager array is populated (the reporter NULL-checks it either way).
     m_statusReporter.SetManagers(GetPointer(m_registryAggregator),
                                  GetPointer(m_liveAuthority),
                                  positionManager,
                                  (ArraySize(m_enterpriseManagers) > 0 ? m_enterpriseManagers[0] : NULL));
 
-    // ---------------- Validation ----------------
-    // Every check runs (no short-circuit on the RequireDependency call itself)
-    // so a misconfigured build reports ALL missing dependencies in one pass.
+    // Every check runs (no short-circuit) so a misconfigured build reports ALL missing deps at once.
     bool ok = true;
 
-    // CandidateBuilder required dependencies.
     ok = RequireDependency(riskManager     != NULL, "CandidateBuilder", "CUnifiedRiskManager")   && ok;
     ok = RequireDependency(positionSizer   != NULL, "CandidateBuilder", "CPositionSizer")        && ok;
     ok = RequireDependency(tradeManager    != NULL, "CandidateBuilder", "CTradeManager")         && ok;
     ok = RequireDependency(perfAnalytics   != NULL, "CandidateBuilder", "CPerformanceAnalytics") && ok;
     ok = RequireDependency(derivProfiler   != NULL, "CandidateBuilder", "CDerivAssetProfiler")   && ok;
 
-    // TradeExecutor required dependencies.
     ok = RequireDependency(tradeManager    != NULL, "TradeExecutor", "CTradeManager")            && ok;
     ok = RequireDependency(attributionMgr  != NULL, "TradeExecutor", "CTradeAttributionManager") && ok;
     ok = RequireDependency(positionManager != NULL, "TradeExecutor", "CPositionManager")         && ok;
     ok = RequireDependency(neuralRegistry  != NULL, "TradeExecutor", "CNeuralNetRegistry")       && ok;
 
-    // TradeAttributionManager required dependencies.
     ok = RequireDependency(positionManager != NULL, "TradeAttributionManager", "CPositionManager") && ok;
 
-    // PositionLifecycleManager / DiagnosticsManager take the enterprise manager
-    // array rather than individual collaborators; verify it is populated.
+    // These two take the enterprise manager array rather than individual collaborators.
     ok = RequireDependency(ArraySize(m_enterpriseManagers) > 0,
                            "PositionLifecycleManager", "EnterpriseManagers[]") && ok;
     ok = RequireDependency(ArraySize(m_enterpriseManagers) > 0,
@@ -1699,11 +1478,8 @@ public:
 
 bool InitializeComponents()
 {
-    // Initialize core signal processing components
     m_signalGenerator.Initialize(m_enterpriseManagers, m_enterpriseManagerSymbols, m_managerCount, &m_consensusCache);
     Print("[INIT] SignalGenerator initialized");
-
-    // SignalValidator - now merged into EnterpriseStrategyManager
 
     if(!m_candidateBuilder.Initialize(&m_positionSizer, &m_unifiedRiskManager, &m_riskTierManager,
     &m_compoundingTierManager, &m_familyWeightMatrix,
@@ -1714,19 +1490,13 @@ bool InitializeComponents()
     }
     Print("[INIT] CandidateBuilder initialized");
 
-    // Batch 151: CCandidateBuilder::Configure() had zero callers, so the per-symbol
-    // position caps stayed at their constructor default 0 (= limit bypassed at
-    // CheckSymbolPositionLimit) and minLotRiskMultiplier ignored the configured
-    // input used by PositionSizer / the risk pipeline. Values without any config
-    // source keep their tuned constructor defaults.
+    // Configure() must be called explicitly: without it the per-symbol position caps stay at 0
+    // (CheckSymbolPositionLimit bypassed) and minLotRiskMultiplier ignores the configured input.
     m_candidateBuilder.Configure(2.0, 1.5, 5.0,
                                  0.15, m_config.minLotRiskMultiplier, m_config.aiDrawdownSizingLimit,
                                  true, m_config.maxPositionsPerSymbol, m_config.portfolioMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
-
-    // EXEC-01: CandidateBuilder + TradeExecutor dependency wiring moved to
-    // WireAndValidateDependencies() (called once at the end of Initialize).
 
     Print("[INIT] TradeExecutor initialized");
 
@@ -1744,17 +1514,12 @@ bool InitializeComponents()
     }
     Print("[INIT] PositionManager initialized");
 
-    // EXEC-01: PositionManager -> TradeAttributionManager wiring moved to
-    // WireAndValidateDependencies() (called once at the end of Initialize).
-
-    // Initialize Signal Diagnostics
     m_signalDiagnostics = new CSignalDiagnostics();
     if(m_signalDiagnostics != NULL)
     {
         if(m_signalDiagnostics.Initialize(10000, 3))
         {
             Print("[INIT] SignalDiagnostics initialized");
-            // Pass to mathematical engine registry for pipeline engines
             CMathematicalEngineRegistry* mathReg = m_registryAggregator.GetMathRegistry();
             if(mathReg != NULL)
             {
@@ -1770,19 +1535,17 @@ bool InitializeComponents()
     }
 }
 
-// Register mathematical engines with registry
-// (NULL-check on the registry is performed inside the hub, as before)
+// The hub NULL-checks the math registry internally.
 m_mathEngineHub.RegisterMathEngines(m_registryAggregator.GetMathRegistry());
 
 m_mathEngineHub.RegisterInstitutionalEngines(m_registryAggregator.GetInstitutionalRegistry(),
 m_enterpriseManagerSymbols, m_managerCount);
 
-// Register neural network strategies if AI enabled
 if(m_config.enableAIMode && (m_config.enableNeuralNetwork || m_config.enableTransformer ||
 m_config.enableEnsemble || m_config.enableOnnxAI))
 {
-    // L1-008: Neural networks now owned by adapters registered with strategy managers
-    // m_registryAggregator.GetNeuralNetRegistry() has its own internal management via GetOrCreateNeuralNet
+    // NNs are owned by adapters registered with the strategy managers; the neural-net registry
+    // manages them internally via GetOrCreateNeuralNet.
 }
 
 CDrawingManagerRegistry* drawReg = m_registryAggregator.GetDrawingRegistry();
@@ -1790,24 +1553,18 @@ if(drawReg != NULL)
 drawReg.RegisterAll(m_drawingManagers, m_drawingManagerSymbols,
 ArraySize(m_drawingManagers));
 
-// Initialize symbol state tracker
 CSymbolStateTracker* tracker = m_registryAggregator.GetSymbolStateTracker();
 if(tracker != NULL)
     tracker.Initialize(m_enterpriseManagerSymbols, m_managerCount);
 
-// NOTE: The strategy registry is populated by BuildStrategyRegistry() (called earlier in
-// CEAOrchestrator::Initialize, before InitializeComponents). Do NOT call
-// CStrategyRegistry::Initialize()/Reset() here — it would wipe the descriptors that
-// BuildStrategyRegistry just registered, orphaning every per-symbol manager's view of the
-// registry and leaving all strategies disabled (REGISTRY-WIPE bug).
+// Do NOT call CStrategyRegistry::Initialize()/Reset() here: it wipes the descriptors populated
+// by BuildStrategyRegistry(), orphans every manager's view and leaves all strategies disabled.
 
 return true;
 }
 
 void InitializeMathematicalEngines()
 {
-    // Phase F: body moved verbatim to COrchestratorMathEngineHub. The registry
-    // pointer that used to be fetched inside the body is now passed in.
     m_mathEngineHub.InitializeMathematicalEngines(m_config,
                                                   m_registryAggregator.GetMathRegistry(),
                                                   m_enterpriseManagerSymbols,
@@ -1817,14 +1574,11 @@ void InitializeMathematicalEngines()
 
 void InitializeInstitutionalEngines()
 {
-    // Phase F: body moved verbatim to COrchestratorMathEngineHub.
     m_mathEngineHub.InitializeInstitutionalEngines(m_config,
                                                    m_registryAggregator.GetInstitutionalRegistry(),
                                                    m_enterpriseManagerSymbols,
                                                    m_managerCount);
 }
-
-// ============ Enterprise Manager Initialization ============
 
 bool InitializeEnterpriseManagers()
 {
@@ -1834,8 +1588,7 @@ bool InitializeEnterpriseManagers()
         return false;
     }
 
-    // Pre-allocate math engine arrays (Batch 100 + Batch 114 + Batch 107)
-    // (ArrayResize + NULL-init + cursor reset moved verbatim into the hub)
+    // Pre-allocates the per-symbol engine arrays (resize + NULL-init + cursor reset)
     m_mathEngineHub.Reserve(m_managerCount);
 
     int managerInitCount = 0;
@@ -1873,10 +1626,9 @@ if(managerInitCount <= 0 || ArraySize(m_enterpriseManagers) <= 0)
     return false;
 }
 
-// Update magic range max now that symbol universe is known
-// Batch 168: one formula, asserted before it is trusted. Orders ship with an
-// asset-class offset of up to 9999 (CDerivAssetProfiler::DERIV_UNKNOWN), so a
-// window sized only by symbolCount*100 excluded every position this EA opens.
+// The magic ownership window is sized once the universe is known, then asserted before it is
+// trusted: orders ship with an asset-class offset of up to 9999 (CDerivAssetProfiler::DERIV_UNKNOWN),
+// so a window sized only by symbolCount*100 would exclude every position this EA opens.
 int symbolCount = ArraySize(m_enterpriseManagerSymbols);
 ConfigureMagicOwnership(m_config.magicNumber, symbolCount);
 long magicRangeMax = g_magicMax;
@@ -1894,27 +1646,22 @@ if(!ValidateMagicOwnershipCoverage(m_config.magicNumber, maxShippedOffset))
     Print("[CRITICAL] Magic ownership window does not cover the offsets this EA ships with - refusing to trade");
     return false;
 }
-// Propagate magic range to all enterprise managers
 for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
 {
     if(m_enterpriseManagers[mi] != NULL)
     {
         m_enterpriseManagers[mi].SetManagedMagicRangeMax((long)magicRangeMax);
-        // Inject diagnostics manager for per-manager consensus diagnostics
         m_enterpriseManagers[mi].SetDiagnosticsManager(&m_diagnosticsManager);
-        // Inject trade attribution manager for position-level attribution tracking
         m_enterpriseManagers[mi].SetAttributionManager(&m_attributionManager);
-        // Batch 103: Set profilers for asset-class-based engine weighting
+        // Profilers drive asset-class-based engine weighting
         if(m_config.multiAssetProfilerEnabled)
         {
             m_enterpriseManagers[mi].SetDerivProfiler(m_multiAssetProfiler.GetDerivProfiler());
             m_enterpriseManagers[mi].SetMultiAssetProfiler(&m_multiAssetProfiler);
             m_enterpriseManagers[mi].ApplyAssetClassEngineWeights(m_enterpriseManagerSymbols[mi]);
-            // I1: Wire family weight matrix for per-family cluster weighting
             m_enterpriseManagers[mi].SetFamilyWeightMatrix(&m_familyWeightMatrix);
         }
 
-        // Batch 103: Wire Hurst/VPIN/OFI/OU engines to strategies and manager
         {
             string sym = m_enterpriseManagerSymbols[mi];
             int mathIdx = m_mathEngineHub.FindSymbolIndex(sym);
@@ -1926,7 +1673,6 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                 if(m_config.logLevel >= 3)
                 PrintFormat("[WIRE] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
 
-                // Find and wire Trend strategy
                 IStrategy* trendStrat = m_enterpriseManagers[mi].GetStrategyByName("Trend");
                 if(trendStrat != NULL)
                 {
@@ -1939,7 +1685,6 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                         PrintFormat("[WIRE] Hurst/VPIN wired to Trend | Symbol=%s", sym);
                     }
                 }
-                // Find and wire S/R strategy
                 IStrategy* srStrat = m_enterpriseManagers[mi].GetStrategyByName("Support/Resistance");
                 if(srStrat != NULL)
                 {
@@ -1952,7 +1697,7 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                         PrintFormat("[WIRE] Hurst/VPIN wired to S/R | Symbol=%s", sym);
                     }
                 }
-                // Wire Mean Reversion Hurst engine (v2.0 regime lockout)
+                // Mean Reversion: Hurst engine (regime lockout)
                 IStrategy* mrStrat = m_enterpriseManagers[mi].GetStrategyByName("Mean Reversion");
                 if(mrStrat != NULL)
                 {
@@ -1964,7 +1709,7 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                         PrintFormat("[WIRE] Hurst wired to Mean Reversion | Symbol=%s", sym);
                     }
                 }
-                // Wire Statistical Arbitrage OU engine (half-life filter)
+                // Statistical Arbitrage: OU engine (half-life filter)
                 IStrategy* saStrat = m_enterpriseManagers[mi].GetStrategyByName("Statistical Arbitrage");
                 if(saStrat != NULL)
                 {
@@ -1972,10 +1717,8 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                     if(saPtr != NULL)
                     {
                         saPtr.SetOUEngine(m_mathEngineHub.GetOUEngine(mathIdx));
-                        // Batch 155: the catalog registration path never injects
-                        // the bridge, so the instance-level gate stayed NULL even
-                        // when registration passed its global-bridge prerequisite -
-                        // every signal died as STATARB_PYTHON_BRIDGE_UNAVAILABLE.
+                        // The catalog registration path never injects the bridge, so without this
+                        // the gate stayed NULL and every signal failed as STATARB_PYTHON_BRIDGE_UNAVAILABLE.
                         CPythonBridge* saBridge = ((g_pythonBridge != NULL && g_pythonBridge.IsConnected())
                                                    ? g_pythonBridge : m_pythonBridge);
                         if(saBridge != NULL)
@@ -2016,7 +1759,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
         return false;
     }
 
-    // L1-004: Inject strategy registry into manager (replaces global singleton)
+    // Inject the strategy registry into the manager (not the global singleton)
     manager.SetStrategyRegistry(m_registryAggregator.GetStrategyRegistry());
 
     if(m_config.useSignalPipeline)
@@ -2033,7 +1776,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
         filters.session.tradeTokyoSession = true;
         filters.confidence.minConfidence = MathMax(0.0, MathMin(1.0, m_config.pipelineMinConfidence));
 
-        // Phase 6: Safe mode raises the minimum confidence floor
+        // Safe mode raises the minimum confidence floor
         if(m_config.riskTier == RISK_TIER_CONSERVATIVE && m_safeMode.IsInitialized())
         filters.confidence.minConfidence = MathMax(filters.confidence.minConfidence, m_safeMode.GetConfig().minConfidence);
         filters.confidence.intrabarConfidenceCap = MathMax(0.0, m_config.pipelineIntrabarConfidenceCap);
@@ -2056,7 +1799,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
             if(regimeEngine != NULL)
             regimeEngine.SetSnapshotReuseTtlSeconds(m_config.readinessReuseTtlSeconds);
 
-            // I3: Wire session weight manager to pipeline
             if(m_config.enableSessionWeights)
             pipeline.SetSessionWeightManager(&m_sessionWeightManager);
         }
@@ -2114,8 +1856,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     sparseIntrabarMinQuality,
     intrabarSingleVoterMinConfidence);
 
-    // L6-007: Configure intrabar policies from orchestrator config before auto-registration
-    // L7-009/L7-010: Use centralized strategy intrabar config array
+    // Intrabar policies must be set from the config array before auto-registration
     for(int si = 0; si < m_config.strategyConfigCount; si++)
     {
         manager.SetStrategyIntrabarPolicyConfig(si, m_config.strategyIntrabarConfigs[si].defaultPolicy);
@@ -2123,23 +1864,18 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     // Strategies beyond strategyConfigCount will use defaults from GetIntrabarPolicy lambda
 
 
-    // L6-007: Auto-register strategies with configured intrabar policies
     manager.AutoRegisterStrategies(strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
     ApplyStrategyWeights(manager, symbol, strategyFlags);
 
-    // Array is pre-sized in Initialize(); place the manager at its symbol index
-    // (do NOT append — appending lands managers at 12..23 while indices 0..11 stay NULL,
-    //  which makes CSignalGenerator receive an all-NULL manager array and consensus dormant).
+    // Array is pre-sized in Initialize(); place the manager at its symbol index. Do NOT append:
+    // appending leaves indices 0..11 NULL, so CSignalGenerator sees an all-NULL manager array.
     m_enterpriseManagers[assignIndex] = manager;
     // m_enterpriseManagerSymbols[assignIndex] is already populated by the Initialize() pre-fill.
 
-    // Batch 100: Initialize per-symbol mathematical engines using pre-allocated arrays
-    // (construction block moved verbatim to COrchestratorMathEngineHub::CreateEnginesForSymbol,
-    //  which also advances the m_mathEngineCount cursor exactly as before)
+    // The hub creates the per-symbol engines and advances its own engine cursor.
     m_mathEngineHub.CreateEnginesForSymbol(m_config, symbol);
 
-    // Initialize Drawing Manager for this symbol if enabled
     if(m_config.enableVisualAnalysis)
     {
         CChartDrawingManager* draw = new CChartDrawingManager();
@@ -2151,7 +1887,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 drawConfig.enableDrawing = true;
                 drawConfig.maxObjectAge = m_config.maxVisualObjects;
                 draw.SetConfiguration(drawConfig);
-                draw.SetMaxObjects(MathMin(450, m_config.maxVisualObjects)); // Cap at 450 for safety
+                draw.SetMaxObjects(MathMin(450, m_config.maxVisualObjects));
 
                 int dSize = ArraySize(m_drawingManagers);
                 ArrayResize(m_drawingManagers, dSize + 1);
@@ -2159,7 +1895,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 m_drawingManagers[dSize] = draw;
                 m_drawingManagerSymbols[dSize] = symbol;
 
-                // Inject drawing manager into strategy manager for strategy-level drawings
                 manager.SetDrawingManager(draw);
                 Print("[VISUAL] Drawing manager initialized for ", symbol);
             }
@@ -2174,12 +1909,7 @@ Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActi
 return true;
 }
 
-// ============ Helper Methods for Enterprise Manager ============
-
-// Phase F forwarders. Bodies live in COrchestratorStrategyFlagBuilder,
-// COrchestratorSymbolClassifier and COrchestratorIntrabarPolicy; signatures,
-// argument order and return values are unchanged so every call site (here and
-// in CandidateBuilder / SignalGenerator / EnterpriseStrategyManager) is untouched.
+// Forwarders to COrchestratorStrategyFlagBuilder, COrchestratorSymbolClassifier and COrchestratorIntrabarPolicy.
 
 bool BuildStrategyFlags(bool& flags[])
 {
@@ -2207,16 +1937,13 @@ double ResolveIntrabarSingleVoterMinConfidenceForSymbol(const string& symbol, co
     return COrchestratorIntrabarPolicy::ResolveIntrabarSingleVoterMinConfidenceForSymbol(m_config, symbol, strategyFlags);
 }
 
-// L7-009/L7-010: Centralized intrabar policy resolution
-// Replaces hardcoded switch statements and duplicate resolution functions
-// Synthetic lean overrides driven by CDerivAssetProfiler family profile, not hardcoded indices
+// Synthetic lean overrides come from the CDerivAssetProfiler family profile, not indices
 ENUM_INTRABAR_POLICY GetIntrabarPolicy(const string symbol, int strategyIndex, const bool& strategyFlags[])
 {
     return COrchestratorIntrabarPolicy::GetIntrabarPolicy(
         m_config, GetPointer(m_multiAssetProfiler), symbol, strategyIndex, strategyFlags);
 }
 
-// L7-009: Get strategy timeframe config from centralized array
 SStrategyTimeframeConfig GetStrategyTimeframeConfig(int strategyIndex) const
 {
     return COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig(m_config, strategyIndex);
@@ -2234,16 +1961,12 @@ string BuildEnabledStrategyList(const bool& strategyFlags[])
 
 void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
 {
-    // Institutional governance hook. No governance layer is active in this build; strategies are
-    // registered and weighted through the standard consensus pipeline. Kept as an explicit
-    // pass-through so the caller's intent is preserved without changing behaviour.
+    // Intentional pass-through: no governance layer is active; consensus weights the strategies.
 }
 
 void ApplyStrategyWeights(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
 {
-    // Strategy weights are applied through the consensus/role-cluster pipeline, not here.
-    // Kept as an explicit pass-through; wiring a separate weight-application step is a future
-    // enhancement, not a behavioural change to make silently.
+    // Intentional pass-through: weights apply via the consensus/role-cluster pipeline; a step here would change behaviour.
 }
 
 string GetInstrumentExecutionProfileName(const string& symbol)
@@ -2261,8 +1984,7 @@ bool UseSyntheticLeanRosterProfile(const string& symbol, const bool& strategyFla
     return COrchestratorSymbolClassifier::UseSyntheticLeanRosterProfile(m_config, symbol, strategyFlags);
 }
 
-// NOTE: this member intentionally shadows the free function of the same name in
-// Core/Utils/Instruments.mqh, exactly as it did before Phase F.
+// Intentionally shadows the same-named free function in Core/Utils/Instruments.mqh.
 bool IsSyntheticIndexSymbolName(const string& symbol)
 {
     return COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol);
@@ -2272,8 +1994,6 @@ bool IsForexSymbol(const string& symbol)
 {
     return COrchestratorSymbolClassifier::IsForexSymbol(symbol);
 }
-
-// ============ New Helper Methods for AI/Strategy Initialization ============
 
 double ResolveAIRuntimeVoteThreshold(ENUM_EA_MODE effectiveMode)
 {
@@ -2322,7 +2042,6 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
         if(enabled)
         strategyRegistry.RegisterDefinition("Volatility Breakout", STRATEGY_VOLATILITY_BREAKOUT, false, true, false, m_config.weightVolatilityBreakout);
 
-        // Batch 103: ICT/SMC strategies
         enabled = (ArraySize(strategyFlags) > SI_FVG_SCALPER && strategyFlags[SI_FVG_SCALPER]);
         if(enabled)
         strategyRegistry.RegisterDefinition("FVG Scalper", STRATEGY_FVG_SCALPER, false, true, false, m_config.weightFVGScalper);
@@ -2374,7 +2093,7 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
         strategyRegistry.SetMode(effectiveMode);
     }
 
-    // L7-025: Strict EA Mode - fail init if mode degrades
+    // Strict EA mode: refuse to start when the requested mode degraded
     if(m_config.strictEAMode && effectiveMode != m_config.eaMode)
     {
         PrintFormat("[CRITICAL] Strict EA Mode enabled but mode degraded from %s to %s",
@@ -2382,11 +2101,9 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
         return false;
     }
 
-    // Batch 152 (ORCH-02): Configure() had zero callers, so the per-candidate
-    // live-authority gate ran on constructor defaults and silently ignored
-    // m_config.eaMode / aiStandaloneMinConfidence. Wire it once mode resolution
-    // has settled. The remaining three values have no user-facing config fields;
-    // they restate the legacy constructor defaults explicitly.
+    // The live-authority gate must be configured explicitly once mode resolution has settled;
+    // otherwise it runs on constructor defaults and ignores eaMode and aiStandaloneMinConfidence.
+    // The last three values have no config field and restate the legacy constructor defaults.
     m_liveAuthority.Configure(effectiveMode,
                               m_config.aiStandaloneMinConfidence,
                               0.5,   // aiBootstrapRiskMultiplier
@@ -2399,8 +2116,7 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
 
 void LogAIRuntimeTopology()
 {
-    // __FILE__ is passed in from here so the [RUNTIME-FINGERPRINT] line keeps
-    // printing this file's name rather than the module's.
+    // __FILE__ is passed here so [RUNTIME-FINGERPRINT] keeps printing this file's name.
     COrchestratorModeResolver::LogAIRuntimeTopology(m_config,
                                                     m_registryAggregator.GetStrategyRegistry(),
                                                     __FILE__,
@@ -2415,11 +2131,10 @@ void LogPositionLifecycleConfig()
 
 void ReleaseNeuralNetStrategies()
 {
-    // L1-008: Do NOT delete neural networks - adapters own them now
-    // Adapters are owned by strategy managers and will clean up NNs
+    // Do NOT delete the neural nets: they are owned by the adapters, which the strategy
+    // managers own. Clear the pointers only.
     for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
     {
-        // Just clear pointers - do NOT delete
         m_neuralNetStrategies[i] = NULL;
     }
     ArrayResize(m_neuralNetStrategies, 0);
@@ -2427,17 +2142,8 @@ void ReleaseNeuralNetStrategies()
     m_attributionManager.ClearAll();
 }
 
-    //==============================================================//
-    // Batch 145: catalog-driven AI adapter registration.            //
-    // The five hand-written Initialize*AIForSymbol() functions were //
-    // collapsed into one loop over the CAT_KIND_AI rows of          //
-    // Core/Strategy/StrategyCatalog.mqh. Every gate, prep step and  //
-    // log line of the originals is preserved; the only behavioural  //
-    // change is the F4 fix (no delete after a failed                //
-    // RegisterStrategy - the manager already destroyed the adapter).//
-    //==============================================================//
+    // Catalog-driven AI adapter registration: one loop over the CAT_KIND_AI rows of StrategyCatalog.mqh.
 
-    // Per-row master switch (mirrors the old `if(!m_config.enableX) return false;`)
     bool IsCatalogAIRowEnabled(const ENUM_CATALOG_AI k)
     {
         switch(k)
@@ -2451,9 +2157,8 @@ void ReleaseNeuralNetStrategies()
         }
     }
 
-    // Gates that ran BEFORE the factory call in the original functions.
-    // Returning false skips the row; alreadyLive=true means the row is
-    // already satisfied for this symbol (old NN early `return true`).
+    // Gates that run BEFORE the factory call. Returning false skips the row;
+    // alreadyLive=true means this symbol already holds the adapter.
     bool CatalogAIPreCreateGate(const ENUM_CATALOG_AI k, const string symbol, bool &alreadyLive)
     {
         alreadyLive = false;
@@ -2462,7 +2167,6 @@ void ReleaseNeuralNetStrategies()
         {
             case CAT_AI_NEURAL_NET:
             {
-                // Check if already initialized for this symbol
                 for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
                 {
                     if(m_neuralNetStrategySymbols[i] == symbol && m_neuralNetStrategies[i] != NULL)
@@ -2475,9 +2179,8 @@ void ReleaseNeuralNetStrategies()
             }
 
             case CAT_AI_ONNX:
-                // Backoff/disable state machine lives in CONNXInitManager; it emits
-                // the retry log line and clears the disabled flag when a retry is
-                // granted. Still in backoff => skip this attempt.
+                // Backoff/disable state and the retry log line live in CONNXInitManager;
+                // still in backoff => skip this attempt.
                 return m_onnxInit.ShouldAttemptInit(symbol);
 
             case CAT_AI_PYTHON_BRIDGE:
@@ -2495,8 +2198,8 @@ void ReleaseNeuralNetStrategies()
         }
     }
 
-    // Adapter-specific preparation performed after the factory call and
-    // before registration. Caller owns `adapter` until this returns true.
+    // Prepares the adapter after the factory call, before registration. The caller owns
+    // `adapter` until this returns true.
     bool PrepareCatalogAIAdapter(const ENUM_CATALOG_AI k, IStrategy* adapter,
                                  const string symbol, ENUM_TIMEFRAMES tf)
     {
@@ -2509,7 +2212,6 @@ void ReleaseNeuralNetStrategies()
             {
                 CAIStrategyAdapter* nnAdapter = (CAIStrategyAdapter*)adapter;
 
-                // Get the neural network from adapter and initialize it
                 CNeuralNetworkStrategy* nn = nnAdapter.GetNeuralNetwork();
                 if(nn == NULL)
                 {
@@ -2595,8 +2297,7 @@ void ReleaseNeuralNetStrategies()
         }
     }
 
-    // Shared registration tail: weight resolution, RegisterStrategy, registry
-    // bookkeeping and the ONNX success/failure hooks.
+    // Shared registration tail: weight resolution, RegisterStrategy, bookkeeping, ONNX hooks.
     bool RegisterCatalogAIAdapter(CEnterpriseStrategyManager* mgr, const int catIdx,
                                   IStrategy* adapter, const string symbol)
     {
@@ -2629,9 +2330,7 @@ void ReleaseNeuralNetStrategies()
             Print("[AI-MODE] WARNING: Failed to register ", name, " adapter for ", symbol);
             if(stratRegLocal != NULL)
                 stratRegLocal.MarkRegistered(name, false, g_strategyCatalog[catIdx].failReason);
-            // Batch 145 / F4 fix: RegisterStrategy() already deleted the adapter on
-            // failure - deleting it here again was a double free (4 of the 5 old
-            // paths did exactly that).
+            // RegisterStrategy() already deleted the adapter on failure; do not delete it again.
             if(k == CAT_AI_ONNX)
                 HandleONNXInitFailure(symbol);
             return false;
@@ -2641,14 +2340,13 @@ void ReleaseNeuralNetStrategies()
             stratRegLocal.MarkRegistered(name, true);
 
         if(k == CAT_AI_ONNX)
-            m_onnxInit.RegisterSuccess();   // Success - reset retry count
+            m_onnxInit.RegisterSuccess();
 
         Print("[AI-MODE] ", name, " ready for ", symbol);
         return true;
     }
 
-    // Register every enabled AI catalog row for one symbol.
-    // Returns the number of rows that are live for the symbol.
+    // Registers every enabled AI catalog row for one symbol; returns how many are live.
     int RegisterCatalogAIStrategiesForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
         BuildStrategyCatalog();
@@ -2680,7 +2378,7 @@ void ReleaseNeuralNetStrategies()
                 continue;
             }
 
-            // L1-008: Use factory to create the AI adapter (adapter owns its model)
+            // The adapter owns its model; created through the strategy factory.
             CStrategyFactory::SStrategyConfig cfg;
             cfg.symbol            = symbol;
             cfg.timeframe         = timeframe;
@@ -2714,9 +2412,7 @@ void ReleaseNeuralNetStrategies()
         return okCount;
     }
 
-    // Helper to handle ONNX initialization failure with retry tracking.
-    // Attempt counting, the 3-failure disable threshold and the failure logging
-    // now live in CONNXInitManager; this stays as the orchestrator-side entry point.
+    // ONNX failure entry point; attempt counting, the 3-failure disable threshold and logging live in CONNXInitManager.
         void HandleONNXInitFailure(const string symbol)
         {
             m_onnxInit.RegisterFailure(symbol);
@@ -2748,9 +2444,8 @@ int FindEnterpriseManagerIndex(const string symbol)
     return -1;
 }
 
-// Phase F: body moved verbatim to COrchestratorMathEngineHub. The engine
-// arrays it walked are owned by the hub now; the manager array/symbol list
-// are still owned here and are passed through.
+// The engine arrays are owned by COrchestratorMathEngineHub; the manager array and symbol
+// list are still owned here and are passed through.
 void ApplyHurstWeightModifiersToRegime()
 {
     m_mathEngineHub.ApplyHurstWeightModifiersToRegime(m_config, m_enterpriseManagers, m_enterpriseManagerSymbols);
@@ -2770,21 +2465,16 @@ void ReleaseEnterpriseManagers()
     ArrayResize(m_enterpriseManagers, 0);
     ArrayResize(m_enterpriseManagerSymbols, 0);
 
-    // Drop the status reporter's borrowed slot-0 pointer so it cannot outlive the
-    // deleted manager. The original re-read m_enterpriseManagers[0] on every call
-    // and skipped that report section once it was NULL - same observable result.
+    // Drop the status reporter's borrowed slot-0 pointer so it cannot outlive the deleted
+    // manager; heartbeat status then skips that report section.
     m_statusReporter.ClearEnterpriseManager();
 }
 
-// ============ Main Processing ============
-
 void OnTick()
 {
-    // Batch 152 (ORCH-08.6): m_callCount was read by GetStatusReport but had no
-    // writer, so the status line reported Cycle=0 forever.
     m_callCount++;
 
-    // L5-019: Check for emergency close request from circuit breaker
+    // Emergency close request from the circuit breaker
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
     {
         PrintFormat("[RISK-EMERGENCY] Emergency close requested - closing all positions");
@@ -2792,26 +2482,23 @@ void OnTick()
         m_unifiedRiskManager.ResetEmergencyCloseRequested();
     }
 
-    // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+    // Basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
     if(m_basketEquityStop.ShouldCloseBasket())
         m_basketEquityStop.CloseBasket();
 
     ProcessTickSafetyLoop();
 
-    // Batch 100: Feed tick data to VPIN and OFI engines (throttled to 200ms)
-    // Phase F: loop + 200 ms throttle moved verbatim into the hub. The loop
-    // bound stays ArraySize(m_mathEngineSymbols), which the hub exposes as
-    // GetSymbolCount(), so the iteration count is unchanged.
+    // VPIN/OFI tick feed, throttled to 200 ms inside the hub. The loop bound stays
+    // ArraySize(m_mathEngineSymbols), which the hub exposes as GetSymbolCount().
     m_mathEngineHub.FeedMicrostructure(m_mathEngineHub.GetSymbolCount());
 
-    // I4: Feed tick data to Skew Step Analyzer (throttled to 500ms)
+    // Feed tick data to Skew Step Analyzer (throttled to 500 ms)
     if(m_config.enableSkewStepAnalyzer && m_skewStepAnalyzer.IsInitialized())
     {
         static uint s_lastSkewStepFeed = 0;
         uint nowMs = GetTickCount();
         if(nowMs - s_lastSkewStepFeed >= 500)
         {
-            // Hoisted GetDerivProfiler() call out of loop
             CDerivAssetProfiler* derivProf = m_multiAssetProfiler.GetDerivProfiler();
             if(derivProf != NULL)
             {
@@ -2821,7 +2508,6 @@ void OnTick()
                     ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
                     if(family == DERIV_SKEW_STEP)
                     {
-                        // Calculate step size as difference between current and previous close
                         double close0 = iClose(sym, PERIOD_M1, 0);
                         double close1 = iClose(sym, PERIOD_M1, 1);
                         if(close0 > 0 && close1 > 0)
@@ -2836,9 +2522,8 @@ void OnTick()
         }
     }
 
-    // Fast-path scalp signal evaluation on ticks (dual-path architecture).
-    // Batch 150: throttled to 1s - it previously scanned the full symbol universe
-    // on EVERY tick (ShouldEnterScalp does indicator/ATR/cost/risk work per symbol).
+    // Fast-path scalp evaluation on ticks (dual-path architecture), throttled to 1 s:
+    // ShouldEnterScalp does indicator/ATR/cost/risk work for every symbol in the universe.
     static uint s_lastScalpFastPathMs = 0;
     uint scalpNowMs = GetTickCount();
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized()
@@ -2851,11 +2536,11 @@ void OnTick()
 
 void OnTimer()
 {
-    // L2-001: Early exit during shutdown to prevent accessing invalid resources
+    // Early exit during shutdown: released resources must not be touched.
     if(m_shuttingDown)
     return;
 
-    // L5-019: Check for emergency close request from circuit breaker
+    // Emergency close request from the circuit breaker
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
     {
         PrintFormat("[RISK-EMERGENCY] Emergency close requested - closing all positions");
@@ -2863,17 +2548,15 @@ void OnTimer()
         m_unifiedRiskManager.ResetEmergencyCloseRequested();
     }
 
-    // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+    // Basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
     if(m_basketEquityStop.ShouldCloseBasket())
         m_basketEquityStop.CloseBasket();
 
-    // Error handling wrapper
     bool timerError = false;
     string timerErrorMsg = "";
 
     datetime now = TimeCurrent();
 
-    // I2: Compounding tier transition check
     if(m_config.enableCompoundingTiers && m_compoundingTierManager.IsInitialized())
     {
         static datetime lastTierCheck = 0;
@@ -2896,31 +2579,26 @@ void OnTimer()
             string aiStatus = "[AI-DASHBOARD] ";
             CStrategyRegistry* aiStratReg = m_registryAggregator.GetStrategyRegistry();
 
-            // Transformer status
             if(m_aiBrainReady)
             aiStatus += "TF:RDY | ";
         else
         aiStatus += "TF:OFF | ";
 
-        // Neural Network status
         if(m_aiEngineReady)
         aiStatus += "NN:RDY | ";
     else
     aiStatus += "NN:OFF | ";
 
-    // Ensemble status
     int activeAIModels = 0;
     if(aiStratReg != NULL)
     activeAIModels = aiStratReg.GetActiveAICount();
     aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/4 | ";
 
-    // Memory efficiency indicator
     aiStatus += "MEM:OPTIMIZED";
 
     Print(aiStatus);
 }
 
-// Python Bridge status
 if(m_pythonBridge != NULL)
 {
     SPythonBridgeHealthStatus bridgeStatus = m_pythonBridge.GetHealthStatus();
@@ -2965,13 +2643,11 @@ else
 
 if(!skipDashboardLog)
     {
-        // Version info
         if(bridgeStatus.version.version != "")
         bridgeStatusStr += "VER:" + bridgeStatus.version.version + " | ";
     else
     bridgeStatusStr += "VER:UNKNOWN | ";
 
-    // Stats
     bridgeStatusStr += "REQS:" + IntegerToString(bridgeStatus.request_count) + " | ";
     bridgeStatusStr += "OK:" + IntegerToString(bridgeStatus.success_count) + " | ";
     bridgeStatusStr += "ERR:" + IntegerToString(bridgeStatus.error_count);
@@ -2983,9 +2659,7 @@ if(!skipDashboardLog)
     }
 }
 
-// L2-007
-
-// L2-007: Set bridge readiness gate after first successful health check
+// Set the bridge readiness gate after the first successful health check
 static bool s_firstHealthCheckDone = false;
 if(!s_firstHealthCheckDone)
 {
@@ -3030,7 +2704,6 @@ else
 lastPythonBridgeCheck = now;
 }
 
-// Dashboard bridge state push
 if(m_dashboardBridge != NULL && m_dashboardBridge.IsEnabled() && m_bridgesReady
 && (m_lastPush == 0 || (now - m_lastPush) >= m_config.dashboardPushIntervalSec))
 {
@@ -3043,7 +2716,6 @@ if(m_dashboardBridge != NULL && m_dashboardBridge.IsEnabled() && m_bridgesReady
         if(nnSig == TRADE_SIGNAL_BUY) nnSigText = "BUY";
         else if(nnSig == TRADE_SIGNAL_SELL) nnSigText = "SELL";
 
-        // Get real regime probabilities
         double regimeProbs[];
         m_neuralNetStrategies[0].GetRegimeProbs(regimeProbs);
         double rTrend = (ArraySize(regimeProbs) > 0) ? regimeProbs[0] : 0.25;
@@ -3093,24 +2765,19 @@ m_spikeMonitor.ReleasePauseIfExpired();
     }
 }
 
-// Batch 99: Update EquityCurveManager on every timer tick
+// Update EquityCurveManager on every timer tick
 if(m_equityCurveManager != NULL)
 m_equityCurveManager.Update(AccountInfoDouble(ACCOUNT_EQUITY));
 
-// Theme 3: update basket equity stop peak/DD tracking each timer tick
+// Update basket equity stop peak/DD tracking each timer tick
 m_basketEquityStop.Update(AccountInfoDouble(ACCOUNT_EQUITY));
 
-// Batch 100 + Batch 114: bar-level engine updates (Hurst, OU, Grid-Hurst
-// bridge, Kalman, CPD, Four-State, VolTarget). Phase F: both loops moved
-// verbatim into COrchestratorMathEngineHub::UpdateTimerEngines. m_gridRecovery
-// is a by-value member so GetPointer() is never NULL.
+// Bar-level engine updates (Hurst, OU, Grid-Hurst bridge, Kalman, CPD, Four-State, VolTarget).
+// m_gridRecovery is a by-value member, so GetPointer() is never NULL.
 m_mathEngineHub.UpdateTimerEngines(m_config, GetPointer(m_gridRecovery));
 
-// Batch 100: Apply Hurst weight modifiers to regime engine
 ApplyHurstWeightModifiersToRegime();
 
-// Batch 99: Apply equity curve position size multiplier to PositionSizer via modifier chain
-// (The equity curve multiplier is applied as a post-hoc adjustment in the sizing flow)
 // CVaR periodic logging (every 5 minutes)
 datetime nowCvar = TimeCurrent();
 if(m_lastCvarLogTime == 0 || (nowCvar - m_lastCvarLogTime) >= 300)
@@ -3121,7 +2788,7 @@ if(m_lastCvarLogTime == 0 || (nowCvar - m_lastCvarLogTime) >= 300)
     m_lastCvarLogTime = nowCvar;
 }
 
-// FIX: Periodic indicator handle auto-eviction (every 60 seconds)
+// Periodic indicator handle auto-eviction (every 60 seconds)
 static datetime s_lastIndicatorEviction = 0;
 if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
 {
@@ -3129,32 +2796,26 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     s_lastIndicatorEviction = now;
 }
 
-// L12-012: Process pending async trade confirmations and timeouts
+// Process pending async trade confirmations and timeouts
     m_tradeManager.CheckAsyncTimeouts();
 
-    // Batch 152 (ORCH-04): drain the executor's confirmation queue. Execute()
-    // queues every fill for history-based resolution (attribution, position
-    // state, NN prediction mapping), but nothing ever called
-    // CheckPendingConfirmations() - the queue only ever grew.
+    // Drain the executor's confirmation queue: Execute() queues every fill for
+    // history-based resolution, so without this the queue only ever grows.
     m_tradeExecutor.CheckPendingConfirmations();
 
-    // Emit heartbeat diagnostics (L9-001 through L9-004)
+    // Emit heartbeat diagnostics
     static datetime s_lastHeartbeat = 0;
     if(s_lastHeartbeat == 0 || (now - s_lastHeartbeat) >= m_config.heartbeatInterval)
     {
-        // Phase B-2: counter snapshot + heartbeat emission now owned by
-        // CHeartbeatTelemetry::Emit(); argument order is unchanged.
         m_heartbeat.Emit(GetPointer(m_diagnosticsManager));
         s_lastHeartbeat = now;
     }
     
-    // Production monitoring components
     m_configReloader.CheckAndReload();
     m_riskDashboard.OnTimer();
     m_symbolHealth.OnTick(_Symbol);
     m_symbolHealth.CheckAllSymbols(m_config.symbolsToTrade);
     
-    // Update risk dashboard metrics
     SUnifiedRiskSnapshot riskSnap = m_unifiedRiskManager.GetSnapshot();
     double portfolioRisk = riskSnap.portfolioRiskPercent;
     double dailyRisk = riskSnap.dailyRiskUsedPercent;
@@ -3175,7 +2836,7 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     ProcessTradingLogic(true);  // true = called from timer
 }
 
-// L5-018: Update risk parameters from input changes
+// Update risk parameters from input changes
 void UpdateRiskParametersFromInputs(double maxRiskPerTrade, double maxDailyRisk,
 double maxPortfolioRisk, double maxDrawdown,
 double dailyLossLimitPercent,
@@ -3189,11 +2850,9 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     maxDrawdown * 0.7, maxDrawdown,
     dailyLossLimitPercent);
 
-    // Update PositionSizer
     m_positionSizer.SetAllowMinLotRoundUp(allowMinLotRoundUp);
     m_positionSizer.SetMinLotRiskMultiplier(minLotRiskMultiplier);
 
-    // Update CompoundingTierManager
     m_compoundingTierManager.SetAutoSwitch(enableCompoundingTiers);
 
     PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s multiplier=%.1f compounding=%s tier=%d",
@@ -3202,12 +2861,8 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         enableCompoundingTiers ? "true" : "false", (int)riskTier);
     }
 
-    // ============ ProcessTradingLogic Helper Methods ============
-
-    // Preflight checks: emergency close, system initialized, trading enabled
     bool PreflightChecks(const string corrId)
     {
-        // L5-019: Emergency close requested - close all positions immediately
         if(m_unifiedRiskManager.IsEmergencyCloseRequested())
         {
             PrintFormat("[EMERGENCY-CLOSE] Circuit breaker emergency close requested - closing all positions");
@@ -3217,7 +2872,7 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
             return false;
         }
 
-        // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+        // Basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
         if(m_basketEquityStop.ShouldCloseBasket())
             m_basketEquityStop.CloseBasket();
 
@@ -3230,52 +2885,43 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         return true;
     }
 
-    // Refresh runtime state: risk state, daily profit target, auto mode switching
     void RefreshRuntimeState()
     {
-        // Update risk state
         m_unifiedRiskManager.RefreshRuntimeState();
 
-        // Update daily profit target logic
         UpdateDailyProfitTarget();
 
         UpdateAutoModeSwitch();
 
-        // Check unprotected positions
         m_unprotectedTracker.AttemptRemediation();
 
-        // Batch 168: persist circuit-breaker state on the runtime cadence (30s
-        // throttle inside) so a crash or VPS reboot leaves something to recover.
+        // Persist circuit-breaker state on the runtime cadence (30 s throttle inside) for crash recovery.
         PersistRiskRuntimeState(false);
     }
 
-    // Process AI subsystems: neural network, AI engine, AI feedback
     void ProcessAISubsystems()
     {
-        // Neural network online learning (driven via CRegistryAggregator, which owns the full CNeuralNetRegistry definition)
+        // NN online learning is driven via CRegistryAggregator, which owns the CNeuralNetRegistry.
         if(m_config.enableAIMode && m_config.enableNeuralNetwork && m_config.enableNNOnlineTraining)
         {
             m_registryAggregator.TickNeuralNetOnlineLearning();
         }
 
-        // AI engine adaptation
         if(m_config.enableAIMode && m_aiEngine != NULL)
         {
             m_aiEngine.ProcessAdaptation();
         }
 
-        // AI feedback maintenance
         if(m_aiFeedbackReady)
         {
             m_aiFeedback.CheckAutomaticRetraining();
 
-            // L6-016: Update AI performance metrics for all enterprise managers
             SAIModelMetrics aiMetrics = m_aiFeedback.GetCurrentMetrics();
             for(int m = 0; m < ArraySize(m_enterpriseManagers); m++)
             {
                 if(m_enterpriseManagers[m] != NULL)
                 {
-                    // Update AI strategy weights based on AI feedback
+                    // Feeds the AI weight-adaptation sync path back into the managers.
                     if(m_config.enableNeuralNetwork)
                     m_enterpriseManagers[m].UpdateAIPerformanceMetrics("Neural Network AI", aiMetrics);
                     if(m_config.enableTransformer)
@@ -3294,17 +2940,13 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         ProcessNewBars();
     }
 
-    // Run signal evaluation cycle: generate and process signals
     void RunSignalEvaluationCycle(const string cycleCorrId)
     {
-        // Generate and validate signals
         GenerateAndProcessSignals(cycleCorrId);
     }
 
-    // Post-consensus filtering: update AI vote activity
     void PostConsensusFiltering()
     {
-        // Update AI vote activity tracking [L11-004]
         UpdateAIVoteActivity();
     }
 
@@ -3314,7 +2956,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         // signal-reversal exit is a stub; it still owns the position-state registry.
         m_lifecycleManager.ManagePositions();
 
-        // Process closed positions for NN training linkage (L11-014)
         ProcessClosedPositionsForNNTraining();
     }
 
@@ -3324,20 +2965,15 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     string cycleCorrId = CCorrelationIdGenerator::Generate("CYCLE");
     CJsonLogger::SetCorrelationId(cycleCorrId);
     
-    // Preflight checks - emergency close, system initialized, trading enabled
     if(!PreflightChecks(cycleCorrId))
     {
         return;
     }
 
-    // Refresh runtime state - risk state, profit target, auto mode
     RefreshRuntimeState();
 
-    // Batch 154: orchestrator-owned strategy lifecycle governance. The only
-    // previous caller of CheckStrategyDisabling/CheckStrategyReEnabling was
-    // AIEngine::AdaptToPerformance, gated on AI mode AND prediction accuracy -
-    // with AI off, a strategy auto-disabled by trade feedback could never come
-    // back. Sweep both directions on a 60s cadence regardless of AI mode.
+    // Strategy lifecycle governance: sweep disabling AND re-enabling on a 60 s cadence regardless
+    // of AI mode, so a strategy auto-disabled by trade feedback can recover with AI off.
     static datetime s_lastGovernanceSweep = 0;
     datetime nowGov = TimeCurrent();
     if(nowGov - s_lastGovernanceSweep >= 60)
@@ -3351,15 +2987,12 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         s_lastGovernanceSweep = nowGov;
     }
 
-    // Process AI subsystems - neural network, AI engine, AI feedback
     ProcessAISubsystems();
 
     DetectNewBarsPerSymbol();
 
-    // Run signal evaluation cycle - generate and process signals
     RunSignalEvaluationCycle(cycleCorrId);
 
-    // Post-consensus filtering - update AI vote activity
     PostConsensusFiltering();
 
     ManageOpenPositions();
@@ -3367,16 +3000,14 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     CJsonLogger::ClearCorrelationId();
 }
 
-    // Process closed positions and link to NN predictions for online training (L11-014)
+    // Process closed positions and link them to NN predictions for online training.
     void ProcessClosedPositionsForNNTraining()
     {
-        // NN diagnostics check removed: m_attributionManager is an object (not pointer)
-        // and IsNNDiagnosticsEnabled() is not exposed publicly. Guarded by NN strategy count below.
+        // NN diagnostics are not exposed publicly; the guard is the strategy-count check below.
         
         if(ArraySize(m_neuralNetStrategies) == 0)
             return;
         
-        // Get pending close profits from attribution manager with prediction IDs
         ulong positionIds[];
         double profits[];
         string predictionIds[];
@@ -3385,7 +3016,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         if(closedCount <= 0)
             return;
         
-        // For each closed position, link to NN strategy
         for(int i = 0; i < closedCount; i++)
         {
             string predId = predictionIds[i];
@@ -3394,16 +3024,13 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
             if(predId == "")
                 continue;
             
-            // Find the NN strategy that made this prediction
-            // The prediction ID format is typically "symbol_timeframe_timestamp"
-            // We need to match it to the right NN strategy
+            // The prediction ID format is "symbol_timeframe_timestamp".
             for(int nnIdx = 0; nnIdx < ArraySize(m_neuralNetStrategies); nnIdx++)
             {
                 CNeuralNetworkStrategy* nn = m_neuralNetStrategies[nnIdx];
                 if(nn == NULL || !nn.IsTraining())
                     continue;
                 
-                // Try to update trade result by prediction ID
                 if(nn.UpdateTradeResultByPredictionId(predId, profit))
                 {
                     PrintFormat("[NN-TRAINING] Updated trade result for prediction %s: profit=%.2f", predId, profit);
@@ -3415,32 +3042,24 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 
 void ProcessTickSafetyLoop()
 {
-    // Batch 152 (ORCH-01): this was an empty stub whose old delegations were
-    // commented out during the God-Object split ("method not found"). Ownership
-    // of every concern it once routed is LIVE elsewhere - keep this record so
-    // the stub is not mistaken for dead safety equipment:
-    //  - Drawdown halt / conservative mode / emergency flatten:
-    //    CRiskCircuitBreaker (drawdownWarning/CriticalPercent from
-    //    m_config.maxDrawdown) -> CUnifiedRiskManager -> OnTick() honors
-    //    IsEmergencyCloseRequested() with CloseAllPositions(). Wiring
-    //    CSyntheticSpikeMonitor::HandleEmergencyDrawdown here would create a
-    //    second flatten authority with unconfigured thresholds.
-    //  - Trading-pause expiry: m_spikeMonitor.ReleasePauseIfExpired() runs via
-    //    the cycle gate (IsPaused).
-    //  - Spread / free-margin / margin-level health: CRiskMarginHealth inside
-    //    CRiskValidationPipeline (Phase E2) plus TradeManager preflight gates;
-    //    CTickSafetyMonitor remains a passive query API used by those paths.
-    //  - Synthetic tick-rate spike detection (EvaluateSpike): single-symbol
-    //    (_Symbol) legacy with no multi-symbol configuration - deliberately
-    //    NOT revived with invented thresholds.
+    // Intentional stub, not dead safety equipment: every concern it once routed is LIVE elsewhere.
+    //  - Drawdown halt / conservative mode / emergency flatten: CRiskCircuitBreaker (thresholds from
+    //    m_config.maxDrawdown) -> CUnifiedRiskManager -> OnTick honors IsEmergencyCloseRequested().
+    //    Wiring CSyntheticSpikeMonitor::HandleEmergencyDrawdown here would create a second flatten
+    //    authority with unconfigured thresholds.
+    //  - Trading-pause expiry: m_spikeMonitor.ReleasePauseIfExpired() runs via the cycle gate (IsPaused).
+    //  - Spread / free-margin / margin-level health: CRiskMarginHealth inside CRiskValidationPipeline
+    //    plus TradeManager preflight gates; CTickSafetyMonitor stays a passive query API.
+    //  - Synthetic tick-rate spike detection (EvaluateSpike): single-symbol (_Symbol) legacy with no
+    //    multi-symbol configuration; deliberately not revived with invented thresholds.
 }
 
 void FeedMicrostructureEngines()
 {
-    // Phase F: VPIN/OFI feed loop + 200 ms throttle moved verbatim into the hub.
+    // VPIN/OFI feed loop and its 200 ms throttle live in the hub.
     m_mathEngineHub.FeedMicrostructure(m_managerCount);
 
-    // I4: Feed tick data to Skew Step Analyzer (throttled to 500ms)
+    // Feed tick data to Skew Step Analyzer (throttled to 500 ms)
     if(m_config.enableSkewStepAnalyzer && m_skewStepAnalyzer.IsInitialized())
     {
         static uint s_lastSkewStepFeed = 0;
@@ -3456,7 +3075,6 @@ void FeedMicrostructureEngines()
                     ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
                     if(family == DERIV_SKEW_STEP)
                     {
-                        // Calculate step size as difference between current and previous close
                         double close0 = iClose(sym, PERIOD_M1, 0);
                         double close1 = iClose(sym, PERIOD_M1, 1);
                         if(close0 > 0 && close1 > 0)
@@ -3472,16 +3090,14 @@ void FeedMicrostructureEngines()
     }
 }
 
-// Batch 152 (S-H-01): OnTradeTransaction forwarder - confirm filled async scalp
-// orders into the position tracker (no-op when nothing is pending).
+// OnTradeTransaction forwarder: confirms filled async scalp orders into the position tracker (no-op when none pending).
 void ProcessScalpDealConfirmed(const ulong dealTicket, const ulong orderTicket)
 {
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
         m_scalpEngine.OnDealConfirmed(dealTicket, orderTicket);
 }
 
-// ============ Batch 154: closed-trade feedback loop ============
-// The EA's OnTradeTransaction routes DEAL_ADD events here. Two jobs:
+// Closed-trade feedback loop: the EA's OnTradeTransaction routes DEAL_ADD events here.
 //  1. fan the transaction out to every symbol manager so per-strategy
 //     attribution pop / UpdatePerformance / health monitor / auto-disable run;
 //  2. feed account-level learners on full closes of EA-owned positions:
@@ -3577,9 +3193,8 @@ void FeedAuthorityOutcome(const ulong positionId, const double netProfit)
     if(managerIdx < 0 || managerIdx >= m_managerCount || m_enterpriseManagers[managerIdx] == NULL) return;
     if(ArraySize(strategyIndices) == 0) return;
 
-    // Approximate R: profit relative to one unit of configured per-trade risk on
-    // current equity - a consistent denominator is sufficient for the resolver's
-    // promote/demote thresholds.
+    // Approximate R: profit against one unit of configured per-trade risk on current equity;
+    // a consistent denominator is enough for the resolver's promote/demote thresholds.
     double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * m_config.maxRiskPerTrade / 100.0;
     double profitR = (riskMoney > 0.0) ? netProfit / riskMoney : 0.0;
     bool isWin = (netProfit > 0.0);
@@ -3596,16 +3211,15 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
                                      const MqlTradeRequest &request,
                                      const MqlTradeResult &result)
 {
-    // 1) Per-strategy fan-out: attribution pop, UpdatePerformance, health
-    //    monitor, governance disable write-through. Each manager filters by
-    //    its own symbol/magic internally.
+    // Per-strategy fan-out: attribution pop, UpdatePerformance, health monitor, governance
+    // disable write-through. Each manager filters by its own symbol/magic internally.
     for(int i = 0; i < m_managerCount; i++)
     {
         if(m_enterpriseManagers[i] == NULL) continue;
         m_enterpriseManagers[i].OnTradeTransaction(trans, request, result);
     }
 
-    // 2) Account-level feeds on full closes of EA-owned positions only.
+    // Account-level feeds, on full closes of EA-owned positions only.
     if(trans.type != TRADE_TRANSACTION_DEAL_ADD || trans.deal == 0) return;
     if(!HistoryDealSelect(trans.deal)) return;
 
@@ -3629,33 +3243,24 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
 
 void ProcessScalpFastPath()
 {
-    // Fast-path scalp signal evaluation on ticks (dual-path architecture)
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
     {
-        // Batch 152 (S-H-02): the cache was filled once at Initialize() and then
-        // frozen - UpdateOnNewBar()/UpdateTickValues() had zero callers, so entry
-        // decisions ran on init-time indicator snapshots forever. UpdateOnNewBar
-        // self-throttles to actual new bars per symbol; UpdateTickValues reads
-        // only SymbolInfoDouble.
+        // The cache must be refreshed here or entry decisions run on init-time snapshots forever:
+        // UpdateOnNewBar self-throttles to new bars per symbol, UpdateTickValues only reads quotes.
         m_scalpCache.UpdateOnNewBar();
         m_scalpCache.UpdateTickValues();
 
-        // Batch 152 (S-H-01): drive the scalp lifecycle before scanning for new
-        // entries. These had zero callers, so open scalps never received their
-        // 1R partial / breakeven / trailing management, tracker state drifted
-        // from the terminal, and pending sync+async orders were never confirmed
-        // or expired.
+        // Drive the scalp lifecycle BEFORE scanning for new entries: open scalps need their 1R partial /
+        // breakeven / trailing management and pending sync+async orders need confirming or expiring.
         m_scalpEngine.SyncScalpPositionTracking();
         m_scalpEngine.ManageScalpPositions();
         m_scalpEngine.CheckPendingAsyncOrders();
         m_scalpEngine.CheckPendingScalpOrders();
 
-        // Theme 3: basket equity stop halts NEW scalp entries (existing scalps
-        // were already managed by the calls above).
+        // Basket equity stop halts NEW scalp entries; existing scalps are already managed above.
         if(m_basketEquityStop.IsHaltActive())
             return;
 
-        // Iterate over all managed symbols for scalp opportunities
         for(int si = 0; si < m_managerCount; si++)
         {
             string symbol = m_enterpriseManagerSymbols[si];
@@ -3666,10 +3271,8 @@ void ProcessScalpFastPath()
             double confidence = 0.0;
             double lotSize = 0.0;
 
-            // Evaluate scalp signal and validate through risk manager
             if(m_scalpEngine.ShouldEnterScalp(symbol, signal, confidence, lotSize))
             {
-                // Execute the scalp trade (sync or async based on config)
                 if(m_scalpEngine.ExecuteScalpTrade(symbol, signal, lotSize, confidence))
                 {
                     PrintFormat("[SCALP-FASTPATH] Executed %s scalp on %s | lot=%.2f | conf=%.2f",
@@ -3687,8 +3290,7 @@ void ProcessScalpFastPath()
 }
 }
 
-// Phase F: state machine + its six state members moved verbatim to
-// COrchestratorProfitGuard (held here by value).
+// Daily profit-target state lives in COrchestratorProfitGuard (held here by value).
 void UpdateDailyProfitTarget()
 {
     m_profitGuard.UpdateDailyProfitTarget(m_config);
@@ -3698,14 +3300,13 @@ void UpdateAutoModeSwitch()
 {
     if(!m_config.enableAutoModeSwitch) return;
 
-    // Would determine mode and apply risk parameters
+    // Auto mode switching is not implemented: no mode or risk parameters are applied here.
 }
 
 void ProcessNewBars()
 {
-    // Batch 150: GetScanScheduler() always returned NULL, which silently disabled the
-    // entire bar-lifecycle path (OnNewBar delivery, consensus-cache invalidation,
-    // AI adaptation). Route through the scan registry that actually holds bar state.
+    // Route through the scan registry, which holds the bar state: GetScanScheduler() always
+    // returned NULL and silently disabled OnNewBar, consensus-cache invalidation, AI adaptation.
     CScanSchedulerRegistry* scanReg = m_registryAggregator.GetScanRegistry();
     if(scanReg == NULL) return;
 
@@ -3722,7 +3323,6 @@ void ProcessNewBars()
         m_consensusCache.Invalidate(symbol);
         m_enterpriseManagers[i].OnNewBar(symbol, tf);
 
-        // AI engine adaptation
         if(m_config.enableAIMode && m_aiEngine != NULL)
             m_aiEngine.ProcessAdaptation();
 
@@ -3735,11 +3335,9 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 {
     ulong startTotal = GetMicrosecondCount();
     
-    // Check trading permissions
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
     return;
 
-    // Check trading blocks
     int secondsSinceLastTrade = (int)(TimeCurrent() - m_lastTradeTime);
     bool cooldownBlocked = (secondsSinceLastTrade < m_config.minSecondsBetweenTrades && m_lastTradeTime > 0);
     int eaPositions = GetEAPositionCount();
@@ -3749,22 +3347,18 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
     bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted() || m_basketEquityStop.IsHaltActive());
 
-        // Generate signals (new bar mode) - with performance timing
         ulong startSignalGen = GetMicrosecondCount();
         CSignalGenerator::SSignalResult newBarSignals[];
         m_signalGenerator.GenerateSignals(EVAL_MODE_NEW_BAR, newBarSignals, cycleCorrId);
             ulong signalGenTime = GetMicrosecondCount() - startSignalGen;
             CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_SignalGen_us", (double)signalGenTime, cycleCorrId);
 
-        // Validate and build candidates
     ulong startCandidateBuild = GetMicrosecondCount();
     int candidatesBuilt = 0;
     for(int i = 0; i < ArraySize(newBarSignals); i++)
     {
-        // Batch 153: these funnel counters had zero writers, so [HEARTBEAT]
-        // always printed scans=0 / no_signal=0 / validator_reject=0 and the
-        // status report's Scans= field was permanently 0. Count every symbol
-        // slot as one attempted scan.
+        // Count every symbol slot as one attempted scan: the [HEARTBEAT] funnel counters
+        // (scans / no_signal / validator_reject) have no other writers.
         m_heartbeat.IncScansAttempted();
 
         if(!newBarSignals[i].valid)
@@ -3777,14 +3371,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         CEnterpriseStrategyManager* manager = m_enterpriseManagers[i];
         if(manager == NULL) continue;
 
-        // Build candidate (declare at top of loop for scope)
         STradeCandidate candidate;
         bool candidateBuilt = false;
 
-        // Validate
-        // Phase C / Slice 2 (C3): result type hoisted out of the manager into
-        // PostConsensusValidator.mqh (the old nested name shadowed the unrelated
-        // global SValidationResult declared in Core/Utils/Enums.mqh).
+        // SPostConsensusValidation lives in PostConsensusValidator.mqh: the old nested name
+        // shadowed the unrelated SValidationResult in Core/Utils/Enums.mqh.
         SPostConsensusValidation validation = manager.ValidateSignal(
                 symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, EVAL_MODE_NEW_BAR, newBarSignals[i].decisionContext,
@@ -3821,27 +3412,23 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         if(!authority.allowed) continue;
 
-                // Check entry blocks
                 if(!canOpenNewTrades) continue;
 
-                // Execute trade; only a real send arms the min-seconds-between-trades
-                // cooldown (m_lastTradeTime was never written before, gate was inert).
+                // Only a real send arms the min-seconds-between-trades cooldown.
                 CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
                 if(execResult.executed)
                 {
                     m_lastTradeTime = TimeCurrent();
                     m_heartbeat.IncSignalsSent();
-                    // Batch 152: book the executed risk into the daily budget. The only
-                    // writer of realized per-trade risk had zero callers, so the daily
-                    // entry budget never accrued from executed trades.
+                    // Book executed risk into the daily entry budget: RegisterExecutedTradeRisk is
+                    // the only writer of realized per-trade risk.
                     SValidationResult executedRisk;
                     executedRisk.riskPercent = candidate.riskPercent;
                     double fillRatio = (candidate.lotSize > 0.0 && execResult.filledVolume > 0.0)
                                        ? MathMin(1.0, execResult.filledVolume / candidate.lotSize) : 1.0;
                     m_unifiedRiskManager.RegisterExecutedTradeRisk(executedRisk, fillRatio);
 
-                    // Batch 154: remember AI-contributed trades so their full close
-                    // feeds CLiveAuthorityResolver::RecordOutcome (PROVEN_AI promotion).
+                    // Remember AI-contributed trades so their full close feeds RecordOutcome (PROVEN_AI).
                     if(candidate.hasAIContributor && execResult.dealTicket > 0
                        && HistoryDealSelect(execResult.dealTicket))
                     {
@@ -3857,11 +3444,8 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 m_heartbeat.IncSignalsRiskApproved();
             }
     
-    // Performance timing for total method
         CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_Total_us", (double)(GetMicrosecondCount() - startTotal), cycleCorrId);
 }
-
-// ============ Helpers ============
 
 int GetEAPositionCount() const
 {
@@ -3878,21 +3462,17 @@ int GetEAPositionCount() const
 
 bool IsEAOwnedMagic(long magic) const
 {
-    // Simplified check
     return m_tradeManager.IsEAOwnedMagic(magic);
 }
 
-// Phase F: body moved verbatim to COrchestratorProfitGuard (static helper).
+// Delegates to COrchestratorProfitGuard's static helper.
 double CalculateDailyPnLPercent()
 {
     return COrchestratorProfitGuard::CalculateDailyPnLPercent();
 }
 
-// ============ Diagnostics ============
-
-// Heartbeat status text. Assembly moved to COrchestratorStatusReporter (collaborators injected once in
-// WireAndValidateDependencies); the per-cycle counters below cannot be captured
-// by pointer in MQL5, so they are forwarded on each call. Output is unchanged.
+// Status assembly lives in COrchestratorStatusReporter (deps injected in WireAndValidateDependencies).
+// MQL5 cannot take the per-cycle counters by pointer, so they are forwarded on each call.
 string GetStatusReport() const
 {
     return m_statusReporter.GetStatusReport(m_systemInitialized,
@@ -3906,10 +3486,9 @@ string GetStatusReport() const
                                             m_config.maxPositionsTotal);
 }
 
-// L2-002: AI Subsystem cleanup helper - called on init failure and in Shutdown()
+// AI cleanup helper: called on init failure and from Shutdown().
 void CleanupAISubsystems()
 {
-    // Clean up AI Engine
     if(m_aiEngine != NULL)
     {
         delete m_aiEngine;
@@ -3917,24 +3496,20 @@ void CleanupAISubsystems()
     }
     m_aiEngineReady = false;
 
-    // Shutdown NextGen Brain
-    // m_aiNextGenBrain.Shutdown(); // Method not found - destructor handles cleanup
+    // No Shutdown() method on m_aiNextGenBrain: its destructor handles cleanup.
     m_aiBrainReady = false;
 
-    // Shutdown AI Feedback
-    // m_aiFeedback.Shutdown(); // Method not found - destructor handles cleanup
+    // No Shutdown() method on m_aiFeedback: its destructor handles cleanup.
     m_aiFeedbackReady = false;
 
     Print("[CLEANUP] AI subsystems cleaned up");
 }
 
-// L2-012: Consolidated AI subsystem initialization
-// Ownership hierarchy:
-// - Neural Network strategies (created via factory) are OWNED by their adapters
-//   which are registered with and OWNED by EnterpriseStrategyManager per symbol
+// AI subsystem initialization. Ownership hierarchy:
+// - Neural Network strategies (created via factory) are OWNED by their adapters, which are
+//   registered with and OWNED by EnterpriseStrategyManager per symbol
 // - CAIEngine (adaptation engine) is OWNED by CEAOrchestrator (this class)
 // - m_aiNextGenBrain and m_aiFeedback are stack-allocated members of CEAOrchestrator
-// This single method replaces the two separate init blocks in Initialize()
 bool InitializeAISubsystems()
 {
     if(!m_config.enableAIMode)
@@ -3945,7 +3520,6 @@ bool InitializeAISubsystems()
 
     bool allSuccess = true;
 
-    // Phase 1: Initialize NextGen Strategy Brain
     if(!m_aiNextGenBrain.Initialize(Symbol(), Period()))
     {
         Print("[INIT] WARNING: NextGen AI Brain failed to initialize");
@@ -3958,7 +3532,6 @@ else
     Print("[AI] Runtime AI voters are adapter-owned and registered per symbol");
 }
 
-// Phase 2: Initialize AI Performance Feedback
 if(!m_aiFeedback.Initialize(1000))
 {
     Print("[WARNING] AIPerformanceFeedback failed to initialize");
@@ -3971,14 +3544,11 @@ else
     Print("[INIT] AIPerformanceFeedback initialized for AI model adaptation");
 }
 
-// Phase 3: Initialize AI Strategy Adapters per active symbol
-// These create AI strategies via factory, wrap in IAIStrategy adapters,
-// and register adapters with EnterpriseStrategyManager (manager owns adapters)
+// AI strategy adapters: created via factory, registered with EnterpriseStrategyManager (which owns them).
 if(m_config.enableAIMode && (m_config.enableNeuralNetwork || m_config.enableTransformer || m_config.enableEnsemble || m_config.enableOnnxAI))
 {
     ReleaseNeuralNetStrategies();
-    // Batch 145: one catalog pass per symbol replaces the five per-adapter calls.
-    // The per-row m_config.enableX gate now lives in IsCatalogAIRowEnabled().
+    // One catalog pass per symbol; the per-row m_config.enableX gates live in IsCatalogAIRowEnabled().
     int aiAdapterInitCount = 0;
     for(int i = 0; i < m_managerCount; i++)
     {
@@ -3991,8 +3561,7 @@ if(m_config.enableAIMode && (m_config.enableNeuralNetwork || m_config.enableTran
                 aiAdapterInitCount, m_managerCount);
 }
 
-// Phase 4: Initialize AI Engine for Adaptation (orchestrator-owned)
-// This engine adapts strategy weights based on AI predictions
+// AI Engine for adaptation (orchestrator-owned): adapts strategy weights from AI predictions.
 if(ArraySize(m_enterpriseManagers) > 0)
 {
     if(m_aiEngine == NULL) m_aiEngine = new CAIEngine();
@@ -4039,16 +3608,12 @@ Print("[AI-DASHBOARD] AI Health Monitoring initialized");
 return allSuccess;
 }
 
-// ============ Accessors ============
-
 bool GetSystemInitialized() const { return m_systemInitialized; }
 bool GetTradingEnabled() const { return m_tradingEnabled; }
 
-// L10-012: Getters for engine state restoration on restart
 CTradeManager* GetTradeManager() { return GetPointer(m_tradeManager); }
 
-// Update AI vote activity for DiagnosticsManager [L11-004]
-// Call after signal generation to track [AI-VOTE] heartbeats
+// Call after signal generation so per-symbol [AI-VOTE] heartbeat activity is tracked.
 void UpdateAIVoteActivity()
 {
     if(!m_config.enableAIMode)
