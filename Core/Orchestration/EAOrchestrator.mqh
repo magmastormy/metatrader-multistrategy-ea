@@ -2103,12 +2103,19 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
 
     // The live-authority gate must be configured explicitly once mode resolution has settled;
     // otherwise it runs on constructor defaults and ignores eaMode and aiStandaloneMinConfidence.
-    // The last three values have no config field and restate the legacy constructor defaults.
+    // otherwise it runs on constructor defaults and ignores every InpAuthority* input.
+    // authorityMinConfluence is the only threshold here without a config field.
     m_liveAuthority.Configure(effectiveMode,
                               m_config.aiStandaloneMinConfidence,
-                              0.5,   // aiBootstrapRiskMultiplier
-                              2,     // authorityMinConfluence
-                              0.3);  // authorityMinExpectancyR
+                              m_config.aiBootstrapRiskMultiplier,
+                              2,   // authorityMinConfluence
+                              m_config.authorityMinExpectancyR,
+                              m_config.authorityMinProfitFactor,
+                              m_config.authorityMinSamples,
+                              m_config.authorityMinCostScore,
+                              m_config.authorityMinReadinessScore,
+                              m_config.authorityMinContextScore,
+                              m_config.aiPromotedRiskMultiplier);
 
     PrintFormat("[STRATEGY-REGISTRY] %s", strategyRegistry.BuildStatusReport());
     return true;
@@ -3407,6 +3414,8 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         authority, cycleCorrId);
 
         candidate.liveAuthorityAllowed = authority.allowed;
+        // liveAuthorityRiskMult is recorded for the log only - no sizing path reads it, so the
+        // resolver's bootstrap cap and PROVEN_AI floor do not change the lot. Only `allowed` acts.
         candidate.liveAuthorityRiskMult = authority.riskMultiplier;
         candidate.liveAuthorityReason = authority.reason;
 

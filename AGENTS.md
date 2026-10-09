@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-10-09
+- Last Updated: 2026-10-10
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 171 - Comment hygiene complete (19,496 -> 8,897 whole-line comments), no code change; Batch 172 queued for the dead PROVEN_AI profitFactor gate
+- Latest Batch: Batch 172 - live-authority thresholds wired and profit factor computed; the resolved risk multiplier and VPIN's veto are recorded as computed-but-unconsumed outputs awaiting an operator decision. Batch 171 closed at 11,201 comment lines removed (19,496 -> 8,295), no code change.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

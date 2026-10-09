@@ -452,13 +452,20 @@ There is no legacy default — the semantic scheme is the only scheme.
 ### 2.9.1 Live authority domain
 
 - Owner: `MultiStrategyAutonomousEA.mq5`
-- Responsibilities:
-  - decide whether each risk-approved candidate is live-send eligible or candidate-level shadow-only
-  - warm-start high-confidence AI/ONNX candidates at scaled risk while evidence is still building
-  - track forward R outcomes for AI, ONNX, indicator, and Elliott contributor families
-  - promote mature families when samples, expectancy, profit factor, and loss-streak gates pass
-  - demote mature families to shadow when forward evidence degrades
-  - emit `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, and `[AUTHORITY-RESULT]` telemetry for every authority decision lifecycle
+- Implementation: `Core/Orchestration/LiveAuthorityResolver.mqh`
+- Responsibilities that are implemented:
+  - score each risk-approved candidate (ONNX / AI / indicator / confluence / decision-path quality) and return a live risk multiplier
+  - shadow-only rejection on mode conflict (`INDICATOR_ONLY_MODE`, `AI_ONLY_MODE_NO_AI`) and on `LOW_CONFIDENCE`
+  - track forward-R outcomes for AI and ONNX contributors only — `RecordOutcome` is fed from `ExtractAIName`, which returns nothing for indicator or Elliott families, so those families carry no authority record
+  - promote a mature AI-only contributor from the bootstrap cap to the promoted floor once samples, expectancy, profit factor and loss-streak gates all pass (Batch 172: this became reachable for the first time — see below)
+  - emit `[AUTHORITY-LEARN]` per recorded close and `AuthorityDecision` / `AuthorityReject` JSON events; `[LiveAuthorityResolver]` status shows the effective thresholds and per-strategy eligibility
+- Not implemented (documented here so the gap is visible rather than implied):
+  - **the risk multiplier is computed but never applied.** `authority.riskMultiplier` is copied to `candidate.liveAuthorityRiskMult` (`EAOrchestrator.mq5:3418`) and read by no code in the repository; `result.allowed` is set `true` unconditionally at the end of `Resolve()`, so the only live vetoes are the two mode checks and `LOW_CONFIDENCE`. The score ladder, the bootstrap cap and `PROVEN_AI` promotion currently change only what is logged. Applying it means multiplying the candidate lot in `CPositionSizer`, which is a live-sizing decision, not a wiring detail.
+  - per-family demotion back to shadow when forward evidence degrades — an unproven contributor is capped each cycle, but a promoted one is never demoted except through the `consecutiveLosses < 4` test at evaluation time
+  - trial-window tracking: `InpAuthorityTrialHorizonSeconds`, `InpAuthorityMaxTrackedTrials` and `InpNonAIPromotedRiskMultiplier` reach `config` and are read by nothing
+  - `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` telemetry — these tags appear in no source file and will never appear in a log
+- Related but separate: VPIN order-flow toxicity does affect size, through `CVPINLotModifier` in the `CPositionSizer` modifier chain, not through this resolver. `CPostConsensusValidator::CheckVPINFilter` never vetoes (it returns true on every path), and its stored `m_lastVPINMultiplier` has no reader.
+- Threshold policy (Batch 172): every `InpAuthority*` input now reaches the resolver, but each is clamped so it can only tighten its gate or shrink its multiplier, never the reverse. The floors are the values this project has always documented (30 samples, expectancyR >= 0.3, PF >= 1.2, promoted 0.75x, bootstrap 0.5x); a clamp is announced once at init as `[AUTHORITY-CONFIG] clamped ...` and the effective set is printed as `[AUTHORITY-CONFIG] effective: ...`.
 
 ### 2.10 Position lifecycle domain
 
