@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendRegime.mqh - Trend regime classification                    |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendRegime.mqh - Trend regime classification
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -11,10 +9,8 @@
 
 #include "TrendTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless regime classifier: maps (strength, angle, adx) onto an |
-//| ENUM_TREND_TYPE label, plus the label predicates.                |
-//+------------------------------------------------------------------+
+// Stateless regime classifier: maps (strength, angle, adx) onto an
+// ENUM_TREND_TYPE label, plus the label predicates.
 class CTrendRegime
 {
 public:
@@ -32,9 +28,6 @@ public:
     static bool IsRanging(const ENUM_TREND_TYPE type);
 };
 
-//+------------------------------------------------------------------+
-//| Determine Trend Type                                            |
-//+------------------------------------------------------------------+
 ENUM_TREND_TYPE CTrendRegime::DetermineTrendType(double strength,
                                                  double angle,
                                                  double adx,
@@ -93,36 +86,28 @@ ENUM_TREND_TYPE CTrendRegime::DetermineTrendType(double strength,
     return TREND_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Trend is Bullish                                      |
-//+------------------------------------------------------------------+
+// Check if Trend is Bullish
 bool CTrendRegime::IsBullish(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BULLISH_STRONG || 
            type == TREND_BULLISH_WEAK;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Trend is Bearish                                      |
-//+------------------------------------------------------------------+
+// Check if Trend is Bearish
 bool CTrendRegime::IsBearish(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BEARISH_STRONG || 
            type == TREND_BEARISH_WEAK;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Strong Trend                                          |
-//+------------------------------------------------------------------+
+// Check if Strong Trend
 bool CTrendRegime::IsStrong(const ENUM_TREND_TYPE type)
 {
     return type == TREND_BULLISH_STRONG || 
            type == TREND_BEARISH_STRONG;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Ranging                                               |
-//+------------------------------------------------------------------+
+// Check if Ranging
 bool CTrendRegime::IsRanging(const ENUM_TREND_TYPE type)
 {
     return type == TREND_RANGING;

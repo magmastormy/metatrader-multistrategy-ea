@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| PyBridgeTypes.mqh                                                |
-//| Shared enums and structures for the Python bridge.               |
-//| Extracted verbatim from PythonBridge.mqh (behaviour unchanged).  |
-//+------------------------------------------------------------------+
+// Shared enums and structures for the Python bridge.
+// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -11,9 +8,7 @@
 #ifndef CORE_PYBRIDGE_TYPES_MQH
 #define CORE_PYBRIDGE_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Python Bridge Health State Enum                                  |
-//+------------------------------------------------------------------+
+// Python Bridge Health State Enum
 enum ENUM_PYTHON_BRIDGE_STATE
 {
    PYTHON_BRIDGE_DISCONNECTED = 0,   // Not connected
@@ -22,9 +17,7 @@ enum ENUM_PYTHON_BRIDGE_STATE
    PYTHON_BRIDGE_ERROR        = 3    // Error state
 };
 
-//+------------------------------------------------------------------+
-//| Python Bridge Version Information                                |
-//+------------------------------------------------------------------+
+// Python Bridge Version Information
 struct SPythonBridgeVersion
 {
    string             version;         // Server version string
@@ -43,9 +36,6 @@ struct SPythonBridgeVersion
    }
 };
 
-//+------------------------------------------------------------------+
-//| Python Bridge Health Status                                      |
-//+------------------------------------------------------------------+
 struct SPythonBridgeHealthStatus
 {
    ENUM_PYTHON_BRIDGE_STATE state;    // Connection state
@@ -73,9 +63,6 @@ struct SPythonBridgeHealthStatus
    }
 };
 
-//+------------------------------------------------------------------+
-//| Python Bridge Response Structure                                 |
-//+------------------------------------------------------------------+
 struct SPythonBridgeResponse
 {
    bool               success;         // Request successful

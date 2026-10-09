@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendMath.mqh - Stateless trend math primitives                  |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendMath.mqh - Stateless trend math primitives
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -9,11 +7,9 @@
 #ifndef TREND_MATH_MQH
 #define TREND_MATH_MQH
 
-//+------------------------------------------------------------------+
-//| Stateless numeric helpers used by the trend engine.              |
-//| All methods are static: they depend only on their arguments and  |
-//| on terminal price series, never on engine instance state.        |
-//+------------------------------------------------------------------+
+// Stateless numeric helpers used by the trend engine.
+// All methods are static: they depend only on their arguments and
+// on terminal price series, never on engine instance state.
 class CTrendMath
 {
 public:
@@ -38,9 +34,6 @@ public:
     static double CalculateTrendAngle(double &ma[], int period);
 };
 
-//+------------------------------------------------------------------+
-//| Calculate ATR Fallback                                           |
-//+------------------------------------------------------------------+
 double CTrendMath::CalculateAtrFallback(const string symbol,
                                         ENUM_TIMEFRAMES timeframe,
                                         const int period)
@@ -68,9 +61,6 @@ double CTrendMath::CalculateAtrFallback(const string symbol,
     return trueRangeSum / (double)usable;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate EMA Fallback Series                                    |
-//+------------------------------------------------------------------+
 bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
                                             ENUM_TIMEFRAMES timeframe,
                                             const int period,
@@ -147,9 +137,6 @@ bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Momentum                                              |
-//+------------------------------------------------------------------+
 double CTrendMath::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timeframe, int period)
 {
     MqlRates rates[];
@@ -166,9 +153,6 @@ double CTrendMath::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timefr
     return roc;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Trend Angle                                           |
-//+------------------------------------------------------------------+
 double CTrendMath::CalculateTrendAngle(double &ma[], int period)
 {
     // Validate inputs
@@ -185,7 +169,6 @@ double CTrendMath::CalculateTrendAngle(double &ma[], int period)
     double oldestValue = ma[effectivePeriod];
     double newestValue = ma[0];
     
-    // Validate values are valid numbers
     if(!MathIsValidNumber(oldestValue) || !MathIsValidNumber(newestValue))
         return 0;
     

@@ -1,37 +1,29 @@
-//+------------------------------------------------------------------+
-//| Enterprise Strategy Quorum / Adaptation Config (Phase G - G2)     |
-//|                                                                   |
-//| Pure STORAGE object for the consensus-quorum, sparse-intrabar,    |
-//| adaptive-quorum, regime-relax, decay and participation-formula    |
-//| configuration that used to live as loose members of               |
-//| CEnterpriseStrategyManager, together with the clamping setters    |
-//| that write them.                                                  |
-//|                                                                   |
-//| *** CONSENSUS-GATE INTEGRITY NOTICE ***                           |
-//| NOTHING here computes anything. Every default value, every        |
-//| MathMax/MathMin clamp bound and every PROFIT-xx annotation is a   |
-//| byte-for-byte relocation of the original manager constructor      |
-//| initialiser list / setter bodies. The consensus decision core     |
-//| (CConsensusEngine) still reads these values through exactly the   |
-//| same CEnterpriseStrategyManager getters it read before - those    |
-//| getters are now one-line forwarders into this object, so the      |
-//| numeric behaviour of the quorum path is unchanged.                |
-//|                                                                   |
-//| This module deliberately has NO back-pointer to the manager: it   |
-//| is a leaf value object, held BY VALUE by the manager, and never   |
-//| observes manager state.                                           |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Enterprise Strategy Quorum / Adaptation Config (Phase G - G2)
+// Pure STORAGE object for the consensus-quorum, sparse-intrabar,
+// adaptive-quorum, regime-relax, decay and participation-formula
+// configuration that used to live as loose members of
+// CEnterpriseStrategyManager, together with the clamping setters
+// that write them.
+// *** CONSENSUS-GATE INTEGRITY NOTICE ***
+// NOTHING here computes anything. Every default value, every
+// MathMax/MathMin clamp bound and every PROFIT-xx annotation is a
+// byte-for-byte relocation of the original manager constructor
+// initialiser list / setter bodies. The consensus decision core
+// (CConsensusEngine) still reads these values through exactly the
+// same CEnterpriseStrategyManager getters it read before - those
+// getters are now one-line forwarders into this object, so the
+// numeric behaviour of the quorum path is unchanged.
+// This module deliberately has NO back-pointer to the manager: it
+// is a leaf value object, held BY VALUE by the manager, and never
+// observes manager state.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef ENT_STRATEGY_QUORUM_CONFIG_MQH
 #define ENT_STRATEGY_QUORUM_CONFIG_MQH
 
-//+------------------------------------------------------------------+
-//| Consensus / adaptation configuration store                        |
-//+------------------------------------------------------------------+
+// Consensus / adaptation configuration store
 class CEntStrategyQuorumConfig
 {
 private:
@@ -142,10 +134,8 @@ public:
     void CachePipelineMinConfidence(const double minConfidence);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - defaults relocated verbatim from the manager's      |
-//| constructor initialiser list (including the PROFIT-xx notes).     |
-//+------------------------------------------------------------------+
+// Constructor - defaults relocated verbatim from the manager's
+// constructor initialiser list (including the PROFIT-xx notes).
 CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
     m_minWinRateThreshold(0.40),
     m_maxConsecutiveLosses_Limit(5),
@@ -185,9 +175,7 @@ CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Configuration Setters - Store in mirrored config variables       |
-//+------------------------------------------------------------------+
+// Configuration Setters - Store in mirrored config variables
 void CEntStrategyQuorumConfig::SetMinQuorum(int quorum)
 {
     m_minQuorum = MathMax(1, quorum);
@@ -261,9 +249,6 @@ void CEntStrategyQuorumConfig::SetParticipationFormulaMax(const double maxVal)
     m_participationFormulaMax = MathMax(0.0, MathMin(2.0, maxVal));
 }
 
-//+------------------------------------------------------------------+
-//| Set Orchestrator Mode                                            |
-//+------------------------------------------------------------------+
 void CEntStrategyQuorumConfig::SetOrchestratorMode(double minWinRate, int maxLosses)
 {
     m_minWinRateThreshold = MathMax(0.0, MathMin(1.0, minWinRate));
@@ -273,9 +258,7 @@ void CEntStrategyQuorumConfig::SetOrchestratorMode(double minWinRate, int maxLos
                 m_maxConsecutiveLosses_Limit);
 }
 
-//+------------------------------------------------------------------+
-//| Cache pipeline base confidence floor (SetPipelineFilters)         |
-//+------------------------------------------------------------------+
+// Cache pipeline base confidence floor (SetPipelineFilters)
 void CEntStrategyQuorumConfig::CachePipelineMinConfidence(const double minConfidence)
 {
     m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));

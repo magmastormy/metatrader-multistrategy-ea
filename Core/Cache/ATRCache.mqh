@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| ATR Value Cache                                                  |
-//| Caches ATR values per symbol+timeframe to avoid redundant       |
-//| indicator handle reads within a single bar cycle                 |
-//+------------------------------------------------------------------+
+// ATR Value Cache
+// Caches ATR values per symbol+timeframe to avoid redundant
+// indicator handle reads within a single bar cycle
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"

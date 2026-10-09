@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| StrategyRegistry.mqh                                             |
-//| Central registry for strategy availability and mode filtering    |
-//+------------------------------------------------------------------+
+// Central registry for strategy availability and mode filtering
 #property strict
 
 #ifndef CORE_STRATEGY_STRATEGY_REGISTRY_MQH

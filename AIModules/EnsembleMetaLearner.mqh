@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| EnsembleMetaLearner.mqh                                          |
-//| HMM regime-aware transformer ensemble with Kelly reweighting      |
-//+------------------------------------------------------------------+
+// HMM regime-aware transformer ensemble with Kelly reweighting
 #property strict
 
 #ifndef ENSEMBLE_META_LEARNER_MQH

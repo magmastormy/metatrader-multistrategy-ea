@@ -1,22 +1,16 @@
-//+------------------------------------------------------------------+
-//| OrchestratorProfitGuard.mqh                                      |
-//| Phase F extraction from CEAOrchestrator (behaviour preserving).  |
-//|                                                                  |
-//| Owns the daily profit-target / trailing-profit-floor / trading   |
-//| halt state machine that used to live as six loose members on     |
-//| CEAOrchestrator:                                                 |
-//|   m_lastProfitTargetDay, m_dailyProfitTargetReached,             |
-//|   m_dailyProfitPeakPct, m_trailingProfitFloor,                   |
-//|   m_dailyTradingHalt, m_dailyTradingHaltStartTime                |
-//|                                                                  |
-//| The orchestrator now holds one COrchestratorProfitGuard by value |
-//| and forwards UpdateDailyProfitTarget() / CalculateDailyPnLPercent|
-//| to it. The single external reader of the halt flag               |
-//| (GenerateAndProcessSignals) uses IsTradingHalted().              |
-//|                                                                  |
-//| Constructor initialisers reproduce the original CEAOrchestrator  |
-//| constructor list exactly.                                        |
-//+------------------------------------------------------------------+
+// Phase F extraction from CEAOrchestrator (behaviour preserving).
+// Owns the daily profit-target / trailing-profit-floor / trading
+// halt state machine that used to live as six loose members on
+// CEAOrchestrator:
+// m_lastProfitTargetDay, m_dailyProfitTargetReached,
+// m_dailyProfitPeakPct, m_trailingProfitFloor,
+// m_dailyTradingHalt, m_dailyTradingHaltStartTime
+// The orchestrator now holds one COrchestratorProfitGuard by value
+// and forwards UpdateDailyProfitTarget() / CalculateDailyPnLPercent
+// to it. The single external reader of the halt flag
+// (GenerateAndProcessSignals) uses IsTradingHalted().
+// Constructor initialisers reproduce the original CEAOrchestrator
+// constructor list exactly.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_PROFIT_GUARD_MQH
@@ -24,9 +18,6 @@
 
 #include "OrchestratorConfig.mqh"
 
-//+------------------------------------------------------------------+
-//| COrchestratorProfitGuard                                         |
-//+------------------------------------------------------------------+
 class COrchestratorProfitGuard
 {
 private:

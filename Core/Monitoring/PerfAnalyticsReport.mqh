@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| PerfAnalyticsReport.mqh                                          |
-//| Reporting and snapshot assembly: console reports, real-time      |
-//| dashboard, CSV export and SPerformanceMetrics assembly.          |
-//| Extracted verbatim from PerformanceAnalytics.mqh.                |
-//+------------------------------------------------------------------+
+// Reporting and snapshot assembly: console reports, real-time
+// dashboard, CSV export and SPerformanceMetrics assembly.
+// Extracted verbatim from PerformanceAnalytics.mqh.
 #ifndef CORE_PERF_ANALYTICS_REPORT_MQH
 #define CORE_PERF_ANALYTICS_REPORT_MQH
 
@@ -12,15 +9,11 @@
 #include "PerfAnalyticsEquity.mqh"
 #include "PerfAnalyticsRiskTriggers.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless reporting helpers                                      |
-//+------------------------------------------------------------------+
+// Stateless reporting helpers
 class CPerfAnalyticsReport
 {
 public:
-    //+--------------------------------------------------------------+
-    //| Get Performance Metrics                                      |
-    //+--------------------------------------------------------------+
+// Get Performance Metrics
     static SPerformanceMetrics BuildPerformanceMetrics(const CPerfAnalyticsTradeStats &stats,
                                                        const CPerfAnalyticsEquity &equity)
     {
@@ -42,9 +35,6 @@ public:
         return metrics;
     }
 
-    //+--------------------------------------------------------------+
-    //| Print Performance Report                                     |
-    //+--------------------------------------------------------------+
     static void PrintPerformanceReport(const CPerfAnalyticsTradeStats &stats,
                                        const CPerfAnalyticsEquity &equity,
                                        const CPerfAnalyticsRiskTriggers &triggers)
@@ -79,9 +69,6 @@ public:
         Print("=====================================\n");
     }
 
-    //+--------------------------------------------------------------+
-    //| Print Real-Time Dashboard                                    |
-    //+--------------------------------------------------------------+
     static void PrintRealTimeDashboard(const CPerfAnalyticsTradeStats &stats,
                                        const CPerfAnalyticsEquity &equity,
                                        const CPerfAnalyticsRiskTriggers &triggers)
@@ -113,9 +100,6 @@ public:
         Print("============================================\n");
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Performance Summary                                      |
-    //+--------------------------------------------------------------+
     static string GetPerformanceSummary(const CPerfAnalyticsTradeStats &stats,
                                         const CPerfAnalyticsEquity &equity)
     {
@@ -124,9 +108,6 @@ public:
                             equity.GetCurrentDrawdown(), stats.GetProfitFactor());
     }
 
-    //+--------------------------------------------------------------+
-    //| Save Report to CSV                                           |
-    //+--------------------------------------------------------------+
     static void SaveReportToCSV(const string filename,
                                 const CPerfAnalyticsTradeStats &stats,
                                 const CPerfAnalyticsEquity &equity)

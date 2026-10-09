@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| PosLifecycleExit.mqh                                              |
-//| Scheduled exit rules — partial profit taking (partial close) and  |
-//| maximum position hold time — extracted from                       |
-//| PositionLifecycleManager.mqh (Phase H — God Object decomposition) |
-//|                                                                   |
-//| Owns: partial-profit config + max-hold-time config.               |
-//| Behaviour preserved 1:1 — no logic changes.                       |
-//+------------------------------------------------------------------+
+// Scheduled exit rules — partial profit taking (partial close) and
+// maximum position hold time — extracted from
+// PositionLifecycleManager.mqh (Phase H — God Object decomposition)
+// Owns: partial-profit config + max-hold-time config.
+// Behaviour preserved 1:1 — no logic changes.
 #ifndef POS_LIFECYCLE_EXIT_MQH
 #define POS_LIFECYCLE_EXIT_MQH
 
@@ -14,10 +10,7 @@
 #include "PosLifecycleMagicFilter.mqh"
 #include "PosLifecycleVolatility.mqh"   // CPosLifecycleVolatility::GetATR()
 
-//+------------------------------------------------------------------+
-//| CPosLifecycleExit                                                 |
-//| Stateful module — held BY VALUE by CPositionLifecycleManager.     |
-//+------------------------------------------------------------------+
+// Stateful module — held BY VALUE by CPositionLifecycleManager.
 class CPosLifecycleExit
 {
 private:
@@ -134,7 +127,6 @@ public:
             else
                 profitDistance = openPrice - currentPrice;
 
-            // Get ATR
             double atr = CPosLifecycleVolatility::GetATR(symbol, 14);
             if(atr <= 0) continue;
 

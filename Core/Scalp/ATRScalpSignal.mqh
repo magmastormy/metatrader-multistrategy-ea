@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| ATRScalpSignal.mqh                                               |
-//| ATR/EMA/RSI indicator buffers and scalp signal evaluation for    |
-//| the ATR scalping engine. Owns the per-symbol indicator handles   |
-//| and the spike-window block counter.                              |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// ATR/EMA/RSI indicator buffers and scalp signal evaluation for
+// the ATR scalping engine. Owns the per-symbol indicator handles
+// and the spike-window block counter.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -16,9 +13,7 @@
 #include "ATRScalpTypes.mqh"
 #include "ATRScalpFilter.mqh"
 
-//+------------------------------------------------------------------+
-//| CATRScalpSignal — indicator handles + signal evaluation           |
-//+------------------------------------------------------------------+
+// CATRScalpSignal — indicator handles + signal evaluation
 class CATRScalpSignal
 {
 private:
@@ -32,17 +27,13 @@ private:
    int   m_totalSpikeWindowBlocks;
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CATRScalpSignal() :
       m_totalSpikeWindowBlocks(0)
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Resize every handle array to hold newSize symbols                 |
-   //+------------------------------------------------------------------+
+// Resize every handle array to hold newSize symbols
    void ResizeHandles(int newSize)
    {
       ArrayResize(m_atrHandles, newSize);
@@ -51,9 +42,7 @@ public:
       ArrayResize(m_rsiHandles, newSize);
    }
 
-   //+------------------------------------------------------------------+
-   //| Store the handles created for one symbol slot                     |
-   //+------------------------------------------------------------------+
+// Store the handles created for one symbol slot
    void SetHandles(int idx, int atrHandle, int emaFastHandle, int emaSlowHandle, int rsiHandle)
    {
       m_atrHandles[idx]     = atrHandle;
@@ -62,10 +51,8 @@ public:
       m_rsiHandles[idx]     = rsiHandle;
    }
 
-   //+------------------------------------------------------------------+
-   //| Batch 117: Handles are owned by CIndicatorManager — do NOT release |
-   //| them. Just invalidate our references to prevent stale handle usage |
-   //+------------------------------------------------------------------+
+// Batch 117: Handles are owned by CIndicatorManager — do NOT release
+// them. Just invalidate our references to prevent stale handle usage
    void InvalidateHandles(int symbolCount)
    {
       for(int i = 0; i < symbolCount; i++)
@@ -77,14 +64,10 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Spike-window block counter                                        |
-   //+------------------------------------------------------------------+
+// Spike-window block counter
    int TotalSpikeWindowBlocks() const { return m_totalSpikeWindowBlocks; }
 
-   //+------------------------------------------------------------------+
-   //| Update indicator values for a symbol                              |
-   //+------------------------------------------------------------------+
+// Update indicator values for a symbol
    bool UpdateIndicators(int idx, SATRScalpSymbolState &state)
    {
       // ATR
@@ -156,10 +139,8 @@ public:
       return (state.currentATR > 0.0);
    }
 
-   //+------------------------------------------------------------------+
-   //| Evaluate scalp signal: EMA crossover + RSI + spread + spike gate  |
-   //| Returns 0=none, 1=BUY, -1=SELL                                   |
-   //+------------------------------------------------------------------+
+// Evaluate scalp signal: EMA crossover + RSI + spread + spike gate
+// Returns 0=none, 1=BUY, -1=SELL
    int EvaluateScalpSignal(SATRScalpSymbolState &state, const SATRScalpingConfig &config)
    {
       // Must have a fresh EMA crossover - Batch 152 (S-M-02): the cross must
@@ -170,11 +151,9 @@ public:
       if(state.lastEmaCrossBarTime == 0 || state.lastEmaCrossBarTime != iTime(state.symbol, PERIOD_M1, 0))
          return 0;
 
-      // RSI confirmation
       if(!CATRScalpFilter::PassesRsiConfirmation(state, config, crossDir))
          return 0;
 
-      // Spread gate: spread < spreadMaxATRRatio * ATR
       if(!CATRScalpFilter::PassesSpreadGate(state.symbol, state.currentATR, config.spreadMaxATRRatio))
          return 0;
 

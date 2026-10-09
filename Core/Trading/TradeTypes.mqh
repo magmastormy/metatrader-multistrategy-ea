@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| TradeTypes.mqh                                                   |
-//| Shared trade type definitions for modular trade components       |
-//+------------------------------------------------------------------+
+// Shared trade type definitions for modular trade components
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "2.00"
@@ -99,7 +96,6 @@ struct SSmartOrderParams
     SSmartOrderParams() : shouldTrade(true), recommendedSlippage(0), recommendedFillMode(ORDER_FILLING_FOK), reason("") {}
 };
 
-// Execution quality metrics
 struct ExecutionQualityMetrics
 {
     int totalOrders;
@@ -220,7 +216,6 @@ struct SPositionParams
                        maxPyramidEntries(0) {}
 };
 
-// Trade validation result
 struct STradeValidationResult
 {
     bool isValid;

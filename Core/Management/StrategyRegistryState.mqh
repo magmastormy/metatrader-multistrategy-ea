@@ -1,55 +1,46 @@
-//+------------------------------------------------------------------+
-//| Strategy Registry State (Phase C, Slice 4 - C8)                  |
-//| Registry bookkeeping and per-strategy enable-state extracted from |
-//| CEnterpriseStrategyManager:                                       |
-//|   - RegisterStrategy        (registration bookkeeping: registry   |
-//|                              gate, capacity gate, strategy Init / |
-//|                              AI init / risk-injection validation, |
-//|                              entry append, health-monitor         |
-//|                              enrolment, registration log)         |
-//|   - FindStrategyIndexByName (name -> index lookup)                |
-//|   - GetStrategyByName       (name -> IStrategy* lookup)           |
-//|   - IsStrategyLiveVoter     ("is strategy X an enabled live       |
-//|                              voter?" enable-state query)          |
-//|   - SetStrategyRoleByName / SetStrategyClusterByName /            |
-//|     SetStrategyLiveVotingEligibilityByName /                      |
-//|     SetStrategyGovernanceByName (registry-entry metadata          |
-//|                              bookkeeping)                         |
-//|                                                                   |
-//| This module MUTATES the manager, so it holds a NON-const back-    |
-//| pointer and writes through the manager's narrow per-field         |
-//| accessors. It mirrors no injected manager pointer (the registry / |
-//| trade manager / position sizer / risk manager are re-read from    |
-//| the manager on every call), so - like Slice 2/3 - it needs no     |
-//| re-sync on Deinit or on the manager's injection setters.          |
-//|                                                                   |
-//| HARD GUARD - DELIBERATELY NOT MOVED:                              |
-//|   - SyncEnabledWithRegistry(). It reconciles the enable flags     |
-//|     against the shared CStrategyRegistry and therefore belongs to |
-//|     the C9 consensus-core reconciliation step. Its body must stay |
-//|     verbatim in the manager and its only call site is             |
-//|     Core/Orchestration/EAOrchestrator.mqh:768. Slice 3 already    |
-//|     recorded the same guard for C7.                               |
-//|   - EvaluateConsensusInternal and the rest of the C9 core, which  |
-//|     call IsStrategyLiveVoter(). The manager therefore keeps a     |
-//|     private same-signature forwarder so those bodies are byte-    |
-//|     stable.                                                       |
-//|   - UpdateStrategyWeightByName / SetStrategyConfidenceThresholdByName.|
-//|     Both are name lookups, but what they write is WEIGHT and      |
-//|     CONFIDENCE THRESHOLD - C4 weighting/config territory, which   |
-//|     Slice 2 deliberately left in the manager. Only the registry   |
-//|     metadata setters (role / cluster / live-voting) move here.    |
-//|   - The 35-field StrategyEntry initialiser block. It stays in the |
-//|     manager behind the narrow, logic-free mutator                 |
-//|     AppendRegisteredStrategyEntry(), exactly like C4's            |
-//|     ApplyRawStrategyWeight(): relocating it would otherwise need  |
-//|     a write accessor for every field of the struct.               |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Registry State (Phase C, Slice 4 - C8)
+// Registry bookkeeping and per-strategy enable-state extracted from
+// - RegisterStrategy        (registration bookkeeping: registry
+// gate, capacity gate, strategy Init /
+// AI init / risk-injection validation,
+// entry append, health-monitor
+// enrolment, registration log)
+// - FindStrategyIndexByName (name -> index lookup)
+// - GetStrategyByName       (name -> IStrategy* lookup)
+// - IsStrategyLiveVoter     ("is strategy X an enabled live
+// voter?" enable-state query)
+// SetStrategyGovernanceByName (registry-entry metadata
+// bookkeeping)
+// This module MUTATES the manager, so it holds a NON-const back-
+// pointer and writes through the manager's narrow per-field
+// accessors. It mirrors no injected manager pointer (the registry /
+// trade manager / position sizer / risk manager are re-read from
+// the manager on every call), so - like Slice 2/3 - it needs no
+// re-sync on Deinit or on the manager's injection setters.
+// HARD GUARD - DELIBERATELY NOT MOVED:
+// - SyncEnabledWithRegistry(). It reconciles the enable flags
+// against the shared CStrategyRegistry and therefore belongs to
+// the C9 consensus-core reconciliation step. Its body must stay
+// verbatim in the manager and its only call site is
+// Core/Orchestration/EAOrchestrator.mqh:768. Slice 3 already
+// recorded the same guard for C7.
+// - EvaluateConsensusInternal and the rest of the C9 core, which
+// call IsStrategyLiveVoter(). The manager therefore keeps a
+// private same-signature forwarder so those bodies are byte-
+// stable.
+// Both are name lookups, but what they write is WEIGHT and
+// CONFIDENCE THRESHOLD - C4 weighting/config territory, which
+// Slice 2 deliberately left in the manager. Only the registry
+// metadata setters (role / cluster / live-voting) move here.
+// - The 35-field StrategyEntry initialiser block. It stays in the
+// manager behind the narrow, logic-free mutator
+// AppendRegisteredStrategyEntry(), exactly like C4's
+// ApplyRawStrategyWeight(): relocating it would otherwise need
+// a write accessor for every field of the struct.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_REGISTRY_STATE_MQH
 #define STRATEGY_REGISTRY_STATE_MQH
 
@@ -65,9 +56,7 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-//+------------------------------------------------------------------+
-//| Registry / enable-state facade over CEnterpriseStrategyManager    |
-//+------------------------------------------------------------------+
+// Registry / enable-state facade over CEnterpriseStrategyManager
 class CStrategyRegistryState
 {
 private:
@@ -105,9 +94,6 @@ public:
                                      const bool liveVotingEnabled);
 };
 
-//+------------------------------------------------------------------+
-//| Register Strategy                                                |
-//+------------------------------------------------------------------+
 bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string name,
                                               bool enabled, double weight,
                                               ENUM_STRATEGY_TIER tier,
@@ -195,9 +181,7 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Name -> index lookup (-1 when absent)                             |
-//+------------------------------------------------------------------+
+// Name -> index lookup (-1 when absent)
 int CStrategyRegistryState::FindStrategyIndexByName(const string name) const
 {
     if(m_src == NULL)
@@ -212,9 +196,7 @@ int CStrategyRegistryState::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy By Name - Batch 103: returns strategy pointer        |
-//+------------------------------------------------------------------+
+// Get Strategy By Name - Batch 103: returns strategy pointer
 IStrategy* CStrategyRegistryState::GetStrategyByName(const string name) const
 {
     if(m_src == NULL)
@@ -226,9 +208,7 @@ IStrategy* CStrategyRegistryState::GetStrategyByName(const string name) const
     return m_src.GetStrategyPtr(idx);
 }
 
-//+------------------------------------------------------------------+
-//| Enable-state query: registered, enabled, live-voting strategy     |
-//+------------------------------------------------------------------+
+// Enable-state query: registered, enabled, live-voting strategy
 bool CStrategyRegistryState::IsStrategyLiveVoter(const int strategyIndex) const
 {
     if(m_src == NULL)
@@ -243,9 +223,7 @@ bool CStrategyRegistryState::IsStrategyLiveVoter(const int strategyIndex) const
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Registry metadata: role                                           |
-//+------------------------------------------------------------------+
+// Registry metadata: role
 bool CStrategyRegistryState::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
 {
     if(m_src == NULL)
@@ -261,9 +239,7 @@ bool CStrategyRegistryState::SetStrategyRoleByName(const string name, ENUM_STRAT
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Registry metadata: cluster                                        |
-//+------------------------------------------------------------------+
+// Registry metadata: cluster
 bool CStrategyRegistryState::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
 {
     if(m_src == NULL)
@@ -279,9 +255,6 @@ bool CStrategyRegistryState::SetStrategyClusterByName(const string name, ENUM_ST
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Enable-state: live-voting eligibility                             |
-//+------------------------------------------------------------------+
 bool CStrategyRegistryState::SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled)
 {
     if(m_src == NULL)
@@ -297,9 +270,7 @@ bool CStrategyRegistryState::SetStrategyLiveVotingEligibilityByName(const string
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Registry metadata: role + cluster + live-voting in one shot       |
-//+------------------------------------------------------------------+
+// Registry metadata: role + cluster + live-voting in one shot
 bool CStrategyRegistryState::SetStrategyGovernanceByName(const string name,
                                                          ENUM_STRATEGY_ROLE role,
                                                          ENUM_STRATEGY_CLUSTER cluster,

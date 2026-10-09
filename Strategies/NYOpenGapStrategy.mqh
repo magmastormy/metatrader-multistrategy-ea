@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| NYOpenGapStrategy.mqh                                            |
-//| NY Open Gap: NDOG fade with FVG confluence during NY open       |
-//| Trades the gap-fill tendency at 13:30-14:00 UTC                  |
-//| (= 09:30-10:00 NY local during US daylight time; shift +1h for  |
-//|  US standard time). Window is evaluated in GMT, NOT broker time. |
-//|                                                                  |
-//| Batch 103: Session-specific strategy for forex/metals/indices     |
-//+------------------------------------------------------------------+
+// NY Open Gap: NDOG fade with FVG confluence during NY open
+// Trades the gap-fill tendency at 13:30-14:00 UTC
+// (= 09:30-10:00 NY local during US daylight time; shift +1h for
+// US standard time). Window is evaluated in GMT, NOT broker time.
+// Batch 103: Session-specific strategy for forex/metals/indices
 #ifndef NY_OPEN_GAP_STRATEGY_MQH
 #define NY_OPEN_GAP_STRATEGY_MQH
 

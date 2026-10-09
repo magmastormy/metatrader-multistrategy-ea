@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| OnnxBrain.mqh                                                    |
-//| Rolling-window ONNX inference (Live-only; no shadow/hot-swap)    |
-//+------------------------------------------------------------------+
+// Rolling-window ONNX inference (Live-only; no shadow/hot-swap)
 #property strict
 
 #ifndef ONNX_BRAIN_MQH

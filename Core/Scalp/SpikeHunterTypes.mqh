@@ -1,25 +1,17 @@
-//+------------------------------------------------------------------+
-//| SpikeHunterTypes.mqh                                             |
-//| Decomposition extraction from CSpikeHunterEngine (behaviour      |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the three plain-data structs that used to be declared       |
-//| inline inside SpikeHunterEngine.mqh:                             |
-//|   SSpikeHunterConfig, SSpikeSymbolState,                         |
-//|   SSpikeHunterFamilyOverrides                                    |
-//|                                                                  |
-//| SpikeHunterEngine.mqh #includes this header, so every existing   |
-//| consumer of these types keeps seeing them unchanged.             |
-//| Field order, defaults and comments are reproduced verbatim.      |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CSpikeHunterEngine (behaviour
+// preserving).
+// Owns the three plain-data structs that used to be declared
+// inline inside SpikeHunterEngine.mqh:
+// SSpikeHunterConfig, SSpikeSymbolState,
+// SSpikeHunterFamilyOverrides
+// SpikeHunterEngine.mqh #includes this header, so every existing
+// consumer of these types keeps seeing them unchanged.
+// Field order, defaults and comments are reproduced verbatim.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_TYPES_MQH
 #define CORE_SCALP_SPIKE_HUNTER_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Spike hunter configuration struct                                 |
-//+------------------------------------------------------------------+
 struct SSpikeHunterConfig
 {
    double   velocityMultiplier;         // Tick rate multiplier threshold (default 2.5)
@@ -59,9 +51,7 @@ struct SSpikeHunterConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Per-symbol spike state tracking                                   |
-//+------------------------------------------------------------------+
+// Per-symbol spike state tracking
 struct SSpikeSymbolState
 {
    string   symbol;
@@ -94,9 +84,7 @@ struct SSpikeSymbolState
    datetime lastDiagTime;              // Last time near-miss diagnostic was logged
 };
 
-//+------------------------------------------------------------------+
-//| Per-symbol family override parameters (Batch 102)                 |
-//+------------------------------------------------------------------+
+// Per-symbol family override parameters (Batch 102)
 struct SSpikeHunterFamilyOverrides
 {
    string   symbol;

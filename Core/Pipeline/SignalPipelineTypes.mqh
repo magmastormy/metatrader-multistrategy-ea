@@ -1,16 +1,12 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Types - shared structs/enums (extracted)         |
-//| Owns filter settings + evidence snapshot data model.            |
-//+------------------------------------------------------------------+
+// Signal Pipeline Types - shared structs/enums (extracted)
+// Owns filter settings + evidence snapshot data model.
 #ifndef SIGNAL_PIPELINE_TYPES_MQH
 #define SIGNAL_PIPELINE_TYPES_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../../Core/Registry/MathematicalEngineRegistry.mqh"
 
-//+------------------------------------------------------------------+
-//| Filter Preset Types                                             |
-//+------------------------------------------------------------------+
+// Filter Preset Types
 enum ENUM_FILTER_PRESET
 {
     FILTER_PRESET_CONSERVATIVE,
@@ -19,9 +15,6 @@ enum ENUM_FILTER_PRESET
     FILTER_PRESET_CUSTOM
 };
 
-//+------------------------------------------------------------------+
-//| Readiness Score Configuration                                   |
-//+------------------------------------------------------------------+
 struct SReadinessScoreConfig
 {
     double healthyScore;
@@ -61,11 +54,8 @@ struct SReadinessScoreConfig
     }
 };
 
-//+------------------------------------------------------------------+
-//| Signal Filter Settings - Grouped Nested Structs (L4-012 Fix)    |
-//+------------------------------------------------------------------+
+// Signal Filter Settings - Grouped Nested Structs (L4-012 Fix)
 
-// Trend Filter Settings
 struct STrendFilterSettings
 {
     bool enabled;
@@ -79,7 +69,6 @@ struct STrendFilterSettings
     }
 };
 
-// Volatility Filter Settings
 struct SVolatilityFilterSettings
 {
     bool enabled;
@@ -93,7 +82,6 @@ struct SVolatilityFilterSettings
     }
 };
 
-// Liquidity Filter Settings
 struct SLiquidityFilterSettings
 {
     bool enabled;
@@ -103,7 +91,6 @@ struct SLiquidityFilterSettings
     bool Validate() const { return true; }
 };
 
-// Structure Filter Settings
 struct SStructureFilterSettings
 {
     bool enabled;
@@ -134,7 +121,6 @@ struct SSessionFilterSettings
     bool Validate() const { return true; }
 };
 
-// Regime Cost Gate Settings
 struct SRegimeCostGateSettings
 {
     bool enabled;
@@ -160,7 +146,6 @@ struct SRegimeCostGateSettings
     }
 };
 
-// Confidence Settings
 struct SConfidenceSettings
 {
     double minConfidence;
@@ -178,7 +163,6 @@ struct SConfidenceSettings
     }
 };
 
-// Filter Order Settings
 struct SFilterOrderSettings
 {
     int filterOrder[7];
@@ -308,9 +292,6 @@ struct SignalFilterSettings
     }
 };
 
-//+------------------------------------------------------------------+
-//| Pipeline evidence snapshot                                       |
-//+------------------------------------------------------------------+
 struct SPipelineEvidenceSnapshot
 {
     string symbol;

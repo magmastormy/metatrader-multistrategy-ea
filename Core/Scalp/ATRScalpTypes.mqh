@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| ATRScalpTypes.mqh                                                |
-//| Shared plain-data types for the ATR scalping engine.             |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//| Field order, defaults and comments are reproduced unchanged.     |
-//+------------------------------------------------------------------+
+// Shared plain-data types for the ATR scalping engine.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
+// Field order, defaults and comments are reproduced unchanged.
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -12,9 +9,6 @@
 #ifndef CORE_SCALP_ATR_SCALP_TYPES_MQH
 #define CORE_SCALP_ATR_SCALP_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| ATR scalping configuration struct                                 |
-//+------------------------------------------------------------------+
 struct SATRScalpingConfig
 {
    int      atrPeriod;                // ATR period (default 14)
@@ -50,9 +44,7 @@ struct SATRScalpingConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Per-symbol ATR scalp state tracking                               |
-//+------------------------------------------------------------------+
+// Per-symbol ATR scalp state tracking
 struct SATRScalpSymbolState
 {
    string   symbol;

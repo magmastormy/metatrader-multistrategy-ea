@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| UnprotectedPositionTracker.mqh                                   |
-//| Tracks and remediates positions without stop-loss protection     |
-//| 3-attempt escalation: standard SL → broker-min SL → forced close |
-//+------------------------------------------------------------------+
+// Tracks and remediates positions without stop-loss protection
+// 3-attempt escalation: standard SL → broker-min SL → forced close
 #ifndef CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
 #define CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
 
@@ -11,14 +8,11 @@
 #include "UnifiedRiskManager.mqh"
 #include "../Trading/TradeManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Unprotected Position Tracker                                     |
-//| Encapsulates detection, tracking, and remediation of positions   |
-//| that lack stop-loss protection. Implements a 3-attempt           |
-//| escalation protocol before forced closure.                       |
-//| L5-022 FIX: Pass min/max magic directly to Initialize()         |
-//| L5-023 FIX: Context-aware escalation (position size, DD, vol)   |
-//+------------------------------------------------------------------+
+// Encapsulates detection, tracking, and remediation of positions
+// that lack stop-loss protection. Implements a 3-attempt
+// escalation protocol before forced closure.
+// L5-022 FIX: Pass min/max magic directly to Initialize()
+// L5-023 FIX: Context-aware escalation (position size, DD, vol)
 class CUnprotectedPositionTracker
 {
 private:
@@ -51,15 +45,13 @@ public:
         ArrayResize(m_attempts, 0);
     }
 
-    //+------------------------------------------------------------------+
-    //| Initialize with external dependencies                           |
-    //| Batch 168: the magic window is no longer passed in here. The     |
-    //| previous call site handed the symbol-array length to the         |
-    //| maxMagicNumber parameter, producing the empty range              |
-    //| [123456, 13] - so IsEAOwnedMagic was false for every position    |
-    //| and no-SL remediation never ran. Ownership now resolves through  |
-    //| CMagicRange, configured once by the orchestrator.                |
-    //+------------------------------------------------------------------+
+// Initialize with external dependencies
+// Batch 168: the magic window is no longer passed in here. The
+// previous call site handed the symbol-array length to the
+// maxMagicNumber parameter, producing the empty range
+// [123456, 13] - so IsEAOwnedMagic was false for every position
+// and no-SL remediation never ran. Ownership now resolves through
+// CMagicRange, configured once by the orchestrator.
     void Initialize(CTradeManager* tradeMgr, CUnifiedRiskManager* riskMgr,
                     int remediationIntervalSec = 15, int maxRestoreAttempts = 3)
     {
@@ -69,9 +61,7 @@ public:
         m_maxRestoreAttempts      = MathMax(1, maxRestoreAttempts);
     }
 
-    //+------------------------------------------------------------------+
-    //| Set context-aware escalation parameters (L5-023)                |
-    //+------------------------------------------------------------------+
+// Set context-aware escalation parameters (L5-023)
     void SetEscalationContext(double maxPositionSizeLots, double maxDrawdownPct, double volatilityATRThreshold)
     {
         m_maxPositionSizeForEscalation = MathMax(0.01, maxPositionSizeLots);
@@ -79,18 +69,14 @@ public:
         m_volatilityThreshold = MathMax(0.0, volatilityATRThreshold);
     }
 
-    //+------------------------------------------------------------------+
-    //| Check if a magic number falls within this EA's ownership range   |
-    //| Batch 168: resolves through CMagicRange, the single authority.   |
-    //+------------------------------------------------------------------+
+// Check if a magic number falls within this EA's ownership range
+// Batch 168: resolves through CMagicRange, the single authority.
     bool IsEAOwnedMagic(long magic) const
     {
         return IsMagicOwned(magic);
     }
 
-    //+------------------------------------------------------------------+
-    //| Find tracker index for a ticket (-1 if not found)               |
-    //+------------------------------------------------------------------+
+// Find tracker index for a ticket (-1 if not found)
     int FindTrackerIndex(const ulong ticket) const
     {
         for(int i = 0; i < ArraySize(m_tickets); i++)
@@ -101,9 +87,7 @@ public:
         return -1;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get attempt count for a ticket                                   |
-    //+------------------------------------------------------------------+
+// Get attempt count for a ticket
     int GetAttempts(const ulong ticket) const
     {
         int idx = FindTrackerIndex(ticket);
@@ -112,9 +96,7 @@ public:
         return m_attempts[idx];
     }
 
-    //+------------------------------------------------------------------+
-    //| Set attempt count for a ticket (adds entry if new)              |
-    //+------------------------------------------------------------------+
+// Set attempt count for a ticket (adds entry if new)
     void SetAttempts(const ulong ticket, const int attempts)
     {
         int idx = FindTrackerIndex(ticket);
@@ -149,9 +131,7 @@ public:
         m_attempts[idx] = MathMax(0, attempts);
     }
 
-    //+------------------------------------------------------------------+
-    //| Clear a ticket from the tracker                                 |
-    //+------------------------------------------------------------------+
+// Clear a ticket from the tracker
     void ClearTicket(const ulong ticket)
     {
         int idx = FindTrackerIndex(ticket);
@@ -168,9 +148,7 @@ public:
         ArrayResize(m_attempts, last);
     }
 
-    //+------------------------------------------------------------------+
-    //| Remove entries for positions that no longer need tracking       |
-    //+------------------------------------------------------------------+
+// Remove entries for positions that no longer need tracking
     void Cleanup()
     {
         for(int i = ArraySize(m_tickets) - 1; i >= 0; i--)
@@ -181,9 +159,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Build fallback stop-loss distance in points                     |
-    //+------------------------------------------------------------------+
+// Build fallback stop-loss distance in points
     static double BuildFallbackStopPoints(const string symbol, const double referencePrice)
     {
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -196,12 +172,10 @@ public:
         return MathMax(fallbackByStops, fallbackByPrice);
     }
 
-    //+------------------------------------------------------------------+
-    //| Main remediation sweep — 3-attempt escalation protocol          |
-    //| Escalation-1: Standard SL at fallback distance                  |
-    //| Escalation-2: Broker minimum distance SL                        |
-    //| Escalation-3: Forced close (position must not exist without SL) |
-    //+------------------------------------------------------------------+
+// Main remediation sweep — 3-attempt escalation protocol
+// Escalation-1: Standard SL at fallback distance
+// Escalation-2: Broker minimum distance SL
+// Escalation-3: Forced close (position must not exist without SL)
     void AttemptRemediation()
     {
         if(m_riskManager == NULL || m_tradeManager == NULL)
@@ -392,9 +366,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Reset all tracking state (for OnInit / OnDeinit)                |
-    //+------------------------------------------------------------------+
+// Reset all tracking state (for OnInit / OnDeinit)
     void Reset()
     {
         m_lastAttempt = 0;

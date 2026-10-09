@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CCheckpointManager.mqh                                            |
-//| Handles atomic checkpoint save/load for neural network           |
-//+------------------------------------------------------------------+
+// Handles atomic checkpoint save/load for neural network
 #ifndef NEURAL_CHECKPOINT_MANAGER_MQH
 #define NEURAL_CHECKPOINT_MANAGER_MQH
 

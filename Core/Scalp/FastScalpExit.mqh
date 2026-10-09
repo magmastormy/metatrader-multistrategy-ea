@@ -1,24 +1,18 @@
-//+------------------------------------------------------------------+
-//| FastScalpExit.mqh                                                |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the tick-level scalp exit management that used to live as   |
-//| three large public methods on CFastScalpEngine:                  |
-//|   ManageScalpPositions()      — 1R partial close, breakeven,     |
-//|                                 tight trailing                   |
-//|   SyncScalpPositionTracking() — reconcile tracker vs terminal    |
-//|   FreeScalpRiskBudget()       — tracker lookup + budget release  |
-//|                                                                  |
-//| All methods are `static`; every piece of mutable state lives in  |
-//| the tracker / budget objects passed in by reference.             |
-//|                                                                  |
-//| IMPORTANT — original in-place semantics preserved:               |
-//| section 3 (trailing) reads `breakevenSet` AFTER section 2 may    |
-//| have just set it. The local snapshot is therefore mirrored       |
-//| (state.breakevenSet = true) at the same moment the tracker slot  |
-//| is marked, reproducing the original read-after-write exactly.    |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the tick-level scalp exit management that used to live as
+// three large public methods on CFastScalpEngine:
+// ManageScalpPositions()      — 1R partial close, breakeven,
+// tight trailing
+// SyncScalpPositionTracking() — reconcile tracker vs terminal
+// FreeScalpRiskBudget()       — tracker lookup + budget release
+// All methods are `static`; every piece of mutable state lives in
+// the tracker / budget objects passed in by reference.
+// IMPORTANT — original in-place semantics preserved:
+// section 3 (trailing) reads `breakevenSet` AFTER section 2 may
+// have just set it. The local snapshot is therefore mirrored
+// (state.breakevenSet = true) at the same moment the tracker slot
+// is marked, reproducing the original read-after-write exactly.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_EXIT_MQH
@@ -30,17 +24,13 @@
 #include "FastScalpPositionTracker.mqh"
 #include "FastScalpRiskBudget.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpExit — stateless scalp position management              |
-//+------------------------------------------------------------------+
+// CFastScalpExit — stateless scalp position management
 class CFastScalpExit
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Free the scalp risk budget consumed by `ticket`.                  |
-   //| Was CFastScalpEngine::FreeScalpRiskBudget() — the tracker scan is |
-   //| done here, the arithmetic lives in CFastScalpRiskBudget.          |
-   //+------------------------------------------------------------------+
+// Free the scalp risk budget consumed by `ticket`.
+// Was CFastScalpEngine::FreeScalpRiskBudget() — the tracker scan is
+// done here, the arithmetic lives in CFastScalpRiskBudget.
    static void FreeScalpRiskBudget(ulong ticket,
                                    CFastScalpPositionTracker &tracker,
                                    CFastScalpRiskBudget &budget,
@@ -54,9 +44,7 @@ public:
       budget.FreeForTicket(ticket, found, state, riskManager);
    }
 
-   //+------------------------------------------------------------------+
-   //| Sync tracked scalp positions with actual open positions           |
-   //+------------------------------------------------------------------+
+// Sync tracked scalp positions with actual open positions
    static void SyncScalpPositionTracking(CFastScalpPositionTracker &tracker,
                                          CFastScalpRiskBudget &budget,
                                          CUnifiedRiskManager* riskManager)
@@ -114,11 +102,9 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Manage scalp positions at tick level                              |
-   //| Quick profit lock, tight trailing, partial close                  |
-   //| NOT throttled to 1 second like swing trailing                     |
-   //+------------------------------------------------------------------+
+// Manage scalp positions at tick level
+// Quick profit lock, tight trailing, partial close
+// NOT throttled to 1 second like swing trailing
    static void ManageScalpPositions(CFastScalpPositionTracker &tracker,
                                     CFastScalpRiskBudget &budget,
                                     CTradeManager* tradeManager,

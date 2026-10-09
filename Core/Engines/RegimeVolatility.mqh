@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| RegimeVolatility.mqh                                             |
-//| Volatility / dispersion measurement helpers (stateless)          |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Volatility / dispersion measurement helpers (stateless)
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_VOLATILITY_MQH
 #define REGIME_VOLATILITY_MQH
 
 #include "RegimeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Rate-derived ATR / Bollinger fallback, range z-score and the     |
-//| sanitised ADX read. All pure functions of (symbol, tf, config).  |
-//+------------------------------------------------------------------+
+// Rate-derived ATR / Bollinger fallback, range z-score and the
+// sanitised ADX read. All pure functions of (symbol, tf, config).
 class CRegimeVolatility
 {
 public:
@@ -35,9 +30,7 @@ public:
                                const ENUM_TIMEFRAMES timeframe);
 };
 
-//+------------------------------------------------------------------+
-//| Build ATR / Bollinger values from raw rates                      |
-//+------------------------------------------------------------------+
+// Build ATR / Bollinger values from raw rates
 bool CRegimeVolatility::BuildFallbackIndicators(const string symbol,
                                                 const ENUM_TIMEFRAMES timeframe,
                                                 const SRegimeConfig &config,
@@ -95,9 +88,7 @@ bool CRegimeVolatility::BuildFallbackIndicators(const string symbol,
             MathIsValidNumber(bbLowerValue));
 }
 
-//+------------------------------------------------------------------+
-//| Rolling close z-score                                            |
-//+------------------------------------------------------------------+
+// Rolling close z-score
 bool CRegimeVolatility::ComputeRangeZScore(const string symbol,
                                            const ENUM_TIMEFRAMES timeframe,
                                            const int zScoreWindow,
@@ -132,9 +123,7 @@ bool CRegimeVolatility::ComputeRangeZScore(const string symbol,
     return MathIsValidNumber(zScoreOut);
 }
 
-//+------------------------------------------------------------------+
-//| ENHANCEMENT: sanitised ADX read (Batch 93 - Week 5)              |
-//+------------------------------------------------------------------+
+// ENHANCEMENT: sanitised ADX read (Batch 93 - Week 5)
 double CRegimeVolatility::ReadAdxValue(const int adxHandle,
                                        const string symbol,
                                        const ENUM_TIMEFRAMES timeframe)

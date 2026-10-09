@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MarketAnalysisRegime.mqh - Regime state machine and history      |
-//| Extracted verbatim from MarketAnalysis.mqh (no behavior change)  |
-//+------------------------------------------------------------------+
+// MarketAnalysisRegime.mqh - Regime state machine and history
+// Extracted verbatim from MarketAnalysis.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -11,10 +9,8 @@
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the market regime state, the rolling regime history and the |
-//| classification thresholds.                                       |
-//+------------------------------------------------------------------+
+// Owns the market regime state, the rolling regime history and the
+// classification thresholds.
 class CMarketAnalysisRegime
 {
 private:
@@ -49,16 +45,13 @@ public:
     //--- Classify the supplied metrics and roll the regime history
     ENUM_MARKET_REGIME UpdateRegime(const string symbol, const double trendStrength, const double volatility);
 
-    //--- Get current market regime
     ENUM_MARKET_REGIME GetCurrentRegime() const { return m_currentRegime; }
 
     //--- Set market regime (used when loading from session memory)
     void SetMarketRegime(ENUM_MARKET_REGIME regime) { m_currentRegime = regime; }
 };
 
-//+------------------------------------------------------------------+
-//| Classify the supplied metrics and roll the regime history        |
-//+------------------------------------------------------------------+
+// Classify the supplied metrics and roll the regime history
 ENUM_MARKET_REGIME CMarketAnalysisRegime::UpdateRegime(const string symbol, const double trendStrength, const double volatility)
 {
     ENUM_MARKET_REGIME detectedRegime = MARKET_REGIME_RANGING;

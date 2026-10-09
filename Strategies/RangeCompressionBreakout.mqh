@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| RangeCompressionBreakout.mqh                                     |
-//| Enhanced TTM Squeeze + Hurst Regime Breakout Strategy            |
-//| Uses BB inside Keltner + Hurst to determine breakout direction  |
-//| Batch 114: New strategy — does NOT replace existing strategies   |
-//+------------------------------------------------------------------+
+// Enhanced TTM Squeeze + Hurst Regime Breakout Strategy
+// Uses BB inside Keltner + Hurst to determine breakout direction
+// Batch 114: New strategy — does NOT replace existing strategies
 #ifndef RANGE_COMPRESSION_BREAKOUT_MQH
 #define RANGE_COMPRESSION_BREAKOUT_MQH
 
@@ -12,9 +9,7 @@
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
-//+------------------------------------------------------------------+
-//| Range Compression Signal Structure                               |
-//+------------------------------------------------------------------+
+// Range Compression Signal Structure
 struct SCompressionSignal
 {
     ENUM_TRADE_SIGNAL direction;
@@ -41,10 +36,7 @@ struct SCompressionSignal
         isMeanRevFade(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| CRangeCompressionBreakout                                        |
-//| Enhanced squeeze detection with Hurst regime awareness           |
-//+------------------------------------------------------------------+
+// Enhanced squeeze detection with Hurst regime awareness
 class CRangeCompressionBreakout : public CStrategyBase
 {
 private:
@@ -74,7 +66,6 @@ private:
     // Hurst engine (injected)
     CHurstEngine* m_hurstEngine;
 
-    // Risk Manager
     CUnifiedRiskManager* m_riskManager;
 
     // State
@@ -94,7 +85,6 @@ private:
         return (bbUpper < kcUpper && bbLower > kcLower);
     }
 
-    //--- Check volume confirmation
     bool CheckVolumeConfirmation()
     {
         long vol[];
@@ -157,7 +147,6 @@ public:
         if(m_maHandle != INVALID_HANDLE) IndicatorRelease(m_maHandle);
     }
 
-    //--- Initialize
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                     CHurstEngine* hurstEngine = NULL,
                     CUnifiedRiskManager* riskManager = NULL)
@@ -183,7 +172,6 @@ public:
         return (m_bbHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
     }
 
-    //--- Configure
     void Configure(int bbPeriod = 20, double bbDev = 2.0, int kcPeriod = 20,
                    double kcATR = 1.5, int minSqueezeBars = 6,
                    double volRatio = 1.5, int trendMaPeriod = 50, bool useTrendFilter = true)
@@ -348,7 +336,6 @@ public:
                     }
                 }
 
-                // Volume confirmation
                 if(!CheckVolumeConfirmation())
                 {
                     LogRejectEvent("NO_VOLUME_CONFIRM");

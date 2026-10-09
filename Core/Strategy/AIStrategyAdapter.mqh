@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
- //| AIStrategyAdapter.mqh                                            |
- //| Adapter to integrate CNeuralNetworkStrategy into Enterprise Manager|
- //+------------------------------------------------------------------+
+// Adapter to integrate CNeuralNetworkStrategy into Enterprise Manager
  #property copyright "Copyright 2025, Advanced Trading Systems"
  #property strict
  
@@ -10,9 +7,6 @@
  #include "../../AIModules/NeuralNetworkStrategy.mqh"
  #include "../Utils/SubsystemLogger.mqh"
  
- //+------------------------------------------------------------------+
- //| AI Strategy Adapter Class                                        |
- //+------------------------------------------------------------------+
  class CAIStrategyAdapter : public IAIStrategy
  {
  private:
@@ -148,9 +142,7 @@ public:
             }
         }
     
-    //+------------------------------------------------------------------+
-    //| IStrategy Interface Implementation                               |
-    //+------------------------------------------------------------------+
+// IStrategy Interface Implementation
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
                          void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
         {
@@ -210,7 +202,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
         
-        // Use the neural network to get signal
         ENUM_TRADE_SIGNAL signal = m_neuralNet.GetNeuralSignalCached(confidence);
         
         // Validate confidence value
@@ -372,9 +363,7 @@ public:
     {
     }
 
-    //+------------------------------------------------------------------+
-    //| IAIStrategy Interface Implementation                             |
-    //+------------------------------------------------------------------+
+// IAIStrategy Interface Implementation
     virtual double GetUncertainty(void) override
     {
         if(m_neuralNet == NULL)
@@ -435,9 +424,7 @@ public:
         return m_neuralNet.GetLastLoadStatus();
     }
 
-    //+------------------------------------------------------------------+
-    //| Capability Interface Methods                                     |
-    //+------------------------------------------------------------------+
+// Capability Interface Methods
     // IUncertaintyEstimation
     virtual void GetConfidenceInterval(double &lower, double &upper) const override
     {
@@ -452,7 +439,6 @@ public:
         }
     }
 
-    // IModelHealth
     virtual double GetHealthScore(void) const override
     {
         if(m_neuralNet == NULL)
@@ -460,7 +446,6 @@ public:
         return IsModelHealthy() ? 1.0 : 0.0;
     }
 
-    // IOnlineTraining
     virtual void EnableOnlineTraining(const bool enable) override
     {
     }
@@ -477,7 +462,6 @@ public:
         return m_neuralNet.IsTraining() ? "TRAINING" : "IDLE";
     }
 
-    // IRegimeAware
     virtual void OnRegimeChange(const int newRegime) override
     {
     }

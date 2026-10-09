@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| Enhanced Market Analysis Module                                  |
-//| Thin coordinator: state and logic live in the MarketAnalysis*    |
-//| modules below; this class only forwards (no behavior change).    |
-//+------------------------------------------------------------------+
+// Enhanced Market Analysis Module
+// Thin coordinator: state and logic live in the MarketAnalysis*
+// modules below; this class only forwards (no behavior change).
 
 #ifndef MARKET_ANALYSIS_MQH
 #define MARKET_ANALYSIS_MQH
@@ -85,7 +83,6 @@ public:
                                      m_metrics.VolatilityValue());
     }
 
-    // Get current market regime
     ENUM_MARKET_REGIME GetCurrentRegime() const {
         return m_regime.GetCurrentRegime();
     }
@@ -118,17 +115,13 @@ public:
     double GetATR(const string symbol, int period);
 };
 
-//+------------------------------------------------------------------+
-//| Get current ATR value                                            |
-//+------------------------------------------------------------------+
+// Get current ATR value
 double CMarketAnalysis::GetATRValue()
 {
     return m_metrics.GetATRValue();
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR value for a specific symbol and period                   |
-//+------------------------------------------------------------------+
+// Get ATR value for a specific symbol and period
 double CMarketAnalysis::GetATR(const string symbol, int period)
 {
     // For now, return the current ATR value

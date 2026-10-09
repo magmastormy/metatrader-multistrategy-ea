@@ -1,14 +1,10 @@
-//+------------------------------------------------------------------+
-//| DiagMgrAIVote.mqh                                                 |
-//| Extracted from DiagnosticsManager.mqh (God-Object decomposition)  |
-//| Owns AI vote heartbeat tracking state [L11-004]:                  |
-//| the per-symbol / per-AI-type last-activity matrix and the         |
-//| staleness warnings emitted during the heartbeat cycle.            |
-//|                                                                   |
-//| CDiagnosticsManager keeps a by-value CDiagMgrAIVoteTracker member |
-//| and forwards to it; symbol list stays owned by the manager and is |
-//| passed in, so log strings and ordering are unchanged.             |
-//+------------------------------------------------------------------+
+// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
+// Owns AI vote heartbeat tracking state [L11-004]:
+// the per-symbol / per-AI-type last-activity matrix and the
+// staleness warnings emitted during the heartbeat cycle.
+// CDiagnosticsManager keeps a by-value CDiagMgrAIVoteTracker member
+// and forwards to it; symbol list stays owned by the manager and is
+// passed in, so log strings and ordering are unchanged.
 #ifndef DIAG_MGR_AI_VOTE_MQH
 #define DIAG_MGR_AI_VOTE_MQH
 
@@ -24,9 +20,7 @@ enum ENUM_AI_VOTE_TYPE
     AI_VOTE_COUNT = 4
 };
 
-//+------------------------------------------------------------------+
-//| CDiagMgrAIVoteTracker — AI vote heartbeat activity tracking       |
-//+------------------------------------------------------------------+
+// CDiagMgrAIVoteTracker — AI vote heartbeat activity tracking
 class CDiagMgrAIVoteTracker
 {
 private:
@@ -41,10 +35,8 @@ public:
 
     bool IsTrackingEnabled() const { return m_aiVoteTrackingEnabled; }
 
-    //+------------------------------------------------------------------+
-    //| Size the tracking matrix for the configured symbol universe       |
-    //| Mirrors the initialisation block inside the original SetSymbols() |
-    //+------------------------------------------------------------------+
+// Size the tracking matrix for the configured symbol universe
+// Mirrors the initialisation block inside the original SetSymbols()
     void ConfigureSymbols(const int symbolCount)
     {
         // Initialize AI vote tracking array [L11-004]
@@ -57,10 +49,8 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Update AI vote activity timestamp [L11-004]                      |
-    //| Call this when an AI adapter logs an [AI-VOTE] heartbeat         |
-    //+------------------------------------------------------------------+
+// Update AI vote activity timestamp [L11-004]
+// Call this when an AI adapter logs an [AI-VOTE] heartbeat
     void UpdateActivity(string &symbols[],
                         const int symbolCount,
                         const string symbol,
@@ -100,11 +90,9 @@ public:
         m_aiVoteLastActivity[arrayIndex] = TimeCurrent();
     }
 
-    //+------------------------------------------------------------------+
-    //| AI vote heartbeat monitoring [L11-004]                            |
-    //| Check if AI adapters are logging [AI-VOTE] heartbeats             |
-    //| Emits identical AIVoteMissing warnings, in identical order.       |
-    //+------------------------------------------------------------------+
+// AI vote heartbeat monitoring [L11-004]
+// Check if AI adapters are logging [AI-VOTE] heartbeats
+// Emits identical AIVoteMissing warnings, in identical order.
     void EmitMissingVoteWarnings(string &symbols[],
                                  const int symbolCount,
                                  const bool nnEnabled,
@@ -130,7 +118,6 @@ public:
                             lastVote == 0 ? -1 : (int)(hbNow - lastVote)), corrId);
                 }
             }
-            // Transformer AI
             if(transformerEnabled)
             {
                 int arrayIdx = symIdx * AI_VOTE_COUNT + AI_VOTE_TRANSFORMER;
@@ -143,7 +130,6 @@ public:
                             lastVote == 0 ? -1 : (int)(hbNow - lastVote)), corrId);
                 }
             }
-            // Ensemble AI
             if(ensembleEnabled)
             {
                 int arrayIdx = symIdx * AI_VOTE_COUNT + AI_VOTE_ENSEMBLE;
@@ -156,7 +142,6 @@ public:
                             lastVote == 0 ? -1 : (int)(hbNow - lastVote)), corrId);
                 }
             }
-            // ONNX AI
             if(onnxEnabled)
             {
                 int arrayIdx = symIdx * AI_VOTE_COUNT + AI_VOTE_ONNX;

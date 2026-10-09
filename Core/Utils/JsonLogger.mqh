@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| JsonLogger.mqh - Structured JSON Logging Utility                 |
-//| Provides structured JSON logging with correlation IDs            |
-//+------------------------------------------------------------------+
+// JsonLogger.mqh - Structured JSON Logging Utility
+// Provides structured JSON logging with correlation IDs
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -13,9 +11,6 @@
 #include "ErrorHandling.mqh"
 #include "Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| JSON Log Entry Structure                                         |
-//+------------------------------------------------------------------+
 struct SJsonLogEntry
 {
     string timestamp;           // ISO 8601 timestamp
@@ -39,9 +34,6 @@ struct SJsonLogEntry
     }
 };
 
-//+------------------------------------------------------------------+
-//| Correlation ID Generator                                         |
-//+------------------------------------------------------------------+
 class CCorrelationIdGenerator
 {
 private:
@@ -79,9 +71,6 @@ public:
 ulong CCorrelationIdGenerator::m_sequence = 0;
 datetime CCorrelationIdGenerator::m_lastReset = 0;
 
-//+------------------------------------------------------------------+
-//| JSON Logger Class                                                |
-//+------------------------------------------------------------------+
 class CJsonLogger
 {
 private:
@@ -106,7 +95,6 @@ private:
     static datetime m_fileCreationTime;
     static int m_rotationIndex;
     
-    // Escape JSON string
     static string EscapeJson(const string &value) {
         string escaped = value;
         StringReplace(escaped, "\\", "\\\\");
@@ -135,7 +123,6 @@ private:
         return StringSubstr(m_logFile, 0, lastDot + 4);
     }
     
-    // Get rotated file name
     static string GetRotatedFileName(int rotationIndex) {
         string base = GetBaseFileName();
         if(base == "") return "";
@@ -229,7 +216,6 @@ private:
         }
     }
     
-    // Build JSON line
     static string BuildJsonLine(const SJsonLogEntry &entry) {
         string json = "{";
         json += "\"timestamp\":\"" + entry.timestamp + "\",";
@@ -245,7 +231,6 @@ private:
     }
 
 public:
-    // Initialize logger
     static bool Initialize(const string logFile, ENUM_LOG_VERBOSITY minVerbosity = VERBOSITY_NORMAL) {
         m_logFile = logFile;
         m_minVerbosity = minVerbosity;
@@ -296,7 +281,6 @@ public:
         m_currentCorrelationId = correlationId;
     }
     
-    // Clear correlation ID
     static void ClearCorrelationId() {
         m_currentCorrelationId = "";
     }

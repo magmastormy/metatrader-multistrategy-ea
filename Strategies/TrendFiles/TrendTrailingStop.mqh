@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendTrailingStop.mqh                                            |
-//| Dynamic Trailing Stop System for Trend Strategy                  |
-//| Implements EMA-based and ATR-based trailing                      |
-//+------------------------------------------------------------------+
+// Dynamic Trailing Stop System for Trend Strategy
+// Implements EMA-based and ATR-based trailing
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -13,9 +10,6 @@
 #include "MultiEMASystem.mqh"
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Trailing Method                                                  |
-//+------------------------------------------------------------------+
 enum ENUM_TRAILING_METHOD
 {
     TRAIL_EMA21,            // Trail below/above 21 EMA
@@ -25,9 +19,6 @@ enum ENUM_TRAILING_METHOD
     TRAIL_HYBRID            // Combination of EMA and ATR
 };
 
-//+------------------------------------------------------------------+
-//| Trade Info Structure                                             |
-//+------------------------------------------------------------------+
 struct STradeTrailInfo
 {
     ulong           ticket;
@@ -45,9 +36,6 @@ struct STradeTrailInfo
                         method(TRAIL_EMA21), openTime(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Trend Trailing Stop Class                                        |
-//+------------------------------------------------------------------+
 class CTrendTrailingStop
 {
 private:
@@ -101,9 +89,7 @@ public:
     double              GetATRTrailStop(bool isBuy, double highestOrLowest);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendTrailingStop::CTrendTrailingStop() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -116,17 +102,12 @@ CTrendTrailingStop::CTrendTrailingStop() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendTrailingStop::~CTrendTrailingStop()
 {
     Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTrendTrailingStop::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                     CMultiEMASystem* emaSystem)
 {
@@ -151,9 +132,6 @@ bool CTrendTrailingStop::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
     return (m_emaSystem != NULL);
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize                                                     |
-//+------------------------------------------------------------------+
 void CTrendTrailingStop::Deinit()
 {
     if(m_ownEmaSystem && m_emaSystem != NULL)
@@ -163,9 +141,6 @@ void CTrendTrailingStop::Deinit()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR                                                          |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::GetATR(int period)
 {
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
@@ -179,9 +154,6 @@ double CTrendTrailingStop::GetATR(int period)
     return atr[0];
 }
 
-//+------------------------------------------------------------------+
-//| Should Move To Breakeven                                         |
-//+------------------------------------------------------------------+
 bool CTrendTrailingStop::ShouldMoveToBreakeven(const STradeTrailInfo &tradeInfo)
 {
     if(tradeInfo.atBreakeven) return false;
@@ -203,9 +175,6 @@ bool CTrendTrailingStop::ShouldMoveToBreakeven(const STradeTrailInfo &tradeInfo)
     return (currentRR >= m_breakEvenRR);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Breakeven Stop                                         |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::CalculateBreakevenStop(const STradeTrailInfo &tradeInfo)
 {
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -219,9 +188,6 @@ double CTrendTrailingStop::CalculateBreakevenStop(const STradeTrailInfo &tradeIn
         return tradeInfo.entryPrice - buffer;
 }
 
-//+------------------------------------------------------------------+
-//| Get EMA21 Trail Stop                                             |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
 {
     if(m_emaSystem == NULL) return 0;
@@ -241,9 +207,6 @@ double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
         return ema21 + buffer;
 }
 
-//+------------------------------------------------------------------+
-//| Get EMA8 Trail Stop                                              |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
 {
     if(m_emaSystem == NULL) return 0;
@@ -261,9 +224,6 @@ double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
         return ema8 + buffer;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Trail Stop                                               |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::GetATRTrailStop(bool isBuy, double highestOrLowest)
 {
     double atr = GetATR(14);
@@ -275,9 +235,7 @@ double CTrendTrailingStop::GetATRTrailStop(bool isBuy, double highestOrLowest)
         return highestOrLowest + (m_atrMultiplier * atr);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate New Stop Loss                                          |
-//+------------------------------------------------------------------+
+// Calculate New Stop Loss
 double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
 {
     double newSL = tradeInfo.currentSL;
@@ -334,9 +292,6 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
     return newSL;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Trailing Stop                                          |
-//+------------------------------------------------------------------+
 double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
 {
     // Batch 157: sell positions close at ASK - tracking their extreme off BID
@@ -379,9 +334,6 @@ double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
     return tradeInfo.currentSL;  // No change
 }
 
-//+------------------------------------------------------------------+
-//| Should Exit Early                                                |
-//+------------------------------------------------------------------+
 bool CTrendTrailingStop::ShouldExitEarly(const STradeTrailInfo &tradeInfo)
 {
     if(m_emaSystem == NULL) return false;

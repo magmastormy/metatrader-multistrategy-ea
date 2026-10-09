@@ -1,22 +1,16 @@
-//+------------------------------------------------------------------+
-//| TradeMgrAsyncExecutor.mqh                                        |
-//| OrderSendAsync submission, confirmation, timeout and persistence |
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
-//| OWNS: m_pendingAsyncTrades[] / m_maxPendingAsync /               |
-//|       m_asyncModeEnabled, plus every async code path.            |
-//| CTradeManager holds this class BY VALUE and keeps thin           |
-//| forwarders with the original public signatures.                  |
-//|                                                                  |
-//| SPLIT POINT - SendTradeAsync: guards that only need async state  |
-//| live here (CheckSendGuards); the volume/price/preflight steps    |
-//| that need CTradeManager collaborators stay in the forwarder and  |
-//| hand resolved values to SubmitAsync(). Order of checks, prints   |
-//| and side effects is identical to the original function.          |
-//|                                                                  |
-//| NO BACK-POINTER: execution-quality accounting is done by passing |
-//| the caller's CExecutionQualityTracker in by reference.           |
-//+------------------------------------------------------------------+
+// OrderSendAsync submission, confirmation, timeout and persistence
+// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
+// OWNS: m_pendingAsyncTrades[] / m_maxPendingAsync /
+// m_asyncModeEnabled, plus every async code path.
+// CTradeManager holds this class BY VALUE and keeps thin
+// forwarders with the original public signatures.
+// SPLIT POINT - SendTradeAsync: guards that only need async state
+// live here (CheckSendGuards); the volume/price/preflight steps
+// that need CTradeManager collaborators stay in the forwarder and
+// hand resolved values to SubmitAsync(). Order of checks, prints
+// and side effects is identical to the original function.
+// NO BACK-POINTER: execution-quality accounting is done by passing
+// the caller's CExecutionQualityTracker in by reference.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -28,9 +22,7 @@
 #include "TradeDescriptor.mqh"
 #include "ExecutionQualityTracker.mqh"
 
-//+------------------------------------------------------------------+
-//| Trade Manager Async Executor                                     |
-//+------------------------------------------------------------------+
+// Trade Manager Async Executor
 class CTradeMgrAsyncExecutor
 {
 private:
@@ -49,17 +41,13 @@ public:
     void SetAsyncModeEnabled(const bool enabled) { m_asyncModeEnabled = enabled; }
     void FreePending() { ArrayFree(m_pendingAsyncTrades); }
 
-    //+--------------------------------------------------------------+
-    //| Get pending async trade count                                 |
-    //+--------------------------------------------------------------+
+// Get pending async trade count
     int GetPendingAsyncCount() const
     {
         return ArraySize(m_pendingAsyncTrades);
     }
 
-    //+--------------------------------------------------------------+
-    //| Get pending async trade ticket by index                       |
-    //+--------------------------------------------------------------+
+// Get pending async trade ticket by index
     ulong GetPendingAsyncTicket(int index) const
     {
         if(index < 0 || index >= ArraySize(m_pendingAsyncTrades))
@@ -67,9 +55,7 @@ public:
         return m_pendingAsyncTrades[index].ticket;
     }
 
-    //+--------------------------------------------------------------+
-    //| Check for duplicate idempotency key                           |
-    //+--------------------------------------------------------------+
+// Check for duplicate idempotency key
     bool IsDuplicateIdempotencyKey(const string key) const
     {
         for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
@@ -80,9 +66,7 @@ public:
         return false;
     }
 
-    //+--------------------------------------------------------------+
-    //| SendTradeAsync guards that only depend on async state         |
-    //+--------------------------------------------------------------+
+// SendTradeAsync guards that only depend on async state
     bool CheckSendGuards(const string symbol, const double lot)
     {
         // Guard: async mode must be enabled
@@ -116,9 +100,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Build + submit the async request and record it as pending     |
-    //+--------------------------------------------------------------+
+// Build + submit the async request and record it as pending
     bool SubmitAsync(const ENUM_ORDER_TYPE orderType,
                      const string symbol,
                      const double normalizedLot,
@@ -190,9 +172,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Process trade transaction event (call from OnTradeTransaction)|
-    //+--------------------------------------------------------------+
+// Process trade transaction event (call from OnTradeTransaction)
     void ProcessTradeTransaction(const MqlTradeTransaction &trans,
                                  const MqlTradeRequest &request,
                                  const MqlTradeResult &result,
@@ -261,9 +241,7 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Check for timed-out async trades (call from OnTimer)          |
-    //+--------------------------------------------------------------+
+// Check for timed-out async trades (call from OnTimer)
     void CheckAsyncTimeouts(CExecutionQualityTracker &execQuality)
     {
         int pendingCount = ArraySize(m_pendingAsyncTrades);
@@ -312,9 +290,7 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Persist async trade request to CSV for replay on restart      |
-    //+--------------------------------------------------------------+
+// Persist async trade request to CSV for replay on restart
     static void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
     {
         string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
@@ -359,9 +335,7 @@ public:
         FileClose(handle);
     }
 
-    //+--------------------------------------------------------------+
-    //| Replay async trade requests from CSV on EA restart            |
-    //+--------------------------------------------------------------+
+// Replay async trade requests from CSV on EA restart
     void ReplayAsyncTradeRequests()
     {
         string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
@@ -467,9 +441,7 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Clean up confirmed/expired persisted async trades             |
-    //+--------------------------------------------------------------+
+// Clean up confirmed/expired persisted async trades
     static void CleanupPersistedAsyncTrades()
     {
         string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";

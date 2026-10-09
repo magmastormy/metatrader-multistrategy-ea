@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| DrawingManagerRegistry.mqh                                       |
-//| Consolidates ChartDrawingManager instances per symbol            |
-//+------------------------------------------------------------------+
+// Consolidates ChartDrawingManager instances per symbol
 #property strict
 
 #ifndef CORE_REGISTRY_DRAWING_MANAGER_REGISTRY_MQH

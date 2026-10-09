@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| VolatilityTargeting.mqh                                          |
-//| Volatility targeting position sizing (Moreira & Muir 2017)      |
-//| Adjusts position size inversely proportional to realized vol     |
-//| Expected improvement: +40% Sharpe, -30% max drawdown           |
-//| Batch 114: Integrates with position sizer chain                  |
-//+------------------------------------------------------------------+
+// Volatility targeting position sizing (Moreira & Muir 2017)
+// Adjusts position size inversely proportional to realized vol
+// Expected improvement: +40% Sharpe, -30% max drawdown
+// Batch 114: Integrates with position sizer chain
 #ifndef VOLATILITY_TARGETING_MQH
 #define VOLATILITY_TARGETING_MQH
 
@@ -15,9 +12,6 @@
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-//+------------------------------------------------------------------+
-//| Volatility Targeting Snapshot                                     |
-//+------------------------------------------------------------------+
 struct SVolTargetSnapshot
 {
     double realizedVol;        // Current realized volatility (annualized)
@@ -41,16 +35,12 @@ struct SVolTargetSnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| CVolatilityTargeting — Moreira & Muir (2017) position scaler    |
-//|                                                                  |
-//| Core idea: Scale position size so that the portfolio's realized  |
-//| volatility tracks a target (e.g., 15% annualized). When vol is  |
-//| high, reduce size; when vol is low, increase size (with caps).   |
-//|                                                                  |
-//| Key constraint: scale factor clamped to [minScale, maxScale]    |
-//| to prevent extreme leverage in very low-vol environments.        |
-//+------------------------------------------------------------------+
+// CVolatilityTargeting — Moreira & Muir (2017) position scaler
+// Core idea: Scale position size so that the portfolio's realized
+// volatility tracks a target (e.g., 15% annualized). When vol is
+// high, reduce size; when vol is low, increase size (with caps).
+// Key constraint: scale factor clamped to [minScale, maxScale]
+// to prevent extreme leverage in very low-vol environments.
 class CVolatilityTargeting
 {
 private:
@@ -196,7 +186,6 @@ public:
             IndicatorRelease(m_atrHandle);
     }
 
-    //--- Configure
     void Configure(double targetVol, int volLookback, double ewmaDecay,
                    double minScale, double maxScale)
     {
@@ -276,7 +265,6 @@ public:
             if(m_volCount < m_volHistorySize) m_volCount++;
         }
 
-        // Compute vol percentile
         double volPctile = ComputeVolPercentile();
 
         // Compute scale factor

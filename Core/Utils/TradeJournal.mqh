@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Trade Journal - Persistent CSV trade logging for crash recovery  |
-//| Records open/close events for orphaned-position reconciliation   |
-//+------------------------------------------------------------------+
+// Trade Journal - Persistent CSV trade logging for crash recovery
+// Records open/close events for orphaned-position reconciliation
 #property copyright "Copyright 2024, MiMoCode"
 #property link      ""
 #property version   "1.00"
@@ -12,9 +10,7 @@
 
 #include "MagicRange.mqh"
 
-//+------------------------------------------------------------------+
-//| Write a single CSV row to the trade journal                     |
-//+------------------------------------------------------------------+
+// Write a single CSV row to the trade journal
 void WriteTradeJournalEntry(const string &action, ulong ticket, const string &symbol,
                             ENUM_ORDER_TYPE type, double volume, double price,
                             double sl, double tp, long magic, const string &reason)
@@ -43,9 +39,7 @@ void WriteTradeJournalEntry(const string &action, ulong ticket, const string &sy
     FileClose(handle);
 }
 
-//+------------------------------------------------------------------+
-//| Journal an open trade event                                      |
-//+------------------------------------------------------------------+
+// Journal an open trade event
 void JournalTradeOpen(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                       double volume, double price, double sl, double tp,
                       long magic, const string &reason)
@@ -55,9 +49,7 @@ void JournalTradeOpen(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                 ticket, EnumToString(type), symbol, volume, price, sl, tp, magic, reason);
 }
 
-//+------------------------------------------------------------------+
-//| Journal a close trade event                                      |
-//+------------------------------------------------------------------+
+// Journal a close trade event
 void JournalTradeClose(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                        double volume, double exitPrice, double sl, double tp,
                        long magic, double profit, const string &reason)
@@ -69,10 +61,8 @@ void JournalTradeClose(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                 ticket, EnumToString(type), symbol, volume, exitPrice, profit, reason);
 }
 
-//+------------------------------------------------------------------+
-//| Reconcile trade journal against live positions on init           |
-//| Detects orphaned trades (open without matching close)            |
-//+------------------------------------------------------------------+
+// Reconcile trade journal against live positions on init
+// Detects orphaned trades (open without matching close)
 void ReconcileTradeJournal(uint eaMagicNumber)
 {
     string fileName = "trade_journal_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";

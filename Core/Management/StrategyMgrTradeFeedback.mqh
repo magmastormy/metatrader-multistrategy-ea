@@ -1,44 +1,37 @@
-//+------------------------------------------------------------------+
-//| Strategy Manager Trade Feedback (Phase G - G6)                    |
-//|                                                                   |
-//| Owns the EA magic-number ownership window and the trade-outcome   |
-//| feedback loop that used to be loose members / bodies of           |
-//| CEnterpriseStrategyManager:                                       |
-//|   - m_managedMagic / m_managedMagicRangeMax  (ownership window)   |
-//|   - IsEAOwnedMagic          (ownership predicate)                 |
-//|   - IsPositionIdStillOpen   (partial-close guard)                 |
-//|   - OnTradeTransaction      (deal -> attribution -> performance)  |
-//|                                                                   |
-//| *** BEHAVIOUR CONTRACT ***                                        |
-//| Every body is a byte-for-byte relocation of the original manager  |
-//| body. The only mechanical substitutions are the manager-member    |
-//| reads, which now go through the manager's existing public         |
-//| accessors:                                                        |
-//|   m_symbol                  -> m_src.GetManagedSymbol()           |
-//|   m_attribution             -> m_src.GetAttribution()             |
-//|   m_healthMonitor           -> m_src.GetHealthMonitor()           |
-//|   m_successfulSignals++     -> m_src.IncrementSuccessfulSignals() |
-//|   m_lastContributorCount    -> m_src.GetLastContributorCountValue()|
-//|   ArraySize(m_lastSignalContributors)                             |
-//|                             -> m_src.GetLastContributorArraySize()|
-//|   m_lastSignalContributors  -> m_src.GetLastSignalContributors()  |
-//|                                (read-only copy; the callee only   |
-//|                                 reads the array)                  |
-//|   the 3-statement contributor reset                               |
-//|                             -> m_src.ResetLastContributorContext()|
-//|   FindStrategyIndexByName   -> m_src.GetStrategyIndexByName()     |
-//| No comparison, no arithmetic and no log string was altered.       |
-//|                                                                   |
-//| This module MUTATES the manager, so it holds a NON-const back-    |
-//| pointer. It mirrors no injected manager pointer (the attribution  |
-//| manager and health monitor are re-read from the manager on every  |
-//| call), so it needs no re-sync on Deinit.                          |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Manager Trade Feedback (Phase G - G6)
+// Owns the EA magic-number ownership window and the trade-outcome
+// feedback loop that used to be loose members / bodies of
+// - m_managedMagic / m_managedMagicRangeMax  (ownership window)
+// - IsEAOwnedMagic          (ownership predicate)
+// - IsPositionIdStillOpen   (partial-close guard)
+// - OnTradeTransaction      (deal -> attribution -> performance)
+// *** BEHAVIOUR CONTRACT ***
+// Every body is a byte-for-byte relocation of the original manager
+// body. The only mechanical substitutions are the manager-member
+// reads, which now go through the manager's existing public
+// accessors:
+// m_symbol                  -> m_src.GetManagedSymbol()
+// m_attribution             -> m_src.GetAttribution()
+// m_healthMonitor           -> m_src.GetHealthMonitor()
+// m_successfulSignals++     -> m_src.IncrementSuccessfulSignals()
+// m_lastContributorCount    -> m_src.GetLastContributorCountValue()
+// ArraySize(m_lastSignalContributors)
+// -> m_src.GetLastContributorArraySize()
+// m_lastSignalContributors  -> m_src.GetLastSignalContributors()
+// (read-only copy; the callee only
+// reads the array)
+// the 3-statement contributor reset
+// -> m_src.ResetLastContributorContext()
+// FindStrategyIndexByName   -> m_src.GetStrategyIndexByName()
+// No comparison, no arithmetic and no log string was altered.
+// This module MUTATES the manager, so it holds a NON-const back-
+// pointer. It mirrors no injected manager pointer (the attribution
+// manager and health monitor are re-read from the manager on every
+// call), so it needs no re-sync on Deinit.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_MGR_TRADE_FEEDBACK_MQH
 #define STRATEGY_MGR_TRADE_FEEDBACK_MQH
 
@@ -47,9 +40,7 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-//+------------------------------------------------------------------+
-//| Magic ownership + trade outcome feedback                          |
-//+------------------------------------------------------------------+
+// Magic ownership + trade outcome feedback
 class CStrategyMgrTradeFeedback
 {
 private:
@@ -86,9 +77,7 @@ public:
                             const MqlTradeResult& result);
 };
 
-//+------------------------------------------------------------------+
-//| Check if magic number is owned by this EA                        |
-//+------------------------------------------------------------------+
+// Check if magic number is owned by this EA
 bool CStrategyMgrTradeFeedback::IsEAOwnedMagic(long magic) const
 {
     if(m_managedMagic <= 0)
@@ -100,9 +89,7 @@ bool CStrategyMgrTradeFeedback::IsEAOwnedMagic(long magic) const
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Is the position still open? (partial-close double-count guard)    |
-//+------------------------------------------------------------------+
+// Is the position still open? (partial-close double-count guard)
 bool CStrategyMgrTradeFeedback::IsPositionIdStillOpen(const ulong positionId) const
 {
     if(positionId == 0)
@@ -122,9 +109,7 @@ bool CStrategyMgrTradeFeedback::IsPositionIdStillOpen(const ulong positionId) co
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| OnTradeTransaction - Handle trade events for AI feedback        |
-//+------------------------------------------------------------------+
+// OnTradeTransaction - Handle trade events for AI feedback
 void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& trans,
                                                    const MqlTradeRequest& request,
                                                    const MqlTradeResult& result)

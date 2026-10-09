@@ -1,21 +1,15 @@
-//+------------------------------------------------------------------+
-//| PosLifecycleMagicFilter.mqh                                       |
-//| Ownership predicate for the CPositionLifecycleManager family.     |
-//|                                                                   |
-//| Batch 168: the arithmetic moved to CMagicRange so this predicate   |
-//| and every other ownership test in the EA agree on one window.      |
-//| Callers still pre-compute [magicBase, magicMax] via                |
-//| CPositionLifecycleManager::MagicMax(), which now delegates to      |
-//| CMagicRange::ComputeMax().                                         |
-//+------------------------------------------------------------------+
+// Ownership predicate for the CPositionLifecycleManager family.
+// Batch 168: the arithmetic moved to CMagicRange so this predicate
+// and every other ownership test in the EA agree on one window.
+// Callers still pre-compute [magicBase, magicMax] via
+// CPositionLifecycleManager::MagicMax(), which now delegates to
+// CMagicRange::ComputeMax().
 #ifndef POS_LIFECYCLE_MAGIC_FILTER_MQH
 #define POS_LIFECYCLE_MAGIC_FILTER_MQH
 
 #include "../Utils/MagicRange.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless helper — all methods are static.                        |
-//+------------------------------------------------------------------+
+// Stateless helper — all methods are static.
 class CPosLifecycleMagicFilter
 {
 public:

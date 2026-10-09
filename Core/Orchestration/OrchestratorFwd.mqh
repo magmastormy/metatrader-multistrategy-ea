@@ -1,17 +1,13 @@
-//+------------------------------------------------------------------+
-//| Orchestrator Forward Declarations - Enterprise Grade             |
-//| Forward declarations for EAOrchestrator dependencies             |
-//| Use this header to break include cycles and reduce compile time  |
-//+------------------------------------------------------------------+
+// Orchestrator Forward Declarations - Enterprise Grade
+// Forward declarations for EAOrchestrator dependencies
+// Use this header to break include cycles and reduce compile time
 #ifndef ORCHESTRATOR_FWD_MQH
 #define ORCHESTRATOR_FWD_MQH
 
 // Core system enums
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Core Management                           |
-//+------------------------------------------------------------------+
+// Forward Declarations - Core Management
 class CEnterpriseStrategyManager;
 class CUnifiedRiskManager;
 class CPositionSizer;
@@ -31,9 +27,7 @@ class CIntelligentSLGuard;
 class CTickSafetyMonitor;
 class CSpikeMonitor;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Engine Registry                           |
-//+------------------------------------------------------------------+
+// Forward Declarations - Engine Registry
 class CRegistryAggregator;
 class CMathematicalEngineRegistry;
 class CInstitutionalEngineRegistry;
@@ -51,26 +45,20 @@ class CChartDrawingManager;
 class CSessionWeightManager;
 class CSymbolScanScheduler;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Engines                                   |
-//+------------------------------------------------------------------+
+// Forward Declarations - Engines
 class CTrendEngine;
 class CStructureEngine;
 class CLiquidityEngine;
 class CVolatilityEngine;
 class CRegimeEngine;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Pipeline & Signals                        |
-//+------------------------------------------------------------------+
+// Forward Declarations - Pipeline & Signals
 class CUnifiedSignalPipeline;
 class CTimeframeConsistency;
 struct SignalFilterSettings;
 struct SPipelineEvidenceSnapshot;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Strategies                                |
-//+------------------------------------------------------------------+
+// Forward Declarations - Strategies
 class IStrategy;
 class IAIStrategy;
 class CStrategyBase;
@@ -80,37 +68,25 @@ class CEnsembleAIStrategyAdapter;
 class COnnxAIStrategyAdapter;
 class CStrategyRegistry;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Python Bridge                             |
-//+------------------------------------------------------------------+
+// Forward Declarations - Python Bridge
 class CPythonBridge;
 struct SPythonBridgeMetrics;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Risk & Compounding                        |
-//+------------------------------------------------------------------+
+// Forward Declarations - Risk & Compounding
 class CRiskTierManager;
 class CCompoundingTierManager;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Neural Network                            |
-//+------------------------------------------------------------------+
+// Forward Declarations - Neural Network
 class CNeuralNetworkStrategy;
 struct SNeuralNetConfig;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Consensus                                 |
-//+------------------------------------------------------------------+
+// Forward Declarations - Consensus
 struct SConsensusDecisionContext;
 
-//+------------------------------------------------------------------+
-//| Forward Declarations - Diagnostics & Health                      |
-//+------------------------------------------------------------------+
+// Forward Declarations - Diagnostics & Health
 class CStrategyHealthMonitor;
 
-//+------------------------------------------------------------------+
-//| External References                                              |
-//+------------------------------------------------------------------+
+// External References
 class CPythonBridge;
 extern CPythonBridge* g_pythonBridge;
 extern CEnterpriseStrategyManager* g_enterpriseManagers[];

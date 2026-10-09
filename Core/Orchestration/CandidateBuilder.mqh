@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CandidateBuilder.mqh                                             |
-//| Builds trade candidates from validated signals                   |
-//+------------------------------------------------------------------+
+// Builds trade candidates from validated signals
 #property strict
 
 #ifndef CORE_ORCHESTRATION_CANDIDATE_BUILDER_MQH
@@ -91,7 +88,6 @@ private:
     // Cluster-specific minRR
     double                      m_minRRByCluster[];
     
-    // Hybrid gate relaxation
         int                         m_hybridGateRelaxAfterCycles;
         double                      m_aiStandaloneMinConfidence;
         double                      m_aiStandaloneRelaxedConfidence;
@@ -412,11 +408,9 @@ public:
         if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
             return false;
         
-        // Check execution cost
         if(!CheckExecutionCost(symbol, candidate))
             return false;
         
-        // Check account capacity
         if(!CheckAccountCapacity(symbol, candidate))
             return false;
         
@@ -431,11 +425,9 @@ public:
             return false;
         }
         
-        // Resolve live authority
         if(!ResolveLiveAuthority(symbol, candidate, proposedRisk))
             return false;
         
-        // Check per-symbol position limit
         if(!CheckSymbolPositionLimit(symbol, candidate))
             return false;
         
@@ -481,10 +473,8 @@ public:
             return false;
         }
         
-        // Apply drawdown scaling
         lotSize = ApplyDrawdownScaling(symbol, lotSize, proposedRisk);
         
-        // Apply momentum scaling
         lotSize = ApplyMomentumScaling(symbol, lotSize);
         
         // Batch 170: removed the VPIN-toxicity and volatility-targeting scaling
@@ -493,13 +483,10 @@ public:
         // the validator status report printed a LastVPINMultiplier that no caller
         // consumed. VPIN still vetoes signals; it never sized, and the code no
         // longer implies otherwise.
-        // Apply Skew Step scaling
         lotSize = ApplySkewStepScaling(symbol, lotSize);
         
-        // Apply full-margin stacking
         lotSize = ApplyFullMarginStacking(symbol, signal, lotSize);
         
-        // Apply safe mode restrictions
         lotSize = ApplySafeModeRestrictions(symbol, lotSize);
         
         // Floor at broker minimum
@@ -777,7 +764,6 @@ public:
         return lotSize;
     }
     
-    // === EA mode admission ===
     bool EvaluateEAModeAdmission(const string &contributors[], double confidence,
                                  string &rejectReason, double &confidenceBonus)
     {

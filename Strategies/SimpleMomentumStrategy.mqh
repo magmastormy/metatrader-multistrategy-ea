@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SimpleMomentumStrategy.mqh                                       |
-//| Basic momentum strategy using EMA crossover                      |
-//| Simplified version: 4 indicators (fast/slow MA, ATR, RSI)       |
-//+------------------------------------------------------------------+
+// Basic momentum strategy using EMA crossover
+// Simplified version: 4 indicators (fast/slow MA, ATR, RSI)
 #ifndef SIMPLE_MOMENTUM_STRATEGY_MQH
 #define SIMPLE_MOMENTUM_STRATEGY_MQH
 
@@ -11,9 +8,7 @@
 #include "../Utilities/SafeCopyBuffer.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Momentum strategy for multi-instrument orchestration             |
-//+------------------------------------------------------------------+
+// Momentum strategy for multi-instrument orchestration
 class CSimpleMomentumStrategy : public CStrategyBase
 {
 private:
@@ -46,18 +41,13 @@ private:
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
     ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
 
-    //+------------------------------------------------------------------+
-    //| ValidateCrossoverWithHysteresis                                   |
-    //| Purpose: Verify crossover persists for minimum bars to filter     |
-    //|         false signals during volatile periods                     |
-    //|                                                                  |
-    //| Parameters:                                                      |
-    //|   direction: +1 for bullish crossover, -1 for bearish crossover   |
-    //|   threshold: Minimum gap between fast and slow MAs                |
-    //|   minBars: Number of bars crossover must persist (hysteresis)    |
-    //|                                                                  |
-    //| Returns: true if crossover is confirmed, false if it's just noise |
-    //+------------------------------------------------------------------+
+// Purpose: Verify crossover persists for minimum bars to filter
+// false signals during volatile periods
+// Parameters:
+// direction: +1 for bullish crossover, -1 for bearish crossover
+// threshold: Minimum gap between fast and slow MAs
+// minBars: Number of bars crossover must persist (hysteresis)
+// Returns: true if crossover is confirmed, false if it's just noise
     bool ValidateCrossoverWithHysteresis(const int direction, const double threshold, const int minBars)
     {
         // Need at least minBars + 1 bars of historical data (including current)
@@ -308,26 +298,19 @@ private:
         return true;
     }
 
-    //+------------------------------------------------------------------+
-    //| CalculateEmaFallback                                              |
-    //| Purpose: Compute EMA from raw price data when SafeCopyBuffer      |
-    //|         fails for MA handles, preventing MOMENTUM_MA_UNAVAILABLE  |
-    //|                                                                  |
-    //| Algorithm:                                                        |
-    //|   1. Fetch period*3 bars of close prices via CopyRates           |
-    //|   2. Initialize with SMA of first 'period' closes               |
-    //|   3. Apply standard EMA formula forward:                         |
-    //|      EMA = price * multiplier + prevEMA * (1 - multiplier)       |
-    //|      where multiplier = 2 / (period + 1)                        |
-    //|   4. Return EMA at shift 1 (emaNow) and shift 2 (emaPrev)       |
-    //|                                                                  |
-    //| Parameters:                                                      |
-    //|   period:  EMA period (e.g., m_fastPeriod or m_slowPeriod)       |
-    //|   emaNow:  [out] EMA value at bar shift 1 (last closed bar)      |
-    //|   emaPrev: [out] EMA value at bar shift 2 (bar before last)      |
-    //|                                                                  |
-    //| Returns: true if fallback calculation succeeded, false otherwise  |
-    //+------------------------------------------------------------------+
+// Purpose: Compute EMA from raw price data when SafeCopyBuffer
+// fails for MA handles, preventing MOMENTUM_MA_UNAVAILABLE
+// Algorithm:
+// 1. Fetch period*3 bars of close prices via CopyRates
+// 2. Initialize with SMA of first 'period' closes
+// 3. Apply standard EMA formula forward:
+// EMA = price * multiplier + prevEMA * (1 - multiplier)
+// where multiplier = 2 / (period + 1)
+// 4. Return EMA at shift 1 (emaNow) and shift 2 (emaPrev)
+// Parameters:
+// emaNow:  [out] EMA value at bar shift 1 (last closed bar)
+// emaPrev: [out] EMA value at bar shift 2 (bar before last)
+// Returns: true if fallback calculation succeeded, false otherwise
     bool CalculateEmaFallback(const int period, double &emaNow, double &emaPrev)
     {
         if(period <= 0)
@@ -508,14 +491,10 @@ public:
         m_scalpCooldownSeconds = MathMax(5, cooldownSeconds);
     }
 
-    //+------------------------------------------------------------------+
-    //| SetMinimumConfirmationBars                                        |
-    //| Configure minimum bars for crossover hysteresis validation         |
-    //|                                                                  |
-    //| bars = 1: Conservative - verify crossover holds for 1 bar        |
-    //| bars = 2: Stricter - verify crossover holds for 2 bars (default)  |
-    //| bars = 3: Very strict - verify crossover holds for 3 bars         |
-    //+------------------------------------------------------------------+
+// Configure minimum bars for crossover hysteresis validation
+// bars = 1: Conservative - verify crossover holds for 1 bar
+// bars = 2: Stricter - verify crossover holds for 2 bars (default)
+// bars = 3: Very strict - verify crossover holds for 3 bars
     void SetMinimumConfirmationBars(const int bars)
     {
         m_minConfirmationBars = MathMax(1, MathMin(bars, 5)); // Clamp to 1-5 range
@@ -535,16 +514,11 @@ public:
         m_adxThreshold = MathMax(10.0, MathMin(40.0, threshold));
     }
 
-    //+------------------------------------------------------------------+
-    //| SetScalpTimeframeBounds                                           |
-    //| Configure allowed timeframe range for scalping mode                 |
-    //|                                                                  |
-    //| minTf: Minimum timeframe (e.g., PERIOD_M1)                         |
-    //| maxTf: Maximum timeframe (e.g., PERIOD_M15)                       |
-    //|                                                                  |
-    //| Note: Scalping mode requires M1-M15 timeframes for appropriate     |
-    //|       signal timing. Non-scalping mode requires M5 or higher.      |
-    //+------------------------------------------------------------------+
+// Configure allowed timeframe range for scalping mode
+// minTf: Minimum timeframe (e.g., PERIOD_M1)
+// maxTf: Maximum timeframe (e.g., PERIOD_M15)
+// Note: Scalping mode requires M1-M15 timeframes for appropriate
+// signal timing. Non-scalping mode requires M5 or higher.
     void SetScalpTimeframeBounds(const ENUM_TIMEFRAMES minTf, const ENUM_TIMEFRAMES maxTf)
     {
         m_minScalpTimeframe = minTf;
@@ -556,12 +530,8 @@ public:
     ENUM_TIMEFRAMES GetMinScalpTimeframe() const { return m_minScalpTimeframe; }
     ENUM_TIMEFRAMES GetMaxScalpTimeframe() const { return m_maxScalpTimeframe; }
 
-    //+------------------------------------------------------------------+
-    //| ValidateTimeframeSuitability                                      |
-    //| Check if current timeframe is appropriate for configured mode      |
-    //|                                                                  |
-    //| Returns: true if timeframe is suitable, false otherwise            |
-    //+------------------------------------------------------------------+
+// Check if current timeframe is appropriate for configured mode
+// Returns: true if timeframe is suitable, false otherwise
     bool ValidateTimeframeSuitability()
     {
         // Scalping mode: requires M1-M15 timeframes
@@ -605,11 +575,9 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
                     return false;
 
-                //+------------------------------------------------------------------+
-                //| TIMEFRAME VALIDATION - Issue 2.1.2 Fix                           |
-                //| Validate timeframe suitability for configured mode (scalping/    |
-                //| trend-following) and log warnings for inappropriate settings    |
-                //+------------------------------------------------------------------+
+// TIMEFRAME VALIDATION - Issue 2.1.2 Fix
+// Validate timeframe suitability for configured mode (scalping/
+// trend-following) and log warnings for inappropriate settings
                 ValidateTimeframeSuitability();
 
                 // Adjust min volatility based on symbol digits
@@ -713,11 +681,9 @@ public:
         bool crossedUp = (diffNow > threshold && diffPrev <= threshold);
         bool crossedDown = (diffNow < -threshold && diffPrev >= -threshold);
         
-        //+------------------------------------------------------------------+
-        //| CROSSOVER VALIDATION WITH HYSTERESIS                              |
-        //| Issue 2.1.1 Fix: Verify crossover persists for min bars         |
-        //| Purpose: Filter false signals during volatile periods              |
-        //+------------------------------------------------------------------+
+// CROSSOVER VALIDATION WITH HYSTERESIS
+// Issue 2.1.1 Fix: Verify crossover persists for min bars
+// Purpose: Filter false signals during volatile periods
         if(crossedUp)
         {
             // Validate bullish crossover holds for minimum confirmation bars

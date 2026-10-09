@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SymbolHealthMonitor.mqh                                          |
-//| Live symbol health monitoring - detect frozen feeds, spread spikes|
-//+------------------------------------------------------------------+
+// Live symbol health monitoring - detect frozen feeds, spread spikes
 #property strict
 #ifndef CORE_MONITORING_SYMBOL_HEALTH_MONITOR_MQH
 #define CORE_MONITORING_SYMBOL_HEALTH_MONITOR_MQH
@@ -11,9 +8,7 @@
 #include "../Utils/LogMacros.mqh"
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Symbol Health Data Structure                                     |
-//+------------------------------------------------------------------+
+// Symbol Health Data Structure
 struct SSymbolHealth
 {
     string symbol;
@@ -53,9 +48,6 @@ public:
     virtual int Compare(const CObject* node, const int mode = 0) const override { return 0; }
 };
 
-//+------------------------------------------------------------------+
-//| CSymbolHealthMonitor                                             |
-//+------------------------------------------------------------------+
 class CSymbolHealthMonitor
 {
 private:
@@ -77,7 +69,6 @@ private:
     int    m_staleSymbols;
     int    m_frozenSymbols;
     
-    // Find symbol index
     int FindSymbolIndex(string symbol) {
         for(int i = 0; i < m_symbolCount; i++) {
             if(m_symbols[i] == symbol) return i;

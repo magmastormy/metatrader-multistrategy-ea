@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| LabelEncoder.mqh                                                 |
-//| Label encoding utilities for classification labels                |
-//+------------------------------------------------------------------+
+// Label encoding utilities for classification labels
 #ifndef MQH_LABEL_ENCODER_MQH
 #define MQH_LABEL_ENCODER_MQH
 

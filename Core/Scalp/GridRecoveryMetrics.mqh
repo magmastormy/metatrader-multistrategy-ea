@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryMetrics.mqh                                          |
-//| Recovery statistics / accounting: lifetime grid + level counters  |
-//| and live grid position census.                                    |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Recovery statistics / accounting: lifetime grid + level counters
+// and live grid position census.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -12,9 +9,7 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_METRICS_MQH
 #define CORE_SCALP_GRID_RECOVERY_METRICS_MQH
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryMetrics — owns the grid recovery statistics counters |
-//+------------------------------------------------------------------+
+// CGridRecoveryMetrics — owns the grid recovery statistics counters
 class CGridRecoveryMetrics
 {
 private:
@@ -23,9 +18,7 @@ private:
    int   m_totalLevelsPlaced;
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor — counters start at zero                              |
-   //+------------------------------------------------------------------+
+// Constructor — counters start at zero
    CGridRecoveryMetrics() :
       m_totalGridsOpened(0),
       m_totalGridsClosed(0),
@@ -33,23 +26,17 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Counter mutators                                                  |
-   //+------------------------------------------------------------------+
+// Counter mutators
    void RecordGridOpened()  { m_totalGridsOpened++;  }
    void RecordGridClosed()  { m_totalGridsClosed++;  }
    void RecordLevelPlaced() { m_totalLevelsPlaced++; }
 
-   //+------------------------------------------------------------------+
-   //| Counter accessors                                                 |
-   //+------------------------------------------------------------------+
+// Counter accessors
    int  TotalGridsOpened()  const { return m_totalGridsOpened;  }
    int  TotalGridsClosed()  const { return m_totalGridsClosed;  }
    int  TotalLevelsPlaced() const { return m_totalLevelsPlaced; }
 
-   //+------------------------------------------------------------------+
-   //| Count positions with "GRID-RECOVERY" in comment                   |
-   //+------------------------------------------------------------------+
+// Count positions with "GRID-RECOVERY" in comment
    static int GetActiveGridPositions()
    {
       int count = 0;

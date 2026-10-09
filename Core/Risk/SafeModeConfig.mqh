@@ -1,17 +1,11 @@
-//+------------------------------------------------------------------+
-//| SafeModeConfig.mqh                                                |
-//| Conservative safe trading mode: kill zone filter, partial profit   |
-//| taking, stricter consensus gates, no stacking                     |
-//+------------------------------------------------------------------+
+// Conservative safe trading mode: kill zone filter, partial profit
+// taking, stricter consensus gates, no stacking
 #ifndef CORE_RISK_SAFE_MODE_CONFIG_MQH
 #define CORE_RISK_SAFE_MODE_CONFIG_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../Trading/TradeManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Safe mode configuration                                           |
-//+------------------------------------------------------------------+
 struct SSafeModeConfig
 {
    double   minConfidence;           // Min consensus confidence (0.70)
@@ -44,9 +38,7 @@ struct SSafeModeConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Safe mode position tracking for partial profit management          |
-//+------------------------------------------------------------------+
+// Safe mode position tracking for partial profit management
 struct SSafeModePositionState
 {
    ulong    ticket;
@@ -75,9 +67,7 @@ struct SSafeModePositionState
 
 #define SAFE_MODE_MAX_TRACKED 30
 
-//+------------------------------------------------------------------+
-//| CSafeMode — Conservative safe trading mode controller              |
-//+------------------------------------------------------------------+
+// CSafeMode — Conservative safe trading mode controller
 class CSafeMode
 {
 private:
@@ -90,9 +80,6 @@ private:
    int                      m_trackedCount;
    bool                     m_initialized;
 
-   //+------------------------------------------------------------------+
-   //| Find tracked position by ticket                                   |
-   //+------------------------------------------------------------------+
    int FindTrackedPosition(ulong ticket) const
    {
       for(int i = 0; i < m_trackedCount; i++)
@@ -103,9 +90,7 @@ private:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove inactive positions from tracking                           |
-   //+------------------------------------------------------------------+
+// Remove inactive positions from tracking
    void CleanupTrackedPositions()
    {
       for(int i = m_trackedCount - 1; i >= 0; i--)
@@ -130,9 +115,6 @@ public:
 
    bool IsInitialized() const { return m_initialized; }
 
-   //+------------------------------------------------------------------+
-   //| Initialize with config                                            |
-   //+------------------------------------------------------------------+
    bool Initialize(const SSafeModeConfig &config)
    {
       m_config = config;
@@ -154,9 +136,7 @@ public:
 
    SSafeModeConfig GetConfig() const { return m_config; }
 
-   //+------------------------------------------------------------------+
-   //| Kill Zone Filter: London 07-10 UTC, New York 12-15 UTC           |
-   //+------------------------------------------------------------------+
+// Kill Zone Filter: London 07-10 UTC, New York 12-15 UTC
    bool IsInKillZone() const
    {
       MqlDateTime dt;
@@ -168,9 +148,7 @@ public:
       return londonKZ || nyKZ;
    }
 
-   //+------------------------------------------------------------------+
-   //| News avoidance stub (future: integrate economic calendar)         |
-   //+------------------------------------------------------------------+
+// News avoidance stub (future: integrate economic calendar)
    bool IsNearNewsEvent() const
    {
       // Stub: always returns false until news calendar integration
@@ -179,9 +157,7 @@ public:
       return false;
    }
 
-   //+------------------------------------------------------------------+
-   //| Safe mode spread gate: stricter than normal (15% ATR)            |
-   //+------------------------------------------------------------------+
+// Safe mode spread gate: stricter than normal (15% ATR)
    bool IsSpreadAcceptable(string symbol, double atrValue) const
    {
       if(atrValue <= 0.0)
@@ -196,10 +172,8 @@ public:
       return (spreadPrice <= m_config.maxSpreadATRRatio * atrValue);
    }
 
-   //+------------------------------------------------------------------+
-   //| Pre-signal gate: check all safe mode conditions before evaluation |
-   //| Returns true if signal evaluation is allowed                      |
-   //+------------------------------------------------------------------+
+// Pre-signal gate: check all safe mode conditions before evaluation
+// Returns true if signal evaluation is allowed
    bool IsSignalEvaluationAllowed(string symbol, double atrValue) const
    {
       if(!m_initialized)
@@ -209,7 +183,6 @@ public:
       if(m_config.tradeOnlyKillZones && !IsInKillZone())
          return false;
 
-      // News avoidance
       if(m_config.avoidNewsEvents && IsNearNewsEvent())
          return false;
 
@@ -220,17 +193,13 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if stacking is allowed (safe mode: never)                   |
-   //+------------------------------------------------------------------+
+// Check if stacking is allowed (safe mode: never)
    bool IsStackingAllowed() const
    {
       return !m_config.noStacking;
    }
 
-   //+------------------------------------------------------------------+
-   //| Register a swing position for safe mode partial profit tracking   |
-   //+------------------------------------------------------------------+
+// Register a swing position for safe mode partial profit tracking
    void RegisterPosition(ulong ticket, string symbol, double entryPrice,
                           double sl, double tp)
    {
@@ -278,9 +247,7 @@ public:
                   symbol, ticket, entryPrice, sl, riskDist);
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove a position from tracking                                   |
-   //+------------------------------------------------------------------+
+// Remove a position from tracking
    void UnregisterPosition(ulong ticket)
    {
       int idx = FindTrackedPosition(ticket);
@@ -288,12 +255,10 @@ public:
          m_trackedPositions[idx].isActive = false;
    }
 
-   //+------------------------------------------------------------------+
-   //| Manage safe mode positions: partial profit taking + breakeven     |
-   //| This is for swing positions — different from scalp engine logic   |
-   //| - Move SL to breakeven at 0.5R profit                            |
-   //| - Close 50% of position at 1R profit                             |
-   //+------------------------------------------------------------------+
+// Manage safe mode positions: partial profit taking + breakeven
+// This is for swing positions — different from scalp engine logic
+// - Move SL to breakeven at 0.5R profit
+// - Close 50% of position at 1R profit
    void ManageSafeModePositions(CTradeManager* safeModeTradeMgr)
    {
       if(!m_initialized || !m_config.partialProfitTaking)
@@ -388,9 +353,7 @@ public:
       CleanupTrackedPositions();
    }
 
-   //+------------------------------------------------------------------+
-   //| Print safe mode diagnostics                                       |
-   //+------------------------------------------------------------------+
+// Print safe mode diagnostics
    void PrintDiagnostics() const
    {
       PrintFormat("[SAFE-MODE-DIAG] initialized=%s | killZone=%s | trackedPositions=%d | minConf=%.2f | minVoters=%d | quorum=%.2f | spreadATR=%.2f",

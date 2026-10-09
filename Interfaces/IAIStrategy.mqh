@@ -1,15 +1,10 @@
-//+------------------------------------------------------------------+
-//| IAIStrategy Interface                                            |
-//| AI-specific interface extending IStrategy with capability interfaces |
-//+------------------------------------------------------------------+
+// AI-specific interface extending IStrategy with capability interfaces
 #ifndef INTERFACES_IAISTRATEGY_MQH
 #define INTERFACES_IAISTRATEGY_MQH
 
 #include "IStrategy.mqh"
 
-//+------------------------------------------------------------------+
-//| AI Strategy Interface - Combines all AI capability interfaces   |
-//+------------------------------------------------------------------+
+// AI Strategy Interface - Combines all AI capability interfaces
 class IAIStrategy : public IStrategy
 {
 public:
@@ -19,11 +14,9 @@ public:
     virtual double GetUncertainty(void) = 0;
     virtual void GetConfidenceInterval(double &lower, double &upper) const = 0;
 
-    // --- Model Health ---
     virtual bool IsModelHealthy(void) const = 0;
     virtual double GetHealthScore(void) const = 0;
 
-    // --- Online Training ---
     virtual void EnableOnlineTraining(const bool enable) = 0;
     virtual bool TrainStep(void) = 0;
     virtual string GetTrainingState(void) const = 0;
@@ -38,7 +31,6 @@ public:
     virtual double GetTemperature(void) const = 0;
     virtual void SetTemperature(const double temperature) = 0;
 
-    // --- Checkpointing ---
         virtual bool SaveCheckpoint(void) = 0;
         virtual string GetLastLoadStatus(void) const = 0;
 

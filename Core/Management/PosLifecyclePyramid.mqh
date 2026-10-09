@@ -1,11 +1,7 @@
-//+------------------------------------------------------------------+
-//| PosLifecyclePyramid.mqh                                           |
-//| Pyramiding state tracking + layer-add lifecycle extracted from    |
-//| PositionLifecycleManager.mqh (Phase H — God Object decomposition) |
-//|                                                                   |
-//| Owns: CPyramidState registry + pyramiding configuration.          |
-//| Behaviour preserved 1:1 — no logic changes.                       |
-//+------------------------------------------------------------------+
+// Pyramiding state tracking + layer-add lifecycle extracted from
+// PositionLifecycleManager.mqh (Phase H — God Object decomposition)
+// Owns: CPyramidState registry + pyramiding configuration.
+// Behaviour preserved 1:1 — no logic changes.
 #ifndef POS_LIFECYCLE_PYRAMID_MQH
 #define POS_LIFECYCLE_PYRAMID_MQH
 
@@ -37,10 +33,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| CPosLifecyclePyramid                                              |
-//| Stateful module — held BY VALUE by CPositionLifecycleManager.     |
-//+------------------------------------------------------------------+
+// Stateful module — held BY VALUE by CPositionLifecycleManager.
 class CPosLifecyclePyramid
 {
 private:

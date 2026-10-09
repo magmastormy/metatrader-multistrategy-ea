@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                        PiercingDetector.mqh      |
-//|               Piercing Line / Dark Cloud Cover Detection          |
-//+------------------------------------------------------------------+
+// Piercing Line / Dark Cloud Cover Detection
 #property copyright "Copyright 2026"
 #property strict
 

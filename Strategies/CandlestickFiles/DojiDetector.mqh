@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                             DojiDetector.mqh     |
-//|                                  Doji Pattern Detection           |
-//+------------------------------------------------------------------+
+// Doji Pattern Detection
 #property copyright "Copyright 2026"
 #property strict
 

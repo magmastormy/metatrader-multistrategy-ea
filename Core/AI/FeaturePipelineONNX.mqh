@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| FeaturePipelineONNX.mqh                                          |
-//| ONNX feature pipeline implementation                             |
-//+------------------------------------------------------------------+
+// ONNX feature pipeline implementation
 #property strict
 
 #ifndef CORE_AI_FEATURE_PIPELINE_ONNX_MQH
@@ -11,9 +8,6 @@
 #include "AIFeatureVectorBuilder.mqh"
 #include "../AI/PipelineScaler.mqh"
 
-//+------------------------------------------------------------------+
-//| CFeaturePipelineONNX - ONNX Feature Pipeline                     |
-//+------------------------------------------------------------------+
 class CFeaturePipelineONNX : public IFeaturePipeline
 {
 private:
@@ -163,7 +157,6 @@ public:
         return m_scaler.IsLoaded();
     }
     
-    // Set scaler path
     void SetScalerPath(const string path)
     {
         m_scalerPath = path;

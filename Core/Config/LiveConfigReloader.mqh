@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| LiveConfigReloader.mqh                                           |
-//| Hot-reload configuration from JSON file without restart          |
-//+------------------------------------------------------------------+
+// Hot-reload configuration from JSON file without restart
 #property strict
 #ifndef CORE_CONFIG_LIVE_CONFIG_RELOADER_MQH
 #define CORE_CONFIG_LIVE_CONFIG_RELOADER_MQH
@@ -10,9 +7,7 @@
 #include "../Utils/StructuredLogger.mqh"
 #include "../Utils/LogMacros.mqh"
 
-//+------------------------------------------------------------------+
-//| Callback interface for config changes                            |
-//+------------------------------------------------------------------+
+// Callback interface for config changes
 class IConfigCallback : public CObject
 {
 public:
@@ -21,9 +16,7 @@ public:
     virtual ~IConfigCallback() {}
 };
 
-//+------------------------------------------------------------------+
-//| Callback implementation - users derive from this class           |
-//+------------------------------------------------------------------+
+// Callback implementation - users derive from this class
 class CConfigCallbackBase : public IConfigCallback
 {
 protected:
@@ -39,9 +32,6 @@ public:
     virtual string GetSectionName() const override { return m_sectionName; }
 };
 
-//+------------------------------------------------------------------+
-//| CLiveConfigReloader                                              |
-//+------------------------------------------------------------------+
 class CLiveConfigReloader
 {
 private:
@@ -142,7 +132,6 @@ public:
         CheckAndReload();
     }
     
-    // Get current config as JSON string
     string GetCurrentConfig() const { return m_lastJson; }
     
     // Parse helpers for common types
@@ -238,9 +227,7 @@ private:
     }
 };
 
-//+------------------------------------------------------------------+
-//| JSON parsing helpers (MQL5 Json functions are limited)           |
-//+------------------------------------------------------------------+
+// JSON parsing helpers (MQL5 Json functions are limited)
 double JsonGetDouble(string json, string path, double defaultVal) {
     // Simple dot-path parser: "risk.maxRiskPerTrade"
     string valueStr = JsonExtractValue(json, path);

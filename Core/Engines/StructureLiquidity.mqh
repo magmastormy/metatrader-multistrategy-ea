@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| StructureLiquidity.mqh - Liquidity sweep / stop-hunt detection   |
-//| Extracted verbatim from StructureEngine.mqh (no behavior change) |
-//|                                                                  |
-//| Stateless: swing arrays and the structure state are injected.    |
-//+------------------------------------------------------------------+
+// StructureLiquidity.mqh - Liquidity sweep / stop-hunt detection
+// Extracted verbatim from StructureEngine.mqh (no behavior change)
+// Stateless: swing arrays and the structure state are injected.
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -13,9 +10,7 @@
 
 #include "StructureTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless liquidity sweep helpers                                |
-//+------------------------------------------------------------------+
+// Stateless liquidity sweep helpers
 class CStructureLiquidity
 {
 public:
@@ -29,9 +24,6 @@ public:
     static bool HasLiquiditySweep(const MarketStructureState &state, int lookback);
 };
 
-//+------------------------------------------------------------------+
-//| Detect Liquidity Sweep                                          |
-//+------------------------------------------------------------------+
 bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
                                                int index,
                                                const SwingPoint &swingHighs[],
@@ -73,9 +65,7 @@ bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent liquidity sweep                                |
-//+------------------------------------------------------------------+
+// Check for recent liquidity sweep
 bool CStructureLiquidity::HasLiquiditySweep(const MarketStructureState &state, int lookback)
 {
     // This would need to track sweep events

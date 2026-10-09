@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryExecution.mqh                                        |
-//| Recovery order sequencing: pre-trade risk gate, AI-VOTE logging,  |
-//| grid entry execution with dynamic slippage, retcode diagnostics   |
-//| and grid position close.                                          |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Recovery order sequencing: pre-trade risk gate, AI-VOTE logging,
+// grid entry execution with dynamic slippage, retcode diagnostics
+// and grid position close.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -24,9 +21,7 @@ class CUnifiedRiskManager;
 // Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryExecution �?owns the trade execution dependencies    |
-//+------------------------------------------------------------------+
+// CGridRecoveryExecution �?owns the trade execution dependencies
 class CGridRecoveryExecution
 {
 private:
@@ -36,9 +31,7 @@ private:
    CAIAdapter*               m_aiAdapter;       // L10-018: AI adapter for voting
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CGridRecoveryExecution() :
       m_riskManager(NULL),
       m_tradeManager(NULL),
@@ -46,9 +39,7 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Wire up the execution dependencies                                |
-   //+------------------------------------------------------------------+
+// Wire up the execution dependencies
    void Configure(CUnifiedRiskManager *pRiskManager, CTradeManager *pTradeManager, CAIAdapter *pAIAdapter)
    {
       m_riskManager    = pRiskManager;
@@ -56,10 +47,8 @@ public:
       m_aiAdapter      = pAIAdapter;     // L10-018: Store AI adapter
    }
 
-   //+------------------------------------------------------------------+
-   //| Pre-trade risk validation via UnifiedRiskManager                  |
-   //| (AGENTS.md invariant #1)                                          |
-   //+------------------------------------------------------------------+
+// Pre-trade risk validation via UnifiedRiskManager
+// (AGENTS.md invariant #1)
    bool PassesRiskValidation(const string symbol, ENUM_ORDER_TYPE orderType, double lotSize,
                              double slDistance, int level)
    {
@@ -87,9 +76,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| L10-018: AI-VOTE logging                                          |
-   //+------------------------------------------------------------------+
+// L10-018: AI-VOTE logging
    void LogAIVote(const string symbol, int direction)
    {
       if(m_aiAdapter != NULL)
@@ -99,9 +86,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Execute a grid level entry; ticketOut receives the result order   |
-   //+------------------------------------------------------------------+
+// Execute a grid level entry; ticketOut receives the result order
    bool ExecuteEntry(const string symbol, int direction, int level, double lotSize,
                      double entryPrice, double sl, double tp, int magic, ulong &ticketOut)
    {
@@ -194,9 +179,7 @@ public:
       return result;
    }
 
-   //+------------------------------------------------------------------+
-   //| Close a single grid level position; logs the retcode on failure   |
-   //+------------------------------------------------------------------+
+// Close a single grid level position; logs the retcode on failure
    bool ClosePositionTicket(const string symbol, int level, ulong ticket)
    {
       if(!m_trade.PositionClose(ticket))

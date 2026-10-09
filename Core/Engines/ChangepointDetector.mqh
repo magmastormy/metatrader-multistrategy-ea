@@ -1,17 +1,11 @@
-//+------------------------------------------------------------------+
-//| ChangepointDetector.mqh                                          |
-//| Bayesian Online Changepoint Detection (Adams & MacKay 2007)     |
-//| Detects regime breaks in real-time for signal gating            |
-//| Batch 114: Integrates with AI pipeline as preprocessing gate    |
-//+------------------------------------------------------------------+
+// Bayesian Online Changepoint Detection (Adams & MacKay 2007)
+// Detects regime breaks in real-time for signal gating
+// Batch 114: Integrates with AI pipeline as preprocessing gate
 #ifndef CHANGEPOINT_DETECTOR_MQH
 #define CHANGEPOINT_DETECTOR_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Changepoint Snapshot                                              |
-//+------------------------------------------------------------------+
 struct SChangepointSnapshot
 {
     double hazardRate;         // P(regime change at time t)
@@ -33,17 +27,13 @@ struct SChangepointSnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| CChangepointDetector — BOCPD for real-time regime break detection|
-//|                                                                  |
-//| Based on Adams & MacKay (2007) "Bayesian Online Changepoint      |
-//| Detection". Maintains a posterior over run lengths and computes   |
-//| the hazard function P(changepoint at t | data_{1:t}).            |
-//|                                                                  |
-//| Key insight: After a changepoint, momentum signals should be    |
-//| paused/reset, and stops should be widened. This prevents the     |
-//| EA from entering trades based on stale regime assumptions.       |
-//+------------------------------------------------------------------+
+// CChangepointDetector — BOCPD for real-time regime break detection
+// Based on Adams & MacKay (2007) "Bayesian Online Changepoint
+// Detection". Maintains a posterior over run lengths and computes
+// the hazard function P(changepoint at t | data_{1:t}).
+// Key insight: After a changepoint, momentum signals should be
+// paused/reset, and stops should be widened. This prevents the
+// EA from entering trades based on stale regime assumptions.
 class CChangepointDetector
 {
 private:

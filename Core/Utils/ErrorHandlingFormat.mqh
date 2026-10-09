@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingFormat.mqh                                          |
-//| Pure formatting and error-code classification helpers.           |
-//| Extracted verbatim from ErrorHandling.mqh.                       |
-//+------------------------------------------------------------------+
+// Pure formatting and error-code classification helpers.
+// Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_FORMAT_MQH
 #define CORE_ERROR_HANDLING_FORMAT_MQH
 

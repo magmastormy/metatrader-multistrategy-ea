@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| ATRScalpEntry.mqh                                                |
-//| Entry preparation and execution for the ATR scalping engine:     |
-//| SL/TP sizing from ATR, lot sizing + margin cap, pre-trade risk   |
-//| validation and the market order itself.                          |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Entry preparation and execution for the ATR scalping engine:
+// SL/TP sizing from ATR, lot sizing + margin cap, pre-trade risk
+// validation and the market order itself.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -23,9 +20,7 @@
 
 class CUnifiedRiskManager;
 
-//+------------------------------------------------------------------+
-//| CATRScalpEntry �?owns the entry dependencies and open counter     |
-//+------------------------------------------------------------------+
+// CATRScalpEntry �?owns the entry dependencies and open counter
 class CATRScalpEntry
 {
 private:
@@ -35,9 +30,7 @@ private:
    int                    m_totalTradesOpened;
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CATRScalpEntry() :
       m_baseMagic(0),
       m_positionSizer(NULL),
@@ -46,9 +39,7 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Wire up the entry dependencies                                    |
-   //+------------------------------------------------------------------+
+// Wire up the entry dependencies
    void Configure(int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager)
    {
       m_baseMagic     = baseMagic;
@@ -56,14 +47,10 @@ public:
       m_riskManager   = pRiskManager;
    }
 
-   //+------------------------------------------------------------------+
-   //| Opened trade counter                                              |
-   //+------------------------------------------------------------------+
+// Opened trade counter
    int TotalTradesOpened() const { return m_totalTradesOpened; }
 
-   //+------------------------------------------------------------------+
-   //| Open a scalp trade in the given direction                         |
-   //+------------------------------------------------------------------+
+// Open a scalp trade in the given direction
    bool OpenScalpTrade(int idx, int direction, SATRScalpSymbolState &state,
                        const SATRScalpingConfig &config, CTrade &trade)
    {

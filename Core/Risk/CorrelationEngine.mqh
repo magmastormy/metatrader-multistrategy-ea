@@ -1,24 +1,16 @@
-//+------------------------------------------------------------------+
-//| CorrelationEngine.mqh                                            |
-//| Single authoritative correlation computation for the EA runtime  |
-//| Phase 2.2: Unifies three divergent correlation implementations   |
-//+------------------------------------------------------------------+
+// Single authoritative correlation computation for the EA runtime
+// Phase 2.2: Unifies three divergent correlation implementations
 #ifndef CORE_RISK_CORRELATION_ENGINE_MQH
 #define CORE_RISK_CORRELATION_ENGINE_MQH
 
-//+------------------------------------------------------------------+
-//| Constants                                                        |
-//+------------------------------------------------------------------+
+// Constants
 #define CORR_ENGINE_MAX_SYMBOLS  20
 #define CORR_ENGINE_INVALID_IDX  -1
 
-//+------------------------------------------------------------------+
-//| Correlation Engine Class                                         |
-//| Computes Pearson correlation on H1 returns over configurable     |
-//| lookback. Caches full correlation matrix. Recomputes periodically|
-//| (default every 300 seconds), not per-trade.                     |
-//| Uses fixed-size arrays, no heap allocation in hot path.         |
-//+------------------------------------------------------------------+
+// Computes Pearson correlation on H1 returns over configurable
+// lookback. Caches full correlation matrix. Recomputes periodically
+// (default every 300 seconds), not per-trade.
+// Uses fixed-size arrays, no heap allocation in hot path.
 class CCorrelationEngine
 {
 private:
@@ -94,9 +86,7 @@ public:
     string   GetConfig() const;
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CCorrelationEngine::CCorrelationEngine() :
     m_lookback(30),
     m_refreshIntervalSec(300),
@@ -113,9 +103,6 @@ CCorrelationEngine::CCorrelationEngine() :
         m_symbols[i] = "";
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
                                     double conservativeFallback,
                                     double assetClassThreshold,
@@ -151,9 +138,7 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Find symbol index in registry                                    |
-//+------------------------------------------------------------------+
+// Find symbol index in registry
 int CCorrelationEngine::FindSymbolIndex(const string symbol) const
 {
     for(int i = 0; i < m_symbolCount; i++)
@@ -164,9 +149,7 @@ int CCorrelationEngine::FindSymbolIndex(const string symbol) const
     return CORR_ENGINE_INVALID_IDX;
 }
 
-//+------------------------------------------------------------------+
-//| Register a symbol, return its index                              |
-//+------------------------------------------------------------------+
+// Register a symbol, return its index
 int CCorrelationEngine::RegisterSymbol(const string symbol)
 {
     int existingIdx = FindSymbolIndex(symbol);
@@ -185,9 +168,7 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
     return m_symbolCount - 1;
 }
 
-//+------------------------------------------------------------------+
-//| Compute Pearson correlation between two symbols on H1 returns    |
-//+------------------------------------------------------------------+
+// Compute Pearson correlation between two symbols on H1 returns
 double CCorrelationEngine::ComputePearson(const string symbol1, const string symbol2) const
 {
     if(symbol1 == "" || symbol2 == "")
@@ -239,9 +220,7 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
     return correlation;
 }
 
-//+------------------------------------------------------------------+
-//| Get cached correlation value by matrix indices                   |
-//+------------------------------------------------------------------+
+// Get cached correlation value by matrix indices
 double CCorrelationEngine::GetCachedCorrelation(int idx1, int idx2) const
 {
     if(idx1 < 0 || idx1 >= m_symbolCount || idx2 < 0 || idx2 >= m_symbolCount)
@@ -250,9 +229,7 @@ double CCorrelationEngine::GetCachedCorrelation(int idx1, int idx2) const
     return m_matrix[idx1 * CORR_ENGINE_MAX_SYMBOLS + idx2];
 }
 
-//+------------------------------------------------------------------+
-//| Compute the full correlation matrix                              |
-//+------------------------------------------------------------------+
+// Compute the full correlation matrix
 void CCorrelationEngine::ComputeMatrix()
 {
     // Register all currently open position symbols
@@ -280,9 +257,7 @@ void CCorrelationEngine::ComputeMatrix()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Refresh if enough time has elapsed or symbols changed            |
-//+------------------------------------------------------------------+
+// Refresh if enough time has elapsed or symbols changed
 void CCorrelationEngine::Refresh()
 {
     if(!m_initialized)
@@ -303,10 +278,8 @@ void CCorrelationEngine::Refresh()
     m_symbolsChanged = false; // Reset after rebuild
 }
 
-//+------------------------------------------------------------------+
-//| Prune symbols that no longer have open positions                 |
-//| L5-018 FIX: Full matrix rebuild after pruning to maintain consistency |
-//+------------------------------------------------------------------+
+// Prune symbols that no longer have open positions
+// L5-018 FIX: Full matrix rebuild after pruning to maintain consistency
 void CCorrelationEngine::PruneStaleSymbols()
 {
     if(m_symbolCount <= 0)
@@ -355,9 +328,7 @@ void CCorrelationEngine::PruneStaleSymbols()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Force immediate matrix rebuild                                   |
-//+------------------------------------------------------------------+
+// Force immediate matrix rebuild
 void CCorrelationEngine::ForceRefresh()
 {
     if(!m_initialized)
@@ -367,9 +338,7 @@ void CCorrelationEngine::ForceRefresh()
     m_lastRefreshTime = TimeCurrent();
 }
 
-//+------------------------------------------------------------------+
-//| Get correlation between two symbols                              |
-//+------------------------------------------------------------------+
+// Get correlation between two symbols
 double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 {
     if(!m_initialized)
@@ -407,9 +376,7 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
     return GetCachedCorrelation(idx1, idx2);
 }
 
-//+------------------------------------------------------------------+
-//| Get configuration for diagnostics                                |
-//+------------------------------------------------------------------+
+// Get configuration for diagnostics
 string CCorrelationEngine::GetConfig() const
 {
     return StringFormat("Lookback=%d | Refresh=%ds | Fallback=%.2f | AssetClass=%.2f | CrossAsset=%.2f | Symbols=%d | Initialized=%s",
@@ -418,17 +385,13 @@ string CCorrelationEngine::GetConfig() const
                         m_initialized ? "true" : "false");
 }
 
-//+------------------------------------------------------------------+
-//| Check if symbol has correlated open positions above threshold    |
-//+------------------------------------------------------------------+
+// Check if symbol has correlated open positions above threshold
 bool CCorrelationEngine::IsCorrelatedCluster(const string symbol, double threshold)
 {
     return (CountCorrelatedPositions(symbol, threshold) > 0);
 }
 
-//+------------------------------------------------------------------+
-//| Count open positions correlated with symbol above threshold      |
-//+------------------------------------------------------------------+
+// Count open positions correlated with symbol above threshold
 int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double threshold)
 {
     if(!m_initialized)
@@ -454,9 +417,7 @@ int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double thr
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Reset symbol registry and matrix                                 |
-//+------------------------------------------------------------------+
+// Reset symbol registry and matrix
 void CCorrelationEngine::Reset()
 {
     m_symbolCount = 0;
@@ -466,9 +427,7 @@ void CCorrelationEngine::Reset()
     m_lastRefreshTime = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CCorrelationEngine::~CCorrelationEngine()
 {
     // Cleanup - array memory is automatically managed

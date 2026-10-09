@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CTrainingDataManager.mqh                                          |
-//| Manages training examples and barrier buffer for neural network   |
-//+------------------------------------------------------------------+
+// Manages training examples and barrier buffer for neural network
 #ifndef NEURAL_TRAINING_DATA_MANAGER_MQH
 #define NEURAL_TRAINING_DATA_MANAGER_MQH
 

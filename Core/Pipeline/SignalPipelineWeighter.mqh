@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Weighter - readiness/context/quality scoring     |
-//| Stateless scoring helpers extracted from CUnifiedSignalPipeline. |
-//+------------------------------------------------------------------+
+// Signal Pipeline Weighter - readiness/context/quality scoring
+// Stateless scoring helpers extracted from CUnifiedSignalPipeline.
 #ifndef SIGNAL_PIPELINE_WEIGHTER_MQH
 #define SIGNAL_PIPELINE_WEIGHTER_MQH
 

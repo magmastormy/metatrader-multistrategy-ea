@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| MultiStrategyTestingEA.mq5                                       |
-//| Standalone Testing EA with Complete Test Profile System          |
-//| Load this instead of MultiStrategyAutonomousEA.mq5 for testing   |
-//+------------------------------------------------------------------+
+// Standalone Testing EA with Complete Test Profile System
+// Load this instead of MultiStrategyAutonomousEA.mq5 for testing
 #property copyright "Copyright 2024"
 #property link      "https://github.com/"
 #property version   "2.000"
@@ -10,9 +7,7 @@
 
 #include "Core/Orchestration/EAOrchestrator.mqh"
 
-//+------------------------------------------------------------------+
-//| Global variable definitions (declared extern in OrchestratorFwd) |
-//+------------------------------------------------------------------+
+// Global variable definitions (declared extern in OrchestratorFwd)
 #include "Core/Orchestration/GlobalDefs.mqh"
 
 // Production logging & tracing. Both managers are DEFINED here to resolve the
@@ -37,9 +32,7 @@ string GetDeInitReasonText(int reasonCode);
 bool ValidateInputs();
 void RestoreEngineStates();
 
-//======================================================================
 // COMPLETE TEST PROFILE SYSTEM (from AUDIT_CompleteStrategyEngineTesting.md)
-//======================================================================
 
 // 3.2 Complete Enum Definition (27 Single + 15 Combination + 3 Special = 45 Profiles)
 enum ENUM_COMPLETE_TEST_PROFILE
@@ -443,7 +436,6 @@ input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
 input bool     InpSymbolEnableVolumeCheck = true;
 
-//--- Logging
 input int      InpLogLevel = 1;
 input int      InpLogVerbosity = 3;
 input bool     InpLogDerivFamilyDetection = true;
@@ -456,7 +448,6 @@ input int      InpEquityCurveEmaPeriod = 20;
 input double   InpEquityCurveReductionFactor = 0.50;
 input double   InpKellyFraction = 0.25;
 
-// 3.4 Component Flag Structure
 struct SCompleteComponentFlags
 {
     // Registry Strategies (19) - executed via ProcessTradingLogic() -> Pipeline -> CUnifiedRiskManager
@@ -517,9 +508,7 @@ struct SCompleteComponentFlags
 // Global flags instance
 SCompleteComponentFlags g_completeFlags;
 
-//======================================================================
 // PROFILE APPLICATION LOGIC
-//======================================================================
 
 // 3.5 Helper functions for flag groups (replaced C++ lambdas for MQL5 compatibility)
 void SetIndicatorFlags(SCompleteComponentFlags &flags, bool m, bool t, bool sr, bool ict, bool cd, bool um, bool pot,
@@ -856,7 +845,6 @@ void ApplyFlagsToInputs(const SCompleteComponentFlags &flags)
     PrintFormat("[TEST-PROFILE] Grid Recovery Engine: %s", flags.gridRecoveryEngine ? "ON" : "OFF");
     PrintFormat("[TEST-PROFILE] ATR Scalping Engine: %s", flags.atrScalpingEngine ? "ON" : "OFF");
 
-    // Dead Code
     if(InpIncludeDeadCodeInProfiles)
     {
         PrintFormat("[TEST-PROFILE] Hurst Engine (dead): %s", flags.enableHurstEngine ? "ON" : "OFF");
@@ -1007,9 +995,7 @@ void LogPerSymbolEffectiveComponents()
     Print("[PER-SYMBOL-REPORT] ========================================");
 }
 
-//======================================================================
 // ORCHESTRATOR CONFIG BUILDER (with test profile integration)
-//======================================================================
 
 SOrchestratorConfig BuildOrchestratorConfig()
 {
@@ -1045,7 +1031,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     // Strategy Selection - OVERRIDDEN BY TEST PROFILE if enabled
     if(InpTestProfileOverrideAll && InpCompleteTestProfile != TEST_PROFILE_CUSTOM)
     {
-        // Apply test profile flags
         ApplyCompleteTestProfile(InpCompleteTestProfile, g_completeFlags, InpIncludeDeadCodeInProfiles);
 
         config.enableMomentum = g_completeFlags.momentum;
@@ -1083,7 +1068,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.aiWeightMultiplier = InpAIWeightMultiplier;
         config.aiDrawdownSizingLimit = InpAIDrawdownSizingLimit;
 
-        // Engines
         config.enableScalpEngine = g_completeFlags.fastScalpEngine;
         config.scalpAsyncMode = InpScalpAsyncMode;
         config.scalpMaxLatencyMs = InpScalpMaxLatencyMs;
@@ -1095,7 +1079,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableHurstEngine = g_completeFlags.enableHurstEngine;
         config.enableOUProcess = g_completeFlags.enableOUProcess;
 
-        // Thresholds
         config.trendADXNoTrendThreshold = InpTrendADXNoTrendThreshold;
         config.syntheticADXNoTrendThreshold = InpSyntheticADXNoTrendThreshold;
     }
@@ -1137,7 +1120,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.aiWeightMultiplier = InpAIWeightMultiplier;
         config.aiDrawdownSizingLimit = InpAIDrawdownSizingLimit;
 
-        // Engines
         config.enableScalpEngine = InpEnableScalpEngine;
         config.scalpAsyncMode = InpScalpAsyncMode;
         config.scalpMaxLatencyMs = InpScalpMaxLatencyMs;
@@ -1149,7 +1131,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableHurstEngine = InpEnableHurstEngine;
         config.enableOUProcess = InpEnableOUProcess;
 
-        // Thresholds
         config.trendADXNoTrendThreshold = InpTrendADXNoTrendThreshold;
         config.syntheticADXNoTrendThreshold = InpSyntheticADXNoTrendThreshold;
     }
@@ -1189,13 +1170,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.weightLiquiditySweep = InpWeightLiquiditySweep;
     config.weightRangeCompression = InpWeightRangeCompression;
 
-    // Dashboard
     config.dashboardEnabled = InpDashboardEnabled;
     config.dashboardEndpoint = InpDashboardEndpoint;
     config.dashboardPushIntervalSec = InpDashboardPushIntervalSec;
     config.dashboardControlEnabled = InpDashboardControlEnabled;
 
-    // Live Authority Gate
     config.enableLiveAuthorityGate = InpEnableLiveAuthorityGate;
     config.allowAIWarmStartLive = InpAllowAIWarmStartLive;
     config.allowHybridAIStandalone = InpAllowHybridAIStandalone;
@@ -1214,7 +1193,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.aiPromotedRiskMultiplier = InpAIPromotedRiskMultiplier;
     config.nonAIPromotedRiskMultiplier = InpNonAIPromotedRiskMultiplier;
 
-    // NN Attribution
     config.enableNNAttributionDiagnostics = InpEnableNNAttributionDiagnostics;
     config.runNNAttributionSelfTest = InpRunNNAttributionSelfTest;
 
@@ -1295,13 +1273,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.lifecycleUseATRTrailing = InpLifecycleUseATRTrailing;
     config.lifecycleATRMultiplier = InpLifecycleATRMultiplier;
 
-    // Max Hold Time
     config.enableMaxHoldTime = InpEnableMaxHoldTime;
     config.maxHoldHoursIntraday = InpMaxHoldHoursIntraday;
     config.maxHoldHoursSwing = InpMaxHoldHoursSwing;
     config.maxHoldOnlyIfLoss = InpMaxHoldOnlyIfLoss;
 
-    // Emergency
     config.emergencyFlattenAllAccountPositions = InpEmergencyFlattenAllAccountPositions;
     config.unprotectedRemediationIntervalSec = InpUnprotectedRemediationIntervalSec;
     config.unprotectedMaxRestoreAttempts = InpUnprotectedMaxRestoreAttempts;
@@ -1309,7 +1285,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.syntheticSpikeVelocityMultiplier = InpSyntheticSpikeVelocityMultiplier;
     config.syntheticSpikePauseSeconds = InpSyntheticSpikePauseSeconds;
 
-    // Dynamic Slippage
     config.enableDynamicSlippage = InpEnableDynamicSlippage;
     config.dynamicSlippageAtrPercent = InpDynamicSlippageAtrPercent;
     config.dynamicSlippageMinPoints = InpDynamicSlippageMinPoints;
@@ -1325,7 +1300,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.skewStepSmallThreshold = InpSkewStepSmallThreshold;
     config.skewStepLargeThreshold = InpSkewStepLargeThreshold;
 
-    // Spike Hunter
     config.spikeHunterEnabled = InpSpikeHunterEnabled;
     config.spikeHunterVelocityMult = InpSpikeHunterVelocityMult;
     config.spikeHunterMinConsecTicks = InpSpikeHunterMinConsecTicks;
@@ -1340,7 +1314,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.spikeHunterAlertThrottle = InpSpikeHunterAlertThrottle;
     config.spikeHunterMinConfluence = InpSpikeHunterMinConfluence;
 
-    // Multi-Asset Profiler
     config.multiAssetProfilerEnabled = InpMultiAssetProfilerEnabled;
     config.derivProfilerEnabled = InpDerivProfilerEnabled;
     config.gridRecoveryEnabled = InpGridRecoveryEnabled;
@@ -1402,7 +1375,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.symbolMinDailyVolumeLots = InpSymbolMinDailyVolumeLots;
     config.symbolEnableVolumeCheck = InpSymbolEnableVolumeCheck;
 
-    // Logging
     config.logLevel = InpLogLevel;
     config.logVerbosity = InpLogVerbosity;
     config.logDerivFamilyDetection = InpLogDerivFamilyDetection;
@@ -1411,24 +1383,19 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.useCuratedStrategySet = InpUseCuratedStrategySet;
     config.useSymbolClassProfiles = InpUseSymbolClassProfiles;
 
-    // Kalman MR
     config.enableKalmanMR = InpEnableKalmanMR;
     config.kalmanLambda = InpKalmanLambda;
 
-    // Changepoint Detection
     config.enableChangepointDetect = InpEnableChangepointDetect;
     config.cpdHazardThreshold = InpCPDHazardThreshold;
 
-    // Four State Regime
     config.enableFourStateRegime = InpEnableFourStateRegime;
 
-    // Vol Targeting
     config.enableVolTargeting = InpEnableVolTargeting;
     config.targetVol = InpTargetVol;
     config.volMinScale = InpVolMinScale;
     config.volMaxScale = InpVolMaxScale;
 
-    // Exit Optimizer
     config.enableExitOptimizer = InpEnableExitOptimizer;
 
     // Symbol Universe
@@ -1442,15 +1409,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     return config;
 }
 
-//======================================================================
 // MAIN EA EVENT HANDLERS
-//======================================================================
 
 CEAOrchestrator *g_orchestrator = NULL;
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Initialization                                    |
-//+------------------------------------------------------------------+
+// Expert Advisor Initialization
 int OnInit()
 {
     // Validate inputs first
@@ -1554,9 +1517,7 @@ int OnInit()
     return INIT_SUCCEEDED;
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Deinitialization                                  |
-//+------------------------------------------------------------------+
+// Expert Advisor Deinitialization
 void OnDeinit(const int reason)
 {
     Print("[DEINIT-START] Deinitialization begun | reason=", reason, " (", GetDeInitReasonText(reason), ")");
@@ -1574,10 +1535,8 @@ void OnDeinit(const int reason)
     // Destroy IndicatorManager BEFORE killing timer
     CIndicatorManager::DestroyInstance();
 
-    // Shutdown CJsonLogger
     CJsonLogger::Shutdown();
 
-    // Kill the timer
     EventKillTimer();
 
     Print("[MULTI-STRATEGY-TESTING-EA] ========================================");
@@ -1587,9 +1546,7 @@ void OnDeinit(const int reason)
     Print("[DEINIT-COMPLETE] Deinitialization finished cleanly | reason=", reason, " (", GetDeInitReasonText(reason), ")");
 }
 
-//+------------------------------------------------------------------+
-//| Timer Handler                                                    |
-//+------------------------------------------------------------------+
+// Timer Handler
 void OnTimer()
 {
     // Early exit during shutdown
@@ -1602,9 +1559,7 @@ void OnTimer()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Trade Transaction Handler                         |
-//+------------------------------------------------------------------+
+// Expert Advisor Trade Transaction Handler
 void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
@@ -1623,9 +1578,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Tick Handler                                      |
-//+------------------------------------------------------------------+
+// Expert Advisor Tick Handler
 void OnTick()
 {
     if(g_orchestrator != NULL && g_orchestrator.GetSystemInitialized())
@@ -1634,9 +1587,7 @@ void OnTick()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Chart Event Handler                                              |
-//+------------------------------------------------------------------+
+// Chart Event Handler
 void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
@@ -1657,9 +1608,7 @@ void OnChartEvent(const int id,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helper functions                                                 |
-//+------------------------------------------------------------------+
+// Helper functions
 string GetDeInitReasonText(int reasonCode)
 {
     switch(reasonCode)
@@ -1681,9 +1630,7 @@ string GetDeInitReasonText(int reasonCode)
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
 
 
-//+------------------------------------------------------------------+
-//| Restore Engine States (from MultiStrategyAutonomousEA.mq5)      |
-//+------------------------------------------------------------------+
+// Restore Engine States (from MultiStrategyAutonomousEA.mq5)
 void RestoreEngineStates()
 {
     int total = PositionsTotal();
@@ -1738,9 +1685,7 @@ void RestoreEngineStates()
                 foundGridPositions, foundScalpPositions, foundSpikePositions);
 }
 
-//+------------------------------------------------------------------+
-//| Input Validation (Testing EA subset)                            |
-//+------------------------------------------------------------------+
+// Input Validation (Testing EA subset)
 bool ValidateInputs()
 {
     // Validates the subset of inputs that are relevant to the Testing EA.

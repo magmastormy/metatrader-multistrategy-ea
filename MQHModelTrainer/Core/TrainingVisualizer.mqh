@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| TrainingVisualizer.mqh                                           |
-//| Chart visualization for training analysis                         |
-//+------------------------------------------------------------------+
+// Chart visualization for training analysis
 #ifndef MQH_TRAINING_VISUALIZER_MQH
 #define MQH_TRAINING_VISUALIZER_MQH
 

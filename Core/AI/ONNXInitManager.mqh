@@ -1,39 +1,30 @@
-//+------------------------------------------------------------------+
-//| ONNXInitManager.mqh                                              |
-//| ONNX session initialisation retry / exponential-backoff state    |
-//|                                                                  |
-//| Extracted verbatim from CEAOrchestrator, which previously held   |
-//| three loose members (m_onnxSessionDisabled, m_onnxInitRetryCount,|
-//| m_lastOnnxInitAttempt) plus the retry logic inlined into         |
-//| InitializeONNXAIForSymbol() / HandleONNXInitFailure() /          |
-//| ReenableONNXAI().                                                |
-//|                                                                  |
-//| BEHAVIOUR CONTRACT (must not drift - this gates the ONNX voter   |
-//| that feeds the weighted-consensus path):                         |
-//|   * disable threshold : 3 consecutive failures                   |
-//|   * backoff schedule  : 1, 2, 4, 8, 16, 32->capped 30 minutes    |
-//|                         (base 1 min, doubled once per recorded   |
-//|                          retry, at most 5 doublings, MathMin 30) |
-//|   * backoff is only evaluated while the session is disabled;     |
-//|     a first attempt (m_lastOnnxInitAttempt == 0) never waits     |
-//|   * a granted retry clears the disabled flag BEFORE the adapter  |
-//|     is constructed, exactly as the original inline code did      |
-//|   * success resets the retry counter and the attempt timestamp   |
-//|     but does NOT touch the disabled flag (already cleared)       |
-//+------------------------------------------------------------------+
+// ONNX session initialisation retry / exponential-backoff state
+// Extracted verbatim from CEAOrchestrator, which previously held
+// three loose members (m_onnxSessionDisabled, m_onnxInitRetryCount,
+// m_lastOnnxInitAttempt) plus the retry logic inlined into
+// InitializeONNXAIForSymbol() / HandleONNXInitFailure() /
+// ReenableONNXAI().
+// BEHAVIOUR CONTRACT (must not drift - this gates the ONNX voter
+// that feeds the weighted-consensus path):
+// * disable threshold : 3 consecutive failures
+// * backoff schedule  : 1, 2, 4, 8, 16, 32->capped 30 minutes
+// (base 1 min, doubled once per recorded
+// retry, at most 5 doublings, MathMin 30)
+// * backoff is only evaluated while the session is disabled;
+// a first attempt (m_lastOnnxInitAttempt == 0) never waits
+// * a granted retry clears the disabled flag BEFORE the adapter
+// is constructed, exactly as the original inline code did
+// * success resets the retry counter and the attempt timestamp
+// but does NOT touch the disabled flag (already cleared)
 #property strict
 
 #ifndef CORE_AI_ONNX_INIT_MANAGER_MQH
 #define CORE_AI_ONNX_INIT_MANAGER_MQH
 
-//+------------------------------------------------------------------+
-//| CONNXInitManager                                                 |
-//|                                                                  |
-//| Self-contained retry/backoff state machine. Owns no collaborators|
-//| and performs no ONNX work itself - the caller still creates,     |
-//| initialises and registers the adapter; this class only decides   |
-//| whether an attempt may run and records its outcome.              |
-//+------------------------------------------------------------------+
+// Self-contained retry/backoff state machine. Owns no collaborators
+// and performs no ONNX work itself - the caller still creates,
+// initialises and registers the adapter; this class only decides
+// whether an attempt may run and records its outcome.
 class CONNXInitManager
 {
 private:
@@ -62,14 +53,10 @@ public:
 
     ~CONNXInitManager() {}
 
-    //+--------------------------------------------------------------+
-    //| ComputeBackoffMinutes                                        |
-    //|                                                              |
-    //| Exponential backoff: 1min, 2min, 4min, 8min, 16min, max 30min|
-    //| Reproduces the original loop exactly:                        |
-    //|   for(i = 0; i < m_onnxInitRetryCount && i < 5; i++) x *= 2; |
-    //|   x = MathMin(x, 30);                                        |
-    //+--------------------------------------------------------------+
+// Exponential backoff: 1min, 2min, 4min, 8min, 16min, max 30min
+// Reproduces the original loop exactly:
+// for(i = 0; i < m_onnxInitRetryCount && i < 5; i++) x *= 2;
+// x = MathMin(x, 30);
     int ComputeBackoffMinutes() const
     {
         // Both MathMin arguments are explicitly int so template deduction cannot
@@ -81,18 +68,13 @@ public:
         return retryDelayMinutes;
     }
 
-    //+--------------------------------------------------------------+
-    //| ShouldAttemptInit                                            |
-    //|                                                              |
-    //| Gate that used to open InitializeONNXAIForSymbol(). Returns   |
-    //| false while the session is disabled AND still inside the      |
-    //| backoff window; otherwise returns true, and - when this is a  |
-    //| granted retry - logs the retry line and clears the disabled   |
-    //| flag before the caller proceeds.                              |
-    //|                                                              |
-    //| symbol - symbol being initialised (log context only)          |
-    //| returns true when the caller may attempt initialisation       |
-    //+--------------------------------------------------------------+
+// Gate that used to open InitializeONNXAIForSymbol(). Returns
+// false while the session is disabled AND still inside the
+// backoff window; otherwise returns true, and - when this is a
+// granted retry - logs the retry line and clears the disabled
+// flag before the caller proceeds.
+// symbol - symbol being initialised (log context only)
+// returns true when the caller may attempt initialisation
     bool ShouldAttemptInit(const string symbol)
     {
         if(!m_onnxSessionDisabled)
@@ -115,28 +97,19 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| RegisterAttempt                                              |
-    //|                                                              |
-    //| Records one consumed initialisation attempt: bumps the        |
-    //| consecutive-failure counter and stamps the attempt time.      |
-    //+--------------------------------------------------------------+
+// Records one consumed initialisation attempt: bumps the
+// consecutive-failure counter and stamps the attempt time.
     void RegisterAttempt()
     {
         m_onnxInitRetryCount++;
         m_lastOnnxInitAttempt = TimeCurrent();
     }
 
-    //+--------------------------------------------------------------+
-    //| RegisterFailure                                              |
-    //|                                                              |
-    //| Full failure path, byte-for-byte equivalent to the former     |
-    //| CEAOrchestrator::HandleONNXInitFailure(): count the attempt,   |
-    //| disable after 3 consecutive failures, log either the disable   |
-    //| notice or the "attempt n/3" notice.                            |
-    //|                                                              |
-    //| symbol - symbol whose initialisation failed (log context)     |
-    //+--------------------------------------------------------------+
+// Full failure path, byte-for-byte equivalent to the former
+// CEAOrchestrator::HandleONNXInitFailure(): count the attempt,
+// disable after 3 consecutive failures, log either the disable
+// notice or the "attempt n/3" notice.
+// symbol - symbol whose initialisation failed (log context)
     void RegisterFailure(const string symbol)
     {
         RegisterAttempt();
@@ -155,25 +128,18 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| RegisterSuccess                                              |
-    //|                                                              |
-    //| Success path: reset retry count (original cleared the counter |
-    //| and the timestamp only - the disabled flag was already        |
-    //| cleared by the granted retry in ShouldAttemptInit()).         |
-    //+--------------------------------------------------------------+
+// Success path: reset retry count (original cleared the counter
+// and the timestamp only - the disabled flag was already
+// cleared by the granted retry in ShouldAttemptInit()).
     void RegisterSuccess()
     {
         m_onnxInitRetryCount = 0;
         m_lastOnnxInitAttempt = 0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Reset                                                        |
-    //|                                                              |
-    //| Full state reset used by the manual re-enable path            |
-    //| (CEAOrchestrator::ReenableONNXAI).                            |
-    //+--------------------------------------------------------------+
+// Reset
+// Full state reset used by the manual re-enable path
+// (CEAOrchestrator::ReenableONNXAI).
     void Reset()
     {
         m_onnxSessionDisabled = false;

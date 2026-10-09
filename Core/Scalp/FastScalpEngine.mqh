@@ -1,25 +1,20 @@
-//+------------------------------------------------------------------+
-//| FastScalpEngine.mqh                                              |
-//| Dedicated scalping pipeline bypassing full consensus engine       |
-//| Single-strategy-allowed signals, tight stops, tick-level mgmt    |
-//|                                                                  |
-//| DECOMPOSED: CFastScalpEngine is now a thin coordinator. The       |
-//| implementation lives in focused FastScalp* modules, each owning   |
-//| one cohesive concern. Every public method below is a signature-   |
-//| identical forwarder — no behaviour, threshold or log tag changed. |
-//|                                                                  |
-//|   FastScalpTypes.mqh            SScalpConfig + tracking structs   |
-//|   FastScalpIndicators.mqh       M1 ATR/EMA/RSI cache (stateful)   |
-//|   FastScalpFilters.mqh          price/spread/burst/cost gates     |
-//|   FastScalpSizing.mqh           lot sizing + confidence score     |
-//|   FastScalpSignal.mqh           cached fast path + slow path      |
-//|   FastScalpRiskBudget.mqh       scalp risk budget (stateful)      |
-//|   FastScalpPositionTracker.mqh  scalp position registry (stateful)|
-//|   FastScalpPendingOrders.mqh    pending limit orders (stateful)   |
-//|   FastScalpAsyncTracker.mqh     OrderSendAsync tracking (stateful)|
-//|   FastScalpEntry.mqh            entry gating + trade execution    |
-//|   FastScalpExit.mqh             1R partial / breakeven / trailing |
-//+------------------------------------------------------------------+
+// Dedicated scalping pipeline bypassing full consensus engine
+// Single-strategy-allowed signals, tight stops, tick-level mgmt
+// DECOMPOSED: CFastScalpEngine is now a thin coordinator. The
+// implementation lives in focused FastScalp* modules, each owning
+// one cohesive concern. Every public method below is a signature-
+// identical forwarder — no behaviour, threshold or log tag changed.
+// FastScalpTypes.mqh            SScalpConfig + tracking structs
+// FastScalpIndicators.mqh       M1 ATR/EMA/RSI cache (stateful)
+// FastScalpFilters.mqh          price/spread/burst/cost gates
+// FastScalpSizing.mqh           lot sizing + confidence score
+// FastScalpSignal.mqh           cached fast path + slow path
+// FastScalpRiskBudget.mqh       scalp risk budget (stateful)
+// FastScalpPositionTracker.mqh  scalp position registry (stateful)
+// FastScalpPendingOrders.mqh    pending limit orders (stateful)
+// FastScalpAsyncTracker.mqh     OrderSendAsync tracking (stateful)
+// FastScalpEntry.mqh            entry gating + trade execution
+// FastScalpExit.mqh             1R partial / breakeven / trailing
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -58,9 +53,7 @@ class CAIAdapter;
 #include "FastScalpExit.mqh"
 #include "FastScalpEntry.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpEngine — Dedicated scalping pipeline (coordinator)      |
-//+------------------------------------------------------------------+
+// CFastScalpEngine — Dedicated scalping pipeline (coordinator)
 class CFastScalpEngine
 {
 private:
@@ -125,11 +118,9 @@ private:
    { return m_posTracker.FindScalpPositionState(ticket); }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //| Scalar members keep their original initialisers; the extracted    |
-   //| state objects reproduce the rest in their own constructors.       |
-   //+------------------------------------------------------------------+
+// Constructor
+// Scalar members keep their original initialisers; the extracted
+// state objects reproduce the rest in their own constructors.
    CFastScalpEngine() :
       m_tradeManager(NULL),
       m_riskManager(NULL),
@@ -143,9 +134,7 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                        |
-   //+------------------------------------------------------------------+
+// Destructor
    ~CFastScalpEngine()
    {
       // Cancel any remaining pending orders
@@ -153,9 +142,7 @@ public:
       m_posTracker.Reset();
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize with external dependencies                             |
-   //+------------------------------------------------------------------+
+// Initialize with external dependencies
    bool Initialize(CTradeManager* scalpTradeMgr,
                    CUnifiedRiskManager* riskManager,
                    CPositionSizer* scalpPosSizer,
@@ -199,9 +186,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Set custom configuration                                         |
-   //+------------------------------------------------------------------+
+// Set custom configuration
    void SetConfig(SScalpConfig &config)
    {
       m_config = config;
@@ -210,50 +195,33 @@ public:
                   m_config.scalpSLPips, m_config.scalpTPPips);
    }
 
-   //+------------------------------------------------------------------+
-   //| Get current configuration                                         |
-   //+------------------------------------------------------------------+
+// Get current configuration
    SScalpConfig GetConfig() const { return m_config; }
 
-   //+------------------------------------------------------------------+
-   //| Set magic number for pending orders                               |
-   //+------------------------------------------------------------------+
+// Set magic number for pending orders
    void SetMagicNumber(long magic) { m_magicNumber = magic; }
 
-   //+------------------------------------------------------------------+
-   //| Set external signal cache for fast-path evaluation                |
-   //| When set, EvaluateScalpSignal reads from cache instead of         |
-   //| calling CopyBuffer — zero indicator computation in fast path      |
-   //+------------------------------------------------------------------+
+// Set external signal cache for fast-path evaluation
+// When set, EvaluateScalpSignal reads from cache instead of
+// calling CopyBuffer — zero indicator computation in fast path
    void SetSignalCache(CScalpSignalCache* cache) { m_signalCache = cache; }
 
-   //+------------------------------------------------------------------+
-   //| Set async mode for scalp order execution                          |
-   //+------------------------------------------------------------------+
+// Set async mode for scalp order execution
    void SetAsyncMode(bool enabled) { m_asyncTracker.SetAsyncMode(enabled); }
 
-   //+------------------------------------------------------------------+
-   //| Set max acceptable latency for async order confirmation           |
-   //+------------------------------------------------------------------+
+// Set max acceptable latency for async order confirmation
    void SetMaxLatencyMs(uint maxMs) { m_asyncTracker.SetMaxLatencyMs(maxMs); }
 
-   //+------------------------------------------------------------------+
-   //| Get pending async order count                                     |
-   //+------------------------------------------------------------------+
+// Get pending async order count
    int GetPendingAsyncCount() const { return m_asyncTracker.Count(); }
 
-   //+------------------------------------------------------------------+
-   //| Is the engine initialized and enabled?                            |
-   //+------------------------------------------------------------------+
+// Is the engine initialized and enabled?
    bool IsInitialized() const { return m_initialized; }
 
-   //+------------------------------------------------------------------+
-   //| Evaluate scalp signal for a symbol                                |
-   //| Micro-trend: EMA5/EMA13 crossover on M1                          |
-   //| Momentum burst: bar body > 0.8 * ATR                             |
-   //| RSI confirmation: not overbought/oversold                         |
-   //| Spread gate: reject if spread > 30% of ATR                       |
-   //+------------------------------------------------------------------+
+// Micro-trend: EMA5/EMA13 crossover on M1
+// Momentum burst: bar body > 0.8 * ATR
+// RSI confirmation: not overbought/oversold
+// Spread gate: reject if spread > 30% of ATR
    ENUM_TRADE_SIGNAL EvaluateScalpSignal(string symbol)
    {
       if(!m_initialized)
@@ -283,10 +251,7 @@ public:
       return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators);
    }
 
-   //+------------------------------------------------------------------+
-   //| Should we enter a scalp trade?                                    |
-   //| Checks: cooldown, max positions, scalp risk budget, signal, lots  |
-   //+------------------------------------------------------------------+
+// Checks: cooldown, max positions, scalp risk budget, signal, lots
    bool ShouldEnterScalp(string symbol, ENUM_TRADE_SIGNAL &signal,
                           double &confidence, double &lotSize)
    {
@@ -301,7 +266,6 @@ public:
       if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get()))
          return false;
 
-      // Evaluate signal
       signal = EvaluateScalpSignal(symbol);
       if(signal == TRADE_SIGNAL_NONE)
          return false;
@@ -333,10 +297,8 @@ public:
       return CFastScalpEntry::FinalizeLotSize(symbol, lotSize);
    }
 
-   //+------------------------------------------------------------------+
-   //| Execute a scalp trade (market order)                              |
-   //| Supports both synchronous and async execution modes               |
-   //+------------------------------------------------------------------+
+// Execute a scalp trade (market order)
+// Supports both synchronous and async execution modes
    bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
                            double lotSize, double confidence)
    {
@@ -347,29 +309,21 @@ public:
                                       m_lastScalpTime);
    }
 
-   //+------------------------------------------------------------------+
-   //| Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)               |
-   //+------------------------------------------------------------------+
+// Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)
    bool PlaceScalpPendingOrder(string symbol, ENUM_TRADE_SIGNAL signal, double lotSize)
    {
       return m_pendingBook.Place(symbol, signal, lotSize, m_config, m_magicNumber, m_lastScalpTime);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check and manage pending scalp orders (cancel expired)            |
-   //+------------------------------------------------------------------+
+// Check and manage pending scalp orders (cancel expired)
    void CheckPendingScalpOrders() { m_pendingBook.CheckExpired(m_config); }
 
-   //+------------------------------------------------------------------+
-   //| Remove pending order from tracking array by index                 |
-   //+------------------------------------------------------------------+
+// Remove pending order from tracking array by index
    void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
-   //+------------------------------------------------------------------+
-   //| Manage scalp positions at tick level                              |
-   //| Quick profit lock, tight trailing, partial close                  |
-   //| NOT throttled to 1 second like swing trailing                     |
-   //+------------------------------------------------------------------+
+// Manage scalp positions at tick level
+// Quick profit lock, tight trailing, partial close
+// NOT throttled to 1 second like swing trailing
    void ManageScalpPositions()
    {
       if(!m_initialized || m_tradeManager == NULL)
@@ -379,67 +333,49 @@ public:
                                            m_tradeManager, m_riskManager, m_config);
    }
 
-   //+------------------------------------------------------------------+
-   //| Count positions with "SCALP" in comment                           |
-   //+------------------------------------------------------------------+
+// Count positions with "SCALP" in comment
    int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
 
-   //+------------------------------------------------------------------+
-   //| Check if a position is a scalp position                           |
-   //+------------------------------------------------------------------+
+// Check if a position is a scalp position
    bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }
 
-   //+------------------------------------------------------------------+
-   //| Sync tracked scalp positions with actual open positions           |
-   //+------------------------------------------------------------------+
+// Sync tracked scalp positions with actual open positions
    void SyncScalpPositionTracking()
    {
       CFastScalpExit::SyncScalpPositionTracking(m_posTracker, m_riskBudget, m_riskManager);
    }
 
-   //+------------------------------------------------------------------+
-   //| Free the scalp risk budget consumed by a ticket                   |
-   //+------------------------------------------------------------------+
+// Free the scalp risk budget consumed by a ticket
    void FreeScalpRiskBudget(ulong ticket)
    {
       CFastScalpExit::FreeScalpRiskBudget(ticket, m_posTracker, m_riskBudget, m_riskManager);
    }
 
-   //+------------------------------------------------------------------+
-   //| Track a pending async order after OrderSendAsync                  |
-   //+------------------------------------------------------------------+
+// Track a pending async order after OrderSendAsync
    void OnAsyncOrderSent(ulong orderTicket, string symbol, int direction,
                           double lotSize, double entryPrice, double sl, double tp)
    {
       m_asyncTracker.OnAsyncOrderSent(orderTicket, symbol, direction, lotSize, entryPrice, sl, tp);
    }
 
-   //+------------------------------------------------------------------+
-   //| Handle deal confirmation for async scalp orders                   |
-   //| Called from OnTradeTransaction when a deal matches a pending order|
-   //+------------------------------------------------------------------+
+// Handle deal confirmation for async scalp orders
+// Called from OnTradeTransaction when a deal matches a pending order
    void OnDealConfirmed(ulong dealTicket, ulong orderTicket)
    {
       m_asyncTracker.OnDealConfirmed(dealTicket, orderTicket, m_config, m_posTracker);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check pending async orders for expiration                         |
-   //| Called from OnTick to detect stale unconfirmed orders             |
-   //+------------------------------------------------------------------+
+// Check pending async orders for expiration
+// Called from OnTick to detect stale unconfirmed orders
    void CheckPendingAsyncOrders()
    {
       m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager);
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove a pending async order from tracking array by index         |
-   //+------------------------------------------------------------------+
+// Remove a pending async order from tracking array by index
    void RemovePendingAsync(int index) { m_asyncTracker.RemovePendingAsync(index); }
 
-   //+------------------------------------------------------------------+
-   //| Get scalp engine diagnostics                                      |
-   //+------------------------------------------------------------------+
+// Get scalp engine diagnostics
    void PrintDiagnostics()
    {
       PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | pending=%d | tracked=%d | async=%s | pendingAsync=%d",
@@ -454,14 +390,8 @@ public:
                   m_asyncTracker.Count());
    }
 
-   //+------------------------------------------------------------------+
-   //| Get used scalp risk budget                                        |
-   //+------------------------------------------------------------------+
    double GetUsedScalpRiskPct() const { return m_riskBudget.Get(); }
 
-   //+------------------------------------------------------------------+
-   //| Get pending order count                                           |
-   //+------------------------------------------------------------------+
    int GetPendingOrderCount() const { return m_pendingBook.Count(); }
 };
 

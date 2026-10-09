@@ -1,41 +1,29 @@
-//+------------------------------------------------------------------+
-//| RiskAdaptiveTuner.mqh                                            |
-//| Adaptive risk-sizing state: active risk per trade, conservative  |
-//| mode flag, throttle pressure, and profit-adjusted risk reduction |
-//| factor.                                                           |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E3, B):       |
-//|   m_activeRiskPerTradePercent (double, init 1.0)                 |
-//|   m_riskReductionFactor       (double, init 0.5)                 |
-//|   m_lastThrottlePressure      (double, init 1.0)                 |
-//|   m_conservativeMode          (bool,   init false)               |
-//|   CUnifiedRiskManager::UpdateAdaptiveRiskLevel                   |
-//|       -> UpdateAdaptiveRiskLevel                                 |
-//|   CUnifiedRiskManager::GetThrottlePressure                       |
-//|       -> GetThrottlePressure                                    |
-//|   CUnifiedRiskManager::GetActiveRiskPerTradePercent              |
-//|       -> GetActiveRiskPerTradePercent                            |
-//|                                                                  |
-//| Behaviour is byte-identical to the original member functions;    |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| signatures so that all call sites remain unchanged.              |
-//|                                                                  |
-//| OWNERSHIP NOTE: config values (baseRiskPerTradePercent,          |
-//| enableAdaptiveSizing, adaptationMinTrades, drawdown thresholds,  |
-//| min/max risk percent) and the performance analytics pointer are  |
-//| passed as parameters from the forwarder because they change at   |
-//| runtime (ApplyTierOverrides / Initialize / SetPerformanceAnalytics).|
-//| The moved state fields (active risk, conservative mode, throttle |
-//| pressure, reduction factor) are owned exclusively by this class. |
-//+------------------------------------------------------------------+
+// Adaptive risk-sizing state: active risk per trade, conservative
+// mode flag, throttle pressure, and profit-adjusted risk reduction
+// factor.
+// Extracted verbatim from CUnifiedRiskManager (Phase E3, B):
+// m_activeRiskPerTradePercent (double, init 1.0)
+// m_riskReductionFactor       (double, init 0.5)
+// m_lastThrottlePressure      (double, init 1.0)
+// m_conservativeMode          (bool,   init false)
+// CUnifiedRiskManager::GetThrottlePressure
+// -> GetThrottlePressure
+// Behaviour is byte-identical to the original member functions;
+// CUnifiedRiskManager keeps thin forwarders with the original
+// signatures so that all call sites remain unchanged.
+// OWNERSHIP NOTE: config values (baseRiskPerTradePercent,
+// enableAdaptiveSizing, adaptationMinTrades, drawdown thresholds,
+// min/max risk percent) and the performance analytics pointer are
+// passed as parameters from the forwarder because they change at
+// runtime (ApplyTierOverrides / Initialize / SetPerformanceAnalytics).
+// The moved state fields (active risk, conservative mode, throttle
+// pressure, reduction factor) are owned exclusively by this class.
 #ifndef CORE_RISK_RISK_ADAPTIVE_TUNER_MQH
 #define CORE_RISK_RISK_ADAPTIVE_TUNER_MQH
 
 #include "../Monitoring/PerformanceAnalytics.mqh"
 
-//+------------------------------------------------------------------+
-//| Adaptive risk tuner (stateful, owned by value)                   |
-//+------------------------------------------------------------------+
+// Adaptive risk tuner (stateful, owned by value)
 class CRiskAdaptiveTuner
 {
 private:
@@ -67,9 +55,7 @@ public:
         // No owned resources.
     }
 
-    //+--------------------------------------------------------------+
-    //| Getters / setters for the moved state fields                  |
-    //+--------------------------------------------------------------+
+// Getters / setters for the moved state fields
 
     double GetActiveRiskPerTradePercent() const
     {
@@ -106,11 +92,8 @@ public:
         m_conservativeMode = value;
     }
 
-    //+--------------------------------------------------------------+
-    //| Update adaptive risk level                                    |
-    //| Config values and analytics pointer are passed from the       |
-    //| forwarder because they change at runtime.                    |
-    //+--------------------------------------------------------------+
+// Config values and analytics pointer are passed from the
+// forwarder because they change at runtime.
     void UpdateAdaptiveRiskLevel(const double baseRiskPerTradePercent,
                                  const bool enableAdaptiveSizing,
                                  const int adaptationMinTrades,

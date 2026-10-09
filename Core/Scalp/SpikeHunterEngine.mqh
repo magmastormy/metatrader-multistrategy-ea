@@ -1,21 +1,16 @@
-//+------------------------------------------------------------------+
-//| SpikeHunterEngine.mqh                                            |
-//| Spike hunting engine for synthetic CFD indices                   |
-//| Detects pre-spike conditions and opens trades IN the spike       |
-//| direction, independent of existing long-term positions           |
-//|                                                                  |
-//| DECOMPOSED: CSpikeHunterEngine is now a thin coordinator. The     |
-//| implementation lives in focused SpikeHunter* modules, each owning |
-//| one cohesive concern. Every public method below is a signature-   |
-//| identical forwarder â€?no behaviour, threshold or log tag changed. |
-//|                                                                  |
-//|   SpikeHunterTypes.mqh      SSpikeHunterConfig + state structs    |
-//|   SpikeHunterOverrides.mqh  Batch-102 family override table       |
-//|   SpikeHunterDirection.mqh  PainX/GainX/Boom/Crash direction map  |
-//|   SpikeHunterDetector.mqh   symbol registry + 3 detection layers  |
-//|   SpikeHunterAlerts.mqh     throttled push notifications          |
-//|   SpikeHunterExecutor.mqh   spike trade gating + execution        |
-//+------------------------------------------------------------------+
+// Spike hunting engine for synthetic CFD indices
+// Detects pre-spike conditions and opens trades IN the spike
+// direction, independent of existing long-term positions
+// DECOMPOSED: CSpikeHunterEngine is now a thin coordinator. The
+// implementation lives in focused SpikeHunter* modules, each owning
+// one cohesive concern. Every public method below is a signature-
+// identical forwarder â€?no behaviour, threshold or log tag changed.
+// SpikeHunterTypes.mqh      SSpikeHunterConfig + state structs
+// SpikeHunterOverrides.mqh  Batch-102 family override table
+// SpikeHunterDirection.mqh  PainX/GainX/Boom/Crash direction map
+// SpikeHunterDetector.mqh   symbol registry + 3 detection layers
+// SpikeHunterAlerts.mqh     throttled push notifications
+// SpikeHunterExecutor.mqh   spike trade gating + execution
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -42,10 +37,8 @@ class CAIAdapter;
 #include "SpikeHunterAlerts.mqh"
 #include "SpikeHunterExecutor.mqh"
 
-//+------------------------------------------------------------------+
-//| CSpikeHunterEngine â€?Spike hunting engine for synthetic CFDs      |
-//| (coordinator)                                                     |
-//+------------------------------------------------------------------+
+// CSpikeHunterEngine â€?Spike hunting engine for synthetic CFDs
+// (coordinator)
 class CSpikeHunterEngine
 {
 private:
@@ -62,19 +55,13 @@ private:
 
    //--- Forwarders into CSpikeHunterDetector (signatures unchanged) ---
 
-   //+------------------------------------------------------------------+
-   //| Find symbol index in the states array                             |
-   //+------------------------------------------------------------------+
+// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const { return m_detector.FindSymbolIndex(symbol); }
 
-   //+------------------------------------------------------------------+
-   //| Find family override index for a symbol (Batch 102)               |
-   //+------------------------------------------------------------------+
+// Find family override index for a symbol (Batch 102)
    int FindFamilyOverrideIndex(const string symbol) const { return m_detector.FindFamilyOverrideIndex(symbol); }
 
-   //+------------------------------------------------------------------+
-   //| Effective (override-aware) parameters for a symbol (Batch 102)    |
-   //+------------------------------------------------------------------+
+// Effective (override-aware) parameters for a symbol (Batch 102)
    double GetEffectiveVelocityMultiplier(int idx) const { return m_detector.GetEffectiveVelocityMultiplier(idx); }
    int    GetEffectiveMinConsecutiveTicks(int idx) const { return m_detector.GetEffectiveMinConsecutiveTicks(idx); }
    double GetEffectiveATRCompressionRatio(int idx) const { return m_detector.GetEffectiveATRCompressionRatio(idx); }
@@ -84,69 +71,51 @@ private:
    int    GetEffectiveCooldownMs(int idx) const { return m_detector.GetEffectiveCooldownMs(idx); }
    int    GetEffectiveMinConfluence(int idx) const { return m_detector.GetEffectiveMinConfluence(idx); }
 
-   //+------------------------------------------------------------------+
-   //| Initialize a symbol state slot with defaults                      |
-   //+------------------------------------------------------------------+
+// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol) { m_detector.InitializeSymbolState(idx, symbol); }
 
-   //+------------------------------------------------------------------+
-   //| Detection layers 1-3 and confluence count                         |
-   //+------------------------------------------------------------------+
+// Detection layers 1-3 and confluence count
    void UpdateTickVelocity(int idx) { m_detector.UpdateTickVelocity(idx); }
    void UpdateDirectionAccumulation(int idx, double bid) { m_detector.UpdateDirectionAccumulation(idx, bid); }
    void UpdateATRCompression(int idx) { m_detector.UpdateATRCompression(idx); }
    int  CountConfluence(int idx) const { return m_detector.CountConfluence(idx); }
 
-   //+------------------------------------------------------------------+
-   //| Determine spike direction based on symbol type and detection      |
-   //+------------------------------------------------------------------+
+// Determine spike direction based on symbol type and detection
    int DetermineSpikeDirection(int idx) const
    {
       return CSpikeHunterDirection::DetermineSpikeDirection(m_detector.GetSymbolName(idx),
                                                             m_detector.GetDirectionSign(idx));
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if symbol has a certain spike direction                     |
-   //| Returns true and sets direction for PainX/Crash/Boom/GainX       |
-   //+------------------------------------------------------------------+
+// Check if symbol has a certain spike direction
+// Returns true and sets direction for PainX/Crash/Boom/GainX
    bool IsSpikeSymbolDirectionCertain(const string symbol, int &direction) const
    {
       return CSpikeHunterDirection::IsSpikeSymbolDirectionCertain(symbol, direction);
    }
 
-   //+------------------------------------------------------------------+
-   //| Spike trade gating and execution                                  |
-   //+------------------------------------------------------------------+
+// Spike trade gating and execution
    bool CanOpenSpikeTrade(int idx) const { return m_executor.CanOpenSpikeTrade(idx); }
    bool OpenSpikeTrade(int idx, int direction) { return m_executor.OpenSpikeTrade(idx, direction); }
 
-   //+------------------------------------------------------------------+
-   //| Send a throttled push notification                               |
-   //+------------------------------------------------------------------+
+// Send a throttled push notification
    void SendThrottledAlert(const string message) { m_alerts.SendThrottledAlert(message); }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CSpikeHunterEngine() :
       m_totalDetections(0),
       m_totalTradesSkipped(0)
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                        |
-   //+------------------------------------------------------------------+
+// Destructor
    ~CSpikeHunterEngine()
    {
       Deinit();
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize the engine with config and dependencies               |
-   //+------------------------------------------------------------------+
+// Initialize the engine with config and dependencies
    bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
    {
       m_config         = config;
@@ -172,14 +141,10 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Add a symbol to monitor for spikes                               |
-   //+------------------------------------------------------------------+
+// Add a symbol to monitor for spikes
    bool AddSymbol(const string symbol) { return m_detector.AddSymbol(symbol); }
 
-   //+------------------------------------------------------------------+
-   //| Release all indicator handles and clean up                       |
-   //+------------------------------------------------------------------+
+// Release all indicator handles and clean up
    void Deinit()
    {
       m_detector.ReleaseHandles();
@@ -188,9 +153,7 @@ public:
                   m_totalDetections, m_executor.GetTotalTradesOpened(), m_totalTradesSkipped, m_alerts.GetAlertCount());
    }
 
-   //+------------------------------------------------------------------+
-   //| Process a tick for a given symbol â€?call every tick               |
-   //+------------------------------------------------------------------+
+// Process a tick for a given symbol â€?call every tick
    void ProcessTick(const string symbol, double bid, double ask)
    {
       int idx = FindSymbolIndex(symbol);
@@ -205,7 +168,6 @@ public:
       UpdateDirectionAccumulation(idx, bid);
       UpdateATRCompression(idx);
 
-      // Count confluence
       m_detector.SetConfluenceCount(idx, CountConfluence(idx));
 
       // Check if spike is confirmed
@@ -220,7 +182,6 @@ public:
       m_detector.MarkSpikeDetected(idx);
       m_totalDetections++;
 
-      // Determine direction
       int direction = DetermineSpikeDirection(idx);
       if(direction == 0)
       {
@@ -246,43 +207,29 @@ public:
          return;
       }
 
-      // Open the spike trade
       OpenSpikeTrade(idx, direction);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if a symbol is in spike cooldown for long-term entries      |
-   //| Clears the cooldown flag if expired                               |
-   //+------------------------------------------------------------------+
+// Check if a symbol is in spike cooldown for long-term entries
+// Clears the cooldown flag if expired
    bool IsSymbolInSpikeCooldown(const string symbol)
    {
       return m_detector.IsSymbolInSpikeCooldown(symbol, m_config.spikeCooldownForLongTermMs);
    }
 
-   //+------------------------------------------------------------------+
-   //| Count active spike positions (positions with SPIKE-HUNT comment)  |
-   //+------------------------------------------------------------------+
+// Count active spike positions (positions with SPIKE-HUNT comment)
    int GetActiveSpikePositions() const { return CSpikeHunterExecutor::GetActiveSpikePositions(); }
 
-   //+------------------------------------------------------------------+
-   //| Get total spike detections                                        |
-   //+------------------------------------------------------------------+
+// Get total spike detections
    int GetTotalDetections() const { return m_totalDetections; }
 
-   //+------------------------------------------------------------------+
-   //| Get total spike trades opened                                     |
-   //+------------------------------------------------------------------+
+// Get total spike trades opened
    int GetTotalTradesOpened() const { return m_executor.GetTotalTradesOpened(); }
    int GetTotalTradesSkipped() const { return m_totalTradesSkipped; }
 
-   //+------------------------------------------------------------------+
-   //| Get configuration                                                 |
-   //+------------------------------------------------------------------+
    const SSpikeHunterConfig GetConfig() const { return m_config; }
 
-   //+------------------------------------------------------------------+
-   //| Set family-specific overrides for a symbol (Batch 102)            |
-   //+------------------------------------------------------------------+
+// Set family-specific overrides for a symbol (Batch 102)
    void SetFamilyOverrides(const string symbol, double velMult, int minTicks, double atrRatio,
                            double slMult, double tpMult, int magicOff, int cooldown, int minConf)
    {
@@ -290,9 +237,6 @@ public:
                                     magicOff, cooldown, minConf);
    }
 
-   //+------------------------------------------------------------------+
-   //| Print diagnostics                                                 |
-   //+------------------------------------------------------------------+
    void PrintDiagnostics()
    {
       PrintFormat("[SPIKE-HUNT-DIAG] symbols=%d | detections=%d | trades=%d | skipped=%d | alerts=%d | activePos=%d",

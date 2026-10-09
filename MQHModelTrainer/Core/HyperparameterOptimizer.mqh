@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| HyperparameterOptimizer.mqh                                      |
-//| Hyperparameter tuning utilities                                   |
-//+------------------------------------------------------------------+
+// Hyperparameter tuning utilities
 #ifndef MQH_HYPERPARAMETER_OPTIMIZER_MQH
 #define MQH_HYPERPARAMETER_OPTIMIZER_MQH
 

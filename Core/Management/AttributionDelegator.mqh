@@ -1,10 +1,8 @@
-//+------------------------------------------------------------------+
-//| Attribution Delegator (Phase C, Slice 1 - C2)                     |
-//| Thin forwarders to CTradeAttributionManager, extracted from       |
-//| CEnterpriseStrategyManager. Holds the attribution manager pointer |
-//| and replays the exact same NULL-check / fallback behaviour so the |
-//| output of every method is byte-for-byte identical to the original.|
-//+------------------------------------------------------------------+
+// Attribution Delegator (Phase C, Slice 1 - C2)
+// Thin forwarders to CTradeAttributionManager, extracted from
+// CEnterpriseStrategyManager. Holds the attribution manager pointer
+// and replays the exact same NULL-check / fallback behaviour so the
+// output of every method is byte-for-byte identical to the original.
 #ifndef ATTRIBUTION_DELEGATOR_MQH
 #define ATTRIBUTION_DELEGATOR_MQH
 
@@ -27,9 +25,7 @@ public:
     bool   PopClosedTradeAttribution(string &contributors[], double &netProfit);
 };
 
-//+------------------------------------------------------------------+
-//| Method bodies (verbatim forwarders)                               |
-//+------------------------------------------------------------------+
+// Method bodies (verbatim forwarders)
 int CAttributionDelegator::FindAttributionIndexByPositionId(const ulong positionId) const
 {
     if(m_attribution == NULL)

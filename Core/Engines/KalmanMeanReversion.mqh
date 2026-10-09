@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| KalmanMeanReversion.mqh                                          |
-//| Flexible Least Squares (FLS) engine for dynamic mean-reversion  |
-//| Algebraically equivalent to Kalman filter (Su & White 2007)     |
-//| No Gaussian assumption — robust for non-Gaussian synthetic idx  |
-//| Batch 114: Replaces static OU-OLS with adaptive parameters     |
-//+------------------------------------------------------------------+
+// Flexible Least Squares (FLS) engine for dynamic mean-reversion
+// Algebraically equivalent to Kalman filter (Su & White 2007)
+// No Gaussian assumption — robust for non-Gaussian synthetic idx
+// Batch 114: Replaces static OU-OLS with adaptive parameters
 #ifndef KALMAN_MEAN_REVERSION_MQH
 #define KALMAN_MEAN_REVERSION_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Kalman MR Snapshot — full state for downstream consumers         |
-//+------------------------------------------------------------------+
+// Kalman MR Snapshot — full state for downstream consumers
 struct SKalmanMRSnapshot
 {
     double mu;               // Dynamic long-run mean (time-varying)
@@ -40,18 +35,14 @@ struct SKalmanMRSnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| CKalmanMeanReversion — FLS-based dynamic OU estimator           |
-//|                                                                  |
-//| State: [mu, kappa] — long-run mean and reversion speed           |
-//| Observation: price_t = mu_t + noise                              |
-//| Transition: mu_{t+1} = mu_t + kappa_t * (mu_t - price_t) + w   |
-//|                                                                  |
-//| FLS penalty parameter lambda controls adaptation speed:          |
-//|   lambda = 0  → no penalty → tracks noise (too fast)            |
-//|   lambda = ∞  → constant coefficients (static OLS)              |
-//|   lambda = 100-1000 → good balance for financial data           |
-//+------------------------------------------------------------------+
+// CKalmanMeanReversion — FLS-based dynamic OU estimator
+// State: [mu, kappa] — long-run mean and reversion speed
+// Observation: price_t = mu_t + noise
+// Transition: mu_{t+1} = mu_t + kappa_t * (mu_t - price_t) + w
+// FLS penalty parameter lambda controls adaptation speed:
+// lambda = 0  → no penalty → tracks noise (too fast)
+// lambda = ∞  → constant coefficients (static OLS)
+// lambda = 100-1000 → good balance for financial data
 class CKalmanMeanReversion
 {
 private:
@@ -204,7 +195,6 @@ public:
         for(int i = 0; i < n; i++)
         {
             // closes[0] = most recent, closes[copied-1] = oldest
-            // X_lag = closes[i+1], ΔX = closes[i] - closes[i+1]
             double xLag = closes[i + 1];
             double deltaY = closes[i] - closes[i + 1];
             sumX += xLag;
@@ -291,7 +281,6 @@ public:
         // Negative kappa means trending — we still track it but clamp for stability
         m_kappa = MathMax(0.001, MathMin(2.0, m_kappa));
 
-        // Update covariance
         UpdateCovariance(innovationVariance);
 
         // Slow pull of mu toward current price (adaptive: based on kappa)

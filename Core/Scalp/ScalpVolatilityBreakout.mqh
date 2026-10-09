@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ScalpVolatilityBreakout.mqh                                       |
-//| Enter on the first bar that breaks out of a squeeze                |
-//| Entry: ATR at 20-bar low + BB breakout + strong bar + RSI confirm  |
-//+------------------------------------------------------------------+
+// Enter on the first bar that breaks out of a squeeze
+// Entry: ATR at 20-bar low + BB breakout + strong bar + RSI confirm
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -13,9 +10,7 @@
 
 #include "../Strategy/StrategyBase.mqh"
 
-//+------------------------------------------------------------------+
-//| CScalpVolatilityBreakout — Squeeze breakout scalper                |
-//+------------------------------------------------------------------+
+// CScalpVolatilityBreakout — Squeeze breakout scalper
 class CScalpVolatilityBreakout : public CStrategyBase
 {
 private:
@@ -53,28 +48,19 @@ public:
 
     ~CScalpVolatilityBreakout() {}
 
-    //+------------------------------------------------------------------+
-    //| Get SL in pips from last signal                                   |
-    //+------------------------------------------------------------------+
+// Get SL in pips from last signal
     double GetLastSLPips() const { return m_lastSLPips; }
 
-    //+------------------------------------------------------------------+
-    //| Get TP in pips from last signal                                   |
-    //+------------------------------------------------------------------+
+// Get TP in pips from last signal
     double GetLastTPPips() const { return m_lastTPPips; }
 
-    //+------------------------------------------------------------------+
-    //| Strategy type override                                            |
-    //+------------------------------------------------------------------+
     virtual ENUM_STRATEGY_TYPE GetType(void) const override
     {
         return STRATEGY_VOLATILITY_BREAKOUT;
     }
 
-    //+------------------------------------------------------------------+
-    //| Execute signal — core logic                                       |
-    //| Base class GetSignal() already applies regime/volatility/HTF      |
-    //+------------------------------------------------------------------+
+// Execute signal — core logic
+// Base class GetSignal() already applies regime/volatility/HTF
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -240,9 +226,6 @@ public:
         return direction;
     }
 
-    //+------------------------------------------------------------------+
-    //| Validate parameters                                               |
-    //+------------------------------------------------------------------+
     virtual bool ValidateParameters(void) override
     {
         if(m_atrPeriod <= 0) return false;

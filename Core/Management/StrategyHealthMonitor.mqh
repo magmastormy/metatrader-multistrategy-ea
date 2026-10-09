@@ -1,16 +1,11 @@
-//+------------------------------------------------------------------+
-//| Strategy Health Monitor - Enterprise Grade                       |
-//| Tracks performance, decay, disable/enable logic                  |
-//+------------------------------------------------------------------+
+// Strategy Health Monitor - Enterprise Grade
+// Tracks performance, decay, disable/enable logic
 #ifndef STRATEGY_HEALTH_MONITOR_MQH
 #define STRATEGY_HEALTH_MONITOR_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
-//+------------------------------------------------------------------+
-//| Strategy Health Entry                                            |
-//+------------------------------------------------------------------+
 struct SStrategyHealthEntry
 {
     // Performance metrics
@@ -86,9 +81,6 @@ struct SStrategyHealthEntry
     }
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Health Monitor Class                                    |
-//+------------------------------------------------------------------+
 class CStrategyHealthMonitor
 {
 private:

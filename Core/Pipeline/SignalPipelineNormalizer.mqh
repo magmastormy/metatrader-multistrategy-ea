@@ -1,6 +1,4 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Normalizer - symbol classification (extracted)   |
-//+------------------------------------------------------------------+
+// Signal Pipeline Normalizer - symbol classification (extracted)
 #ifndef SIGNAL_PIPELINE_NORMALIZER_MQH
 #define SIGNAL_PIPELINE_NORMALIZER_MQH
 

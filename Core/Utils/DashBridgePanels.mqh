@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| DashBridgePanels.mqh                                             |
-//| Dashboard state payload assembly: account panel, positions panel |
-//| and the composition of every sub-section produced by the         |
-//| protocol / health modules into the final /state document.        |
-//| Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)|
-//+------------------------------------------------------------------+
+// Dashboard state payload assembly: account panel, positions panel
+// and the composition of every sub-section produced by the
+// protocol / health modules into the final /state document.
+// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -17,9 +14,7 @@
 #include "DashBridgeProtocol.mqh"
 #include "DashBridgeHealth.mqh"
 
-//+------------------------------------------------------------------+
-//| Dashboard Bridge Panel Assembly (static-only, no state)          |
-//+------------------------------------------------------------------+
+// Dashboard Bridge Panel Assembly (static-only, no state)
 class CDashBridgePanels
 {
 public:
@@ -33,9 +28,6 @@ public:
    static string     BuildScalpJson();
 };
 
-//+------------------------------------------------------------------+
-//| Build account panel JSON                                         |
-//+------------------------------------------------------------------+
 string CDashBridgePanels::BuildAccountJson()
 {
    string json = "\"account\":{";
@@ -47,9 +39,7 @@ string CDashBridgePanels::BuildAccountJson()
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build positions panel JSON (actual data)                         |
-//+------------------------------------------------------------------+
+// Build positions panel JSON (actual data)
 string CDashBridgePanels::BuildPositionsJson()
 {
    string json = "\"positions\":[";
@@ -83,9 +73,7 @@ string CDashBridgePanels::BuildPositionsJson()
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build scalp panel JSON (placeholder for now)                     |
-//+------------------------------------------------------------------+
+// Build scalp panel JSON (placeholder for now)
 string CDashBridgePanels::BuildScalpJson()
 {
    string json = "\"scalp\":{";
@@ -98,15 +86,12 @@ string CDashBridgePanels::BuildScalpJson()
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build state JSON payload (ENHANCED VERSION)                      |
-//+------------------------------------------------------------------+
+// Build state JSON payload (ENHANCED VERSION)
 string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData,
                                          const CDashBridgeHealth &healthData)
 {
    string json = "{";
 
-   // Timestamp
    json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\",";
 
    // Account info
@@ -121,13 +106,11 @@ string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData
    // Performance (use enhanced method)
    json += protocolData.BuildPerformanceJson() + ",";
 
-   // Consensus
    json += CDashBridgeProtocol::BuildConsensusJson() + ",";
 
    // AI adapters
    json += protocolData.BuildAIJson() + ",";
 
-   // Strategies
    json += CDashBridgeProtocol::BuildStrategiesJson() + ",";
 
    // Scalp (placeholder for now)
@@ -136,10 +119,8 @@ string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData
    // Heartbeat (use enhanced method with actual counters)
    json += healthData.BuildHeartbeatJson() + ",";
 
-   // Execution mode
    json += "\"execution_mode\":\"LIVE_SEND\",";
 
-   // Python bridge
    json += protocolData.BuildPythonBridgeJson();
 
    json += "}";

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| PositionSizerModifiers.mqh                                       |
-//| Pluggable lot-size modifiers for CPositionSizer                  |
-//| Phase 5: Position Sizer Consolidation                            |
-//+------------------------------------------------------------------+
+// Pluggable lot-size modifiers for CPositionSizer
+// Phase 5: Position Sizer Consolidation
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -14,12 +11,10 @@
 #include "EquityCurveManager.mqh"
 #include "VPINFilter.mqh"
 
-//+------------------------------------------------------------------+
-//| Abstract modifier interface                                      |
-//| Strategy-specific sizers become parameter providers rather than   |
-//| independent calculators. Each modifier adjusts the base lot size |
-//| computed by CPositionSizer.                                      |
-//+------------------------------------------------------------------+
+// Abstract modifier interface
+// Strategy-specific sizers become parameter providers rather than
+// independent calculators. Each modifier adjusts the base lot size
+// computed by CPositionSizer.
 class CPositionSizerModifier
 {
 public:
@@ -28,12 +23,9 @@ public:
     virtual bool IsEnabled() { return true; }
 };
 
-//+------------------------------------------------------------------+
-//| ADX Lot Modifier                                                 |
-//| Wraps the ADX-tiered logic from CADXPositionSizing.              |
-//| Gets ADX value, applies multiplier:                              |
-//|   0x no trend, 0.5x weak, 1.0x normal, 1.3x strong, 1.5x very  |
-//+------------------------------------------------------------------+
+// Wraps the ADX-tiered logic from CADXPositionSizing.
+// Gets ADX value, applies multiplier:
+// 0x no trend, 0.5x weak, 1.0x normal, 1.3x strong, 1.5x very
 class CADXLotModifier : public CPositionSizerModifier
 {
 private:
@@ -47,7 +39,6 @@ private:
     double m_normalThreshold;       // Normal trend threshold
     double m_strongThreshold;       // Strong trend threshold
 
-    // Multipliers
     double m_weakMultiplier;        // 0.5x for weak trends
     double m_normalMultiplier;      // 1.0x for normal trends
     double m_strongMultiplier;      // 1.3x for strong trends
@@ -241,16 +232,14 @@ public:
     virtual string GetName() override { return "ADX"; }
 };
 
-//+------------------------------------------------------------------+
-//| Bayesian Kelly Lot Modifier                                      |
-//| Uses Beta-Binomial conjugate priors to estimate win rate, then   |
-//| applies the Kelly Criterion with a configurable fraction.        |
-//| Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD  |
-//| vs 62% at full Kelly. Self-contained — tracks its own stats.     |
-//| L5-013 FIX: Uses confidence parameter as prior weight for the    |
-//| Bayesian update — higher confidence = stronger belief in observed |
-//| win rate, lower confidence = more weight on prior.               |
-//+------------------------------------------------------------------+
+// Bayesian Kelly Lot Modifier
+// Uses Beta-Binomial conjugate priors to estimate win rate, then
+// applies the Kelly Criterion with a configurable fraction.
+// Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD
+// vs 62% at full Kelly. Self-contained — tracks its own stats.
+// L5-013 FIX: Uses confidence parameter as prior weight for the
+// Bayesian update — higher confidence = stronger belief in observed
+// win rate, lower confidence = more weight on prior.
 class CBayesianKellyModifier : public CPositionSizerModifier
 {
 private:
@@ -393,13 +382,10 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Equity Curve Lot Modifier                                        |
-//| Wraps CEquityCurveManager to scale lot size based on whether    |
-//| equity is above or below its EMA. Below EMA → reduce position   |
-//| size by reductionFactor. Above EMA → normal sizing.             |
-//| L5-014 FIX: Added per-strategy equity curve support             |
-//+------------------------------------------------------------------+
+// Wraps CEquityCurveManager to scale lot size based on whether
+// equity is above or below its EMA. Below EMA → reduce position
+// size by reductionFactor. Above EMA → normal sizing.
+// L5-014 FIX: Added per-strategy equity curve support
 class CEquityCurveLotModifier : public CPositionSizerModifier
 {
 private:
@@ -423,7 +409,6 @@ private:
     CEquityCurveManager* m_defaultManager;
     bool m_ownsDefaultManager;
 
-    // Find equity curve manager for a strategy
     CEquityCurveManager* FindStrategyCurve(const string strategyName) const
     {
         for(int i = 0; i < m_curveCount; i++)
@@ -475,7 +460,6 @@ public:
         }
     }
 
-    // Add a per-strategy equity curve manager
     void AddStrategyEquityCurve(const string strategyName, CEquityCurveManager* manager, bool own = false)
     {
         // Check if already exists
@@ -558,11 +542,9 @@ public:
     virtual string GetName() override { return "EquityCurve"; }
 };
 
-//+------------------------------------------------------------------+
-//| Volatility Targeting Lot Modifier                                |
-//| Adjusts position size to target a specific annualized volatility |
-//| Uses ATR-based volatility estimation                             |
-//+------------------------------------------------------------------+
+// Volatility Targeting Lot Modifier
+// Adjusts position size to target a specific annualized volatility
+// Uses ATR-based volatility estimation
 class CVolatilityTargetingModifier : public CPositionSizerModifier
 {
 private:
@@ -607,7 +589,6 @@ private:
         double price = SymbolInfoDouble(symbol, SYMBOL_BID);
         if(price <= 0.0) return 0.0;
         
-        // Daily volatility = ATR / price
         double dailyVol = avgATR / price;
         // Annualized volatility (sqrt of trading days)
         double annualVol = dailyVol * MathSqrt(252.0);
@@ -675,12 +656,9 @@ public:
     virtual string GetName() override { return "VolatilityTarget"; }
 };
 
-//+------------------------------------------------------------------+
-//| VPIN Lot Modifier                                                |
-//| Wraps CVPINFilter to scale lot size based on VPIN toxicity       |
-//| L5-024: Supports multiple classification modes                   |
-//| L5-025: Handles bucket overflow carry                            |
-//+------------------------------------------------------------------+
+// Wraps CVPINFilter to scale lot size based on VPIN toxicity
+// L5-024: Supports multiple classification modes
+// L5-025: Handles bucket overflow carry
 class CVPINLotModifier : public CPositionSizerModifier
 {
 private:

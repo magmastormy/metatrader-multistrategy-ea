@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Strategy Interface                                             |
-//| Base interface for all trading strategies                      |
-//+------------------------------------------------------------------+
+// Strategy Interface
+// Base interface for all trading strategies
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -12,9 +10,7 @@
 
 #include "../Core/Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Strategy Interface                                             |
-//+------------------------------------------------------------------+
+// Strategy Interface
 class IStrategy
 {
 public:
@@ -48,7 +44,6 @@ public:
     // Get strategy name
     virtual string GetName(void) const = 0;
     
-    // Get strategy type
     virtual ENUM_STRATEGY_TYPE GetType(void) const = 0;
     
     // Check if strategy is enabled
@@ -66,7 +61,6 @@ public:
     // Validate strategy parameters
     virtual bool ValidateParameters(void) = 0;
     
-    // Get last signal time
     virtual datetime GetLastSignalTime(void) const = 0;
     
     // Get strategy statistics

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| MultiEMASystem.mqh                                               |
-//| Multi-Speed EMA System for Trend Strategy                        |
-//| Uses 8, 21, 50, 200 EMAs for multi-level trend analysis          |
-//+------------------------------------------------------------------+
+// Multi-Speed EMA System for Trend Strategy
+// Uses 8, 21, 50, 200 EMAs for multi-level trend analysis
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -12,9 +9,6 @@
 
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Trend State Structure                                            |
-//+------------------------------------------------------------------+
 struct STrendState
 {
     bool        isUptrend;
@@ -29,9 +23,7 @@ struct STrendState
                     strength(0), slope(0), consistency(0), momentum(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| EMA Alignment State                                              |
-//+------------------------------------------------------------------+
+// EMA Alignment State
 enum ENUM_EMA_ALIGNMENT
 {
     EMA_PERFECT_BULL,       // 8 > 21 > 50 > 200 (all rising)
@@ -43,16 +35,12 @@ enum ENUM_EMA_ALIGNMENT
     EMA_PERFECT_BEAR        // 8 < 21 < 50 < 200 (all falling)
 };
 
-//+------------------------------------------------------------------+
-//| Multi-EMA System Class                                           |
-//+------------------------------------------------------------------+
 class CMultiEMASystem
 {
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
     
-    // EMA handles
     int                 m_ema8Handle;       // Momentum EMA
     int                 m_ema21Handle;      // Swing trend EMA
     int                 m_ema50Handle;      // Intermediate trend EMA
@@ -88,10 +76,8 @@ public:
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe);
     void                Deinit();
     
-    // Update
     void                Update();
     
-    // Getters
     STrendState         GetTrendState() const { return m_currentTrend; }
     ENUM_EMA_ALIGNMENT  GetAlignment() const { return m_alignment; }
     
@@ -128,9 +114,7 @@ public:
     double              GetEMASlope(int emaPeriod, int barsBack = 3);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CMultiEMASystem::CMultiEMASystem() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -153,17 +137,12 @@ CMultiEMASystem::CMultiEMASystem() :
     ArrayInitialize(m_minusDI, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CMultiEMASystem::~CMultiEMASystem()
 {
     Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
@@ -191,9 +170,6 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize                                                     |
-//+------------------------------------------------------------------+
 void CMultiEMASystem::Deinit()
 {
     // Handles owned by CIndicatorManager — do NOT release individually.
@@ -206,9 +182,6 @@ void CMultiEMASystem::Deinit()
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Update EMA Values                                                |
-//+------------------------------------------------------------------+
 bool CMultiEMASystem::UpdateEMAValues()
 {
     // Batch 155: static member arrays cannot carry the AS_SERIES flag, so the
@@ -241,9 +214,6 @@ bool CMultiEMASystem::UpdateEMAValues()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Trend State                                            |
-//+------------------------------------------------------------------+
 void CMultiEMASystem::CalculateTrendState()
 {
     STrendState prevState = m_currentTrend;
@@ -266,7 +236,6 @@ void CMultiEMASystem::CalculateTrendState()
     
     m_currentTrend.isRanging = (!m_currentTrend.isUptrend && !m_currentTrend.isDowntrend);
     
-    // Trend strength from ADX
     m_currentTrend.strength = m_adx[0];
     
     // Calculate 21 EMA slope
@@ -297,9 +266,6 @@ void CMultiEMASystem::CalculateTrendState()
     m_currentTrend.consistency = m_consistentBars;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate EMA Alignment                                          |
-//+------------------------------------------------------------------+
 void CMultiEMASystem::CalculateAlignment()
 {
     bool ema8Rising = (m_ema8[0] > m_ema8[1]);
@@ -338,9 +304,6 @@ void CMultiEMASystem::CalculateAlignment()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CMultiEMASystem::Update()
 {
     if(!UpdateEMAValues())
@@ -350,9 +313,7 @@ void CMultiEMASystem::Update()
     CalculateAlignment();
 }
 
-//+------------------------------------------------------------------+
-//| Crossover Detection                                              |
-//+------------------------------------------------------------------+
+// Crossover Detection
 bool CMultiEMASystem::HasGoldenCross8_21()
 {
     return (m_ema8[0] > m_ema21[0] && m_ema8[1] <= m_ema21[1]);
@@ -383,9 +344,7 @@ bool CMultiEMASystem::HasDeathCross50_200()
     return (m_ema50[0] < m_ema200[0] && m_ema50[1] >= m_ema200[1]);
 }
 
-//+------------------------------------------------------------------+
-//| Trend Checks                                                     |
-//+------------------------------------------------------------------+
+// Trend Checks
 bool CMultiEMASystem::IsStrongUptrend()
 {
     return (m_currentTrend.isUptrend && m_currentTrend.strength > 25);
@@ -418,9 +377,7 @@ bool CMultiEMASystem::IsBelowAllEMAs(double price)
             price < m_ema50[0] && price < m_ema200[0]);
 }
 
-//+------------------------------------------------------------------+
-//| Pullback Detection                                               |
-//+------------------------------------------------------------------+
+// Pullback Detection
 bool CMultiEMASystem::IsPullbackTo21EMA(double price, double toleranceAtrFactor = 0.5)
 {
     double atr = m_atr[0];
@@ -437,12 +394,7 @@ bool CMultiEMASystem::IsPullbackTo50EMA(double price, double toleranceAtrFactor 
     return (distance <= (atr * toleranceAtrFactor));
 }
 
-//+------------------------------------------------------------------+
-//| Get EMA Slope                                                    |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//| Get EMA Slope (ATR Normalized)                                   |
-//+------------------------------------------------------------------+
+// Get EMA Slope (ATR Normalized)
 double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
 {
     double current = 0, past = 0;

@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| SyntheticSpikeMonitor.mqh - Synthetic tick spike detection        |
-//| Encapsulates spike detection, trading pause, and emergency        |
-//| drawdown stop logic extracted from MultiStrategyAutonomousEA.mq5  |
-//+------------------------------------------------------------------+
+// SyntheticSpikeMonitor.mqh - Synthetic tick spike detection
+// Encapsulates spike detection, trading pause, and emergency
+// drawdown stop logic extracted from MultiStrategyAutonomousEA.mq5
 #ifndef SYNTHETIC_SPIKE_MONITOR_MQH
 #define SYNTHETIC_SPIKE_MONITOR_MQH
 
@@ -13,9 +11,6 @@
 #include "..\..\IndicatorManager.mqh"
 #include "TickSafetyMonitor.mqh"
 
-//+------------------------------------------------------------------+
-//| Synthetic Spike Monitor Class                                     |
-//+------------------------------------------------------------------+
 class CSyntheticSpikeMonitor
 {
 private:
@@ -35,7 +30,6 @@ private:
     CUnifiedRiskManager* m_riskManager;
     CTickSafetyMonitor*  m_tickSafetyMonitor;
 
-    // --- Spike event counter ---
     ulong    m_spikeEventCount;
 
 public:

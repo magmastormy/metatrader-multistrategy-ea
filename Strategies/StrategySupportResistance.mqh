@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| StrategySupportResistance.mqh                                    |
-//| Support & Resistance + Trendlines Strategy v1.0                  |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Support & Resistance + Trendlines Strategy v1.0
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -26,9 +23,6 @@
 #include "SupportResistanceFiles/TrendlineDetector.mqh"
 #include "SupportResistanceFiles/SRTradingStrategies.mqh"
 
-//+------------------------------------------------------------------+
-//| S/R Strategy Mode                                                |
-//+------------------------------------------------------------------+
 enum ENUM_SR_STRATEGY_MODE
 {
     SR_MODE_BOUNCE,
@@ -37,9 +31,6 @@ enum ENUM_SR_STRATEGY_MODE
     SR_MODE_ALL
 };
 
-//+------------------------------------------------------------------+
-//| Support & Resistance Strategy Class                              |
-//+------------------------------------------------------------------+
 class CStrategySupportResistance : public CStrategyBase
 {
 private:
@@ -97,7 +88,6 @@ private:
     void                        SetMode(ENUM_SR_STRATEGY_MODE mode) { m_mode = mode; }
     void                        SetMinConfidence(double conf) { m_minConfidence = conf; }
     
-    // Getters
     int                         GetLevelCount() const { return m_levelsDetected; }
     int                         GetTrendlineCount() const { return m_trendlinesDetected; }
     
@@ -107,9 +97,6 @@ private:
     void                        DrawTrendlines();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
 CStrategySupportResistance::CStrategySupportResistance(const string name, int magic) :
     CStrategyBase(name, magic),
         m_srDetector(NULL),
@@ -134,17 +121,12 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_minConfidence = 0.45; // Reduced from 0.50 to allow more M1/M5 level participation
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CStrategySupportResistance::~CStrategySupportResistance()
 {
     Cleanup();
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup                                                          |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::Cleanup()
 {
     if(m_srDetector != NULL) { delete m_srDetector; m_srDetector = NULL; }
@@ -162,9 +144,6 @@ void CStrategySupportResistance::Cleanup()
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Initialization                                                   |
-//+------------------------------------------------------------------+
 bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr)
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
@@ -272,9 +251,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialization                                                 |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::Deinit()
 {
     if(m_drawingManager != NULL)
@@ -283,17 +259,11 @@ void CStrategySupportResistance::Deinit()
     CStrategyBase::Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| OnTick                                                           |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::OnTick()
 {
     if(!m_is_enabled) return;
 }
 
-//+------------------------------------------------------------------+
-//| OnNewBar                                                         |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
@@ -341,9 +311,6 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
     }
 }
 
-//+------------------------------------------------------------------+
-//| Draw S/R Levels                                                  |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawLevels()
 {
     if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
@@ -428,9 +395,6 @@ void CStrategySupportResistance::DrawLevels()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Draw Trendlines                                                  |
-//+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawTrendlines()
 {
     if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
@@ -480,9 +444,6 @@ void CStrategySupportResistance::DrawTrendlines()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Signal                                                       |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
 {
     confidence = 0.0;
@@ -610,9 +571,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     return bestResult.signal;
 }
 
-//+------------------------------------------------------------------+
-//| Apply Fibonacci Confluence Boost                                 |
-//+------------------------------------------------------------------+
+// Apply Fibonacci Confluence Boost
 double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence)
 {
     if(m_fibModule == NULL || m_srDetector == NULL) return confidence;

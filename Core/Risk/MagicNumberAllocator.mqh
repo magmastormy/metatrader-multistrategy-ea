@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| MagicNumberAllocator.mqh                                         |
-//| Centralized magic number allocation service                      |
-//| L1-015: Eliminates scattered magic number logic across classes   |
-//+------------------------------------------------------------------+
+// Centralized magic number allocation service
+// L1-015: Eliminates scattered magic number logic across classes
 #property strict
 
 #ifndef CORE_RISK_MAGIC_NUMBER_ALLOCATOR_MQH
@@ -11,10 +8,7 @@
 #include "../../Core/Utils/Enums.mqh"
 #include <Object.mqh>
 
-//+------------------------------------------------------------------+
-//| Magic Number Allocator                                           |
-//| Single authority for magic number allocation across all systems  |
-//+------------------------------------------------------------------+
+// Single authority for magic number allocation across all systems
 class CMagicNumberAllocator : public CObject
 {
 private:
@@ -235,13 +229,11 @@ public:
                  ENUM_STRATEGY_CLUSTER cluster,
                  int symbolIndex)
     {
-        // Get family offset
         int familyOffset = GetFamilyOffset(family);
         
         // Get strategy-specific offset
         int strategyOffset = GetStrategyOffset(strategyType);
         
-        // Get cluster offset
         int clusterOffset = GetClusterOffset(cluster);
         int clusterCode = clusterOffset; // Use offset as cluster code
         
@@ -294,7 +286,6 @@ public:
         return magic;
     }
     
-    // Get strategy offset by type
     int GetStrategyOffset(ENUM_STRATEGY_TYPE strategyType) const
     {
         // Map strategy types to offsets within family range
@@ -375,7 +366,6 @@ public:
             return m_maxFamilyOffset;
         }
     
-    // Get allocation report
     string GetAllocationReport() const
     {
         string report = "[MAGIC-ALLOCATOR] Current Allocations:\n";

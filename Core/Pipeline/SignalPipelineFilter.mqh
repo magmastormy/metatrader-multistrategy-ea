@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Filter - trend/vol/liq/structure/time/session    |
-//| + regime-cost gate + spread filter (extracted, stateless).       |
-//+------------------------------------------------------------------+
+// Signal Pipeline Filter - trend/vol/liq/structure/time/session
+// + regime-cost gate + spread filter (extracted, stateless).
 #ifndef SIGNAL_PIPELINE_FILTER_MQH
 #define SIGNAL_PIPELINE_FILTER_MQH
 
@@ -416,15 +414,12 @@ static bool ApplySessionFilter(const SignalFilterSettings &m_filters, string &m_
     TimeToStruct(TimeGMT(), dt);
     int gmtHour = dt.hour;
     
-    // Tokyo session: 00:00-09:00 GMT
     if(m_filters.session.tradeTokyoSession && gmtHour >= 0 && gmtHour < 9)
         return true;
     
-    // London session: 08:00-17:00 GMT
     if(m_filters.session.tradeLondonSession && gmtHour >= 8 && gmtHour < 17)
         return true;
     
-    // New York session: 13:00-22:00 GMT
     if(m_filters.session.tradeNewYorkSession && gmtHour >= 13 && gmtHour < 22)
         return true;
     

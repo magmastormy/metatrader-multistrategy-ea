@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MarketAnalysisIndicators.mqh - Indicator handle lifecycle        |
-//| Extracted verbatim from MarketAnalysis.mqh (no behavior change)  |
-//+------------------------------------------------------------------+
+// MarketAnalysisIndicators.mqh - Indicator handle lifecycle
+// Extracted verbatim from MarketAnalysis.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -13,12 +11,10 @@
 #include "MarketAnalysisSymbolProfile.mqh"
 #include "MarketAnalysisMetricCache.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the analysed symbol/timeframe, every indicator handle, the  |
-//| indicator parameters and the warmup / retry bookkeeping.         |
-//| NOTE: the timeframe accessor is named Timeframe() on purpose -   |
-//| a member named Period() would shadow the built-in Period().      |
-//+------------------------------------------------------------------+
+// Owns the analysed symbol/timeframe, every indicator handle, the
+// indicator parameters and the warmup / retry bookkeeping.
+// NOTE: the timeframe accessor is named Timeframe() on purpose -
+// a member named Period() would shadow the built-in Period().
 class CMarketAnalysisIndicators
 {
 private:
@@ -121,9 +117,7 @@ public:
     bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period, CMarketAnalysisMetricCache &cache);
 };
 
-//+------------------------------------------------------------------+
-//| Helper to release all indicator handles                          |
-//+------------------------------------------------------------------+
+// Helper to release all indicator handles
 void CMarketAnalysisIndicators::ReleaseAllHandles()
 {
     // Array of all indicator handles for easier management
@@ -153,9 +147,7 @@ void CMarketAnalysisIndicators::ReleaseAllHandles()
     m_ma200Handle = handles[9];
 }
 
-//+------------------------------------------------------------------+
-//| Check if we're still in warmup period (suppress warnings)        |
-//+------------------------------------------------------------------+
+// Check if we're still in warmup period (suppress warnings)
 bool CMarketAnalysisIndicators::IsInWarmup() const
 {
     // If indicators not ready and we haven't exhausted retries, stay in warmup
@@ -171,9 +163,7 @@ bool CMarketAnalysisIndicators::IsInWarmup() const
     return (TimeCurrent() - m_initTime) < WARMUP_SECONDS;
 }
 
-//+------------------------------------------------------------------+
-//| Ensure indicator handles exist for current symbol/period         |
-//+------------------------------------------------------------------+
+// Ensure indicator handles exist for current symbol/period
 bool CMarketAnalysisIndicators::EnsureIndicatorsReady(CMarketAnalysisMetricCache &cache)
 {
     if(m_symbol == "")
@@ -193,9 +183,7 @@ bool CMarketAnalysisIndicators::EnsureIndicatorsReady(CMarketAnalysisMetricCache
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize a single indicator and handle errors                  |
-//+------------------------------------------------------------------+
+// Initialize a single indicator and handle errors
 bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string symbolName, const ENUM_TIMEFRAMES period, const string indicatorName,
                                                     const int param1, const int param2, const double param3, const int param4)
 {
@@ -274,9 +262,7 @@ bool CMarketAnalysisIndicators::InitializeIndicator(int &handle, const string sy
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize all required indicators for the symbol and period     |
-//+------------------------------------------------------------------+
+// Initialize all required indicators for the symbol and period
 bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period, CMarketAnalysisMetricCache &cache)
 {
     // Track initialization attempt

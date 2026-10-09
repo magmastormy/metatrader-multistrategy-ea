@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| TransformerBrain.mqh                                             |
-//| Pre-norm transformer encoder with RoPE and AdamW classification  |
-//+------------------------------------------------------------------+
+// Pre-norm transformer encoder with RoPE and AdamW classification
 #property strict
 
 #ifndef TRANSFORMER_BRAIN_MQH

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                             PinBarDetector.mqh   |
-//|                                  Pin Bar / Hammer Detection      |
-//+------------------------------------------------------------------+
+// Pin Bar / Hammer Detection
 #property copyright "Copyright 2024"
 #property strict
 

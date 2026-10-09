@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| VolumeProfileEngine.mqh                                          |
-//| Volume Profile with POC, Value Area, HVN/LVN detection           |
-//| For forex markets only                                           |
-//+------------------------------------------------------------------+
+// Volume Profile with POC, Value Area, HVN/LVN detection
+// For forex markets only
 #ifndef CORE_ENGINES_VOLUME_PROFILE_ENGINE_MQH
 #define CORE_ENGINES_VOLUME_PROFILE_ENGINE_MQH
 

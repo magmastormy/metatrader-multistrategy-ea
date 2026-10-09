@@ -1,6 +1,3 @@
-//+------------------------------------------------------------------+
-//| StrategyBase.mqh
-//+------------------------------------------------------------------+
 #property copyright "Copyright 2025"
 #property version   "2.00"
 #property strict
@@ -205,9 +202,7 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     }
 }
 
-//+------------------------------------------------------------------+
-//| Static confidence configuration                                  |
-//+------------------------------------------------------------------+
+// Static confidence configuration
 void CStrategyBase::SetDefaultMinConfidence(const double value)
 {
     double bounded = MathMax(0.0, MathMin(1.0, value));
@@ -418,18 +413,14 @@ void CStrategyBase::SetDecisionReasonTag(const string tag)
     m_lastDecisionReasonTag = tag;
 }
 
-//+------------------------------------------------------------------+
-//| SetProposedStops - stash designed SL/TP (pips) for FINDING 0      |
-//+------------------------------------------------------------------+
+// SetProposedStops - stash designed SL/TP (pips) for FINDING 0
 void CStrategyBase::SetProposedStops(double slPips, double tpPips)
 {
     m_proposedSLpips = slPips;
     m_proposedTPpips = tpPips;
 }
 
-//+------------------------------------------------------------------+
-//| GetProposedStops - return stashed SL/TP if a real proposal exists |
-//+------------------------------------------------------------------+
+// GetProposedStops - return stashed SL/TP if a real proposal exists
 bool CStrategyBase::GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
 {
     if(m_proposedSLpips > 0.0 && m_proposedTPpips > 0.0)
@@ -441,10 +432,8 @@ bool CStrategyBase::GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, d
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| LogRejectEvent - throttled reject logging with dedup            |
-//| Uses m_strategyPrefix for strategy-specific log identification   |
-//+------------------------------------------------------------------+
+// LogRejectEvent - throttled reject logging with dedup
+// Uses m_strategyPrefix for strategy-specific log identification
 void CStrategyBase::LogRejectEvent(const string reasonTag)
 {
     datetime nowTime = TimeCurrent();
@@ -459,9 +448,7 @@ void CStrategyBase::LogRejectEvent(const string reasonTag)
     m_lastRejectLogTime = nowTime;
 }
 
-//+------------------------------------------------------------------+
-//| RejectSignal - set reason tag, log, and return NONE             |
-//+------------------------------------------------------------------+
+// RejectSignal - set reason tag, log, and return NONE
 ENUM_TRADE_SIGNAL CStrategyBase::RejectSignal(const string reasonTag)
 {
     SetDecisionReasonTag(reasonTag);
@@ -469,10 +456,8 @@ ENUM_TRADE_SIGNAL CStrategyBase::RejectSignal(const string reasonTag)
     return TRADE_SIGNAL_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| RefreshForNewBar - common new-bar detection + component refresh  |
-//| Returns true if a new bar was detected and components refreshed   |
-//+------------------------------------------------------------------+
+// RefreshForNewBar - common new-bar detection + component refresh
+// Returns true if a new bar was detected and components refreshed
 bool CStrategyBase::RefreshForNewBar()
 {
     int barCount = iBars(m_symbol, m_timeframe);
@@ -484,10 +469,8 @@ bool CStrategyBase::RefreshForNewBar()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| ValidateWithRiskManager - unified risk validation gate helper     |
-//| Consolidates ~150 lines of duplicated boilerplate across strategies|
-//+------------------------------------------------------------------+
+// ValidateWithRiskManager - unified risk validation gate helper
+// Consolidates ~150 lines of duplicated boilerplate across strategies
 bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &request,
                                              const string tagPrefix,
                                              double &confidence)
@@ -516,10 +499,8 @@ bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &reque
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| LogConsensusDiag - standardized [CONSENSUS-DIAG] logging wrapper  |
-//| Output: [CONSENSUS-DIAG] symbol | BUY/SELL | context | Conf | Wt  |
-//+------------------------------------------------------------------+
+// LogConsensusDiag - standardized [CONSENSUS-DIAG] logging wrapper
+// Output: [CONSENSUS-DIAG] symbol | BUY/SELL | context | Conf | Wt
 void CStrategyBase::LogConsensusDiag(ENUM_TRADE_SIGNAL signal, const string context, double confidence, const string reasonSuffix)
 {
     PrintFormat("[CONSENSUS-DIAG] %s | %s | %s | Conf: %.1f%% | Weight: %.2f | Reason: %s%s",
@@ -630,25 +611,19 @@ int CStrategyBase::GetMagicNumber(void) const
     return m_magic;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 1: Set regime context from RegimeEngine                  |
-//+------------------------------------------------------------------+
+// Feature 1: Set regime context from RegimeEngine
 void CStrategyBase::SetRegimeContext(int detailedRegime)
 {
     m_regimeDetailedType = detailedRegime;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 1: Set strategy cluster type                             |
-//+------------------------------------------------------------------+
+// Feature 1: Set strategy cluster type
 void CStrategyBase::SetStrategyCluster(int cluster)
 {
     m_strategyCluster = cluster;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 1: Regime-aware confidence multiplier                    |
-//+------------------------------------------------------------------+
+// Feature 1: Regime-aware confidence multiplier
 double CStrategyBase::GetRegimeConfidenceMultiplier()
 {
     if(m_strategyCluster == STRATEGY_CLUSTER_NONE) return 1.0;
@@ -672,9 +647,7 @@ double CStrategyBase::GetRegimeConfidenceMultiplier()
     return 1.0;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 2: Detect volatility direction via ATR comparison        |
-//+------------------------------------------------------------------+
+// Feature 2: Detect volatility direction via ATR comparison
 ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
 {
     CIndicatorManager* indMgr = CIndicatorManager::Instance();
@@ -703,9 +676,7 @@ ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
     return VOL_STABLE;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 2: Volatility direction confidence multiplier            |
-//+------------------------------------------------------------------+
+// Feature 2: Volatility direction confidence multiplier
 double CStrategyBase::GetVolatilityDirectionMultiplier()
 {
     ENUM_VOLATILITY_DIRECTION volDir = GetVolatilityDirection();
@@ -717,9 +688,7 @@ double CStrategyBase::GetVolatilityDirectionMultiplier()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Feature 3: Check if signal aligns with higher TF trend           |
-//+------------------------------------------------------------------+
+// Feature 3: Check if signal aligns with higher TF trend
 bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
 {
     ENUM_TIMEFRAMES htf = GetNextHigherTF(m_timeframe);
@@ -743,9 +712,7 @@ bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Feature 3: Get next higher timeframe                             |
-//+------------------------------------------------------------------+
+// Feature 3: Get next higher timeframe
 ENUM_TIMEFRAMES CStrategyBase::GetNextHigherTF(ENUM_TIMEFRAMES tf)
 {
     switch(tf)

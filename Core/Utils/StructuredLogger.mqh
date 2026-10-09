@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| StructuredLogger.mqh                                             |
-//| JSONL structured logging for production debugging                |
-//| Zero overhead when disabled, queryable when enabled              |
-//+------------------------------------------------------------------+
+// JSONL structured logging for production debugging
+// Zero overhead when disabled, queryable when enabled
 #property strict
 #ifndef CORE_UTILS_STRUCTURED_LOGGER_MQH
 #define CORE_UTILS_STRUCTURED_LOGGER_MQH
@@ -12,9 +9,7 @@
 // Forward declaration for global instance (defined in MultiStrategyAutonomousEA.mq5)
 class CStructuredLogger;
 
-//+------------------------------------------------------------------+
-//| String object for buffer                                         |
-//+------------------------------------------------------------------+
+// String object for buffer
 class CStringObj : public CObject
 {
 private:
@@ -26,9 +21,6 @@ public:
     virtual int Compare(const CObject* node, const int mode = 0) const override { return 0; }
 };
 
-//+------------------------------------------------------------------+
-//| CStructuredLogger                                                |
-//+------------------------------------------------------------------+
 class CStructuredLogger
 {
 private:

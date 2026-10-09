@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Core Trading Enums and Constants                                |
-//| Essential definitions for the Multi-Strategy EA                 |
-//+------------------------------------------------------------------+
+// Core Trading Enums and Constants
+// Essential definitions for the Multi-Strategy EA
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -10,9 +8,7 @@
 #ifndef CORE_ENUMS_MQH
 #define CORE_ENUMS_MQH
 
-//+------------------------------------------------------------------+
-//| Trading Signal Types                                            |
-//+------------------------------------------------------------------+
+// Trading Signal Types
 enum ENUM_TRADE_SIGNAL
 {
     TRADE_SIGNAL_NONE = 0,     // No signal
@@ -20,9 +16,7 @@ enum ENUM_TRADE_SIGNAL
     TRADE_SIGNAL_SELL = -1     // Sell signal
 };
 
-//+------------------------------------------------------------------+
-//| Trading Style Enumeration                                       |
-//+------------------------------------------------------------------+
+// Trading Style Enumeration
 enum ENUM_TRADE_STYLE
 {
     TRADE_SCALP = 0,           // Scalping style
@@ -31,9 +25,7 @@ enum ENUM_TRADE_STYLE
     TRADE_RANGE = 3            // Range trading
 };
 
-//+------------------------------------------------------------------+
-//| Trading Mode Enumeration (Killer Scalper vs HTF Follower)       |
-//+------------------------------------------------------------------+
+// Trading Mode Enumeration (Killer Scalper vs HTF Follower)
 enum ENUM_TRADING_MODE
 {
     TRADING_MODE_NO_TRADE = 0,      // No trading allowed
@@ -41,9 +33,6 @@ enum ENUM_TRADING_MODE
     TRADING_MODE_HTF_FOLLOWER = 2    // Structural, trend following
 };
 
-//+------------------------------------------------------------------+
-//| Market Regime Enumeration                                      |
-//+------------------------------------------------------------------+
 enum ENUM_MARKET_REGIME
 {
     MARKET_REGIME_UNKNOWN = 0,     // Unknown regime
@@ -53,9 +42,6 @@ enum ENUM_MARKET_REGIME
     MARKET_REGIME_QUIET = 4        // Quiet market
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Tier Enumeration                                       |
-//+------------------------------------------------------------------+
 enum ENUM_STRATEGY_TIER
 {
     STRATEGY_TIER_1 = 1,           // Top tier strategies
@@ -64,9 +50,6 @@ enum ENUM_STRATEGY_TIER
     STRATEGY_TIER_DISABLED = 0     // Disabled strategies
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Type Enumeration                                       |
-//+------------------------------------------------------------------+
 enum ENUM_STRATEGY_TYPE
 {
     STRATEGY_MOMENTUM = 1,         // Momentum strategy
@@ -95,10 +78,8 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_ONNX = 102            // ONNX AI strategy type
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Array Index Enumeration (L7-004)                       |
-//| Maps array indices 0-20 to strategies - single source of truth  |
-//+------------------------------------------------------------------+
+// Strategy Array Index Enumeration (L7-004)
+// Maps array indices 0-20 to strategies - single source of truth
 enum ENUM_STRATEGY_INDEX
 {
     SI_MOMENTUM = 0,
@@ -122,9 +103,7 @@ enum ENUM_STRATEGY_INDEX
     SI_MAX = 20
 };
 
-//+------------------------------------------------------------------+
-//| EA Operating Mode Enumeration                                   |
-//+------------------------------------------------------------------+
+// EA Operating Mode Enumeration
 enum ENUM_EA_MODE
 {
     EA_MODE_INDICATOR_ONLY = 1,   // Indicator-based strategies only
@@ -134,9 +113,7 @@ enum ENUM_EA_MODE
     EA_MODE_INDICATOR_FILTERED = 5 // Indicator filtered strategies
 };
 
-//+------------------------------------------------------------------+
-//| Python bridge telemetry mode                                     |
-//+------------------------------------------------------------------+
+// Python bridge telemetry mode
 enum ENUM_PYTHON_BRIDGE_MODE
 {
     PYTHON_BRIDGE_OFF = 0,        // No Python sidecar expectations
@@ -144,9 +121,6 @@ enum ENUM_PYTHON_BRIDGE_MODE
     PYTHON_BRIDGE_REQUIRED = 2    // Operator expects Python sidecar to be part of workflow
 };
 
-//+------------------------------------------------------------------+
-//| Error Level Enumeration                                        |
-//+------------------------------------------------------------------+
 enum ENUM_ERROR_LEVEL
 {
     ERROR_LEVEL_INFO = 0,         // Informational
@@ -155,9 +129,7 @@ enum ENUM_ERROR_LEVEL
     ERROR_LEVEL_CRITICAL = 3      // Critical error
 };
 
-//+------------------------------------------------------------------+
-//| Log Level Enumeration (L2-028: Gate verbose PrintFormat)        |
-//+------------------------------------------------------------------+
+// Log Level Enumeration (L2-028: Gate verbose PrintFormat)
 enum ENUM_LOG_LEVEL
 {
     LOG_LEVEL_NONE = 0,      // No logging
@@ -168,9 +140,7 @@ enum ENUM_LOG_LEVEL
     LOG_LEVEL_TRACE = 5      // Everything including trace/heartbeat diagnostics
 };
 
-//+------------------------------------------------------------------+
-//| Risk Management Enumeration                                     |
-//+------------------------------------------------------------------+
+// Risk Management Enumeration
 enum ENUM_RISK_MODE
 {
     RISK_MODE_FIXED = 1,           // Fixed lot size
@@ -178,36 +148,24 @@ enum ENUM_RISK_MODE
     RISK_MODE_ADAPTIVE = 3         // Adaptive risk management
 };
 
-//+------------------------------------------------------------------+
-//| Signal Evaluation Mode                                          |
-//+------------------------------------------------------------------+
 enum ENUM_SIGNAL_EVAL_MODE
 {
     EVAL_MODE_NEW_BAR = 0,         // New bar evaluation
     EVAL_MODE_INTRABAR = 1         // Intrabar evaluation
 };
 
-//+------------------------------------------------------------------+
-//| Validation Profile                                              |
-//+------------------------------------------------------------------+
 enum ENUM_VALIDATION_PROFILE
 {
     VALIDATION_PROFILE_NEW_BAR = 0,     // New bar validation profile
     VALIDATION_PROFILE_INTRABAR = 1     // Intrabar validation profile
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Role Enumeration                                       |
-//+------------------------------------------------------------------+
 enum ENUM_STRATEGY_ROLE
 {
     PRIMARY_ALPHA = 0,
     CONTEXT_FEATURE = 1
 };
 
-//+------------------------------------------------------------------+
-//| Strategy Cluster Enumeration                                    |
-//+------------------------------------------------------------------+
 enum ENUM_STRATEGY_CLUSTER
 {
     STRATEGY_CLUSTER_NONE = 0,
@@ -217,9 +175,6 @@ enum ENUM_STRATEGY_CLUSTER
     SCALP_CLUSTER = 4
 };
 
-//+------------------------------------------------------------------+
-//| Volatility Direction Enumeration                                 |
-//+------------------------------------------------------------------+
 enum ENUM_VOLATILITY_DIRECTION
 {
     VOL_EXPANDING = 1,          // ATR expanding - breakouts more likely
@@ -227,9 +182,6 @@ enum ENUM_VOLATILITY_DIRECTION
     VOL_CONTRACTING = -1        // ATR contracting - squeeze forming
 };
 
-//+------------------------------------------------------------------+
-//| Intrabar Policy Enumeration                                    |
-//+------------------------------------------------------------------+
 enum ENUM_INTRABAR_POLICY
 {
     INTRABAR_POLICY_OFF = 0,
@@ -237,9 +189,6 @@ enum ENUM_INTRABAR_POLICY
     INTRABAR_POLICY_LIVE = 2
 };
 
-//+------------------------------------------------------------------+
-//| Consensus Decision Class Enumeration                           |
-//+------------------------------------------------------------------+
 enum ENUM_CONSENSUS_DECISION_CLASS
 {
     CONSENSUS_DECISION_NONE = 0,
@@ -250,9 +199,6 @@ enum ENUM_CONSENSUS_DECISION_CLASS
     CONSENSUS_DECISION_SOLO_FALLBACK = 5  // Fallback when all strategies abstain
 };
 
-//+------------------------------------------------------------------+
-//| Risk Level Enumeration                                          |
-//+------------------------------------------------------------------+
 enum ENUM_RISK_LEVEL
 {
     RISK_LEVEL_LOW = 0,
@@ -262,9 +208,7 @@ enum ENUM_RISK_LEVEL
     RISK_LEVEL_EXTREME = 4
 };
 
-//+------------------------------------------------------------------+
-//| Margin Health Level (Phase 2.4)                                  |
-//+------------------------------------------------------------------+
+// Margin Health Level (Phase 2.4)
 enum ENUM_MARGIN_HEALTH_LEVEL
 {
     MARGIN_HEALTH_OK = 0,           // Margin level >= 300%
@@ -273,9 +217,7 @@ enum ENUM_MARGIN_HEALTH_LEVEL
     MARGIN_HEALTH_EMERGENCY = 3     // Margin level < 150%
 };
 
-//+------------------------------------------------------------------+
-//| Risk Tier (Phase 2.3)                                            |
-//+------------------------------------------------------------------+
+// Risk Tier (Phase 2.3)
 enum ENUM_RISK_TIER
 {
    RISK_TIER_CONSERVATIVE,      // Conservative: low risk, tight controls
@@ -289,9 +231,7 @@ enum ENUM_RISK_TIER
    RISK_TIER_PROFESSIONAL       // Professional: $500+ accounts, full institutional
 };
 
-//+------------------------------------------------------------------+
-//| Constants                                                       |
-//+------------------------------------------------------------------+
+// Constants
 #define MAX_STRATEGIES 150              // Maximum number of strategies (increased for multi-symbol support)
 #define MAX_POSITIONS 20                // Maximum number of positions
 #define DEFAULT_MAGIC 123456            // Default magic number
@@ -300,11 +240,9 @@ enum ENUM_RISK_TIER
 #define MAX_SPREAD_POINTS 50            // Maximum spread in points
 #define DEFAULT_SLIPPAGE 3              // Default slippage in points
 
-//+------------------------------------------------------------------+
-//| Risk Percent Scale Conversion Helpers (Blueprint Section 10.4)    |
-//| Convention: All risk parameters use 0-100 scale (e.g., 1.5 = 1.5%)|
-//| Internal calculations divide by 100 when fraction is needed.      |
-//+------------------------------------------------------------------+
+// Risk Percent Scale Conversion Helpers (Blueprint Section 10.4)
+// Convention: All risk parameters use 0-100 scale (e.g., 1.5 = 1.5%)
+// Internal calculations divide by 100 when fraction is needed.
 
 // Convert risk percent (0-100 scale) to fraction (0-1 scale)
 double RiskPercentToFraction(double riskPercent)
@@ -338,10 +276,8 @@ double ClampRiskPercentGlobal(double riskPercent)
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
-//+------------------------------------------------------------------+
-//| Drawdown state — single source of truth for all drawdown queries |
-//| (Phase 2.1: Defined here to break circular include dependency)   |
-//+------------------------------------------------------------------+
+// Drawdown state — single source of truth for all drawdown queries
+// (Phase 2.1: Defined here to break circular include dependency)
 struct SDrawdownState
 {
     double currentDrawdownPct;       // Current drawdown from peak equity (%)
@@ -369,7 +305,6 @@ enum ENUM_POSITION_SIZING_MODE
 // Risk Level Constants
 #define RISK_LEVEL_EXTREME 4           // Extreme risk level
 
-// Extended Strategy Type Enumeration
 enum ENUM_STRATEGY_TYPE_EXTENDED
 {
     STRATEGY_TYPE_CUSTOM = 99,         // Custom strategy type
@@ -377,9 +312,6 @@ enum ENUM_STRATEGY_TYPE_EXTENDED
     STRATEGY_TYPE_AI_ENHANCED = 101    // AI enhanced strategy type
 };
 
-//+------------------------------------------------------------------+
-//| Consensus Decision Context Structure                            |
-//+------------------------------------------------------------------+
 struct SConsensusDecisionContext
 {
     string symbol;                 // Symbol being analyzed
@@ -509,9 +441,7 @@ struct SConsensusDecisionContext
     }
 };
 
-//+------------------------------------------------------------------+
-//| Validation Result Structure (alias for compatibility)            |
-//+------------------------------------------------------------------+
+// Validation Result Structure (alias for compatibility)
 struct SValidationResult
 {
     bool approved;                 // Whether the signal is approved
@@ -604,9 +534,6 @@ struct SValidationResult
 };
 
 
-//+------------------------------------------------------------------+
-//| Risk Metrics Structure                                         |
-//+------------------------------------------------------------------+
 struct SRiskMetrics
 {
     double totalRisk;             // Total portfolio risk %
@@ -656,9 +583,6 @@ struct SRiskMetrics
     }
 };
 
-//+------------------------------------------------------------------+
-//| Performance Metrics Structure                                  |
-//+------------------------------------------------------------------+
 struct SPerformanceMetrics
 {
     int totalTrades;              // Total number of trades
@@ -675,9 +599,6 @@ struct SPerformanceMetrics
     double recoveryFactor;        // Recovery factor
 };
 
-//+------------------------------------------------------------------+
-//| Market Analysis Structure                                       |
-//+------------------------------------------------------------------+
 struct SMarketAnalysis
 {
     ENUM_MARKET_REGIME regime;    // Current market regime
@@ -690,9 +611,6 @@ struct SMarketAnalysis
     datetime analysisTime;        // Analysis timestamp
 };
 
-//+------------------------------------------------------------------+
-//| Enhanced Trade Signal Structure                                 |
-//+------------------------------------------------------------------+
 struct SEnhancedTradeSignal
 {
     ENUM_TRADE_SIGNAL signal;           // Trading signal
@@ -786,9 +704,7 @@ struct SEnhancedTradeSignal
     }
 };
 
-//+------------------------------------------------------------------+
-//| Escape JSON string (global utility)                              |
-//+------------------------------------------------------------------+
+// Escape JSON string (global utility)
 string EscapeJsonString(const string &str)
 {
     string result = str;
@@ -800,9 +716,7 @@ string EscapeJsonString(const string &str)
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Log Level Constants (mapped to g_logLevel 0-4 scale)            |
-//+------------------------------------------------------------------+
+// Log Level Constants (mapped to g_logLevel 0-4 scale)
 // g_logLevel: 0=Silent, 1=Errors, 2=Normal/Info, 3=Verbose/Debug, 4=Trace
 #define LOG_LEVEL_SILENT    0
 #define LOG_LEVEL_ERROR     1
@@ -814,9 +728,7 @@ string EscapeJsonString(const string &str)
 // Global log level variable (set from InpLogLevel input during EA initialization)
 int g_logLevel = LOG_LEVEL_ERROR;
 
-//+------------------------------------------------------------------+
-//| Conditional Logging Macro (L2-028: Gate verbose PrintFormat)    |
-//+------------------------------------------------------------------+
+// Conditional Logging Macro (L2-028: Gate verbose PrintFormat)
 // Uses existing g_logLevel (int 0-4) mapped to ENUM_LOG_VERBOSITY
 // MQL5 doesn't support { } blocks in macro definitions, so we use simple statements
 // Users must wrap LOG_IF calls in { } if used in if-else contexts

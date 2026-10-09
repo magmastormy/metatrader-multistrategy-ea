@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Tradable Instruments Registry                                   |
-//| Provides manual and automatic instrument discovery               |
-//+------------------------------------------------------------------+
+// Tradable Instruments Registry
+// Provides manual and automatic instrument discovery
 #ifndef CORE_INSTRUMENTS_MQH
 #define CORE_INSTRUMENTS_MQH
 
@@ -250,11 +248,9 @@ bool IsSyntheticIndexSymbolName(const string symbol)
             IsPairsArbitrageSyntheticSymbolName(symbol));
 }
 
-//+------------------------------------------------------------------+
-//| Detect Deriv family ID from symbol name                          |
-//| Priority order matches CDerivAssetProfiler::DetectFamily()       |
-//| Returns: 0-17 for known families, -1 for non-Deriv symbols      |
-//+------------------------------------------------------------------+
+// Detect Deriv family ID from symbol name
+// Priority order matches CDerivAssetProfiler::DetectFamily()
+// Returns: 0-17 for known families, -1 for non-Deriv symbols
 int DetectFamilyId(const string symbol)
 {
     if(IsBoomCrashSyntheticSymbolName(symbol))    return 0;   // DERIV_CRASH_BOOM
@@ -278,9 +274,7 @@ int DetectFamilyId(const string symbol)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Batch 103: Non-Deriv asset class detection functions             |
-//+------------------------------------------------------------------+
+// Batch 103: Non-Deriv asset class detection functions
 
 bool IsMetalsSymbolName(const string symbol)
 {
@@ -324,11 +318,9 @@ bool IsEnergiesSymbolName(const string symbol)
             StringFind(normalized, "WTICO") >= 0);
 }
 
-//+------------------------------------------------------------------+
-//| Detect asset class ID from symbol name                           |
-//| Priority: Deriv > Metals > Indices > Energies > Forex > Unknown  |
-//| Returns: 0-9 for known asset classes (ENUM_ASSET_CLASS values)   |
-//+------------------------------------------------------------------+
+// Detect asset class ID from symbol name
+// Priority: Deriv > Metals > Indices > Energies > Forex > Unknown
+// Returns: 0-9 for known asset classes (ENUM_ASSET_CLASS values)
 int DetectAssetClassId(const string symbol)
 {
     // Deriv synthetics first (most specific)

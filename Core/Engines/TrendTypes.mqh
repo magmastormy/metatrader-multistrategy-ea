@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendTypes.mqh - Shared trend value types                        |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendTypes.mqh - Shared trend value types
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -9,9 +7,6 @@
 #ifndef TREND_TYPES_MQH
 #define TREND_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Trend Types                                                     |
-//+------------------------------------------------------------------+
 enum ENUM_TREND_TYPE
 {
     TREND_NONE = 0,
@@ -24,9 +19,6 @@ enum ENUM_TREND_TYPE
     TREND_TRANSITIONING
 };
 
-//+------------------------------------------------------------------+
-//| Trend State Structure                                           |
-//+------------------------------------------------------------------+
 struct TrendState
 {
     ENUM_TREND_TYPE type;
@@ -70,9 +62,7 @@ struct STrendReadinessSnapshot
     }
 };
 
-//+------------------------------------------------------------------+
-//| Multi-Timeframe Trend                                           |
-//+------------------------------------------------------------------+
+// Multi-Timeframe Trend
 struct MTFTrendState
 {
     TrendState htf;            // Higher timeframe trend

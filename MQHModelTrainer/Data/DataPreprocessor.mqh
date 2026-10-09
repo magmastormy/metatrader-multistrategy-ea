@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| DataPreprocessor.mqh                                             |
-//| Data preprocessing utilities: normalization, splitting, encoding |
-//+------------------------------------------------------------------+
+// Data preprocessing utilities: normalization, splitting, encoding
 #ifndef MQH_DATA_PREPROCESSOR_MQH
 #define MQH_DATA_PREPROCESSOR_MQH
 

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| MathematicalEngineRegistry.mqh                                   |
-//| Consolidates all mathematical engines per symbol                 |
-//+------------------------------------------------------------------+
+// Consolidates all mathematical engines per symbol
 #property strict
 
 #ifndef CORE_REGISTRY_MATHEMATICAL_ENGINE_REGISTRY_MQH

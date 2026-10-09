@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| FibConfluence.mqh                                                |
-//| Lightweight Fibonacci Confluence Module                          |
-//| Provides Fibonacci level checking for S/R confluence             |
-//+------------------------------------------------------------------+
+// Lightweight Fibonacci Confluence Module
+// Provides Fibonacci level checking for S/R confluence
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -10,9 +7,6 @@
 #ifndef FIB_CONFLUENCE_MQH
 #define FIB_CONFLUENCE_MQH
 
-//+------------------------------------------------------------------+
-//| Fibonacci Level Structure                                        |
-//+------------------------------------------------------------------+
 struct SFibLevel
 {
     double price;
@@ -21,9 +15,7 @@ struct SFibLevel
     SFibLevel() : price(0), ratio(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Fibonacci Confluence Helper Class                                |
-//+------------------------------------------------------------------+
+// Fibonacci Confluence Helper Class
 class CFibConfluence
 {
 private:
@@ -50,25 +42,18 @@ public:
     double              GetConfidenceBoost(double fibRatio);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CFibConfluence::CFibConfluence() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT)
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CFibConfluence::~CFibConfluence()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CFibConfluence::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
@@ -77,18 +62,13 @@ bool CFibConfluence::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve PERIOD_CURRENT to actual chart timeframe                 |
-//+------------------------------------------------------------------+
+// Resolve PERIOD_CURRENT to actual chart timeframe
 void CFibConfluence::ResolveTimeframe()
 {
     if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
         m_timeframe = Period();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Fibonacci Levels                                       |
-//+------------------------------------------------------------------+
 void CFibConfluence::CalculateLevels(double swingHigh, double swingLow, SFibLevel &levels[], int &count)
 {
     if(swingHigh <= swingLow || swingLow <= 0)
@@ -113,9 +93,7 @@ void CFibConfluence::CalculateLevels(double swingHigh, double swingLow, SFibLeve
     levels[2].ratio = 0.618;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Price is Near Fibonacci Level                           |
-//+------------------------------------------------------------------+
+// Check if Price is Near Fibonacci Level
 bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels[], int count,
                                    double tolerancePips, double &nearestRatio)
 {
@@ -140,9 +118,7 @@ bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels
     return (nearestRatio > 0);
 }
 
-//+------------------------------------------------------------------+
-//| Get Confidence Boost Based on Fibonacci Ratio                    |
-//+------------------------------------------------------------------+
+// Get Confidence Boost Based on Fibonacci Ratio
 double CFibConfluence::GetConfidenceBoost(double fibRatio)
 {
     // Golden ratio gets highest boost

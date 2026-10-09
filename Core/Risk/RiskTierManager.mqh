@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| RiskTierManager.mqh                                              |
-//| Tiered position sizing: maps risk tier to risk/sizer/trade params |
-//+------------------------------------------------------------------+
+// Tiered position sizing: maps risk tier to risk/sizer/trade params
 #ifndef CORE_RISK_RISK_TIER_MANAGER_MQH
 #define CORE_RISK_RISK_TIER_MANAGER_MQH
 
@@ -12,9 +9,7 @@
 #include "FullMarginMode.mqh"
 #include "SafeModeConfig.mqh"
 
-//+------------------------------------------------------------------+
-//| Per-cluster risk allocation percentages                          |
-//+------------------------------------------------------------------+
+// Per-cluster risk allocation percentages
 struct SClusterAllocation
 {
    double trendPct;           // % of daily risk budget for TREND_CLUSTER
@@ -23,10 +18,7 @@ struct SClusterAllocation
    double scalpPct;           // % of daily risk budget for SCALP_CLUSTER
 };
 
-//+------------------------------------------------------------------+
-//| Per-tier configuration                                           |
-//| Blueprint 10.4: All percent fields use 0-100 scale               |
-//+------------------------------------------------------------------+
+// Blueprint 10.4: All percent fields use 0-100 scale
 struct STierConfig
 {
    double riskPerTradePct;      // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
@@ -45,9 +37,6 @@ struct STierConfig
    SClusterAllocation clusterAllocation; // Per-cluster risk allocation
 };
 
-//+------------------------------------------------------------------+
-//| Risk Tier Manager                                                |
-//+------------------------------------------------------------------+
 class CRiskTierManager
 {
 private:
@@ -298,11 +287,9 @@ private:
 
     STierConfig GetConfig() const { return m_config; }
 
-    //+------------------------------------------------------------------+
-    //| Apply tier parameters to CUnifiedRiskManager                     |
-    //| Blueprint 10.4: All percent values in 0-100 scale               |
-    //| Input floors: if >0, tier values cannot go below these floors   |
-    //+------------------------------------------------------------------+
+// Apply tier parameters to CUnifiedRiskManager
+// Blueprint 10.4: All percent values in 0-100 scale
+// Input floors: if >0, tier values cannot go below these floors
     void ApplyToRiskManager(CUnifiedRiskManager &riskManager, CPerformanceAnalytics* perfAnalytics = NULL,
                             double inputDailyFloor = 0.0, double inputPortfolioFloor = 0.0,
                             double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0,
@@ -367,11 +354,9 @@ private:
                     effectiveDdWarning, effectiveDdCritical);
     }
 
-    //+------------------------------------------------------------------+
-    //| Apply tier parameters to CPositionSizer                          |
-    //| Blueprint 10.4: riskPercent uses 0-100 scale                     |
-    //| Input floor: if >0, tier risk percent cannot go below this floor |
-    //+------------------------------------------------------------------+
+// Apply tier parameters to CPositionSizer
+// Blueprint 10.4: riskPercent uses 0-100 scale
+// Input floor: if >0, tier risk percent cannot go below this floor
     void ApplyToPositionSizer(CPositionSizer &sizer, double inputRiskFloor = 0.0)
     {
         SPositionSizingParams params = sizer.GetParameters();
@@ -399,10 +384,8 @@ private:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Apply breakeven/trailing from tier to CTradeManager              |
-    //| Batch 117: Store tier params as static defaults for callers      |
-    //+------------------------------------------------------------------+
+// Apply breakeven/trailing from tier to CTradeManager
+// Batch 117: Store tier params as static defaults for callers
     void ApplyToTradeManager(CTradeManager &tradeMgr)
     {
         // Store tier params as static defaults — callers read via GetBreakevenBufferPts/GetTrailingDistancePts
@@ -410,50 +393,32 @@ private:
                     m_config.breakevenBufferPts, m_config.trailingDistancePts);
     }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate breakeven buffer                            |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate breakeven buffer
     double GetBreakevenBufferPts() const { return m_config.breakevenBufferPts; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate trailing distance                           |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate trailing distance
     double GetTrailingDistancePts() const { return m_config.trailingDistancePts; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate max positions                               |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate max positions
     int GetMaxPositions() const { return m_config.maxPositions; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate min confidence                              |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate min confidence
     double GetMinConfidence() const { return m_config.minConfidence; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate min voters                                  |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate min voters
     int GetMinVoters() const { return m_config.minVoters; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate max spread/ATR ratio                        |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate max spread/ATR ratio
     double GetMaxSpreadATRRatio() const { return m_config.maxSpreadATRRatio; }
 
-    //+------------------------------------------------------------------+
-    //| Get tier-appropriate scalp budget                                |
-    //+------------------------------------------------------------------+
+// Get tier-appropriate scalp budget
     double GetScalpBudgetPct() const { return m_config.scalpBudgetPct; }
 
-    //+------------------------------------------------------------------+
-        //| Get cluster allocation config for current tier                   |
-        //+------------------------------------------------------------------+
+// Get cluster allocation config for current tier
         SClusterAllocation GetClusterAllocation() const { return m_config.clusterAllocation; }
 
-        //+------------------------------------------------------------------+
-        //| Validate cluster allocation sums to 100%                         |
-        //| L5-014: Ensure cluster allocation percentages sum to 100%        |
-        //+------------------------------------------------------------------+
+// Validate cluster allocation sums to 100%
+// L5-014: Ensure cluster allocation percentages sum to 100%
         void ValidateClusterAllocation() const
         {
             double sum = m_config.clusterAllocation.trendPct 
@@ -471,9 +436,7 @@ private:
             }
         }
 
-        //+------------------------------------------------------------------+
-        //| Get full-margin mode config for RISK_TIER_FULL_MARGIN            |
-        //+------------------------------------------------------------------+
+// Get full-margin mode config for RISK_TIER_FULL_MARGIN
         SFullMarginConfig GetFullMarginConfig() const
         {
             SFullMarginConfig fm;
@@ -491,9 +454,7 @@ private:
         return fm;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get safe mode config for RISK_TIER_CONSERVATIVE                  |
-    //+------------------------------------------------------------------+
+// Get safe mode config for RISK_TIER_CONSERVATIVE
     SSafeModeConfig GetSafeModeConfig() const
     {
         SSafeModeConfig sm;
@@ -512,9 +473,7 @@ private:
         return sm;
     }
 
-    //+------------------------------------------------------------------+
-    //| Tier name string for logging                                     |
-    //+------------------------------------------------------------------+
+// Tier name string for logging
     string GetTierName() const
     {
         switch(m_tier)

@@ -1,40 +1,33 @@
-//+------------------------------------------------------------------+
-//| PositionStateTracker.mqh                                         |
-//| Position SL/TP state registry extracted from CTradeManager       |
-//|                                                                  |
-//| Phase D, batch T3. This module OWNS the "BEAST MODE" position    |
-//| state cache that used to live in CTradeManager as                |
-//| m_positionStates[100] / m_stateCount:                            |
-//|   - FindPositionState      (internal; self-heals stale entries)  |
-//|   - RemovePositionState    (internal; called by FindPositionState)|
-//|   - UpdatePositionState    (the single ingest point)             |
-//|   - CleanupPositionStates  (periodic sweep of closed positions)  |
-//|   - IsModificationNeeded   (the throttle/dedup read path)        |
-//|                                                                  |
-//| STATE OWNERSHIP: CTradeManager holds this class BY VALUE and     |
-//| keeps thin forwarders with the original signatures, so every     |
-//| existing call site is unchanged - in particular the five         |
-//| UpdatePositionState(...) calls and the two IsModificationNeeded  |
-//| (...) calls on the live ModifyPosition / breakeven paths.        |
-//|                                                                  |
-//| NO BACK-POINTER: IsModificationNeeded needs exactly one          |
-//| CTradeManager configuration value (m_minModifyIntervalSec, the   |
-//| protective-modify cooldown). It is passed in as a parameter      |
-//| rather than read through a back-pointer, keeping this module     |
-//| free of any dependency on CTradeManager. The forwarder supplies  |
-//| it, so the call sites stay textually identical.                  |
-//|                                                                  |
-//| NESTED STRUCT - DELIBERATE: SPositionState is kept nested and    |
-//| private here, exactly as it was nested inside CTradeManager.     |
-//| It is NOT promoted to top-level because a DIFFERENT, field-      |
-//| incompatible top-level "struct SPositionState" already exists in |
-//| Core/Position/PositionManager.mqh (:21), and that file includes  |
-//| Core/Trading/TradeManager.mqh at its line 11 - i.e. before its   |
-//| own declaration. Promoting this one would put two unrelated      |
-//| structs of the same name in the same translation unit and break  |
-//| the build. Nesting keeps the global namespace footprint at zero. |
-//| See the T3 report for details.                                   |
-//+------------------------------------------------------------------+
+// Position SL/TP state registry extracted from CTradeManager
+// Phase D, batch T3. This module OWNS the "BEAST MODE" position
+// state cache that used to live in CTradeManager as
+// m_positionStates[100] / m_stateCount:
+// - FindPositionState      (internal; self-heals stale entries)
+// - RemovePositionState    (internal; called by FindPositionState)
+// - UpdatePositionState    (the single ingest point)
+// - CleanupPositionStates  (periodic sweep of closed positions)
+// - IsModificationNeeded   (the throttle/dedup read path)
+// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
+// keeps thin forwarders with the original signatures, so every
+// existing call site is unchanged - in particular the five
+// UpdatePositionState(...) calls and the two IsModificationNeeded
+// (...) calls on the live ModifyPosition / breakeven paths.
+// NO BACK-POINTER: IsModificationNeeded needs exactly one
+// CTradeManager configuration value (m_minModifyIntervalSec, the
+// protective-modify cooldown). It is passed in as a parameter
+// rather than read through a back-pointer, keeping this module
+// free of any dependency on CTradeManager. The forwarder supplies
+// it, so the call sites stay textually identical.
+// NESTED STRUCT - DELIBERATE: SPositionState is kept nested and
+// private here, exactly as it was nested inside CTradeManager.
+// It is NOT promoted to top-level because a DIFFERENT, field-
+// incompatible top-level "struct SPositionState" already exists in
+// Core/Position/PositionManager.mqh (:21), and that file includes
+// Core/Trading/TradeManager.mqh at its line 11 - i.e. before its
+// own declaration. Promoting this one would put two unrelated
+// structs of the same name in the same translation unit and break
+// the build. Nesting keeps the global namespace footprint at zero.
+// See the T3 report for details.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -42,11 +35,8 @@
 #ifndef CORE_TRADING_POSITION_STATE_TRACKER_MQH
 #define CORE_TRADING_POSITION_STATE_TRACKER_MQH
 
-//+------------------------------------------------------------------+
-//| Position State Tracker                                           |
-//| Owns the per-ticket last-known SL/TP cache used to suppress      |
-//| redundant broker modification requests.                          |
-//+------------------------------------------------------------------+
+// Owns the per-ticket last-known SL/TP cache used to suppress
+// redundant broker modification requests.
 class CPositionStateTracker
 {
 private:
@@ -60,21 +50,16 @@ private:
     SPositionState m_positionStates[100]; // Track up to 100 positions
     int m_stateCount;
 
-    //+------------------------------------------------------------------+
-    //| Check if two double values are approximately equal               |
-    //| Private copy of the CTradeManager helper of the same name; the   |
-    //| original stays in CTradeManager (Phase D T1 left it there) and   |
-    //| is not reachable from this module. Identical epsilon.            |
-    //+------------------------------------------------------------------+
+// Check if two double values are approximately equal
+// Private copy of the CTradeManager helper of the same name; the
+// original stays in CTradeManager (Phase D T1 left it there) and
+// is not reachable from this module. Identical epsilon.
     bool DoubleEquals(double a, double b, double epsilon = 0.00001)
     {
         return MathAbs(a - b) < epsilon;
     }
 
-    //+------------------------------------------------------------------+
-    //| Remove position state by index                                   |
-    //| Internal only - called by FindPositionState. Never forwarded.    |
-    //+------------------------------------------------------------------+
+// Internal only - called by FindPositionState. Never forwarded.
     void RemovePositionState(int index)
     {
         if(index < 0 || index >= m_stateCount) return;
@@ -94,10 +79,8 @@ private:
         m_stateCount--;
     }
 
-    //+------------------------------------------------------------------+
-    //| Find position state by ticket with enhanced validation           |
-    //| Internal only - both former callers now live in this module.     |
-    //+------------------------------------------------------------------+
+// Find position state by ticket with enhanced validation
+// Internal only - both former callers now live in this module.
     int FindPositionState(ulong ticket)
     {
         if(ticket <= 0) return -1;
@@ -128,9 +111,7 @@ public:
         ZeroMemory(m_positionStates);
     }
 
-    //+------------------------------------------------------------------+
-    //| Update position state with validation                            |
-    //+------------------------------------------------------------------+
+// Update position state with validation
     void UpdatePositionState(ulong ticket, double sl, double tp)
     {
         if(ticket <= 0) return;
@@ -166,9 +147,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| BEAST MODE: Clean up closed position states                      |
-    //+------------------------------------------------------------------+
+// BEAST MODE: Clean up closed position states
     void CleanupPositionStates() {
         static datetime lastCleanup = 0;
         datetime localCurrentTime = TimeCurrent();
@@ -196,11 +175,9 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| BEAST MODE: Check if modification is needed                      |
-    //| minModifyIntervalSec is CTradeManager::m_minModifyIntervalSec,   |
-    //| passed in by the forwarder (see NO BACK-POINTER note above).     |
-    //+------------------------------------------------------------------+
+// BEAST MODE: Check if modification is needed
+// minModifyIntervalSec is CTradeManager::m_minModifyIntervalSec,
+// passed in by the forwarder (see NO BACK-POINTER note above).
     bool IsModificationNeeded(ulong ticket, double newSL, double newTP, const int minModifyIntervalSec) {
         int index = FindPositionState(ticket);
         if(index == -1) return true; // New position, modification needed

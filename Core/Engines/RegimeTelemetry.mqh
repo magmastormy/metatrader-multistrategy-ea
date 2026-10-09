@@ -1,19 +1,14 @@
-//+------------------------------------------------------------------+
-//| RegimeTelemetry.mqh                                              |
-//| Throttled healthy-path regime logging                            |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Throttled healthy-path regime logging
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_TELEMETRY_MQH
 #define REGIME_TELEMETRY_MQH
 
 #include "RegimeTypes.mqh"
 #include "RegimeComposite.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the state-log throttle window and the last logged regime.   |
-//| LogDetailedRegime() must be invoked before LogRegimeState() so   |
-//| both observe the same pre-update throttle timestamp.             |
-//+------------------------------------------------------------------+
+// Owns the state-log throttle window and the last logged regime.
+// LogDetailedRegime() must be invoked before LogRegimeState() so
+// both observe the same pre-update throttle timestamp.
 class CRegimeTelemetry
 {
 private:
@@ -53,9 +48,7 @@ public:
                         const datetime now);
 };
 
-//+------------------------------------------------------------------+
-//| Log detailed regime with weight multipliers                      |
-//+------------------------------------------------------------------+
+// Log detailed regime with weight multipliers
 void CRegimeTelemetry::LogDetailedRegime(const SRegimeSnapshot &snapshot, const double adxValue, const datetime now) const
 {
     if(m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
@@ -71,9 +64,7 @@ void CRegimeTelemetry::LogDetailedRegime(const SRegimeSnapshot &snapshot, const 
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log the coarse regime state transition                           |
-//+------------------------------------------------------------------+
+// Log the coarse regime state transition
 void CRegimeTelemetry::LogRegimeState(const string symbol,
                                       const ENUM_TIMEFRAMES resolvedTimeframe,
                                       const ENUM_REGIME_STATE state,

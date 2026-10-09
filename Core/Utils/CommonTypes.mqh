@@ -1,6 +1,4 @@
-//+------------------------------------------------------------------+
-//| Common Types and Forward Declarations                            |
-//+------------------------------------------------------------------+
+// Common Types and Forward Declarations
 #ifndef COMMON_TYPES_MQH
 #define COMMON_TYPES_MQH
 

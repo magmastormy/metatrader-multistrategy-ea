@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| IFeaturePipeline.mqh                                             |
-//| Interface for centralized feature engineering pipeline           |
-//+------------------------------------------------------------------+
+// Interface for centralized feature engineering pipeline
 #property strict
 
 #ifndef CORE_AI_IFEATURE_PIPELINE_MQH
@@ -9,9 +6,6 @@
 
 #include "../../Interfaces/IStrategy.mqh"
 
-//+------------------------------------------------------------------+
-//| Feature Pipeline Configuration                                   |
-//+------------------------------------------------------------------+
 struct SFeaturePipelineConfig
 {
     int version;                    // Schema version
@@ -34,9 +28,6 @@ struct SFeaturePipelineConfig
     }
 };
 
-//+------------------------------------------------------------------+
-//| Feature Pipeline Metadata                                        |
-//+------------------------------------------------------------------+
 struct SFeaturePipelineMetadata
 {
     string name;                    // Pipeline name/identifier
@@ -56,9 +47,7 @@ struct SFeaturePipelineMetadata
     }
 };
 
-//+------------------------------------------------------------------+
-//| IFeaturePipeline Interface                                       |
-//+------------------------------------------------------------------+
+// IFeaturePipeline Interface
 class IFeaturePipeline
 {
 public:
@@ -82,7 +71,6 @@ public:
     // Get pipeline name/identifier
     virtual string GetName() const = 0;
     
-    // Get schema version
     virtual int GetSchemaVersion() const = 0;
     
     // Check if pipeline is ready (indicators loaded, etc.)

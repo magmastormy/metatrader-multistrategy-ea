@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendEntryTypes.mqh                                              |
-//| Multiple Entry Types for Trend Strategy                          |
-//| Implements Early, Pullback, and Continuation entries             |
-//+------------------------------------------------------------------+
+// Multiple Entry Types for Trend Strategy
+// Implements Early, Pullback, and Continuation entries
 // Force recompile
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
@@ -13,9 +10,6 @@
 
 #include "MultiEMASystem.mqh"
 
-//+------------------------------------------------------------------+
-//| Entry Type Enum                                                  |
-//+------------------------------------------------------------------+
 enum ENUM_TREND_ENTRY_TYPE
 {
     ENTRY_NONE,
@@ -25,9 +19,6 @@ enum ENUM_TREND_ENTRY_TYPE
     ENTRY_CLASSIC_CROSS     // 50/200 crossover (late but reliable)
 };
 
-//+------------------------------------------------------------------+
-//| Entry Signal Structure                                           |
-//+------------------------------------------------------------------+
 struct STrendEntrySignal
 {
     ENUM_TREND_ENTRY_TYPE   type;
@@ -43,9 +34,6 @@ struct STrendEntrySignal
                           takeProfit(0), reason("") {}
 };
 
-//+------------------------------------------------------------------+
-//| Trend Entry Types Class                                          |
-//+------------------------------------------------------------------+
 class CTrendEntryTypes
 {
 private:
@@ -78,7 +66,6 @@ public:
                                   CMultiEMASystem* emaSystem = NULL);
     void                Deinit();
     
-    // Update
     void                Update();
     
     // Entry detection
@@ -96,9 +83,7 @@ public:
     void                SetMinADXForContinuation(double adx) { m_minADXForContinuation = adx; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendEntryTypes::CTrendEntryTypes() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -111,17 +96,12 @@ CTrendEntryTypes::CTrendEntryTypes() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendEntryTypes::~CTrendEntryTypes()
 {
     Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTrendEntryTypes::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                   CMultiEMASystem* emaSystem)
 {
@@ -149,9 +129,6 @@ bool CTrendEntryTypes::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
     return (m_emaSystem != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize                                                     |
-//+------------------------------------------------------------------+
 void CTrendEntryTypes::Deinit()
 {
     if(m_ownEmaSystem && m_emaSystem != NULL)
@@ -167,18 +144,12 @@ void CTrendEntryTypes::Deinit()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CTrendEntryTypes::Update()
 {
     if(m_emaSystem != NULL && m_ownEmaSystem)
         m_emaSystem.Update();
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR                                                          |
-//+------------------------------------------------------------------+
 double CTrendEntryTypes::GetATR(int period)
 {
     int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
@@ -198,9 +169,6 @@ double CTrendEntryTypes::GetATR(int period)
     return atr[0];
 }
 
-//+------------------------------------------------------------------+
-//| Has Bullish Rejection                                            |
-//+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBullishRejection()
 {
     double open1 = iOpen(m_symbol, m_timeframe, 1);
@@ -224,9 +192,6 @@ bool CTrendEntryTypes::HasBullishRejection()
     return (isPinBar || isEngulfing);
 }
 
-//+------------------------------------------------------------------+
-//| Has Bearish Rejection                                            |
-//+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBearishRejection()
 {
     double open1 = iOpen(m_symbol, m_timeframe, 1);
@@ -250,9 +215,6 @@ bool CTrendEntryTypes::HasBearishRejection()
     return (isPinBar || isEngulfing);
 }
 
-//+------------------------------------------------------------------+
-//| Has Bullish Momentum                                             |
-//+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBullishMomentum()
 {
     double close1 = iClose(m_symbol, m_timeframe, 1);
@@ -263,9 +225,6 @@ bool CTrendEntryTypes::HasBullishMomentum()
     return (close1 > close2 && close2 > close3);
 }
 
-//+------------------------------------------------------------------+
-//| Has Bearish Momentum                                             |
-//+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBearishMomentum()
 {
     double close1 = iClose(m_symbol, m_timeframe, 1);
@@ -276,9 +235,7 @@ bool CTrendEntryTypes::HasBearishMomentum()
     return (close1 < close2 && close2 < close3);
 }
 
-//+------------------------------------------------------------------+
-//| Get Early Trend Entry (8/21 Cross)                               |
-//+------------------------------------------------------------------+
+// Get Early Trend Entry (8/21 Cross)
 STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
 {
     STrendEntrySignal signal;
@@ -334,9 +291,7 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
     return signal;
 }
 
-//+------------------------------------------------------------------+
-//| Get Pullback Entry (Price returns to 21 EMA)                     |
-//+------------------------------------------------------------------+
+// Get Pullback Entry (Price returns to 21 EMA)
 STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
 {
     STrendEntrySignal signal;
@@ -409,9 +364,7 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
     return signal;
 }
 
-//+------------------------------------------------------------------+
-//| Get Continuation Entry (Strong Trend)                            |
-//+------------------------------------------------------------------+
+// Get Continuation Entry (Strong Trend)
 STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
 {
     STrendEntrySignal signal;
@@ -473,9 +426,7 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
     return signal;
 }
 
-//+------------------------------------------------------------------+
-//| Get Classic Cross Entry (50/200)                                 |
-//+------------------------------------------------------------------+
+// Get Classic Cross Entry (50/200)
 STrendEntrySignal CTrendEntryTypes::GetClassicCrossEntry()
 {
     STrendEntrySignal signal;
@@ -512,9 +463,6 @@ STrendEntrySignal CTrendEntryTypes::GetClassicCrossEntry()
     return signal;
 }
 
-//+------------------------------------------------------------------+
-//| Get Best Entry                                                   |
-//+------------------------------------------------------------------+
 STrendEntrySignal CTrendEntryTypes::GetBestEntry()
 {
     STrendEntrySignal signals[4];

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| ScanSchedulerRegistry.mqh                                        |
-//| Consolidates symbol scanning and scheduling logic                |
-//+------------------------------------------------------------------+
+// Consolidates symbol scanning and scheduling logic
 #property strict
 
 #ifndef CORE_REGISTRY_SCAN_SCHEDULER_REGISTRY_MQH
@@ -217,7 +214,6 @@ public:
         if(idx >= 0) m_states[idx].externalCapacityLogThrottle = (int)TimeCurrent();
     }
     
-    // Release symbol
     void ReleaseSymbol(const string symbol)
     {
         int idx = GetIndex(symbol, false);

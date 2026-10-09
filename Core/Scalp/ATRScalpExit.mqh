@@ -1,11 +1,8 @@
-//+------------------------------------------------------------------+
-//| ATRScalpExit.mqh                                                 |
-//| Open position management for the ATR scalping engine: partial    |
-//| close at 1R, breakeven shift and tight trailing stop.            |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//| The CTrade instance is passed in by reference so the engine keeps |
-//| using one shared trade object exactly as before.                  |
-//+------------------------------------------------------------------+
+// Open position management for the ATR scalping engine: partial
+// close at 1R, breakeven shift and tight trailing stop.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
+// The CTrade instance is passed in by reference so the engine keeps
+// using one shared trade object exactly as before.
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -16,9 +13,7 @@
 
 #include <Trade\Trade.mqh>
 
-//+------------------------------------------------------------------+
-//| CATRScalpExit — stateless scalp position management               |
-//+------------------------------------------------------------------+
+// CATRScalpExit — stateless scalp position management
 class CATRScalpExit
 {
 private:
@@ -52,9 +47,7 @@ private:
    }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Manage open scalp positions: partial close, breakeven, trailing   |
-   //+------------------------------------------------------------------+
+// Manage open scalp positions: partial close, breakeven, trailing
    static void ManageScalpPositions(const string symbol, CTrade &trade)
    {
       PrunePartialedLatches();

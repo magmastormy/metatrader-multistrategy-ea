@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| MQHModelEvaluator.mq5                                            |
-//| Evaluation script for trained MQH models                          |
-//+------------------------------------------------------------------+
+// Evaluation script for trained MQH models
 #property copyright "MQH Model Training System"
 #property link      "https://github.com/metatrader-multistrategy-ea"
 #property version   "1.00"
@@ -23,9 +20,7 @@ input int g_testRatio = 30;
 #include "MQHModelTrainer/Models/FeedForwardNN.mqh"
 #include "MQHModelTrainer/Models/ModelEvaluator.mqh"
 
-//+------------------------------------------------------------------+
-//| Script program start function                                    |
-//+------------------------------------------------------------------+
+// Script program start function
 void OnStart()
 {
     Print("=== MQH Model Evaluator ===");

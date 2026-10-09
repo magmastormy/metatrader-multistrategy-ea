@@ -1,11 +1,9 @@
-//+------------------------------------------------------------------+
-//| TradeAttributionManager.mqh - Trade attribution & NN prediction  |
-//| Copyright 2025, Aggressive Trading Systems                       |
-//| https://www.aggressivetrading.com                                |
-//| Encapsulates trade comment building, prediction position mapping,|
-//| AI pending request tracking, close profit accumulation, and NN   |
-//| attribution diagnostics.                                          |
-//+------------------------------------------------------------------+
+// TradeAttributionManager.mqh - Trade attribution & NN prediction
+// Copyright 2025, Aggressive Trading Systems
+// https://www.aggressivetrading.com
+// Encapsulates trade comment building, prediction position mapping,
+// AI pending request tracking, close profit accumulation, and NN
+// attribution diagnostics.
 #property copyright "Copyright 2025, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -18,9 +16,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Position/PositionManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Trade Attribution Manager Class                                   |
-//+------------------------------------------------------------------+
 class CTradeAttributionManager
 {
 private:
@@ -161,7 +156,6 @@ public:
     void   ClearAll();
 
 private:
-    //--- NN diagnostics
     void   NNDiagLog(const string message);
     bool   RunNNAttributionSelfTest();
 
@@ -182,9 +176,7 @@ private:
     void   ResetNNDiagnostics();
 };
 
-//+------------------------------------------------------------------+
-//| Trade comment building implementation                             |
-//+------------------------------------------------------------------+
+// Trade comment building implementation
 string CTradeAttributionManager::ExtractPredictionIdFromComment(const string comment)
 {
     int marker = StringFind(comment, "|N:");
@@ -237,9 +229,7 @@ string CTradeAttributionManager::BuildClusterTaggedTradeComment(const string clu
     return BuildTradeCommentWithPrediction(compactBase, predictionId);
 }
 
-//+------------------------------------------------------------------+
-//| AI contributor name check (moved from global function)            |
-//+------------------------------------------------------------------+
+// AI contributor name check (moved from global function)
 bool CTradeAttributionManager::IsAIContributorName(const string strategyName) const
 {
     return (strategyName == "Transformer AI" ||
@@ -248,9 +238,7 @@ bool CTradeAttributionManager::IsAIContributorName(const string strategyName) co
             strategyName == "ONNX AI");
 }
 
-//+------------------------------------------------------------------+
-//| Contributor analysis implementation                               |
-//+------------------------------------------------------------------+
+// Contributor analysis implementation
 bool CTradeAttributionManager::ContributorsIncludeAI(const string &contributors[])
 {
     for(int i = 0; i < ArraySize(contributors); i++)
@@ -305,9 +293,7 @@ int CTradeAttributionManager::CountIndicatorContributors(const string &contribut
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Prediction position mapping (delegates to CPositionManager)  |
-//+------------------------------------------------------------------+
+// Prediction position mapping (delegates to CPositionManager)
 int CTradeAttributionManager::FindPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -332,9 +318,7 @@ void CTradeAttributionManager::RemovePredictionPositionMap(const ulong positionI
     m_positionManager.RemovePredictionPositionMap(positionId);
 }
 
-//+------------------------------------------------------------------+
-//| AI prediction position mapping (delegates to CPositionManager)|
-//+------------------------------------------------------------------+
+// AI prediction position mapping (delegates to CPositionManager)
 int CTradeAttributionManager::FindAIPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -365,9 +349,7 @@ void CTradeAttributionManager::RemoveAIPredictionPositionMap(const ulong positio
     m_positionManager.RemoveAIPredictionPositionMap(positionId);
 }
 
-//+------------------------------------------------------------------+
-//| AI pending request mapping implementation                         |
-//+------------------------------------------------------------------+
+// AI pending request mapping implementation
 int CTradeAttributionManager::FindAIPendingRequestIndex(const uint requestId)
 {
     for(int i = 0; i < ArraySize(m_aiPendingRequestIds); i++)
@@ -449,9 +431,7 @@ bool CTradeAttributionManager::ConsumeAIPendingRequestMap(const uint requestId, 
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Pending close profit tracking implementation                      |
-//+------------------------------------------------------------------+
+// Pending close profit tracking implementation
 int CTradeAttributionManager::FindPendingCloseProfitIndex(const ulong positionId)
 {
     for(int i = 0; i < ArraySize(m_pendingClosePositionIds); i++)
@@ -522,9 +502,7 @@ void CTradeAttributionManager::ClearPendingCloseProfit(const ulong positionId)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get all pending close profits with their prediction IDs         |
-//+------------------------------------------------------------------+
+// Get all pending close profits with their prediction IDs
 int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
 {
 int count = ArraySize(m_pendingClosePositionIds);
@@ -555,9 +533,7 @@ for(int i = 0; i < count; i++)
 return count;
 }
 
-//+------------------------------------------------------------------+
-//| Position open check                                               |
-//+------------------------------------------------------------------+
+// Position open check
 bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
 {
     if(positionId == 0)
@@ -577,9 +553,7 @@ bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Position-level Contributor Attribution (merged from CAttributionTracker)
-//+------------------------------------------------------------------+
+// Position-level Contributor Attribution (merged from CAttributionTracker)
 int CTradeAttributionManager::FindAttributionIndexByPositionId(const ulong positionId) const
 {
     int count = ArraySize(m_attributionPositionIds);
@@ -619,7 +593,6 @@ void CTradeAttributionManager::SplitContributors(const string csv, string &contr
         start = pos + 1;
         pos = StringFind(csv, ",", start);
     }
-    // Last part
     string lastPart = StringSubstr(csv, start);
     int newSize = ArraySize(contributors) + 1;
     ArrayResize(contributors, newSize);
@@ -693,9 +666,7 @@ void CTradeAttributionManager::ClearClosedTradeAttribution()
     m_closedTradeNetProfit = 0.0;
 }
 
-//+------------------------------------------------------------------+
-//| NN diagnostics implementation                                     |
-//+------------------------------------------------------------------+
+// NN diagnostics implementation
 void CTradeAttributionManager::NNDiagLog(const string message)
 {
     if(m_enableNNDiagnostics)
@@ -755,9 +726,7 @@ bool CTradeAttributionManager::RunNNAttributionSelfTest()
     return ok;
 }
 
-//+------------------------------------------------------------------+
-//| Record position attribution for NN training                      |
-//+------------------------------------------------------------------+
+// Record position attribution for NN training
 void CTradeAttributionManager::RecordPositionAttribution(
     const ulong dealTicket,
     const string symbol,
@@ -791,9 +760,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
     IncrementNNDiagEntryMapCount();
 }
 
-//+------------------------------------------------------------------+
-//| Reset diagnostics counters                                        |
-//+------------------------------------------------------------------+
+// Reset diagnostics counters
 void CTradeAttributionManager::ResetNNDiagnostics()
 {
     m_nnDiagEntryMapCount = 0;
@@ -804,9 +771,7 @@ void CTradeAttributionManager::ResetNNDiagnostics()
     m_nnDiagLastSummaryTime = TimeCurrent();
 }
 
-//+------------------------------------------------------------------+
-//| Clear all internal state                                          |
-//+------------------------------------------------------------------+
+// Clear all internal state
 void CTradeAttributionManager::ClearAll()
 {
     ArrayResize(m_aiPendingRequestIds, 0);

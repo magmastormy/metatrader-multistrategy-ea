@@ -1,20 +1,15 @@
-//+------------------------------------------------------------------+
-//| FastScalpSizing.mqh                                              |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Stateless lot-sizing and confidence-scoring helpers pulled out   |
-//| of CFastScalpEngine:                                             |
-//|   CapLotToMargin()      — was a private method                   |
-//|   ResolveBaseLotSize()  — was the CPositionSizer / min-lot       |
-//|                           fallback block inside ShouldEnterScalp |
-//|   CalculateConfidence() — was the 0.60 / +0.15 / +0.10 / cap 0.90|
-//|                           block inside ShouldEnterScalp          |
-//|                                                                  |
-//| The momentum-burst flag and the ATR are resolved by the caller   |
-//| in the original order (IsMomentumBurst first, then GetATRCached) |
-//| so the indicator refresh sequence is bit-for-bit identical.      |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Stateless lot-sizing and confidence-scoring helpers pulled out
+// of CFastScalpEngine:
+// CapLotToMargin()      — was a private method
+// ResolveBaseLotSize()  — was the CPositionSizer / min-lot
+// fallback block inside ShouldEnterScalp
+// CalculateConfidence() — was the 0.60 / +0.15 / +0.10 / cap 0.90
+// block inside ShouldEnterScalp
+// The momentum-burst flag and the ATR are resolved by the caller
+// in the original order (IsMomentumBurst first, then GetATRCached)
+// so the indicator refresh sequence is bit-for-bit identical.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_SIZING_MQH
@@ -24,17 +19,13 @@
 #include "../Risk/PositionSizer.mqh"
 #include "FastScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpSizing — stateless scalp sizing / confidence            |
-//+------------------------------------------------------------------+
+// CFastScalpSizing — stateless scalp sizing / confidence
 class CFastScalpSizing
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Cap lot size to available margin and symbol volume limits         |
-   //| Prevents margin rejections (retcode=10018) and volume limit       |
-   //| rejections (retcode=10034) on small accounts                     |
-   //+------------------------------------------------------------------+
+// Cap lot size to available margin and symbol volume limits
+// Prevents margin rejections (retcode=10018) and volume limit
+// rejections (retcode=10034) on small accounts
    static double CapLotToMargin(double calculatedLot, const string symbol)
    {
       double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
@@ -53,11 +44,9 @@ public:
       return cappedLot;
    }
 
-   //+------------------------------------------------------------------+
-   //| Confidence score for a validated scalp signal                     |
-   //| Base 0.60 (EMA crossover + RSI), +0.15 momentum burst,            |
-   //| +0.10 tight spread (< 15% ATR), hard cap at 0.90.                 |
-   //+------------------------------------------------------------------+
+// Confidence score for a validated scalp signal
+// Base 0.60 (EMA crossover + RSI), +0.15 momentum burst,
+// +0.10 tight spread (< 15% ATR), hard cap at 0.90.
    static double CalculateConfidence(const string symbol, double atr, bool momentumBurst)
    {
       // Calculate confidence
@@ -84,9 +73,7 @@ public:
       return MathMin(confidence, 0.90);
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate lot size using CPositionSizer, with min-lot fallback    |
-   //+------------------------------------------------------------------+
+// Calculate lot size using CPositionSizer, with min-lot fallback
    static double ResolveBaseLotSize(const string symbol, const SScalpConfig &config,
                                     double confidence, CPositionSizer* positionSizer)
    {

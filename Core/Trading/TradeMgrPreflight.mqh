@@ -1,22 +1,17 @@
-//+------------------------------------------------------------------+
-//| TradeMgrPreflight.mqh                                            |
-//| Pre-send gating + post-send receipt confirmation for CTradeManager|
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
-//| All members are static pure functions - this module holds NO     |
-//| instance state. Bodies are verbatim copies of the original       |
-//| CTradeManager methods:                                           |
-//|   - ApplyFillingModeForSymbol   (IOC/FOK selection by spread/ATR)|
-//|   - ValidateExecutionPreflight  (session/tick/spread/drift gates)|
-//|   - ConfirmExecutionReceipt     (history-deal confirmation)      |
-//|                                                                  |
-//| NO BACK-POINTER: every piece of CTradeManager state these three  |
-//| need is passed in explicitly - the CTrade / CSessionManager /    |
-//| CATRCache / CMarketAnalysis objects by reference (or pointer,    |
-//| for the optional market-analysis dependency), the tunables as    |
-//| plain values, and the execution receipt as an in/out reference.  |
-//| Same pattern already used by CPositionStateTracker.              |
-//+------------------------------------------------------------------+
+// Pre-send gating + post-send receipt confirmation for CTradeManager
+// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
+// All members are static pure functions - this module holds NO
+// instance state. Bodies are verbatim copies of the original
+// CTradeManager methods:
+// - ApplyFillingModeForSymbol   (IOC/FOK selection by spread/ATR)
+// - ValidateExecutionPreflight  (session/tick/spread/drift gates)
+// - ConfirmExecutionReceipt     (history-deal confirmation)
+// NO BACK-POINTER: every piece of CTradeManager state these three
+// need is passed in explicitly - the CTrade / CSessionManager /
+// CATRCache / CMarketAnalysis objects by reference (or pointer,
+// for the optional market-analysis dependency), the tunables as
+// plain values, and the execution receipt as an in/out reference.
+// Same pattern already used by CPositionStateTracker.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -34,15 +29,11 @@
 #include "TradeMgrPricing.mqh"
 #include "TradeMgrConfirmationQueue.mqh"
 
-//+------------------------------------------------------------------+
-//| Trade Manager Preflight                                          |
-//+------------------------------------------------------------------+
+// Trade Manager Preflight
 class CTradeMgrPreflight
 {
 public:
-    //+--------------------------------------------------------------+
-    //| Choose and apply the broker fill policy for a symbol         |
-    //+--------------------------------------------------------------+
+// Choose and apply the broker fill policy for a symbol
     static void ApplyFillingModeForSymbol(const string symbolParam,
                                           CTrade &trade,
                                           CMarketAnalysis *marketAnalysis,
@@ -105,9 +96,7 @@ public:
             trade.SetTypeFilling(iocAllowed ? ORDER_FILLING_IOC : ORDER_FILLING_RETURN);
     }
 
-    //+--------------------------------------------------------------+
-    //| Hard gates evaluated immediately before a market send        |
-    //+--------------------------------------------------------------+
+// Hard gates evaluated immediately before a market send
     static bool ValidateExecutionPreflight(const string symbolName,
                                            const ENUM_ORDER_TYPE orderType,
                                            const double executionPrice,
@@ -232,9 +221,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Confirm a broker-accepted send against deal history          |
-    //+--------------------------------------------------------------+
+// Confirm a broker-accepted send against deal history
     static bool ConfirmExecutionReceipt(const string symbolName,
                                         const ENUM_ORDER_TYPE orderType,
                                         const double requestedVolume,
@@ -278,17 +265,8 @@ public:
             }
         }
 
-        // Deal not found yet - defer to pending confirmation for later resolution.
-        //
-        // Batch 169: two holes closed here.
-        // (1) Enqueue() only stores the entry when orderTicket > 0, so a broker that
-        //     returns order=0 left the send accepted but permanently untracked - no
-        //     resolver would ever look at it. That case is now logged at CRITICAL.
-        // (2) A deferred send was claimed accepted with filledVolume forced to 0.
-        //     Before accepting that, check whether the position actually exists on
-        //     the terminal: a fill that has no visible deal yet still produces a
-        //     position, and confirming from the position (with its real volume)
-        //     keeps the journal and the risk ledger truthful instead of optimistic.
+        // A send with order=0 is never tracked by the resolver, and a fill can exist
+        // as a position before its deal is visible - so confirm from the position.
         if(tradeResult.order > 0)
             confirmationQueue.Enqueue(symbolName, tradeResult.order, fallbackPrice);
         else
@@ -320,11 +298,9 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Find a position that just appeared for this send             |
-    //| Used to confirm a fill whose deal is not in history yet, and  |
-    //| to stop a retry duplicating an order the server already dealt. |
-    //+--------------------------------------------------------------+
+// Find a position that just appeared for this send
+// Used to confirm a fill whose deal is not in history yet, and
+// to stop a retry duplicating an order the server already dealt.
     static bool FindFreshPositionForSend(const string symbolName,
                                          const ENUM_ORDER_TYPE orderType,
                                          const double requestedVolume,

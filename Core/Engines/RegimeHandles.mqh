@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| RegimeHandles.mqh                                                |
-//| Indicator handle lifecycle + symbol/timeframe context            |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Indicator handle lifecycle + symbol/timeframe context
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_HANDLES_MQH
 #define REGIME_HANDLES_MQH
 
 #include "RegimeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the ATR / Bollinger / ADX handles together with the symbol  |
-//| and timeframe they were created for.                             |
-//+------------------------------------------------------------------+
+// Owns the ATR / Bollinger / ADX handles together with the symbol
+// and timeframe they were created for.
 class CRegimeHandles
 {
 private:

@@ -1,31 +1,24 @@
-//+------------------------------------------------------------------+
-//| StrategyCatalog.mqh                                              |
-//| Batch 145 - Single data-driven registration catalog              |
-//|                                                                  |
-//| ONE place declares every strategy the EA can register:           |
-//|   - 12 indicator strategies (created in-process by a creator fn) |
-//|   - 5  AI adapters        (created through CStrategyFactory)     |
-//|                                                                  |
-//| ADD A STRATEGY (contract):                                       |
-//|   1. write the class file in the strategy source folder          |
-//|   2. add 3 anchored lines here, all tagged with the same          |
-//|      CAT anchor comment (see the rows below)                     |
-//|        a) one #include            (section 1)                    |
-//|        b) one CATALOG_SIMPLE_CREATOR line (section 5)            |
-//|        c) one CatalogAdd(...) row (section 7)                    |
-//| REMOVE A STRATEGY: delete the 3 lines carrying its [CAT:] anchor.|
-//|                                                                  |
-//| NOTE: each row carries the SEMANTIC slot pair only (Batch 147     |
-//| removed the legacy flagsIndex / policyIndex literals entirely):  |
-//|   enable slot : siIndex      - the ENUM_STRATEGY_INDEX slot that  |
-//|                 COrchestratorStrategyFlagBuilder::BuildStrategyFlags|
-//|                 actually writes.                                  |
-//|   policy slot : siPolicyIndex - the StrategyConfigBuilder slot     |
-//|                 holding THIS strategy's own intrabar policy.      |
-//| Reader (CatalogEnableSlot) and writer (BuildStrategyFlags) now    |
-//| agree by construction, so every InpEnable* toggle controls its     |
-//| own strategy. The historical legacy divergence is gone.           |
-//+------------------------------------------------------------------+
+// Batch 145 - Single data-driven registration catalog
+// ONE place declares every strategy the EA can register:
+// - 12 indicator strategies (created in-process by a creator fn)
+// - 5  AI adapters        (created through CStrategyFactory)
+// ADD A STRATEGY (contract):
+// 1. write the class file in the strategy source folder
+// 2. add 3 anchored lines here, all tagged with the same
+// CAT anchor comment (see the rows below)
+// a) one #include            (section 1)
+// b) one CATALOG_SIMPLE_CREATOR line (section 5)
+// c) one CatalogAdd(...) row (section 7)
+// REMOVE A STRATEGY: delete the 3 lines carrying its [CAT:] anchor.
+// NOTE: each row carries the SEMANTIC slot pair only (Batch 147
+// removed the legacy flagsIndex / policyIndex literals entirely):
+// enable slot : siIndex      - the ENUM_STRATEGY_INDEX slot that
+// actually writes.
+// policy slot : siPolicyIndex - the StrategyConfigBuilder slot
+// holding THIS strategy's own intrabar policy.
+// Reader (CatalogEnableSlot) and writer (BuildStrategyFlags) now
+// agree by construction, so every InpEnable* toggle controls its
+// own strategy. The historical legacy divergence is gone.
 #ifndef CORE_STRATEGY_STRATEGY_CATALOG_MQH
 #define CORE_STRATEGY_STRATEGY_CATALOG_MQH
 
@@ -235,9 +228,7 @@ void BuildStrategyCatalog()
 // 8. LOOKUPS / GATES / AUDIT                                        //
 //==================================================================//
 
-//+------------------------------------------------------------------+
-//| Row index for a registration name, -1 when absent.               |
-//+------------------------------------------------------------------+
+// Row index for a registration name, -1 when absent.
 int CatalogFindByName(const string name)
 {
     for(int i = 0; i < g_strategyCatalogCount; i++)
@@ -248,9 +239,7 @@ int CatalogFindByName(const string name)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Symbol whitelist gate. Empty whitelist == every symbol allowed.  |
-//+------------------------------------------------------------------+
+// Symbol whitelist gate. Empty whitelist == every symbol allowed.
 bool CatalogSymbolAllowed(const int i, const string symbol)
 {
     if(i < 0 || i >= g_strategyCatalogCount)
@@ -260,13 +249,11 @@ bool CatalogSymbolAllowed(const int i, const string symbol)
     return (StringFind(g_strategyCatalog[i].allowedSymbols, symbol) >= 0);
 }
 
-//+------------------------------------------------------------------+
-//| Active enable-flag slot for a row.                                |
-//| Batch 147: the legacy flagsIndex literal was removed, so this    |
-//| returns siIndex unconditionally - the slot BuildStrategyFlags    |
-//| (the only writer of the flag vector) actually populates.         |
-//| Returns -1 for "always enabled".                                  |
-//+------------------------------------------------------------------+
+// Active enable-flag slot for a row.
+// Batch 147: the legacy flagsIndex literal was removed, so this
+// returns siIndex unconditionally - the slot BuildStrategyFlags
+// (the only writer of the flag vector) actually populates.
+// Returns -1 for "always enabled".
 int CatalogEnableSlot(const int i)
 {
     if(i < 0 || i >= g_strategyCatalogCount)
@@ -274,12 +261,10 @@ int CatalogEnableSlot(const int i)
     return g_strategyCatalog[i].siIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Active intrabar-policy slot for a row.                            |
-//| Batch 147: the legacy policyIndex literal was removed; returns    |
-//| siPolicyIndex (this strategy's own StrategyConfigBuilder row).    |
-//| Returns -1 when the row should fall back to fixedPolicy.          |
-//+------------------------------------------------------------------+
+// Active intrabar-policy slot for a row.
+// Batch 147: the legacy policyIndex literal was removed; returns
+// siPolicyIndex (this strategy's own StrategyConfigBuilder row).
+// Returns -1 when the row should fall back to fixedPolicy.
 int CatalogPolicySlot(const int i)
 {
     if(i < 0 || i >= g_strategyCatalogCount)
@@ -290,12 +275,10 @@ int CatalogPolicySlot(const int i)
 // Removed in Batch 147: CatalogFlagEnabled (legacy dual-scheme gate) is no
 // longer used - AutoRegisterStrategies reads flags[CatalogEnableSlot(i)] directly.
 
-//+------------------------------------------------------------------+
-//| Report the active slot scheme and per-row resolution.             |
-//| Batch 147: the legacy scheme was removed, so this logs SEMANTIC   |
-//| only. Reader (CatalogEnableSlot) and writer (BuildStrategyFlags)  |
-//| agree by construction - no drift is possible.                     |
-//+------------------------------------------------------------------+
+// Report the active slot scheme and per-row resolution.
+// Batch 147: the legacy scheme was removed, so this logs SEMANTIC
+// only. Reader (CatalogEnableSlot) and writer (BuildStrategyFlags)
+// agree by construction - no drift is possible.
 void CatalogLogIndexAudit()
 {
     PrintFormat("[CATALOG-AUDIT] slot_scheme=SEMANTIC (legacy literals removed in Batch 147)");

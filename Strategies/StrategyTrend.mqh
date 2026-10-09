@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| StrategyTrend.mqh                                                |
-//| Trend-following strategy using multi-EMA system with ADX sizing  |
-//| Includes trailing stop, signal enhancers, and regime awareness    |
-//+------------------------------------------------------------------+
+// Trend-following strategy using multi-EMA system with ADX sizing
+// Includes trailing stop, signal enhancers, and regime awareness
 #ifndef STRATEGY_TREND_MQH
 #define STRATEGY_TREND_MQH
 #include "../Core/Strategy/StrategyBase.mqh"
@@ -20,13 +17,11 @@
 #include "../Core/Risk/VPINFilter.mqh"
 // Batch 103: Asset class detection for ADX thresholds
 #include "../Core/Utils/Instruments.mqh"
-//+------------------------------------------------------------------+
-//| Trend-Following Strategy v2.1                                    |
-//| Multi-Speed EMA (8/21/50/200), ADX-based sizing, trailing stops  |
-//| Entry Types: Early Trend, Pullback, Continuation, Classic Cross  |
-//| Batch 103: Hurst filter, VPIN filter, EMA slope, freshness,     |
-//|           trailing stop integration, asset-class ADX thresholds  |
-//+------------------------------------------------------------------+
+// Trend-Following Strategy v2.1
+// Multi-Speed EMA (8/21/50/200), ADX-based sizing, trailing stops
+// Entry Types: Early Trend, Pullback, Continuation, Classic Cross
+// Batch 103: Hurst filter, VPIN filter, EMA slope, freshness,
+// trailing stop integration, asset-class ADX thresholds
 class CStrategyTrend : public CStrategyBase
 {
 private:
@@ -84,7 +79,6 @@ private:
             return (histNow < histPrev);
     }
 public:
-    //--- Constructor
     CStrategyTrend(const string name = "Trend Strategy v2.1", int magic = 0) :
         CStrategyBase(name, magic),
                 m_emaSystem(NULL),
@@ -147,7 +141,6 @@ public:
                 m_hurstEngine = NULL;
                 m_vpinFilter = NULL;
     }
-    //--- Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
@@ -236,7 +229,6 @@ public:
                     m_vpinFilter != NULL ? "WIRED" : "NULL");
         return true;
     }
-    //--- Deinitialization
     virtual void Deinit() override
     {
         Cleanup();
@@ -308,7 +300,6 @@ public:
         // Regime Lockout: Ensure directional clarity (pDI vs mDI separation)
         if(!m_adxSizing.IsDirectionallyClear())
             return RejectSignal("TREND_REGIME_CHOP_LOCKOUT");
-        // Get best entry signal from all entry types
         STrendEntrySignal bestEntry = m_entryTypes.GetBestEntry();
         if(bestEntry.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("TREND_NO_ENTRY");
@@ -381,7 +372,6 @@ public:
                    bestEntry.reason);
         return bestEntry.direction;
     }
-    //--- Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_TREND; }
     //--- Get Trade Parameters (SL/TP based on entry type)
     bool GetTradeParameters(double &stopLoss, double &takeProfit, double &lotSize)
@@ -429,14 +419,12 @@ public:
         lotSize = m_adxSizing.CalculateLotSize(entry.entryPrice, entry.stopLoss); // Base lot adjusted by ADX and Exact distance
         return true;
     }
-    //--- Get Position Size Multiplier
     double GetPositionSizeMultiplier()
     {
         if(m_adxSizing == NULL)
             return 1.0;
         return m_adxSizing.GetPositionSizeMultiplier();
     }
-    //--- Get Current Trend State
     STrendState GetCurrentTrendState()
     {
         if(m_emaSystem == NULL)

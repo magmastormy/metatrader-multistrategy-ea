@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SignalGenerator.mqh                                              |
-//| Generates consensus signals per symbol                           |
-//+------------------------------------------------------------------+
+// Generates consensus signals per symbol
 #property strict
 
 #ifndef CORE_ORCHESTRATION_SIGNAL_GENERATOR_MQH
@@ -159,7 +156,6 @@ public:
                     if(IsInDormantCooldown(m_symbols[i]))
                         continue;
 
-                    // Evaluate symbol
                     EvaluateSymbol(i, manager, evalMode, results, signalsGenerated, evaluationsUsed, corrId);
                 }
         
@@ -353,7 +349,6 @@ public:
         }
     }
     
-    // Find manager index by symbol
         int FindManagerIndex(const string symbol) const
         {
             for(int i = 0; i < m_managerCount; i++)
@@ -386,7 +381,6 @@ public:
             double confidence = 0.0;
             int confluence = 0;
 
-            // Get consensus signal from manager
             ENUM_TRADE_SIGNAL signal = manager.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
 
             if(signal == TRADE_SIGNAL_NONE)

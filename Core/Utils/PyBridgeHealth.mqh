@@ -1,11 +1,8 @@
-//+------------------------------------------------------------------+
-//| PyBridgeHealth.mqh                                               |
-//| Heartbeat / health monitoring, reconnection backoff, server      |
-//| version negotiation and the NOT_CONFIGURED log throttle.         |
-//| Owns the heartbeat/reconnect/version state; the transport is     |
-//| supplied by reference so no ownership cycle is created.          |
-//| Extracted verbatim from PythonBridge.mqh (behaviour unchanged).  |
-//+------------------------------------------------------------------+
+// Heartbeat / health monitoring, reconnection backoff, server
+// version negotiation and the NOT_CONFIGURED log throttle.
+// Owns the heartbeat/reconnect/version state; the transport is
+// supplied by reference so no ownership cycle is created.
+// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -19,9 +16,7 @@
 #include "PyBridgeProtocol.mqh"
 #include "PyBridgeTransport.mqh"
 
-//+------------------------------------------------------------------+
-//| Python Bridge Health / Reconnection Monitor                      |
-//+------------------------------------------------------------------+
+// Python Bridge Health / Reconnection Monitor
 class CPyBridgeHealth
 {
 private:
@@ -42,13 +37,11 @@ public:
                                int reconnect_backoff_ms);
    void              Reset();
 
-   // Health checks
    bool              CheckHealth(CPyBridgeTransport &transport);
    bool              SendHeartbeat(CPyBridgeTransport &transport);
    bool              AttemptReconnect(CPyBridgeTransport &transport);
    SPythonBridgeHealthStatus GetHealthStatus(const CPyBridgeTransport &transport) const;
 
-   // Version checking
    bool              CheckVersion(CPyBridgeTransport &transport);
    SPythonBridgeVersion GetServerVersion() const { return m_server_version; }
 
@@ -57,9 +50,7 @@ public:
    void              MarkHeartbeat(datetime heartbeat_time) { m_last_heartbeat = heartbeat_time; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - defaults identical to the original CPythonBridge   |
-//+------------------------------------------------------------------+
+// Constructor - defaults identical to the original CPythonBridge
 CPyBridgeHealth::CPyBridgeHealth()
 {
    m_heartbeat_timeout = 30;
@@ -71,9 +62,7 @@ CPyBridgeHealth::CPyBridgeHealth()
    m_lastNotConfiguredLogTime = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Apply the health configuration supplied to Initialize()          |
-//+------------------------------------------------------------------+
+// Apply the health configuration supplied to Initialize()
 void CPyBridgeHealth::Configure(int heartbeat_timeout_s, int max_reconnect_attempts,
                                 int reconnect_backoff_ms)
 {
@@ -82,9 +71,7 @@ void CPyBridgeHealth::Configure(int heartbeat_timeout_s, int max_reconnect_attem
    m_reconnect_backoff = reconnect_backoff_ms;
 }
 
-//+------------------------------------------------------------------+
-//| Reset all health-owned state (Shutdown semantics)                |
-//+------------------------------------------------------------------+
+// Reset all health-owned state (Shutdown semantics)
 void CPyBridgeHealth::Reset()
 {
    m_heartbeat_timeout = 0;
@@ -98,9 +85,7 @@ void CPyBridgeHealth::Reset()
    m_server_version.compatible = false;
 }
 
-//+------------------------------------------------------------------+
-//| Check server health                                              |
-//+------------------------------------------------------------------+
+// Check server health
 bool CPyBridgeHealth::CheckHealth(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
@@ -133,9 +118,6 @@ bool CPyBridgeHealth::CheckHealth(CPyBridgeTransport &transport)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Send heartbeat                                                   |
-//+------------------------------------------------------------------+
 bool CPyBridgeHealth::SendHeartbeat(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
@@ -167,9 +149,6 @@ bool CPyBridgeHealth::SendHeartbeat(CPyBridgeTransport &transport)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Attempt reconnection                                             |
-//+------------------------------------------------------------------+
 bool CPyBridgeHealth::AttemptReconnect(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
@@ -231,9 +210,7 @@ bool CPyBridgeHealth::AttemptReconnect(CPyBridgeTransport &transport)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Check server version                                             |
-//+------------------------------------------------------------------+
+// Check server version
 bool CPyBridgeHealth::CheckVersion(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized())
@@ -265,9 +242,6 @@ bool CPyBridgeHealth::CheckVersion(CPyBridgeTransport &transport)
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get health status                                                 |
-//+------------------------------------------------------------------+
 SPythonBridgeHealthStatus CPyBridgeHealth::GetHealthStatus(const CPyBridgeTransport &transport) const
 {
    SPythonBridgeHealthStatus status;
@@ -287,9 +261,7 @@ SPythonBridgeHealthStatus CPyBridgeHealth::GetHealthStatus(const CPyBridgeTransp
    return status;
 }
 
-//+------------------------------------------------------------------+
-//| Should log NOT_CONFIGURED dashboard entry (throttled to 300s)    |
-//+------------------------------------------------------------------+
+// Should log NOT_CONFIGURED dashboard entry (throttled to 300s)
 bool CPyBridgeHealth::ShouldLogNotConfigured()
 {
    datetime now = TimeCurrent();

@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| RegimeComposite.mqh                                              |
-//| Composite regime scoring / labelling (stateless)                 |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Composite regime scoring / labelling (stateless)
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_COMPOSITE_MQH
 #define REGIME_COMPOSITE_MQH
 
 #include "RegimeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Pure functions mapping raw metrics onto regime labels, strategy  |
-//| weight multipliers and human readable tags. No state is held.    |
-//+------------------------------------------------------------------+
+// Pure functions mapping raw metrics onto regime labels, strategy
+// weight multipliers and human readable tags. No state is held.
 class CRegimeComposite
 {
 public:
@@ -56,9 +51,7 @@ public:
                                           double hurstBreakoutMult);
 };
 
-//+------------------------------------------------------------------+
-//| Coarse regime tag                                                |
-//+------------------------------------------------------------------+
+// Coarse regime tag
 string CRegimeComposite::RegimeToString(const ENUM_REGIME_STATE state)
 {
     switch(state)
@@ -71,9 +64,7 @@ string CRegimeComposite::RegimeToString(const ENUM_REGIME_STATE state)
     }
 }
 
-//+------------------------------------------------------------------+
-//| ENHANCEMENT: Convert detailed regime to string (Batch 93 - Wk 5) |
-//+------------------------------------------------------------------+
+// ENHANCEMENT: Convert detailed regime to string (Batch 93 - Wk 5)
 string CRegimeComposite::DetailedRegimeToString(const ENUM_DETAILED_REGIME regime)
 {
     switch(regime)
@@ -91,9 +82,7 @@ string CRegimeComposite::DetailedRegimeToString(const ENUM_DETAILED_REGIME regim
     }
 }
 
-//+------------------------------------------------------------------+
-//| Primary regime state + confidence scoring                        |
-//+------------------------------------------------------------------+
+// Primary regime state + confidence scoring
 ENUM_REGIME_STATE CRegimeComposite::ClassifyState(const bool cooldownActive,
                                                   const double spreadToAtr,
                                                   const double zScore,
@@ -129,9 +118,7 @@ ENUM_REGIME_STATE CRegimeComposite::ClassifyState(const bool cooldownActive,
     return state;
 }
 
-//+------------------------------------------------------------------+
-//| L4-011 Fix: Estimate regime state from fallback indicators       |
-//+------------------------------------------------------------------+
+// L4-011 Fix: Estimate regime state from fallback indicators
 ENUM_REGIME_STATE CRegimeComposite::EstimateRegimeStateFromFallback(const string symbol,
                                                                     const double atrValue,
                                                                     const double bbUpperValue,
@@ -158,9 +145,7 @@ ENUM_REGIME_STATE CRegimeComposite::EstimateRegimeStateFromFallback(const string
     return REGIME_TREND;
 }
 
-//+------------------------------------------------------------------+
-//| ENHANCEMENT: Calculate Detailed Regime Classification            |
-//+------------------------------------------------------------------+
+// ENHANCEMENT: Calculate Detailed Regime Classification
 ENUM_DETAILED_REGIME CRegimeComposite::CalculateDetailedRegime(double adxValue,
                                                                double zScore,
                                                                double bbWidthAtrRatio,
@@ -199,9 +184,7 @@ ENUM_DETAILED_REGIME CRegimeComposite::CalculateDetailedRegime(double adxValue,
     return DETAILED_REGIME_CHAOS;
 }
 
-//+------------------------------------------------------------------+
-//| ENHANCEMENT: Calculate Strategy-Specific Weight Multipliers      |
-//+------------------------------------------------------------------+
+// ENHANCEMENT: Calculate Strategy-Specific Weight Multipliers
 void CRegimeComposite::CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME regime,
                                                           double &momentumMult,
                                                           double &trendMult,
@@ -244,10 +227,8 @@ void CRegimeComposite::CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME r
     }
 }
 
-//+------------------------------------------------------------------+
-//| Batch 100: Apply Hurst exponent weight multipliers on top of     |
-//| regime multipliers, in-place on the supplied snapshot.           |
-//+------------------------------------------------------------------+
+// Batch 100: Apply Hurst exponent weight multipliers on top of
+// regime multipliers, in-place on the supplied snapshot.
 void CRegimeComposite::ApplyHurstWeightModifiers(SRegimeSnapshot &snapshot,
                                                  double hurstMeanRevMult,
                                                  double hurstMomentumMult,

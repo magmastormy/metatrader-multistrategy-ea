@@ -1,17 +1,11 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingCore.mqh                                            |
-//| Class declarations, static state storage and lifecycle           |
-//| (GetInstance / Initialize / Shutdown / DestroyInstance).         |
-//| Extracted verbatim from ErrorHandling.mqh.                       |
-//+------------------------------------------------------------------+
+// Class declarations, static state storage and lifecycle
+// (GetInstance / Initialize / Shutdown / DestroyInstance).
+// Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_CORE_MQH
 #define CORE_ERROR_HANDLING_CORE_MQH
 
 #include "ErrorHandlingTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Enhanced Error Handler Class                                  |
-//+------------------------------------------------------------------+
 class CEnhancedErrorHandler
 {
 private:
@@ -32,7 +26,6 @@ public:
     static int m_retryAttempts[100];
     static datetime m_lastRetryTime[100];
     
-    // Error aggregation
     static SErrorAggregation m_errorAggregations[50];
     static int m_aggregationCount;
     static int m_aggregationWindowSeconds;
@@ -88,9 +81,7 @@ public:
 // zero references repo-wide and its non-trivial overloads either dropped the
 // payload or double-routed into CEnhancedErrorHandler.
 
-//+------------------------------------------------------------------+
-//| Static member storage                                            |
-//+------------------------------------------------------------------+
+// Static member storage
 CEnhancedErrorHandler* CEnhancedErrorHandler::m_instance = NULL;
 string CEnhancedErrorHandler::m_logFile = "";
 bool CEnhancedErrorHandler::m_loggingEnabled = false;
@@ -110,9 +101,7 @@ int CEnhancedErrorHandler::m_aggregationCount = 0;
 int CEnhancedErrorHandler::m_aggregationWindowSeconds = 300;
 bool CEnhancedErrorHandler::m_aggregationEnabled = true;
 
-//+------------------------------------------------------------------+
-//| Singleton access                                                 |
-//+------------------------------------------------------------------+
+// Singleton access
 CEnhancedErrorHandler* CEnhancedErrorHandler::GetInstance()
 {
     if(m_instance == NULL)

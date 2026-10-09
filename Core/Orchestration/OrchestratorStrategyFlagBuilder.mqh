@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| OrchestratorStrategyFlagBuilder.mqh                              |
-//| Phase F extraction from CEAOrchestrator (behaviour preserving).  |
-//|                                                                  |
-//| Builds the global and per-symbol indicator-strategy enable flag  |
-//| vectors. Moved verbatim out of CEAOrchestrator; the orchestrator |
-//| keeps one-line forwarders with the original signatures, so the   |
-//| flag semantics, curated overrides and every log line are         |
-//| byte-for-byte unchanged.                                         |
-//|                                                                  |
-//| All methods are static - this cluster owns no state. The two     |
-//| collaborators the original bodies reached for (m_config and      |
-//| m_multiAssetProfiler) are now explicit parameters.               |
-//+------------------------------------------------------------------+
+// Phase F extraction from CEAOrchestrator (behaviour preserving).
+// Builds the global and per-symbol indicator-strategy enable flag
+// vectors. Moved verbatim out of CEAOrchestrator; the orchestrator
+// keeps one-line forwarders with the original signatures, so the
+// flag semantics, curated overrides and every log line are
+// byte-for-byte unchanged.
+// All methods are static - this cluster owns no state. The two
+// collaborators the original bodies reached for (m_config and
+// m_multiAssetProfiler) are now explicit parameters.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_STRATEGY_FLAG_BUILDER_MQH
@@ -25,9 +20,6 @@
 #define STRATEGY_COUNT 21
 #endif
 
-//+------------------------------------------------------------------+
-//| COrchestratorStrategyFlagBuilder                                 |
-//+------------------------------------------------------------------+
 class COrchestratorStrategyFlagBuilder
 {
 public:

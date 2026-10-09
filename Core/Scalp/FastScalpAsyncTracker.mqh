@@ -1,25 +1,19 @@
-//+------------------------------------------------------------------+
-//| FastScalpAsyncTracker.mqh                                        |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the async (OrderSendAsync) confirmation state that used to  |
-//| be four loose members on CFastScalpEngine:                       |
-//|   SScalpPendingAsync m_pendingAsync[20];                         |
-//|   int                m_pendingAsyncCount;                        |
-//|   bool               m_asyncMode;                                |
-//|   uint               m_maxLatencyMs;                             |
-//|                                                                  |
-//| Moved methods (bodies verbatim):                                 |
-//|   SetAsyncMode(), SetMaxLatencyMs(), OnAsyncOrderSent(),         |
-//|   OnDealConfirmed(), CheckPendingAsyncOrders(),                  |
-//|   RemovePendingAsync()                                           |
-//|                                                                  |
-//| OnDealConfirmed() registers the filled position through the      |
-//| position tracker; CheckPendingAsyncOrders() releases one         |
-//| risk-per-trade unit through the risk budget — both are the same  |
-//| operations the original inline code performed.                   |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the async (OrderSendAsync) confirmation state that used to
+// be four loose members on CFastScalpEngine:
+// SScalpPendingAsync m_pendingAsync[20];
+// int                m_pendingAsyncCount;
+// bool               m_asyncMode;
+// uint               m_maxLatencyMs;
+// Moved methods (bodies verbatim):
+// SetAsyncMode(), SetMaxLatencyMs(), OnAsyncOrderSent(),
+// OnDealConfirmed(), CheckPendingAsyncOrders(),
+// RemovePendingAsync()
+// OnDealConfirmed() registers the filled position through the
+// position tracker; CheckPendingAsyncOrders() releases one
+// risk-per-trade unit through the risk budget — both are the same
+// operations the original inline code performed.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_ASYNC_TRACKER_MQH
@@ -30,9 +24,7 @@
 #include "FastScalpPositionTracker.mqh"
 #include "FastScalpRiskBudget.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpAsyncTracker — stateful async scalp order tracking      |
-//+------------------------------------------------------------------+
+// CFastScalpAsyncTracker — stateful async scalp order tracking
 class CFastScalpAsyncTracker
 {
 private:
@@ -60,27 +52,21 @@ public:
    bool IsAsyncMode() const { return m_asyncMode; }
    uint GetMaxLatencyMs() const { return m_maxLatencyMs; }
 
-   //+------------------------------------------------------------------+
-   //| Set async mode for scalp order execution                          |
-   //+------------------------------------------------------------------+
+// Set async mode for scalp order execution
    void SetAsyncMode(bool enabled)
    {
       m_asyncMode = enabled;
       PrintFormat("[SCALP-ASYNC] Async mode %s", m_asyncMode ? "ENABLED" : "DISABLED");
    }
 
-   //+------------------------------------------------------------------+
-   //| Set max acceptable latency for async order confirmation           |
-   //+------------------------------------------------------------------+
+// Set max acceptable latency for async order confirmation
    void SetMaxLatencyMs(uint maxMs)
    {
       m_maxLatencyMs = (maxMs > 0) ? maxMs : 500;
       PrintFormat("[SCALP-ASYNC] Max latency set to %u ms", m_maxLatencyMs);
    }
 
-   //+------------------------------------------------------------------+
-   //| Track a pending async order after OrderSendAsync                  |
-   //+------------------------------------------------------------------+
+// Track a pending async order after OrderSendAsync
    void OnAsyncOrderSent(ulong orderTicket, string symbol, int direction,
                           double lotSize, double entryPrice, double sl, double tp)
    {
@@ -104,10 +90,8 @@ public:
       m_pendingAsyncCount++;
    }
 
-   //+------------------------------------------------------------------+
-   //| Handle deal confirmation for async scalp orders                   |
-   //| Called from OnTradeTransaction when a deal matches a pending order|
-   //+------------------------------------------------------------------+
+// Handle deal confirmation for async scalp orders
+// Called from OnTradeTransaction when a deal matches a pending order
    void OnDealConfirmed(ulong dealTicket, ulong orderTicket,
                         const SScalpConfig &config,
                         CFastScalpPositionTracker &positionTracker)
@@ -175,10 +159,8 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Check pending async orders for expiration                         |
-   //| Called from OnTick to detect stale unconfirmed orders             |
-   //+------------------------------------------------------------------+
+// Check pending async orders for expiration
+// Called from OnTick to detect stale unconfirmed orders
    void CheckPendingAsyncOrders(CFastScalpRiskBudget &riskBudget,
                                 CUnifiedRiskManager* riskManager)
    {
@@ -214,9 +196,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove a pending async order from tracking array by index         |
-   //+------------------------------------------------------------------+
+// Remove a pending async order from tracking array by index
    void RemovePendingAsync(int index)
    {
       if(index < 0 || index >= m_pendingAsyncCount)

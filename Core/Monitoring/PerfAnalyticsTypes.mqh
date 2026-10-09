@@ -1,25 +1,18 @@
-//+------------------------------------------------------------------+
-//| PerfAnalyticsTypes.mqh                                           |
-//| Shared constants and stateless helpers for the performance       |
-//| analytics framework. Extracted verbatim from                     |
-//| PerformanceAnalytics.mqh (behaviour unchanged).                  |
-//+------------------------------------------------------------------+
+// Shared constants and stateless helpers for the performance
+// analytics framework. Extracted verbatim from
+// PerformanceAnalytics.mqh (behaviour unchanged).
 #ifndef CORE_PERF_ANALYTICS_TYPES_MQH
 #define CORE_PERF_ANALYTICS_TYPES_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 
-//+------------------------------------------------------------------+
-//| Circular buffer capacity for trade / equity history              |
-//+------------------------------------------------------------------+
+// Circular buffer capacity for trade / equity history
 #ifndef MAX_TRADES
 #define MAX_TRADES 1000
 #endif
 
-//+------------------------------------------------------------------+
-//| Stateless statistical helpers                                    |
-//+------------------------------------------------------------------+
+// Stateless statistical helpers
 class CPerfAnalyticsMath
 {
 public:
@@ -48,9 +41,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Stateless logging sink shared by all analytics modules           |
-//+------------------------------------------------------------------+
+// Stateless logging sink shared by all analytics modules
 class CPerfAnalyticsLog
 {
 public:

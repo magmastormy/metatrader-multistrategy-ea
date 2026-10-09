@@ -1,31 +1,26 @@
-//+------------------------------------------------------------------+
-//| Consensus Weighting & Quorum Profiles (Phase C, Slice 2 - C4)    |
-//| Composite weight computation and quorum preset profiles extracted |
-//| from CEnterpriseStrategyManager:                                  |
-//|   - UpdateStrategyWeights        (performance/AI weight refresh)  |
-//|   - ApplyQuorumProfile           (conservative/balanced/aggressive)|
-//|   - ApplyFamilyEngineWeights     (Deriv family cluster multipliers)|
-//|   - ApplyAssetClassEngineWeights (multi-asset class multipliers)  |
-//|                                                                   |
-//| Unlike the Slice 1 collaborators this module MUTATES the manager, |
-//| so it holds a NON-const back-pointer. It writes exclusively       |
-//| through the manager's existing public mutators                    |
-//| (UpdateStrategyWeightByName / SetMinQuorum / SetQuorumThreshold / |
-//| SetSupportFloors / SetIntrabarDynamicQuorumEnabled) plus one      |
-//| narrow raw setter, so the resulting state is identical.           |
-//|                                                                   |
-//| DELIBERATELY NOT MOVED: the atomic consensus config setters       |
-//| (SetMinQuorum, SetConflictDeadband, SetMinReadyWeightRatio, ...)  |
-//| stay in the manager because they own mirrored fields that the     |
-//| DO-NOT-PIECEMEAL C9 consensus core (EvaluateConsensusInternal)    |
-//| reads directly (m_conflictDeadband, m_minReadyWeightRatio).       |
-//| Relocating those fields would require editing a C9 body.          |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Consensus Weighting & Quorum Profiles (Phase C, Slice 2 - C4)
+// Composite weight computation and quorum preset profiles extracted
+// from CEnterpriseStrategyManager:
+// - UpdateStrategyWeights        (performance/AI weight refresh)
+// - ApplyQuorumProfile           (conservative/balanced/aggressive)
+// - ApplyFamilyEngineWeights     (Deriv family cluster multipliers)
+// - ApplyAssetClassEngineWeights (multi-asset class multipliers)
+// Unlike the Slice 1 collaborators this module MUTATES the manager,
+// so it holds a NON-const back-pointer. It writes exclusively
+// through the manager's existing public mutators
+// (UpdateStrategyWeightByName / SetMinQuorum / SetQuorumThreshold /
+// SetSupportFloors / SetIntrabarDynamicQuorumEnabled) plus one
+// narrow raw setter, so the resulting state is identical.
+// DELIBERATELY NOT MOVED: the atomic consensus config setters
+// (SetMinQuorum, SetConflictDeadband, SetMinReadyWeightRatio, ...)
+// stay in the manager because they own mirrored fields that the
+// DO-NOT-PIECEMEAL C9 consensus core (EvaluateConsensusInternal)
+// reads directly (m_conflictDeadband, m_minReadyWeightRatio).
+// Relocating those fields would require editing a C9 body.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef CONSENSUS_WEIGHTING_CONFIG_MQH
 #define CONSENSUS_WEIGHTING_CONFIG_MQH
 
@@ -38,23 +33,18 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-//+------------------------------------------------------------------+
-//| Quorum profile ids.                                               |
-//|                                                                   |
-//| Mirrors CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE 1:1 by    |
-//| ordinal. The nested enum is intentionally LEFT IN PLACE because   |
-//| it is a user-facing MT5 `input` type in MultiStrategyAutonomousEA |
-//| .mq5 / MultiStrategyTestingEA.mq5 and in OrchestratorConfig; a    |
-//| class declared before the manager cannot name a type nested in    |
-//| it, so the manager forwards the profile as a plain int.           |
-//+------------------------------------------------------------------+
+// Quorum profile ids.
+// Mirrors CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE 1:1 by
+// ordinal. The nested enum is intentionally LEFT IN PLACE because
+// it is a user-facing MT5 `input` type in MultiStrategyAutonomousEA
+// .mq5 / MultiStrategyTestingEA.mq5 and in OrchestratorConfig; a
+// class declared before the manager cannot name a type nested in
+// it, so the manager forwards the profile as a plain int.
 #define QUORUM_PROFILE_CONSERVATIVE 0
 #define QUORUM_PROFILE_BALANCED     1
 #define QUORUM_PROFILE_AGGRESSIVE   2
 
-//+------------------------------------------------------------------+
-//| Weighting / quorum-profile facade over CEnterpriseStrategyManager |
-//+------------------------------------------------------------------+
+// Weighting / quorum-profile facade over CEnterpriseStrategyManager
 class CConsensusWeightingConfig
 {
 private:
@@ -71,9 +61,7 @@ public:
     void ApplyAssetClassEngineWeights(const string symbol);
 };
 
-//+------------------------------------------------------------------+
-//| Refresh all strategy weights                                      |
-//+------------------------------------------------------------------+
+// Refresh all strategy weights
 void CConsensusWeightingConfig::UpdateStrategyWeights()
 {
     if(m_src == NULL)
@@ -133,14 +121,10 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Apply Quorum Profile                                             |
-//|                                                                  |
-//| Routed through the manager's public setters instead of raw field |
-//| assignment. Verified behaviour-identical: every literal below is |
-//| already inside the setters' clamp ranges, so the clamps are      |
-//| no-ops (minQuorum >= 1; thresholds and support floors in [0,1]). |
-//+------------------------------------------------------------------+
+// Routed through the manager's public setters instead of raw field
+// assignment. Verified behaviour-identical: every literal below is
+// already inside the setters' clamp ranges, so the clamps are
+// no-ops (minQuorum >= 1; thresholds and support floors in [0,1]).
 void CConsensusWeightingConfig::ApplyQuorumProfile(const int profile)
 {
     if(m_src == NULL)
@@ -169,9 +153,7 @@ void CConsensusWeightingConfig::ApplyQuorumProfile(const int profile)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Apply family-based engine weights for Deriv synthetic indices    |
-//+------------------------------------------------------------------+
+// Apply family-based engine weights for Deriv synthetic indices
 void CConsensusWeightingConfig::ApplyFamilyEngineWeights(const string symbol)
 {
     if(m_src == NULL)
@@ -212,9 +194,7 @@ void CConsensusWeightingConfig::ApplyFamilyEngineWeights(const string symbol)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Apply asset-class-based engine weights using multi-asset profiler|
-//+------------------------------------------------------------------+
+// Apply asset-class-based engine weights using multi-asset profiler
 void CConsensusWeightingConfig::ApplyAssetClassEngineWeights(const string symbol)
 {
     if(m_src == NULL)

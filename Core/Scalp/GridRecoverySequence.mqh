@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| GridRecoverySequence.mqh                                         |
-//| Recovery sequencing: grid direction selection, active-level scan  |
-//| and pruning, profit census and next-level trigger evaluation.     |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Recovery sequencing: grid direction selection, active-level scan
+// and pruning, profit census and next-level trigger evaluation.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,16 +11,12 @@
 
 #include "GridRecoveryTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CGridRecoverySequence — stateless grid sequencing helpers         |
-//+------------------------------------------------------------------+
+// CGridRecoverySequence — stateless grid sequencing helpers
 class CGridRecoverySequence
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Batch 117: Use price SMA (not ATR SMA) for direction determination|
-   //| Compute 50-bar price SMA to determine mean-reversion direction    |
-   //+------------------------------------------------------------------+
+// Batch 117: Use price SMA (not ATR SMA) for direction determination
+// Compute 50-bar price SMA to determine mean-reversion direction
    static int DetermineGridDirection(const string symbol, double bid, double ask)
    {
       double midPrice = (bid + ask) / 2.0;
@@ -46,10 +39,8 @@ public:
          return -1;   // SELL grid — price above SMA, expect reversion down
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if all levels are in profit (caller closes the entire grid).|
-   //| Levels whose position no longer exists are marked inactive.       |
-   //+------------------------------------------------------------------+
+// Check if all levels are in profit (caller closes the entire grid).
+// Levels whose position no longer exists are marked inactive.
    static bool AllLevelsInProfit(SGridSymbolState &state)
    {
       bool allInProfit = true;
@@ -77,10 +68,8 @@ public:
       return allInProfit;
    }
 
-   //+------------------------------------------------------------------+
-   //| Scan active levels, pruning ones whose position has closed.       |
-   //| Returns the live level count and reports the highest live level.  |
-   //+------------------------------------------------------------------+
+// Scan active levels, pruning ones whose position has closed.
+// Returns the live level count and reports the highest live level.
    static int ScanActiveLevels(SGridSymbolState &state, int &lastActiveLevel)
    {
       int currentActiveCount = 0;
@@ -108,9 +97,7 @@ public:
       return currentActiveCount;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if price has moved against us enough to warrant next level  |
-   //+------------------------------------------------------------------+
+// Check if price has moved against us enough to warrant next level
    static bool HasPriceMovedForNextLevel(const string symbol, int direction, double lastEntry, double gridSpacing)
    {
       double bid = SymbolInfoDouble(symbol, SYMBOL_BID);

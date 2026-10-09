@@ -1,14 +1,10 @@
-//+------------------------------------------------------------------+
-//| PositionMgrSRE.mqh                                               |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATEFUL module: owns the Signal Reversal Exit (SRE) tuning      |
-//| parameters and runs the per-position reversal scan.              |
-//| The scan body is copied verbatim from                            |
-//| CPositionManager::CheckSignalReversalExit() - zero behaviour      |
-//| change. The two members it used to read from the owner           |
-//| (m_tradeManager / m_magicNumber) are now explicit arguments.      |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATEFUL module: owns the Signal Reversal Exit (SRE) tuning
+// parameters and runs the per-position reversal scan.
+// The scan body is copied verbatim from
+// CPositionManager::CheckSignalReversalExit() - zero behaviour
+// change. The two members it used to read from the owner
+// (m_tradeManager / m_magicNumber) are now explicit arguments.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_SRE_MQH
@@ -17,9 +13,6 @@
 #include "../Trading/TradeManager.mqh"     // CTradeManager (complete type, called by pointer)
 #include "PositionMgrMagicFilter.mqh"      // CPositionMgrMagicFilter::IsEAOwnedMagic
 
-//+------------------------------------------------------------------+
-//| CPositionMgrSRE                                                  |
-//+------------------------------------------------------------------+
 class CPositionMgrSRE
 {
 private:

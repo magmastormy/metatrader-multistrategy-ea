@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                            HammerDetector.mqh    |
-//|                            Hammer / Shooting Star Detection       |
-//+------------------------------------------------------------------+
+// Hammer / Shooting Star Detection
 #property copyright "Copyright 2026"
 #property strict
 

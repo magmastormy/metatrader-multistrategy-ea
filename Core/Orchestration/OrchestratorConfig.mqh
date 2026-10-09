@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| OrchestratorConfig.mqh                                           |
-//| SOrchestratorConfig and helper structs                           |
-//+------------------------------------------------------------------+
+// SOrchestratorConfig and helper structs
 #property strict
 
 #ifndef ORCHESTRATOR_CONFIG_MQH
@@ -39,9 +36,7 @@ struct SStrategyIntrabarConfig
 // both are written INTRABAR_POLICY_OFF, so the legacy table stays identical.
 #define MAX_STRATEGY_CONFIGS 23
 
-//+------------------------------------------------------------------+
-//| SOrchestratorConfig - All input parameters grouped by domain     |
-//+------------------------------------------------------------------+
+// SOrchestratorConfig - All input parameters grouped by domain
 struct SOrchestratorConfig
 {
     // General
@@ -158,13 +153,11 @@ struct SOrchestratorConfig
     double  aiWeightMultiplier;
     double  aiDrawdownSizingLimit;
 
-    // Dashboard
     bool    dashboardEnabled;
     string  dashboardEndpoint;
     int     dashboardPushIntervalSec;
     bool    dashboardControlEnabled;
 
-    // Live authority gate
     bool    enableLiveAuthorityGate;
     bool    allowAIWarmStartLive;
     bool    allowHybridAIStandalone;
@@ -183,7 +176,6 @@ struct SOrchestratorConfig
     double  aiPromotedRiskMultiplier;
     double  nonAIPromotedRiskMultiplier;
 
-    // NN attribution
     bool    enableNNAttributionDiagnostics;
     bool    runNNAttributionSelfTest;
 
@@ -270,13 +262,11 @@ struct SOrchestratorConfig
     bool    lifecycleUseATRTrailing;
     double  lifecycleATRMultiplier;
 
-    // Max hold time
     bool    enableMaxHoldTime;
     int     maxHoldHoursIntraday;
     int     maxHoldHoursSwing;
     bool    maxHoldOnlyIfLoss;
 
-    // Emergency
     bool    emergencyFlattenAllAccountPositions;
     int     unprotectedRemediationIntervalSec;
     int     unprotectedMaxRestoreAttempts;
@@ -289,7 +279,6 @@ struct SOrchestratorConfig
     bool    scalpAsyncMode;
     uint    scalpMaxLatencyMs;
 
-    // Dynamic slippage
     bool    enableDynamicSlippage;
     double  dynamicSlippageAtrPercent;
     int     dynamicSlippageMinPoints;
@@ -299,7 +288,6 @@ struct SOrchestratorConfig
     // Spike detection
     int     spikeConfirmWindows;
 
-    // Spike Hunter
     bool    spikeHunterEnabled;
     double  spikeHunterVelocityMult;
     int     spikeHunterMinConsecTicks;
@@ -314,7 +302,6 @@ struct SOrchestratorConfig
     int     spikeHunterAlertThrottle;
     int     spikeHunterMinConfluence;
 
-    // Multi-asset profiler
     bool    multiAssetProfilerEnabled;
     bool    derivProfilerEnabled;
     bool    gridRecoveryEnabled;
@@ -376,7 +363,6 @@ struct SOrchestratorConfig
     long    symbolMinDailyVolumeLots;
     bool    symbolEnableVolumeCheck;
 
-    // Logging
         int     logLevel;
         int     logVerbosity;  // ENUM_LOG_VERBOSITY
         bool    logDerivFamilyDetection;  // L7-013

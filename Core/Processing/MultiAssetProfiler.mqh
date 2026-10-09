@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| MultiAssetProfiler.mqh                                           |
-//| Multi-asset class profiler extending Deriv-only profiling        |
-//| Covers Forex, Metals, Indices, Energies + all Deriv families    |
-//| Batch 103: Full asset universe support                           |
-//+------------------------------------------------------------------+
+// Multi-asset class profiler extending Deriv-only profiling
+// Covers Forex, Metals, Indices, Energies + all Deriv families
+// Batch 103: Full asset universe support
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -15,9 +12,7 @@
 #include "../Utils/Instruments.mqh"
 #include "DerivAssetProfiler.mqh"
 
-//+------------------------------------------------------------------+
-//| Asset class enumeration — coarse grouping for all instruments    |
-//+------------------------------------------------------------------+
+// Asset class enumeration — coarse grouping for all instruments
 enum ENUM_ASSET_CLASS
 {
    ASSET_FOREX,            // 0 - EURUSD, GBPUSD, etc.
@@ -35,9 +30,7 @@ enum ENUM_ASSET_CLASS
 // Helper to check if asset class is synthetic/Deriv (classes 4-8)
 #define IsSyntheticAssetClass(class) ((class) >= ASSET_DERIV_CRASHBOOM && (class) <= ASSET_DERIV_DEX)
 
-//+------------------------------------------------------------------+
-//| Per-asset-class trading profile                                  |
-//+------------------------------------------------------------------+
+// Per-asset-class trading profile
 struct SAssetProfile
 {
    ENUM_ASSET_CLASS  assetClass;          // Asset class enum value
@@ -77,11 +70,8 @@ struct SAssetProfile
    }
 };
 
-//+------------------------------------------------------------------+
-//| CMultiAssetProfiler — Multi-asset class profiler                 |
-//| Wraps CDerivAssetProfiler for Deriv symbols (composition)        |
-//| Adds Forex, Metals, Indices, Energies profiling                  |
-//+------------------------------------------------------------------+
+// Wraps CDerivAssetProfiler for Deriv symbols (composition)
+// Adds Forex, Metals, Indices, Energies profiling
 class CMultiAssetProfiler
 {
 private:
@@ -90,12 +80,9 @@ private:
    ENUM_ASSET_CLASS     m_detectedClass;
    string               m_detectedSymbol;
 
-   //+------------------------------------------------------------------+
-   //| Initialize all asset class profiles with production defaults    |
-   //+------------------------------------------------------------------+
+// Initialize all asset class profiles with production defaults
    void InitializeAllProfiles()
    {
-      // === ASSET 0: FOREX ===
       m_profiles[ASSET_FOREX].assetClass           = ASSET_FOREX;
       m_profiles[ASSET_FOREX].className            = "Forex";
       m_profiles[ASSET_FOREX].atrMultiplierSL      = 1.0;
@@ -146,7 +133,6 @@ private:
       m_profiles[ASSET_INDICES].featureSetSize     = 69;  // 65 + 4 indices-specific
       m_profiles[ASSET_INDICES].pythonModelFamily  = "indices";
 
-      // === ASSET 3: ENERGIES ===
       m_profiles[ASSET_ENERGIES].assetClass        = ASSET_ENERGIES;
       m_profiles[ASSET_ENERGIES].className         = "Energies";
       m_profiles[ASSET_ENERGIES].atrMultiplierSL   = 1.25;
@@ -163,7 +149,6 @@ private:
       m_profiles[ASSET_ENERGIES].featureSetSize    = 68;  // 65 + 3 energies-specific
       m_profiles[ASSET_ENERGIES].pythonModelFamily = "energies";
 
-      // === ASSET 4: DERIV CRASH/BOOM ===
       m_profiles[ASSET_DERIV_CRASHBOOM].assetClass          = ASSET_DERIV_CRASHBOOM;
       m_profiles[ASSET_DERIV_CRASHBOOM].className           = "DerivCrashBoom";
       m_profiles[ASSET_DERIV_CRASHBOOM].atrMultiplierSL     = 1.5;
@@ -180,7 +165,6 @@ private:
       m_profiles[ASSET_DERIV_CRASHBOOM].featureSetSize      = 70;
       m_profiles[ASSET_DERIV_CRASHBOOM].pythonModelFamily   = "deriv_crashboom";
 
-      // === ASSET 5: DERIV VOLATILITY ===
       m_profiles[ASSET_DERIV_VOLATILITY].assetClass         = ASSET_DERIV_VOLATILITY;
       m_profiles[ASSET_DERIV_VOLATILITY].className          = "DerivVolatility";
       m_profiles[ASSET_DERIV_VOLATILITY].atrMultiplierSL    = 1.0;
@@ -197,7 +181,6 @@ private:
       m_profiles[ASSET_DERIV_VOLATILITY].featureSetSize     = 70;
       m_profiles[ASSET_DERIV_VOLATILITY].pythonModelFamily  = "deriv_volatility";
 
-      // === ASSET 6: DERIV STEP ===
       m_profiles[ASSET_DERIV_STEP].assetClass               = ASSET_DERIV_STEP;
       m_profiles[ASSET_DERIV_STEP].className                = "DerivStep";
       m_profiles[ASSET_DERIV_STEP].atrMultiplierSL          = 0.75;
@@ -214,7 +197,6 @@ private:
       m_profiles[ASSET_DERIV_STEP].featureSetSize           = 70;
       m_profiles[ASSET_DERIV_STEP].pythonModelFamily        = "deriv_step";
 
-      // === ASSET 7: DERIV JUMP ===
       m_profiles[ASSET_DERIV_JUMP].assetClass               = ASSET_DERIV_JUMP;
       m_profiles[ASSET_DERIV_JUMP].className                = "DerivJump";
       m_profiles[ASSET_DERIV_JUMP].atrMultiplierSL          = 2.0;
@@ -231,7 +213,6 @@ private:
       m_profiles[ASSET_DERIV_JUMP].featureSetSize           = 70;
       m_profiles[ASSET_DERIV_JUMP].pythonModelFamily        = "deriv_jump";
 
-      // === ASSET 8: DERIV DEX ===
       m_profiles[ASSET_DERIV_DEX].assetClass                = ASSET_DERIV_DEX;
       m_profiles[ASSET_DERIV_DEX].className                 = "DerivDEX";
       m_profiles[ASSET_DERIV_DEX].atrMultiplierSL           = 2.5;
@@ -266,9 +247,7 @@ private:
       m_profiles[ASSET_UNIVERSAL].pythonModelFamily         = "universal";
    }
 
-   //+------------------------------------------------------------------+
-   //| Map Deriv family to coarse asset class                          |
-   //+------------------------------------------------------------------+
+// Map Deriv family to coarse asset class
    ENUM_ASSET_CLASS DerivFamilyToAssetClass(ENUM_DERIV_FAMILY family)
    {
       switch(family)
@@ -296,9 +275,7 @@ private:
    }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CMultiAssetProfiler()
    {
       InitializeAllProfiles();
@@ -306,18 +283,14 @@ public:
       m_detectedSymbol = "";
    }
 
-   //+------------------------------------------------------------------+
-   //| Access the internal Deriv profiler for fine-grained queries     |
-   //+------------------------------------------------------------------+
+// Access the internal Deriv profiler for fine-grained queries
    CDerivAssetProfiler* GetDerivProfiler()
    {
       return &m_derivProfiler;
    }
 
-   //+------------------------------------------------------------------+
-   //| Detect the asset class for a symbol using priority-ordered      |
-   //| detection — Deriv first, then traditional asset classes         |
-   //+------------------------------------------------------------------+
+// Detect the asset class for a symbol using priority-ordered
+// detection — Deriv first, then traditional asset classes
    ENUM_ASSET_CLASS DetectAssetClass(const string symbol)
    {
       string sym = NormalizeInstrumentSymbolName(symbol);
@@ -348,9 +321,7 @@ public:
       return ASSET_UNIVERSAL;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the full asset profile for a symbol                          |
-   //+------------------------------------------------------------------+
+// Get the full asset profile for a symbol
    SAssetProfile GetProfile(const string symbol)
    {
       m_detectedClass = DetectAssetClass(symbol);
@@ -375,63 +346,46 @@ public:
       return profile;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the magic number for a symbol's asset class                  |
-   //+------------------------------------------------------------------+
+// Get the magic number for a symbol's asset class
    int GetMagicNumber(int baseMagic, const string symbol)
    {
       SAssetProfile profile = GetProfile(symbol);
       return baseMagic + profile.magicOffset;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the magic offset for a symbol's asset class                  |
-   //+------------------------------------------------------------------+
+// Get the magic offset for a symbol's asset class
    int GetMagicOffset(const string symbol)
    {
       SAssetProfile profile = GetProfile(symbol);
       return profile.magicOffset;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the asset class for a symbol (public accessor)              |
-   //+------------------------------------------------------------------+
+// Get the asset class for a symbol (public accessor)
    ENUM_ASSET_CLASS GetAssetClassForSymbol(const string symbol)
    {
       return DetectAssetClass(symbol);
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the asset class name string                                  |
-   //+------------------------------------------------------------------+
    string GetAssetClassName(const string symbol)
    {
       ENUM_ASSET_CLASS ac = DetectAssetClass(symbol);
       return m_profiles[ac].className;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the Python model family string for a symbol                  |
-   //+------------------------------------------------------------------+
    string GetPythonModelFamily(const string symbol)
    {
       SAssetProfile profile = GetProfile(symbol);
       return profile.pythonModelFamily;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the feature set size for a symbol                            |
-   //+------------------------------------------------------------------+
    int GetFeatureSetSize(const string symbol)
    {
       SAssetProfile profile = GetProfile(symbol);
       return profile.featureSetSize;
    }
 
-   //+------------------------------------------------------------------+
-   //| Resolve per-asset-class ATR crisis ratio threshold              |
-   //| Used by post-consensus filter to detect ATR spike regimes       |
-   //+------------------------------------------------------------------+
+// Resolve per-asset-class ATR crisis ratio threshold
+// Used by post-consensus filter to detect ATR spike regimes
    double ResolveATRCrisisThreshold(const string symbol)
    {
       ENUM_ASSET_CLASS ac = DetectAssetClass(symbol);
@@ -460,17 +414,13 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if symbol is a Deriv synthetic (delegates to Instruments) |
-   //+------------------------------------------------------------------+
+// Check if symbol is a Deriv synthetic (delegates to Instruments)
    bool IsDerivSymbol(const string symbol)
    {
       return IsSyntheticIndexSymbolName(symbol);
    }
 
-   //+------------------------------------------------------------------+
-   //| Print the full profile for a symbol                              |
-   //+------------------------------------------------------------------+
+// Print the full profile for a symbol
    void PrintProfile(const string symbol)
    {
       SAssetProfile prof = GetProfile(symbol);

@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| StatisticalArbitrageStrategy.mqh                                 |
-//| Institutional Statistical Arbitrage / Pair Trading Strategy      |
-//| Z-Score Mean Reversion on Correlated Synthetic Indices           |
-//| Requires Python Bridge for Real-Time Correlation Matrix          |
-//| Copyright 2026, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Institutional Statistical Arbitrage / Pair Trading Strategy
+// Z-Score Mean Reversion on Correlated Synthetic Indices
+// Requires Python Bridge for Real-Time Correlation Matrix
+// Copyright 2026, Multi-Strategy EA
 #ifndef STATISTICAL_ARBITRAGE_STRATEGY_MQH
 #define STATISTICAL_ARBITRAGE_STRATEGY_MQH
 
@@ -14,9 +11,6 @@
 #include "../Core/Engines/OrnsteinUhlenbeckEngine.mqh"
 #include "../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Statistical Arbitrage Signal Structure                           |
-//+------------------------------------------------------------------+
 struct SStatArbSignal
 {
     ENUM_TRADE_SIGNAL direction;        // BUY = Long spread, SELL = Short spread
@@ -43,11 +37,8 @@ struct SStatArbSignal
         reason("") {}
 };
 
-//+------------------------------------------------------------------+
-//| Statistical Arbitrage Strategy Class                             |
-//| Institutional approach: Trade mean-reverting spreads between     |
-//| highly correlated synthetic indices                              |
-//+------------------------------------------------------------------+
+// Institutional approach: Trade mean-reverting spreads between
+// highly correlated synthetic indices
 class CStatisticalArbitrageStrategy : public CStrategyBase
 {
 private:
@@ -104,7 +95,6 @@ private:
     }
     
 public:
-    // Constructor
     CStatisticalArbitrageStrategy(const string name = "Statistical Arbitrage v1.0", int magic = 0) :
         CStrategyBase(name, magic),
         m_entryZThreshold(2.0),
@@ -144,7 +134,6 @@ public:
     // Batch 100: Set OU engine reference for mean-reversion-aware z-scores
     void SetOUEngine(COrnsteinUhlenbeckEngine* ouEngine) { m_ouEngine = ouEngine; }
     
-    // Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
@@ -167,7 +156,6 @@ public:
         return true;
     }
     
-    // Deinitialization
     virtual void Deinit() override
     {
         Cleanup();
@@ -247,7 +235,6 @@ public:
             return RejectSignal("STATARB_HALF_LIFE_INVALID");
         }
         
-        // Detect signal
         SStatArbSignal signal = DetectStatArbSignal(
             leg1Symbol, leg2Symbol,
             zScore, spreadMean, spreadStdDev
@@ -340,14 +327,8 @@ public:
                    confidence * 100,
                    signal.reason);
         
-        // Batch 169: abstain instead of voting. The edge here is the spread
-        // between two instruments, but only m_symbol can be sent through the
-        // consensus path: ExecutePairTrade has no callers and signal.leg2Symbol /
-        // leg2LotSize are computed then discarded, so returning signal.direction
-        // booked an unhedged directional position against a two-leg signal, with
-        // SL/TP derived from the spread's sigma. The leg's own drift, not the
-        // spread, decided the outcome, and no risk budget knew it was
-        // market-neutral by assumption. Re-enable when both legs are executable.
+        // The edge is the spread, but only m_symbol can be sent: leg2 is computed and
+        // discarded, so voting direction would book an unhedged leg with a two-leg stop.
         PrintFormat("[STATARB-UNHEDGED] %s+%s | signal valid (Z=%.2f Conf=%.1f%%) but leg2 is never sent - abstaining instead of voting a naked %s on %s",
                    leg1Symbol, leg2Symbol, zScore, confidence * 100,
                    signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL", m_symbol);
@@ -355,7 +336,6 @@ public:
         return TRADE_SIGNAL_NONE;
     }
     
-    // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_STATISTICAL_ARBITRAGE; }
     
     // Set Python Bridge reference (called by EA during initialization)
@@ -473,7 +453,6 @@ private:
         return price1 - (price2 * m_hedgeRatio);
     }
     
-    // Detect statistical arbitrage signal
     SStatArbSignal DetectStatArbSignal(
         const string leg1, const string leg2,
         double zScore, double spreadMean, double spreadStdDev)
@@ -522,7 +501,6 @@ private:
             return signal;
         }
         
-        // No signal
         return signal;
     }
     

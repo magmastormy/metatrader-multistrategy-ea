@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| PerfAnalyticsTradeStats.mqh                                      |
-//| Trade statistics aggregation: counters, P&L, ratio metrics,      |
-//| rolling window metrics and streak based momentum scaling.        |
-//| Extracted verbatim from PerformanceAnalytics.mqh.                |
-//+------------------------------------------------------------------+
+// Trade statistics aggregation: counters, P&L, ratio metrics,
+// rolling window metrics and streak based momentum scaling.
+// Extracted verbatim from PerformanceAnalytics.mqh.
 #ifndef CORE_PERF_ANALYTICS_TRADESTATS_MQH
 #define CORE_PERF_ANALYTICS_TRADESTATS_MQH
 
 #include "PerfAnalyticsTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Trade statistics aggregator                                      |
-//+------------------------------------------------------------------+
+// Trade statistics aggregator
 class CPerfAnalyticsTradeStats
 {
 private:
@@ -51,9 +46,7 @@ private:
     double m_lastMomentumScaleValue;
 
 public:
-    //+--------------------------------------------------------------+
-    //| Constructor                                                  |
-    //+--------------------------------------------------------------+
+// Constructor
     CPerfAnalyticsTradeStats(void) :
         m_totalTrades(0),
         m_successfulTrades(0),
@@ -86,18 +79,14 @@ public:
         ArrayInitialize(m_tradeTimes, 0);
     }
 
-    //+--------------------------------------------------------------+
-    //| Counter helpers                                              |
-    //+--------------------------------------------------------------+
+// Counter helpers
     void IncrementSuccessfulTrades(void) { m_successfulTrades++; }
     void IncrementFailedTrades(void) { m_failedTrades++; }
     void SetRiskFreeRate(const double rate) { m_riskFreeRate = MathMax(0.0, rate); }
 
-    //+--------------------------------------------------------------+
-    //| Register a closed trade sample into the circular buffer.     |
-    //| Returns the buffer slot that was written (index NOT advanced |
-    //| yet, so the equity module can write the same slot).          |
-    //+--------------------------------------------------------------+
+// Register a closed trade sample into the circular buffer.
+// Returns the buffer slot that was written (index NOT advanced
+// yet, so the equity module can write the same slot).
     int RegisterTradeSample(const double profit)
     {
         m_totalTrades++;
@@ -124,9 +113,7 @@ public:
         return m_bufferIndex;
     }
 
-    //+--------------------------------------------------------------+
-    //| Increment buffer index, wrap around                          |
-    //+--------------------------------------------------------------+
+// Increment buffer index, wrap around
     void AdvanceBufferIndex(void)
     {
         m_bufferIndex++;
@@ -134,9 +121,7 @@ public:
             m_bufferIndex = 0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Update profit/loss tracking for a closed trade               |
-    //+--------------------------------------------------------------+
+// Update profit/loss tracking for a closed trade
     void ApplyTradeOutcome(const double profit)
     {
         if(profit > 0)
@@ -164,9 +149,7 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Performance Metrics                                |
-    //+--------------------------------------------------------------+
+// Calculate Performance Metrics
     void CalculateMetrics(const double maxDrawdown, const double peakEquity)
     {
         if(m_totalTrades == 0) return;
@@ -185,9 +168,6 @@ public:
             m_averageLoss = m_totalLoss / (double)losingTradesLocal;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Win Rate                                           |
-    //+--------------------------------------------------------------+
     void CalculateWinRate(void)
     {
         if(m_totalTrades > 0)
@@ -196,9 +176,6 @@ public:
             m_winRate = 0.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Profit Factor                                      |
-    //+--------------------------------------------------------------+
     void CalculateProfitFactor(void)
     {
         if(m_totalLoss > 0)
@@ -209,9 +186,6 @@ public:
             m_profitFactor = 0.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Sharpe Ratio                                       |
-    //+--------------------------------------------------------------+
     void CalculateSharpeRatio(void)
     {
         int validTrades = MathMin(m_totalTrades, MAX_TRADES);
@@ -246,7 +220,6 @@ public:
             tempReturns[i] = m_dailyReturns[index];
         }
 
-        // Calculate standard deviation
         double stdDev = CPerfAnalyticsMath::CalculateStandardDeviation(tempReturns);
 
         if(stdDev > 0)
@@ -261,9 +234,6 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Recovery Factor                                    |
-    //+--------------------------------------------------------------+
     void CalculateRecoveryFactor(const double maxDrawdown, const double peakEquity)
     {
         double netProfit = m_totalProfit - m_totalLoss;
@@ -279,9 +249,6 @@ public:
             m_recoveryFactor = 0.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Rolling Metrics                                    |
-    //+--------------------------------------------------------------+
     void CalculateRollingMetrics(void)
     {
         if(m_totalTrades < 5) return; // Need minimum trades
@@ -324,11 +291,9 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Anti-Martingale Momentum Scale                               |
-    //| Win streak: scale up by 10% per win, capped at 1.5x          |
-    //| Loss streak: scale down by 15% per loss, floored at 0.5x     |
-    //+--------------------------------------------------------------+
+// Anti-Martingale Momentum Scale
+// Win streak: scale up by 10% per win, capped at 1.5x
+// Loss streak: scale down by 15% per loss, floored at 0.5x
     double CalculateMomentumScale(void)
     {
         double scale = 1.0;
@@ -358,9 +323,7 @@ public:
         return scale;
     }
 
-    //+--------------------------------------------------------------+
-    //| Accessors                                                    |
-    //+--------------------------------------------------------------+
+// Accessors
     int GetTotalTrades(void) const { return m_totalTrades; }
     int GetSuccessfulTrades(void) const { return m_successfulTrades; }
     int GetFailedTrades(void) const { return m_failedTrades; }

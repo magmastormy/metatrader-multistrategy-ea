@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| OrchestratorStatusReporter.mqh                                   |
-//| Read-only status-text aggregation for the EA orchestrator        |
-//|                                                                  |
-//| Extracted verbatim from CEAOrchestrator::GetStatusReport(). The   |
-//| method is pure string assembly over collaborator status text: it  |
-//| reads no orchestrator state it does not receive, mutates nothing, |
-//| and is only consumed by the heartbeat log                         |
-//|                                                                  |
-//| Wiring: the orchestrator injects its collaborators once, from     |
-//| WireAndValidateDependencies(). The volatile per-cycle counters    |
-//| (call count, live position count, ...) cannot be captured by      |
-//| pointer in MQL5, so they are passed per call - the assembled      |
-//| string is therefore identical to the original, line for line.     |
-//+------------------------------------------------------------------+
+// Read-only status-text aggregation for the EA orchestrator
+// Extracted verbatim from CEAOrchestrator::GetStatusReport(). The
+// method is pure string assembly over collaborator status text: it
+// reads no orchestrator state it does not receive, mutates nothing,
+// and is only consumed by the heartbeat log
+// Wiring: the orchestrator injects its collaborators once, from
+// WireAndValidateDependencies(). The volatile per-cycle counters
+// (call count, live position count, ...) cannot be captured by
+// pointer in MQL5, so they are passed per call - the assembled
+// string is therefore identical to the original, line for line.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_STATUS_REPORTER_MQH
@@ -29,13 +24,9 @@
 #include "../Registry/SymbolStateTracker.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
-//+------------------------------------------------------------------+
-//| COrchestratorStatusReporter                                      |
-//|                                                                  |
-//| Aggregates the status text of the orchestrator's collaborators.   |
-//| Holds borrowed pointers only - it owns nothing and deletes        |
-//| nothing.                                                          |
-//+------------------------------------------------------------------+
+// Aggregates the status text of the orchestrator's collaborators.
+// Holds borrowed pointers only - it owns nothing and deletes
+// nothing.
 class COrchestratorStatusReporter
 {
 private:
@@ -56,17 +47,12 @@ public:
 
     ~COrchestratorStatusReporter() {}
 
-    //+--------------------------------------------------------------+
-    //| SetManagers                                                  |
-    //|                                                              |
-    //| Injects the borrowed collaborators. Called once from          |
-    //| CEAOrchestrator::WireAndValidateDependencies().               |
-    //|                                                              |
-    //| registryAggregator - registry hub (math/inst/neural/draw/scan)|
-    //| liveAuthority      - AI-vs-indicator authority resolver       |
-    //| positionManager    - position lifecycle authority             |
-    //| primaryManager     - enterprise manager slot 0, may be NULL   |
-    //+--------------------------------------------------------------+
+// Injects the borrowed collaborators. Called once from
+// CEAOrchestrator::WireAndValidateDependencies().
+// registryAggregator - registry hub (math/inst/neural/draw/scan)
+// liveAuthority      - AI-vs-indicator authority resolver
+// positionManager    - position lifecycle authority
+// primaryManager     - enterprise manager slot 0, may be NULL
     void SetManagers(CRegistryAggregator*        registryAggregator,
                      CLiveAuthorityResolver*     liveAuthority,
                      CPositionManager*           positionManager,
@@ -78,14 +64,11 @@ public:
         m_primaryManager     = primaryManager;
     }
 
-    //+--------------------------------------------------------------+
-    //| Init                                                         |
-    //|                                                              |
-    //| SetManagers + validity check, for callers that want a         |
-    //| pass/fail result. Returns true when every non-optional        |
-    //| collaborator is present (primaryManager is optional, exactly  |
-    //| as the original NULL-guarded report section was).             |
-    //+--------------------------------------------------------------+
+// Init
+// SetManagers + validity check, for callers that want a
+// pass/fail result. Returns true when every non-optional
+// collaborator is present (primaryManager is optional, exactly
+// as the original NULL-guarded report section was).
     bool Init(CRegistryAggregator*        registryAggregator,
               CLiveAuthorityResolver*     liveAuthority,
               CPositionManager*           positionManager,
@@ -95,23 +78,17 @@ public:
         return IsWired();
     }
 
-    //+--------------------------------------------------------------+
-    //| ClearEnterpriseManager                                       |
-    //|                                                              |
-    //| Drops the borrowed enterprise-manager pointer. Called from    |
-    //| CEAOrchestrator::ReleaseEnterpriseManagers() so the cached    |
-    //| pointer cannot outlive the object it refers to; this mirrors  |
-    //| the original code, which re-read m_enterpriseManagers[0] on   |
-    //| every call and skipped the section once it was NULL.          |
-    //+--------------------------------------------------------------+
+// Drops the borrowed enterprise-manager pointer. Called from
+// CEAOrchestrator::ReleaseEnterpriseManagers() so the cached
+// pointer cannot outlive the object it refers to; this mirrors
+// the original code, which re-read m_enterpriseManagers[0] on
+// every call and skipped the section once it was NULL.
     void ClearEnterpriseManager()
     {
         m_primaryManager = NULL;
     }
 
-    //+--------------------------------------------------------------+
-    //| IsWired - true when the mandatory collaborators are present   |
-    //+--------------------------------------------------------------+
+// IsWired - true when the mandatory collaborators are present
     bool IsWired() const
     {
         return (m_registryAggregator != NULL &&
@@ -119,27 +96,22 @@ public:
                 m_positionManager    != NULL);
     }
 
-    //+--------------------------------------------------------------+
-    //| GetStatusReport                                              |
-    //|                                                              |
-    //| Assembles the heartbeat status text. Body moved verbatim from |
-    //| CEAOrchestrator::GetStatusReport(); the only change is that   |
-    //| the value members it used to read directly are now borrowed   |
-    //| pointers (hence the NULL guards on the two formerly           |
-    //| unconditional lines) and the per-cycle counters arrive as     |
-    //| arguments.                                                    |
-    //|                                                              |
-    //| systemInitialized - orchestrator init flag                    |
-    //| tradingEnabled    - orchestrator trading flag                 |
-    //| managerCount      - number of enterprise managers             |
-    //| callCount         - orchestrator cycle counter                |
-    //| scansAttempted    - heartbeat telemetry: scans attempted      |
-    //| signalsValidated  - heartbeat telemetry: signals validated    |
-    //| signalsSent       - heartbeat telemetry: signals sent         |
-    //| eaPositionCount   - live EA-owned position count              |
-    //| maxPositionsTotal - configured position cap                   |
-    //| returns           - the assembled multi-line status report    |
-    //+--------------------------------------------------------------+
+// Assembles the heartbeat status text. Body moved verbatim from
+// CEAOrchestrator::GetStatusReport(); the only change is that
+// the value members it used to read directly are now borrowed
+// pointers (hence the NULL guards on the two formerly
+// unconditional lines) and the per-cycle counters arrive as
+// arguments.
+// systemInitialized - orchestrator init flag
+// tradingEnabled    - orchestrator trading flag
+// managerCount      - number of enterprise managers
+// callCount         - orchestrator cycle counter
+// scansAttempted    - heartbeat telemetry: scans attempted
+// signalsValidated  - heartbeat telemetry: signals validated
+// signalsSent       - heartbeat telemetry: signals sent
+// eaPositionCount   - live EA-owned position count
+// maxPositionsTotal - configured position cap
+// returns           - the assembled multi-line status report
     string GetStatusReport(const bool  systemInitialized,
                            const bool  tradingEnabled,
                            const int   managerCount,

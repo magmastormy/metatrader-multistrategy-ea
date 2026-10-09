@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| TrainingMetrics.mqh                                              |
-//| Performance metrics calculation for training evaluation            |
-//+------------------------------------------------------------------+
+// Performance metrics calculation for training evaluation
 #ifndef MQH_TRAINING_METRICS_MQH
 #define MQH_TRAINING_METRICS_MQH
 

@@ -1,28 +1,22 @@
-//+------------------------------------------------------------------+
-//| TradeMgrSymbolTradeRegistry.mqh                                  |
-//| Per-symbol CTrade pool + magic offsets + EA-owned ticket cache   |
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
-//| This module OWNS three state blocks that used to live directly   |
-//| inside CTradeManager:                                            |
-//|   1. m_symbolTrades[] / m_symbolTradeCount   (L10-013)           |
-//|      one CTrade instance per symbol, so concurrent multi-symbol  |
-//|      sends never race on a single shared CTrade.                 |
-//|   2. m_magicOffsets[] / m_magicOffsetCount                       |
-//|      family-specific magic-number differentiation per symbol.    |
-//|   3. m_eaOwnedPositionTickets[] / m_eaOwnedPositionCount (L12-008)|
-//|      O(1) EA-owned position iteration cache.                     |
-//|                                                                  |
-//| STATE OWNERSHIP: CTradeManager holds this class BY VALUE and     |
-//| keeps thin forwarders with the original signatures, so every     |
-//| existing call site is textually unchanged.                       |
-//|                                                                  |
-//| NO BACK-POINTER: GetSymbolTrade() needs four CTradeManager       |
-//| configuration values (magic / slippage / fill mode / async mode).|
-//| They are passed in as parameters rather than read through a      |
-//| back-pointer, keeping this module free of any dependency on      |
-//| CTradeManager (same pattern as CPositionStateTracker).           |
-//+------------------------------------------------------------------+
+// Per-symbol CTrade pool + magic offsets + EA-owned ticket cache
+// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
+// This module OWNS three state blocks that used to live directly
+// inside CTradeManager:
+// 1. m_symbolTrades[] / m_symbolTradeCount   (L10-013)
+// one CTrade instance per symbol, so concurrent multi-symbol
+// sends never race on a single shared CTrade.
+// 2. m_magicOffsets[] / m_magicOffsetCount
+// family-specific magic-number differentiation per symbol.
+// 3. m_eaOwnedPositionTickets[] / m_eaOwnedPositionCount (L12-008)
+// O(1) EA-owned position iteration cache.
+// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
+// keeps thin forwarders with the original signatures, so every
+// existing call site is textually unchanged.
+// NO BACK-POINTER: GetSymbolTrade() needs four CTradeManager
+// configuration values (magic / slippage / fill mode / async mode).
+// They are passed in as parameters rather than read through a
+// back-pointer, keeping this module free of any dependency on
+// CTradeManager (same pattern as CPositionStateTracker).
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -49,9 +43,7 @@ struct SSymbolMagicOffset
     }
 };
 
-//+------------------------------------------------------------------+
-//| Trade Manager Symbol Trade Registry                              |
-//+------------------------------------------------------------------+
+// Trade Manager Symbol Trade Registry
 class CTradeMgrSymbolTradeRegistry
 {
 private:
@@ -83,9 +75,7 @@ public:
         ArrayResize(m_eaOwnedPositionTickets, 0);
     }
 
-    //+--------------------------------------------------------------+
-    //| Reset the per-symbol CTrade pool (called from Initialize)     |
-    //+--------------------------------------------------------------+
+// Reset the per-symbol CTrade pool (called from Initialize)
     void ResetSymbolTrades()
     {
         // L10-013: Initialize per-symbol CTrade array
@@ -93,17 +83,13 @@ public:
         ArrayResize(m_symbolTrades, 0);
     }
 
-    //+--------------------------------------------------------------+
-    //| Release dynamic magic-offset storage (called from Deinit/dtor)|
-    //+--------------------------------------------------------------+
+// Release dynamic magic-offset storage (called from Deinit/dtor)
     void FreeMagicOffsets()
     {
         ArrayFree(m_magicOffsets);
     }
 
-    //+--------------------------------------------------------------+
-    //| Get or create per-symbol CTrade instance (L10-013)           |
-    //+--------------------------------------------------------------+
+// Get or create per-symbol CTrade instance (L10-013)
     CTrade* GetSymbolTrade(const string symbol,
                            const long magicNumber,
                            const uint slippage,
@@ -141,9 +127,7 @@ public:
         return GetPointer(m_symbolTrades[m_symbolTradeCount - 1].trade);
     }
 
-    //+--------------------------------------------------------------+
-    //| L10-013: Update all per-symbol CTrade instances               |
-    //+--------------------------------------------------------------+
+// L10-013: Update all per-symbol CTrade instances
     void UpdatePerSymbolSlippage(const uint slippage)
     {
         for(int i = 0; i < m_symbolTradeCount; i++)
@@ -180,9 +164,6 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Per-symbol magic offsets                                      |
-    //+--------------------------------------------------------------+
     void SetMagicOffsetForSymbol(const string symbol, int offset)
     {
         // Find existing
@@ -220,9 +201,7 @@ public:
         return 0;
     }
 
-    //+--------------------------------------------------------------+
-    //| EA-owned position ticket cache helpers (L12-008)             |
-    //+--------------------------------------------------------------+
+// EA-owned position ticket cache helpers (L12-008)
     void AddEAOwnedPosition(ulong ticket)
     {
         if(ticket == 0) return;

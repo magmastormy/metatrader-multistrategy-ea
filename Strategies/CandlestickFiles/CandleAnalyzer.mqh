@@ -1,16 +1,10 @@
-//+------------------------------------------------------------------+
-//|                                              CandleAnalyzer.mqh  |
-//|                                 Candlestick Pattern Recognition  |
-//+------------------------------------------------------------------+
+// Candlestick Pattern Recognition
 #property copyright "Copyright 2024"
 #property link      ""
 #property strict
 
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Candle Properties Structure                                       |
-//+------------------------------------------------------------------+
 struct SCandleProperties
 {
     double open;
@@ -35,9 +29,6 @@ struct SCandleProperties
     double strength;
 };
 
-//+------------------------------------------------------------------+
-//| Candle Analyzer Class                                            |
-//+------------------------------------------------------------------+
 class CCandleAnalyzer
 {
 private:

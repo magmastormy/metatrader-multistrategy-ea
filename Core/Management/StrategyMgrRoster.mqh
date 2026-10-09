@@ -1,41 +1,33 @@
-//+------------------------------------------------------------------+
-//| Strategy Manager Roster (Phase G - G4)                            |
-//|                                                                   |
-//| Owns the registered-strategy roster that used to be loose state   |
-//| of CEnterpriseStrategyManager:                                    |
-//|   - StrategyEntry m_strategies[]  (the dynamic entry array)       |
-//|   - int           m_strategyCount (live entry count)              |
-//|   - int           m_maxStrategies (hard capacity gate, 25)        |
-//|                                                                   |
-//| together with EVERY narrow per-field accessor the Phase C slice   |
-//| modules already used (they keep calling the manager, whose        |
-//| accessors are now one-line forwarders into this object), the      |
-//| 35-field append block and the roster teardown loops.              |
-//|                                                                   |
-//| *** BEHAVIOUR CONTRACT ***                                        |
-//| Every body below is a byte-for-byte relocation of the manager's   |
-//| original inline body, including the bounds checks, the fallback   |
-//| return values and the deliberate "does NOT push to the IStrategy  |
-//| object" semantics of SetStrategyEnabledFlag. The ONLY signature   |
-//| adjustments are:                                                  |
-//|   - GetStrategyTimeframe() takes the manager's base timeframe as  |
-//|     an explicit `fallback` argument (the roster does not own it); |
-//|   - AppendRegisteredStrategyEntry() takes the health monitor as   |
-//|     an explicit argument so the original ordering                 |
-//|     (fill entry -> RegisterStrategy(weight) -> ++count) is        |
-//|     preserved exactly.                                            |
-//| Neither is observable: both manager forwarders supply the value   |
-//| the original body read from its own member.                       |
-//|                                                                   |
-//| This module deliberately has NO back-pointer to the manager: it   |
-//| is a leaf value object, held BY VALUE, and never observes manager |
-//| state.                                                            |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Manager Roster (Phase G - G4)
+// Owns the registered-strategy roster that used to be loose state
+// - StrategyEntry m_strategies[]  (the dynamic entry array)
+// - int           m_strategyCount (live entry count)
+// - int           m_maxStrategies (hard capacity gate, 25)
+// together with EVERY narrow per-field accessor the Phase C slice
+// modules already used (they keep calling the manager, whose
+// accessors are now one-line forwarders into this object), the
+// 35-field append block and the roster teardown loops.
+// *** BEHAVIOUR CONTRACT ***
+// Every body below is a byte-for-byte relocation of the manager's
+// original inline body, including the bounds checks, the fallback
+// return values and the deliberate "does NOT push to the IStrategy
+// object" semantics of SetStrategyEnabledFlag. The ONLY signature
+// adjustments are:
+// - GetStrategyTimeframe() takes the manager's base timeframe as
+// an explicit `fallback` argument (the roster does not own it);
+// - AppendRegisteredStrategyEntry() takes the health monitor as
+// an explicit argument so the original ordering
+// (fill entry -> RegisterStrategy(weight) -> ++count) is
+// preserved exactly.
+// Neither is observable: both manager forwarders supply the value
+// the original body read from its own member.
+// This module deliberately has NO back-pointer to the manager: it
+// is a leaf value object, held BY VALUE, and never observes manager
+// state.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_MGR_ROSTER_MQH
 #define STRATEGY_MGR_ROSTER_MQH
 
@@ -47,9 +39,7 @@
 //--- the originals.
 #define STRATEGY_ROSTER_RECENT_TRADE_SLOTS 20
 
-//+------------------------------------------------------------------+
-//| Registered strategy roster (pure storage + narrow accessors)      |
-//+------------------------------------------------------------------+
+// Registered strategy roster (pure storage + narrow accessors)
 class CStrategyMgrRoster
 {
 private:
@@ -237,9 +227,7 @@ public:
     void ClearRoster();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - relocated from the manager's initialiser list       |
-//+------------------------------------------------------------------+
+// Constructor - relocated from the manager's initialiser list
 CStrategyMgrRoster::CStrategyMgrRoster() :
     m_strategyCount(0),
     m_maxStrategies(25)
@@ -247,9 +235,7 @@ CStrategyMgrRoster::CStrategyMgrRoster() :
     ArrayResize(m_strategies, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Name -> index lookup (-1 when absent)                             |
-//+------------------------------------------------------------------+
+// Name -> index lookup (-1 when absent)
 int CStrategyMgrRoster::FindStrategyIndexByName(const string name) const
 {
     for(int i = 0; i < m_strategyCount; i++)
@@ -260,9 +246,7 @@ int CStrategyMgrRoster::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Narrow raw weight mutator (C4)                                    |
-//+------------------------------------------------------------------+
+// Narrow raw weight mutator (C4)
 void CStrategyMgrRoster::ApplyRawStrategyWeight(const int index, const double weight)
 {
     if(index < 0 || index >= m_strategyCount)
@@ -272,10 +256,8 @@ void CStrategyMgrRoster::ApplyRawStrategyWeight(const int index, const double we
         m_strategies[index].strategy.SetWeight(weight);
 }
 
-//+------------------------------------------------------------------+
-//| 35-field StrategyEntry append                                     |
-//| Mirrors the original RegisterStrategy append block exactly.       |
-//+------------------------------------------------------------------+
+// 35-field StrategyEntry append
+// Mirrors the original RegisterStrategy append block exactly.
 void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                                        double weight, ENUM_STRATEGY_TIER tier,
                                                        ENUM_TIMEFRAMES resolvedTf,
@@ -337,12 +319,10 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategyCount++;
 }
 
-//+------------------------------------------------------------------+
-//| By-name weight mutator (relocated verbatim)                       |
-//| Original: CEnterpriseStrategyManager::UpdateStrategyWeightByName  |
-//| The health monitor is supplied by the caller because the roster   |
-//| does not own it; everything else is byte-identical.               |
-//+------------------------------------------------------------------+
+// By-name weight mutator (relocated verbatim)
+// Original: CEnterpriseStrategyManager::UpdateStrategyWeightByName
+// The health monitor is supplied by the caller because the roster
+// does not own it; everything else is byte-identical.
 bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const double weight,
                                                     CStrategyHealthMonitor* healthMonitor)
 {
@@ -362,11 +342,8 @@ bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const dou
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| By-name confidence threshold mutator (relocated verbatim)         |
-//| Original: CEnterpriseStrategyManager::                            |
-//|           SetStrategyConfidenceThresholdByName                    |
-//+------------------------------------------------------------------+
+// By-name confidence threshold mutator (relocated verbatim)
+// Original: CEnterpriseStrategyManager::
 bool CStrategyMgrRoster::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
     int index = FindStrategyIndexByName(name);
@@ -380,9 +357,7 @@ bool CStrategyMgrRoster::SetStrategyConfidenceThresholdByName(const string name,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Clean up strategies with explicit Deinit call                     |
-//+------------------------------------------------------------------+
+// Clean up strategies with explicit Deinit call
 void CStrategyMgrRoster::DeleteAllStrategies()
 {
     for(int i = 0; i < m_strategyCount; i++)
@@ -396,9 +371,7 @@ void CStrategyMgrRoster::DeleteAllStrategies()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Reset the roster (Deinit only)                                    |
-//+------------------------------------------------------------------+
+// Reset the roster (Deinit only)
 void CStrategyMgrRoster::ClearRoster()
 {
     m_strategyCount = 0;

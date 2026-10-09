@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SymbolUniverseBuilder.mqh                                        |
-//| Validates and builds the active trading symbol universe          |
-//+------------------------------------------------------------------+
+// Validates and builds the active trading symbol universe
 #ifndef SYMBOL_UNIVERSE_BUILDER_MQH
 #define SYMBOL_UNIVERSE_BUILDER_MQH
 
@@ -34,7 +31,6 @@ private:
             // For Deriv synthetic indices: compare the index number/name
             if(StringFind(symUpper, "VOLATILITY") >= 0 && StringFind(existingUpper, "VOLATILITY") >= 0)
             {
-                // Extract index number: "Volatility 25 Index" -> 25
                 int symNum = ExtractVolatilityIndex(symUpper);
                 int existingNum = ExtractVolatilityIndex(existingUpper);
                 if(symNum > 0 && symNum == existingNum)

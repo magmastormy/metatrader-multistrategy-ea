@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| MeanReversionStrategy.mqh                                        |
-//| Institutional Mean Reversion Strategy                            |
-//| Bollinger Bands + RSI + Volume Confirmation                      |
-//| Copyright 2026, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Institutional Mean Reversion Strategy
+// Bollinger Bands + RSI + Volume Confirmation
+// Copyright 2026, Multi-Strategy EA
 #ifndef MEAN_REVERSION_STRATEGY_MQH
 #define MEAN_REVERSION_STRATEGY_MQH
 
@@ -14,9 +11,7 @@
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
-//+------------------------------------------------------------------+
-//| Mean Reversion Entry Types                                       |
-//+------------------------------------------------------------------+
+// Mean Reversion Entry Types
 enum ENUM_MR_ENTRY_TYPE
 {
     MR_ENTRY_NONE = 0,
@@ -25,9 +20,6 @@ enum ENUM_MR_ENTRY_TYPE
     MR_ENTRY_DOUBLE_SIGNAL  // BB touch + RSI extreme (highest confidence)
 };
 
-//+------------------------------------------------------------------+
-//| Mean Reversion Signal Structure                                  |
-//+------------------------------------------------------------------+
 struct SMeanReversionSignal
 {
     ENUM_MR_ENTRY_TYPE entryType;
@@ -48,10 +40,7 @@ struct SMeanReversionSignal
         reason("") {}
 };
 
-//+------------------------------------------------------------------+
-//| Mean Reversion Strategy Class                                    |
-//| Institutional approach: Fade extremes with confirmation          |
-//+------------------------------------------------------------------+
+// Institutional approach: Fade extremes with confirmation
 class CMeanReversionStrategy : public CStrategyBase
 {
 private:
@@ -84,7 +73,6 @@ private:
     int m_signalsGenerated;
 
 public:
-    // Constructor
     CMeanReversionStrategy(const string name = "Mean Reversion v2.0", int magic = 0) :
         CStrategyBase(name, magic),
         m_bbHandle(INVALID_HANDLE),
@@ -129,7 +117,6 @@ public:
                 if(m_syntheticBbHandle != INVALID_HANDLE) { IndicatorRelease(m_syntheticBbHandle); m_syntheticBbHandle = INVALID_HANDLE; }
     }
     
-    // Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
@@ -158,7 +145,6 @@ public:
                 return true;
     }
     
-    // Deinitialization
     virtual void Deinit() override
     {
         Cleanup();
@@ -328,7 +314,6 @@ public:
         return signal.direction;
     }
     
-    // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_MEAN_REVERSION; }
 
     // Set Hurst engine for regime lockout (v2.0)
@@ -337,11 +322,9 @@ public:
     // Set synthetic mode for synthetic indices (Batch 105)
     void SetSyntheticMode(bool enabled) { m_isSynthetic = enabled; }
 
-    //+------------------------------------------------------------------+
-    //| Synthetic mode signal generation (Batch 105)                     |
-    //| Simplified for synthetic indices: BB touch + spike detection     |
-    //| No RSI, no volume filters, uses 1.5σ BB                         |
-    //+------------------------------------------------------------------+
+// Synthetic mode signal generation (Batch 105)
+// Simplified for synthetic indices: BB touch + spike detection
+// No RSI, no volume filters, uses 1.5σ BB
     ENUM_TRADE_SIGNAL GetSignalSynthetic(double &confidence)
     {
         confidence = 0.0;
@@ -617,7 +600,6 @@ private:
         return -1.0;
     }
     
-    // Detect mean reversion signal
     SMeanReversionSignal DetectMeanReversionSignal(
         double price, double prevPrice,
         double bbUpper, double bbMiddle, double bbLower,
@@ -767,7 +749,6 @@ private:
             return signal;
         }
         
-        // No signal
         return signal;
     }
 };

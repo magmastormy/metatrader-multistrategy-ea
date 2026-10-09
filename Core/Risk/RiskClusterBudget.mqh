@@ -1,29 +1,19 @@
-//+------------------------------------------------------------------+
-//| RiskClusterBudget.mqh                                            |
-//| Per-cluster risk-cap registry (Fix #11).                         |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E2, E-D):     |
-//|   m_clusterRiskCapCodes[] / m_clusterRiskCapValues[]             |
-//|   CUnifiedRiskManager::SetClusterRiskCap -> SetClusterRiskCap    |
-//|   inline lookup in ValidateClusterGovernance -> GetClusterRiskCap|
-//|                                                                  |
-//| Behaviour is byte-identical to the original inline code;         |
-//| CUnifiedRiskManager keeps a thin forwarder with the original     |
-//| signature so that all call sites remain unchanged.               |
-//|                                                                  |
-//| OWNERSHIP NOTE: the *global* default cap (m_maxClusterRiskPercent|
-//| configured through ConfigureClusterGovernance) intentionally     |
-//| stays in CUnifiedRiskManager and is handed to GetClusterRiskCap  |
-//| as the `defaultCapPercent` fallback argument.                    |
-//+------------------------------------------------------------------+
+// Per-cluster risk-cap registry (Fix #11).
+// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-D):
+// inline lookup in ValidateClusterGovernance -> GetClusterRiskCap
+// Behaviour is byte-identical to the original inline code;
+// CUnifiedRiskManager keeps a thin forwarder with the original
+// signature so that all call sites remain unchanged.
+// OWNERSHIP NOTE: the *global* default cap (m_maxClusterRiskPercent
+// configured through ConfigureClusterGovernance) intentionally
+// stays in CUnifiedRiskManager and is handed to GetClusterRiskCap
+// as the `defaultCapPercent` fallback argument.
 #ifndef CORE_RISK_RISK_CLUSTER_BUDGET_MQH
 #define CORE_RISK_RISK_CLUSTER_BUDGET_MQH
 
 #include "RiskClusterCodec.mqh"
 
-//+------------------------------------------------------------------+
-//| Per-cluster risk cap registry (stateful, owned by value)         |
-//+------------------------------------------------------------------+
+// Per-cluster risk cap registry (stateful, owned by value)
 class CRiskClusterBudget
 {
 private:

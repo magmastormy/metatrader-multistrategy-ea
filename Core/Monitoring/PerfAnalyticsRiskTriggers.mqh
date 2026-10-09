@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| PerfAnalyticsRiskTriggers.mqh                                    |
-//| Performance trigger evaluation, risk-level classification and    |
-//| parameter adjustment recommendations.                            |
-//| Extracted verbatim from PerformanceAnalytics.mqh.                |
-//+------------------------------------------------------------------+
+// Performance trigger evaluation, risk-level classification and
+// parameter adjustment recommendations.
+// Extracted verbatim from PerformanceAnalytics.mqh.
 #ifndef CORE_PERF_ANALYTICS_RISKTRIGGERS_MQH
 #define CORE_PERF_ANALYTICS_RISKTRIGGERS_MQH
 
 #include "PerfAnalyticsTypes.mqh"
 #include "PerfAnalyticsTradeStats.mqh"
 
-//+------------------------------------------------------------------+
-//| Performance triggers and risk assessment                         |
-//+------------------------------------------------------------------+
+// Performance triggers and risk assessment
 class CPerfAnalyticsRiskTriggers
 {
 private:
@@ -22,9 +17,7 @@ private:
     bool m_performanceAcceptable;
 
 public:
-    //+--------------------------------------------------------------+
-    //| Constructor                                                  |
-    //+--------------------------------------------------------------+
+// Constructor
     CPerfAnalyticsRiskTriggers(void) :
         m_needsRiskReduction(false),
         m_needsParameterAdjustment(false),
@@ -32,9 +25,6 @@ public:
     {
     }
 
-    //+--------------------------------------------------------------+
-    //| Check Performance Triggers                                   |
-    //+--------------------------------------------------------------+
     void CheckPerformanceTriggers(const CPerfAnalyticsTradeStats &stats, const double currentDrawdown)
     {
         if(stats.GetTotalTrades() < MIN_TRADES_FOR_STATS) return;
@@ -86,9 +76,6 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Recommended Risk Reduction                               |
-    //+--------------------------------------------------------------+
     double GetRecommendedRiskReduction(const CPerfAnalyticsTradeStats &stats, const double currentDrawdown) const
     {
         if(!m_needsRiskReduction) return 1.0; // No reduction needed
@@ -114,9 +101,6 @@ public:
         return MathMax(reductionFactor, 0.1); // Minimum 10% of original risk
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Recommended Confidence Threshold                         |
-    //+--------------------------------------------------------------+
     double GetRecommendedConfidenceThreshold(const CPerfAnalyticsTradeStats &stats) const
     {
         double baseThreshold = 0.65; // Default threshold
@@ -138,9 +122,6 @@ public:
         return baseThreshold;
     }
 
-    //+--------------------------------------------------------------+
-    //| Should Enable Conservative Mode                              |
-    //+--------------------------------------------------------------+
     bool ShouldEnableConservativeMode(const CPerfAnalyticsTradeStats &stats, const double currentDrawdown) const
     {
         if(stats.GetTotalTrades() < MIN_TRADES_FOR_STATS) return false;
@@ -157,9 +138,7 @@ public:
         return triggerCount >= 2; // Conservative mode if 2+ triggers
     }
 
-    //+--------------------------------------------------------------+
-    //| Check if Performance is Acceptable                           |
-    //+--------------------------------------------------------------+
+// Check if Performance is Acceptable
     bool IsPerformanceAcceptable(const CPerfAnalyticsTradeStats &stats, const double maxDrawdown) const
     {
         if(stats.GetTotalTrades() < MIN_TRADES_FOR_STATS)
@@ -178,9 +157,6 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Current Risk Level                                       |
-    //+--------------------------------------------------------------+
     ENUM_RISK_LEVEL GetCurrentRiskLevel(const CPerfAnalyticsTradeStats &stats, const double currentDrawdown) const
     {
         if(currentDrawdown > DRAWDOWN_CRITICAL)
@@ -193,9 +169,7 @@ public:
             return RISK_LEVEL_LOW;
     }
 
-    //+--------------------------------------------------------------+
-    //| Accessors                                                    |
-    //+--------------------------------------------------------------+
+// Accessors
     bool NeedsRiskReduction(void) const { return m_needsRiskReduction; }
     bool NeedsParameterAdjustment(void) const { return m_needsParameterAdjustment; }
     bool IsPerformanceFlagAcceptable(void) const { return m_performanceAcceptable; }

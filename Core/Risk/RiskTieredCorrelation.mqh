@@ -1,44 +1,22 @@
-//+------------------------------------------------------------------+
-//| RiskTieredCorrelation.mqh                                        |
-//| Tiered correlation logic: threshold config, correlation risk     |
-//| calculation, and portfolio correlation enforcement.              |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E3, A):       |
-//|   correlationThreshold, correlationReduceThreshold,              |
-//|   correlationBlockThreshold (from SUnifiedRiskConfig)            |
-//|   CUnifiedRiskManager::ValidateCorrelationLimits                 |
-//|       -> ValidateCorrelationLimits                               |
-//|   CUnifiedRiskManager::CalculateCorrelationRisk                  |
-//|       -> CalculateCorrelationRisk                                |
-//|   CUnifiedRiskManager::CalculateSymbolCorrelation                |
-//|       -> CalculateSymbolCorrelation                              |
-//|   CUnifiedRiskManager::GetMaxCorrelationWithPortfolio            |
-//|       -> GetMaxCorrelationWithPortfolio                          |
-//|   CUnifiedRiskManager::GetSymbolCorrelation                      |
-//|       -> GetSymbolCorrelation                                    |
-//|   CUnifiedRiskManager::PortfolioCorrelationAllowed               |
-//|       -> PortfolioCorrelationAllowed                             |
-//|                                                                  |
-//| Behaviour is byte-identical to the original member functions;    |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| signatures so that all call sites remain unchanged.              |
-//|                                                                  |
-//| OWNERSHIP NOTE: maxPositionsSameBase and eaMagicNumber change at |
-//| runtime (ApplyTierOverrides / SetEAMagicNumber), so they are     |
-//| passed as parameters from the forwarder rather than cached.      |
-//| The CPortfolioRiskManager pointer is stable for URM's lifetime   |
-//| (URM owns m_portfolioRiskManager by value) and is set once via   |
-//| SetPortfolioRiskManager from URM's constructor body.             |
-//+------------------------------------------------------------------+
+// Tiered correlation logic: threshold config, correlation risk
+// calculation, and portfolio correlation enforcement.
+// Extracted verbatim from CUnifiedRiskManager (Phase E3, A):
+// Behaviour is byte-identical to the original member functions;
+// CUnifiedRiskManager keeps thin forwarders with the original
+// signatures so that all call sites remain unchanged.
+// OWNERSHIP NOTE: maxPositionsSameBase and eaMagicNumber change at
+// runtime (ApplyTierOverrides / SetEAMagicNumber), so they are
+// passed as parameters from the forwarder rather than cached.
+// The CPortfolioRiskManager pointer is stable for URM's lifetime
+// (URM owns m_portfolioRiskManager by value) and is set once via
+// SetPortfolioRiskManager from URM's constructor body.
 #ifndef CORE_RISK_RISK_TIERED_CORRELATION_MQH
 #define CORE_RISK_RISK_TIERED_CORRELATION_MQH
 
 #include "PortfolioRiskManager.mqh"
 #include "CorrelationEngine.mqh"
 
-//+------------------------------------------------------------------+
-//| Tiered correlation monitor (stateful config holder, owned by value)|
-//+------------------------------------------------------------------+
+// Tiered correlation monitor (stateful config holder, owned by value)
 class CRiskTieredCorrelation
 {
 private:
@@ -81,11 +59,9 @@ public:
         m_portfolioRiskManager = prm;
     }
 
-    //+--------------------------------------------------------------+
-    //| Validate correlation limits for a trade request               |
-    //| maxPositionsSameBase and eaMagicNumber are passed from the    |
-    //| forwarder because they change at runtime.                    |
-    //+--------------------------------------------------------------+
+// Validate correlation limits for a trade request
+// maxPositionsSameBase and eaMagicNumber are passed from the
+// forwarder because they change at runtime.
     bool ValidateCorrelationLimits(const string symbol,
                                    string &message,
                                    double &correlationRisk,
@@ -149,9 +125,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate max correlation risk of a symbol vs open positions  |
-    //+--------------------------------------------------------------+
+// Calculate max correlation risk of a symbol vs open positions
     double CalculateCorrelationRisk(const string symbolParam)
     {
         double maxCorrelation = 0.0;
@@ -173,9 +147,7 @@ public:
         return maxCorrelation;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate correlation between two symbols via the engine      |
-    //+--------------------------------------------------------------+
+// Calculate correlation between two symbols via the engine
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2)
     {
         // Delegate to unified correlation engine via portfolio risk manager
@@ -190,18 +162,14 @@ public:
         return 1.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Get max correlation with portfolio (alias for above)          |
-    //+--------------------------------------------------------------+
+// Get max correlation with portfolio (alias for above)
     double GetMaxCorrelationWithPortfolio(const string symbolParam)
     {
         // This is an alias for CalculateCorrelationRisk
         return CalculateCorrelationRisk(symbolParam);
     }
 
-    //+--------------------------------------------------------------+
-    //| Get correlation between two symbols (direct engine lookup)    |
-    //+--------------------------------------------------------------+
+// Get correlation between two symbols (direct engine lookup)
     double GetSymbolCorrelation(const string symbol1, const string symbol2)
     {
         // Delegate to unified correlation engine via portfolio risk manager
@@ -216,9 +184,7 @@ public:
         return 1.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Check if portfolio correlation allows a new symbol            |
-    //+--------------------------------------------------------------+
+// Check if portfolio correlation allows a new symbol
     bool PortfolioCorrelationAllowed(const string symbolParam)
     {
         if(m_portfolioRiskManager == NULL)

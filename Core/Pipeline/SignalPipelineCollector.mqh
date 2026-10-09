@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Collector - structural evidence collection       |
-//| Owns cache + engine evidence refresh (extracted, stateless).     |
-//+------------------------------------------------------------------+
+// Signal Pipeline Collector - structural evidence collection
+// Owns cache + engine evidence refresh (extracted, stateless).
 #ifndef SIGNAL_PIPELINE_COLLECTOR_MQH
 #define SIGNAL_PIPELINE_COLLECTOR_MQH
 
@@ -28,7 +26,6 @@ static void RefreshEvidenceFromEngines(CMathematicalEngineRegistry* m_mathRegist
     m_lastEvidence.stalenessSeconds = 0;
     m_lastEvidence.stalenessPenalty = 0.0;
 
-    // Get engines from registry
     CTrendEngine* trendEngine = m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL;
     CStructureEngine* structureEngine = m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL;
     CLiquidityEngine* liquidityEngine = m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL;

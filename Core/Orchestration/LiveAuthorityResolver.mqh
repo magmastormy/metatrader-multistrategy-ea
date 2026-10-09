@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| LiveAuthorityResolver.mqh                                        |
-//| Resolves AI vs indicator authority for live trading              |
-//+------------------------------------------------------------------+
+// Resolves AI vs indicator authority for live trading
 #property strict
 
 #ifndef CORE_ORCHESTRATION_LIVE_AUTHORITY_RESOLVER_MQH

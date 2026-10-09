@@ -1,20 +1,15 @@
-//+------------------------------------------------------------------+
-//| BasketEquityStop.mqh                                             |
-//| Theme 3 (MQL5 article 23662): basket-level equity stop.          |
-//|                                                                  |
-//| Tracks the account equity PEAK and current drawdown %. When DD   |
-//| from peak exceeds a configurable threshold it:                    |
-//|   (a) halts new entries (consumed by the EA's canOpenNewTrades   |
-//|       gate), and optionally                                      |
-//|   (b) sweeps ONLY this EA's basket (magic-filtered) so manual /  |
-//|       other-EA positions are never touched (unlike              |
-//|       CTradeManager::CloseAllPositions which is account-wide and  |
-//|       magic-unfiltered).                                          |
-//|                                                                  |
-//| ADDITIVE: it does NOT touch consensus, candidate building, or    |
-//| position sizing. The only influence on entry flow is the single  |
-//| OR-term on canOpenNewTrades.                                      |
-//+------------------------------------------------------------------+
+// Theme 3 (MQL5 article 23662): basket-level equity stop.
+// Tracks the account equity PEAK and current drawdown %. When DD
+// from peak exceeds a configurable threshold it:
+// (a) halts new entries (consumed by the EA's canOpenNewTrades
+// gate), and optionally
+// (b) sweeps ONLY this EA's basket (magic-filtered) so manual /
+// other-EA positions are never touched (unlike
+// CTradeManager::CloseAllPositions which is account-wide and
+// magic-unfiltered).
+// ADDITIVE: it does NOT touch consensus, candidate building, or
+// position sizing. The only influence on entry flow is the single
+// OR-term on canOpenNewTrades.
 #property strict
 
 #ifndef CORE_RISK_BASKET_EQUITY_STOP_MQH

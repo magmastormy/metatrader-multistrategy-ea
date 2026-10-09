@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingHealth.mqh                                          |
-//| Component health tracking, error counters/stats and emergency    |
-//| handling. Extracted verbatim from ErrorHandling.mqh.             |
-//+------------------------------------------------------------------+
+// Component health tracking, error counters/stats and emergency
+// handling. Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_HEALTH_MQH
 #define CORE_ERROR_HANDLING_HEALTH_MQH
 
 #include "ErrorHandlingTypes.mqh"
 #include "ErrorHandlingCore.mqh"
 
-//+------------------------------------------------------------------+
-//| Update component health status with enhanced tracking           |
-//+------------------------------------------------------------------+
+// Update component health status with enhanced tracking
 void CEnhancedErrorHandler::UpdateComponentHealthBySeverity(const string component, const ENUM_ERROR_SEVERITY severity)
 {
     if(component == "") {

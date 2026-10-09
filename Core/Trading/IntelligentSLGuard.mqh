@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| IntelligentSLGuard.mqh                                           |
-//| Guards SL modifications against predictable wicks and noise       |
-//| Implements Component 2 from sl_issue.md                          |
-//+------------------------------------------------------------------+
+// Guards SL modifications against predictable wicks and noise
+// Implements Component 2 from sl_issue.md
 #ifndef CORE_TRADING_INTELLIGENT_SL_GUARD_MQH
 #define CORE_TRADING_INTELLIGENT_SL_GUARD_MQH
 

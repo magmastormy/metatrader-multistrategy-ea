@@ -1,15 +1,11 @@
-//+------------------------------------------------------------------+
-//| PositionLifecycleManager.mqh                                      |
-//| Encapsulates position lifecycle management extracted from          |
-//| MultiStrategyAutonomousEA.mq5 ManageOpenPositionsIfNeeded()       |
-//| Blueprint Section 10.1 — Monolith Decomposition (R6a)            |
-//|                                                                   |
-//| Phase H decomposition: the pyramiding registry, volatility-regime |
-//| / dynamic SL-TP engine, loss-minimisation guard and scheduled     |
-//| exit rules now live in dedicated PosLifecycle* modules that are   |
-//| held BY VALUE below. Every public method kept its original        |
-//| signature and is a thin, zero-behaviour-change forwarder.         |
-//+------------------------------------------------------------------+
+// Encapsulates position lifecycle management extracted from
+// MultiStrategyAutonomousEA.mq5 ManageOpenPositionsIfNeeded()
+// Blueprint Section 10.1 — Monolith Decomposition (R6a)
+// Phase H decomposition: the pyramiding registry, volatility-regime
+// / dynamic SL-TP engine, loss-minimisation guard and scheduled
+// exit rules now live in dedicated PosLifecycle* modules that are
+// held BY VALUE below. Every public method kept its original
+// signature and is a thin, zero-behaviour-change forwarder.
 #ifndef POSITION_LIFECYCLE_MANAGER_MQH
 #define POSITION_LIFECYCLE_MANAGER_MQH
 
@@ -66,7 +62,6 @@ private:
         int    m_magicNumber;
         int    m_maxClusterCode;  // L7-008: Dynamic max cluster code from MagicNumberAllocator
 
-        // I2: Intelligent SL Guard
     CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
 
@@ -222,7 +217,6 @@ public:
             return !IsEngineManagedPosition(PositionGetString(POSITION_COMMENT));
         }
 
-    //--- Get enterprise manager for a symbol
     CEnterpriseStrategyManager* GetManagerForSymbol(const string symbol)
     {
         for(int i = 0; i < m_symbolCount; i++)

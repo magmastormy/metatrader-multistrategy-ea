@@ -1,16 +1,10 @@
-//+------------------------------------------------------------------+
-//| FullMarginMode.mqh                                               |
-//| Full-margin aggressive mode: position stacking, stricter circuit  |
-//| breaker, session lockout safeguards                               |
-//+------------------------------------------------------------------+
+// Full-margin aggressive mode: position stacking, stricter circuit
+// breaker, session lockout safeguards
 #ifndef CORE_RISK_FULL_MARGIN_MODE_MQH
 #define CORE_RISK_FULL_MARGIN_MODE_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Full-margin configuration                                         |
-//+------------------------------------------------------------------+
 struct SFullMarginConfig
 {
    int      maxStackedPositions;     // Max stacked positions per symbol (3)
@@ -41,9 +35,7 @@ struct SFullMarginConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Full-margin breach tracking per day                               |
-//+------------------------------------------------------------------+
+// Full-margin breach tracking per day
 struct SFullMarginBreachState
 {
    int      breachCount;             // Number of DD breaches today
@@ -62,9 +54,7 @@ struct SFullMarginBreachState
    }
 };
 
-//+------------------------------------------------------------------+
-//| CFullMarginMode — Full-margin aggressive mode controller          |
-//+------------------------------------------------------------------+
+// CFullMarginMode — Full-margin aggressive mode controller
 class CFullMarginMode
 {
 private:
@@ -72,9 +62,7 @@ private:
    SFullMarginBreachState m_breachState;
    bool                 m_initialized;
 
-   //+------------------------------------------------------------------+
-   //| Reset breach state on new trading day                             |
-   //+------------------------------------------------------------------+
+// Reset breach state on new trading day
    void CheckDailyReset()
    {
       datetime now = TimeCurrent();
@@ -103,9 +91,6 @@ public:
 
    bool IsInitialized() const { return m_initialized; }
 
-   //+------------------------------------------------------------------+
-   //| Initialize with config                                            |
-   //+------------------------------------------------------------------+
    bool Initialize(const SFullMarginConfig &config)
    {
       m_config = config;
@@ -126,9 +111,6 @@ public:
    SFullMarginConfig GetConfig() const { return m_config; }
    SFullMarginBreachState GetBreachState() const { return m_breachState; }
 
-   //+------------------------------------------------------------------+
-   //| Count positions by symbol and direction                           |
-   //+------------------------------------------------------------------+
    int CountPositionsBySymbolAndDirection(string symbol, ENUM_TRADE_SIGNAL direction) const
    {
       int count = 0;
@@ -149,10 +131,8 @@ public:
       return count;
    }
 
-   //+------------------------------------------------------------------+
-   //| Can we stack another position on this symbol+direction?           |
-   //| All existing positions must be in profit to allow stacking.       |
-   //+------------------------------------------------------------------+
+// Can we stack another position on this symbol+direction?
+// All existing positions must be in profit to allow stacking.
    bool CanStackPosition(string symbol, ENUM_TRADE_SIGNAL direction) const
    {
       if(!m_initialized)
@@ -195,10 +175,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get stacked lot size: baseLot * scale^level                      |
-   //| Batch 120: Added symbol parameter for multi-symbol support       |
-   //+------------------------------------------------------------------+
+// Get stacked lot size: baseLot * scale^level
+// Batch 120: Added symbol parameter for multi-symbol support
    double GetStackedLotSize(double baseLot, int stackLevel, const string symbol = "") const
    {
       if(stackLevel <= 0)
@@ -210,19 +188,14 @@ public:
       return MathMax(lot, minLot);
    }
 
-   //+------------------------------------------------------------------+
-   //| Get current stack level for a symbol+direction                    |
-   //+------------------------------------------------------------------+
+// Get current stack level for a symbol+direction
    int GetStackLevel(string symbol, ENUM_TRADE_SIGNAL direction) const
    {
       return CountPositionsBySymbolAndDirection(symbol, direction);
    }
 
-   //+------------------------------------------------------------------+
-   //| Full-margin circuit breaker check                                 |
-   //| Stricter than standard: DD warning at 5%, critical at 10%        |
-   //| Returns: true if trading is allowed, false if halted              |
-   //+------------------------------------------------------------------+
+// Stricter than standard: DD warning at 5%, critical at 10%
+// Returns: true if trading is allowed, false if halted
    bool CheckFullMarginCircuitBreaker(double currentDrawdownPct)
    {
       if(!m_initialized)
@@ -301,9 +274,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Is the full-margin mode currently in cooldown?                    |
-   //+------------------------------------------------------------------+
+// Is the full-margin mode currently in cooldown?
    bool IsInCooldown() const
    {
       if(m_breachState.cooldownUntil <= 0)
@@ -311,9 +282,7 @@ public:
       return (TimeCurrent() < m_breachState.cooldownUntil);
    }
 
-   //+------------------------------------------------------------------+
-   //| Is the session locked (full-margin disabled for the day)?         |
-   //+------------------------------------------------------------------+
+// Is the session locked (full-margin disabled for the day)?
    bool IsSessionLocked() const
    {
       if(!m_breachState.sessionLocked)
@@ -328,9 +297,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Full-margin spread gate: stricter than normal (20% ATR vs 30%)   |
-   //+------------------------------------------------------------------+
+// Full-margin spread gate: stricter than normal (20% ATR vs 30%)
    bool IsSpreadAcceptable(string symbol, double atrValue) const
    {
       if(atrValue <= 0.0)
@@ -345,10 +312,8 @@ public:
       return (spreadPrice <= m_config.maxSpreadATRRatio * atrValue);
    }
 
-   //+------------------------------------------------------------------+
-   //| Full-margin mandatory safeguard check                             |
-   //| Returns true if all safeguards are satisfied for a new entry      |
-   //+------------------------------------------------------------------+
+// Full-margin mandatory safeguard check
+// Returns true if all safeguards are satisfied for a new entry
    bool CheckSafeguards(string symbol, double atrValue) const
    {
       if(!m_initialized)
@@ -395,9 +360,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Print full-margin diagnostics                                     |
-   //+------------------------------------------------------------------+
+// Print full-margin diagnostics
    void PrintDiagnostics() const
    {
       PrintFormat("[FULL-MARGIN-DIAG] initialized=%s | sessionLocked=%s | cooldown=%s | breaches=%d/%d | maxStack=%d | lotScale=%.2f | spreadATR=%.2f",

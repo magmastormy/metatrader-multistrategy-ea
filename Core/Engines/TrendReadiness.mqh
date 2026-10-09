@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendReadiness.mqh - Readiness state + last-good-trend reuse     |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendReadiness.mqh - Readiness state + last-good-trend reuse
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -12,10 +10,8 @@
 #include "TrendTypes.mqh"
 #include "../Signals/SignalDiagnostics.mqh"
 
-//+------------------------------------------------------------------+
-//| Save/restore bundle used by CTrendEngine::AnalyzeTrend so that a |
-//| nested UpdateTrend() call cannot leak readiness/reuse state.     |
-//+------------------------------------------------------------------+
+// Save/restore bundle used by CTrendEngine::AnalyzeTrend so that a
+// nested UpdateTrend() call cannot leak readiness/reuse state.
 struct STrendReadinessRestorePoint
 {
     STrendReadinessSnapshot snapshot;
@@ -30,10 +26,8 @@ struct STrendReadinessRestorePoint
     }
 };
 
-//+------------------------------------------------------------------+
-//| Owns the readiness snapshot, the readiness fault counters and    |
-//| the last-good-trend reuse cache previously held by CTrendEngine. |
-//+------------------------------------------------------------------+
+// Owns the readiness snapshot, the readiness fault counters and
+// the last-good-trend reuse cache previously held by CTrendEngine.
 class CTrendReadiness
 {
 private:
@@ -94,9 +88,7 @@ public:
     void ResetReadinessState();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - mirrors original CTrendEngine defaults            |
-//+------------------------------------------------------------------+
+// Constructor - mirrors original CTrendEngine defaults
 CTrendReadiness::CTrendReadiness() :
     m_hasLastGoodTrend(false),
     m_lastGoodTrendTime(0),
@@ -108,9 +100,6 @@ CTrendReadiness::CTrendReadiness() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Set Readiness State                                             |
-//+------------------------------------------------------------------+
 void CTrendReadiness::SetState(const ENUM_TREND_READINESS_STATE state,
                                const string reasonTag,
                                const bool reuseActive,
@@ -124,9 +113,6 @@ void CTrendReadiness::SetState(const ENUM_TREND_READINESS_STATE state,
         m_snapshot.lastGoodTime = m_lastGoodTrendTime;
 }
 
-//+------------------------------------------------------------------+
-//| Get Reuse Window Seconds                                        |
-//+------------------------------------------------------------------+
 int CTrendReadiness::GetReuseWindowSeconds(ENUM_TIMEFRAMES timeframe) const
 {
     int barSeconds = PeriodSeconds(timeframe);
@@ -135,9 +121,6 @@ int CTrendReadiness::GetReuseWindowSeconds(ENUM_TIMEFRAMES timeframe) const
     return MathMin(MathMax(10, m_reuseTtlSeconds), MathMax(10, barSeconds));
 }
 
-//+------------------------------------------------------------------+
-//| Try Reuse Last Good Trend                                       |
-//+------------------------------------------------------------------+
 bool CTrendReadiness::TryReuseLastGoodTrend(const string symbol,
                                             ENUM_TIMEFRAMES timeframe,
                                             const string reasonTag,
@@ -177,9 +160,7 @@ bool CTrendReadiness::TryReuseLastGoodTrend(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Record a healthy trend as the new reuse baseline                |
-//+------------------------------------------------------------------+
+// Record a healthy trend as the new reuse baseline
 void CTrendReadiness::RecordGoodTrend(const TrendState &trend)
 {
     m_lastGoodTrend = trend;
@@ -188,9 +169,6 @@ void CTrendReadiness::RecordGoodTrend(const TrendState &trend)
     m_consecutiveFaults = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Record Readiness Fault                                          |
-//+------------------------------------------------------------------+
 void CTrendReadiness::RecordFault(const string symbol,
                                   ENUM_TIMEFRAMES timeframe,
                                   int chartBars,
@@ -241,9 +219,7 @@ void CTrendReadiness::RecordFault(const string symbol,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Guard for indicator-set reinitialization (threshold + throttle)  |
-//+------------------------------------------------------------------+
+// Guard for indicator-set reinitialization (threshold + throttle)
 bool CTrendReadiness::ShouldReinitializeIndicatorSet()
 {
     if(m_consecutiveFaults < m_failureReinitThreshold)
@@ -257,9 +233,7 @@ bool CTrendReadiness::ShouldReinitializeIndicatorSet()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Capture readiness + reuse state                                 |
-//+------------------------------------------------------------------+
+// Capture readiness + reuse state
 STrendReadinessRestorePoint CTrendReadiness::Capture() const
 {
     STrendReadinessRestorePoint point;
@@ -270,9 +244,7 @@ STrendReadinessRestorePoint CTrendReadiness::Capture() const
     return point;
 }
 
-//+------------------------------------------------------------------+
-//| Restore readiness + reuse state                                 |
-//+------------------------------------------------------------------+
+// Restore readiness + reuse state
 void CTrendReadiness::Restore(const STrendReadinessRestorePoint &point)
 {
     m_snapshot = point.snapshot;
@@ -281,11 +253,9 @@ void CTrendReadiness::Restore(const STrendReadinessRestorePoint &point)
     m_lastGoodTrendTime = point.lastGoodTrendTime;
 }
 
-//+------------------------------------------------------------------+
-//| Reset - mirrors exactly the readiness subset of Reset()          |
-//| (deliberately does NOT touch the reuse TTL or the reinit         |
-//| threshold, matching the original implementation).                |
-//+------------------------------------------------------------------+
+// Reset - mirrors exactly the readiness subset of Reset()
+// (deliberately does NOT touch the reuse TTL or the reinit
+// threshold, matching the original implementation).
 void CTrendReadiness::ResetReadinessState()
 {
     m_consecutiveFaults = 0;

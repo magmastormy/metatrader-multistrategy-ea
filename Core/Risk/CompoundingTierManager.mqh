@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| CompoundingTierManager.mqh                                        |
-//| Auto-switches risk tier based on account equity milestones        |
-//| Implements I2 (Compounding Tier System) from problems.md          |
-//+------------------------------------------------------------------+
+// Auto-switches risk tier based on account equity milestones
+// Implements I2 (Compounding Tier System) from problems.md
 #ifndef CORE_RISK_COMPOUNDING_TIER_MANAGER_MQH
 #define CORE_RISK_COMPOUNDING_TIER_MANAGER_MQH
 
@@ -12,10 +9,8 @@
 #include "PositionSizer.mqh"
 #include "../Trading/TradeManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Compounding Tier Enumeration (separate from risk tiers)        |
-//| L5-021 FIX: Separate enum for compounding tiers                |
-//+------------------------------------------------------------------+
+// Compounding Tier Enumeration (separate from risk tiers)
+// L5-021 FIX: Separate enum for compounding tiers
 enum ENUM_COMPOUNDING_TIER
 {
     COMPOUNDING_TIER_MICRO_AGGRESSIVE = 0,   // $10-$25
@@ -29,9 +24,6 @@ enum ENUM_COMPOUNDING_TIER
     COMPOUNDING_TIER_CAPITAL_PRESERVATION = 8 // $50,000+
 };
 
-//+------------------------------------------------------------------+
-//| Compounding Tier Configuration                                   |
-//+------------------------------------------------------------------+
 struct SCompoundingTierConfig
 {
     double minEquity;
@@ -48,10 +40,7 @@ struct SCompoundingTierConfig
     double dailyLossLimitOverride;         // Override daily loss limit %
 };
 
-//+------------------------------------------------------------------+
-//| Compounding Tier Manager                                          |
-//| Automatically switches risk profile as account grows              |
-//+------------------------------------------------------------------+
+// Automatically switches risk profile as account grows
 class CCompoundingTierManager
 {
 private:
@@ -69,9 +58,7 @@ private:
     int      m_switchCount;
     double   m_highestMilestoneReached;  // Batch 117: one-way watermark for milestones
 
-    //+------------------------------------------------------------------+
-        //| Build tier configurations                                         |
-        //+------------------------------------------------------------------+
+// Build tier configurations
         void BuildTierConfigs()
         {
             m_tierCount = 9;
@@ -213,9 +200,7 @@ private:
                     m_tiers[8].dailyLossLimitOverride  = 15.0;
         }
 
-    //+------------------------------------------------------------------+
-    //| Find tier index for given balance                                |
-    //+------------------------------------------------------------------+
+// Find tier index for given balance
     int FindTierIndex(double equity)
     {
         PrintFormat("[COMPOUNDING-TIER-DEBUG] FindTierIndex called | equity=%.2f | tierCount=%d", equity, m_tierCount);
@@ -234,9 +219,7 @@ private:
         return m_tierCount - 1; // highest tier
     }
 
-    //+------------------------------------------------------------------+
-        //| Get tier name for logging                                        |
-        //+------------------------------------------------------------------+
+// Get tier name for logging
         string GetTierName(int index) const
         {
             string riskTierName = "UNKNOWN";
@@ -274,9 +257,7 @@ public:
         m_highestMilestoneReached(0),
         m_lastTierSwitchTime(0), m_peakEquity(0), m_switchCount(0) {}
 
-    //+------------------------------------------------------------------+
-        //| Initialize with default tier configs                             |
-        //+------------------------------------------------------------------+
+// Initialize with default tier configs
         bool Initialize(bool autoSwitch = true)
         {
             BuildTierConfigs();
@@ -304,11 +285,9 @@ public:
         return true;
     }
 
-    //+------------------------------------------------------------------+
-        //| Check for tier transition — call from OnTimer or OnTick          |
-        //| Returns true if tier changed                                     |
-        //| L5-020 FIX: Added downgrade logic with hysteresis               |
-        //+------------------------------------------------------------------+
+// Check for tier transition — call from OnTimer or OnTick
+// Returns true if tier changed
+// L5-020 FIX: Added downgrade logic with hysteresis
         bool CheckTierTransition(CUnifiedRiskManager &riskMgr,
                                  CPositionSizer &posSizer,
                                  CTradeManager &tradeMgr)
@@ -396,9 +375,7 @@ public:
             return false;
         }
 
-    //+------------------------------------------------------------------+
-        //| Apply current tier to risk manager                               |
-        //+------------------------------------------------------------------+
+// Apply current tier to risk manager
         void ApplyTierToRiskManager(CUnifiedRiskManager &riskManager)
         {
             if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
@@ -428,9 +405,7 @@ public:
                         tier.dailyLossLimitOverride);
     }
 
-    //+------------------------------------------------------------------+
-    //| Apply current tier to position sizer                             |
-    //+------------------------------------------------------------------+
+// Apply current tier to position sizer
     void ApplyTierToPositionSizer(CPositionSizer &posSizer)
     {
         if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
@@ -446,15 +421,11 @@ public:
                     tier.riskPerTradeOverride);
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current tier config                                           |
-    //+------------------------------------------------------------------+
     SCompoundingTierConfig GetCurrentTier() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
             return m_tiers[m_currentTierIndex];
 
-        // Fallback
         SCompoundingTierConfig fallback;
         fallback.riskPerTradeOverride = 1.0;
         fallback.maxDailyRiskOverride = 5.0;
@@ -466,9 +437,7 @@ public:
         return fallback;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current tier risk percentage                                  |
-    //+------------------------------------------------------------------+
+// Get current tier risk percentage
     double GetRiskPerTrade() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -476,9 +445,7 @@ public:
         return 1.0;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current max concurrent positions                              |
-    //+------------------------------------------------------------------+
+// Get current max concurrent positions
     int GetMaxConcurrent() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -486,9 +453,7 @@ public:
         return 3;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current daily loss limit                                      |
-    //+------------------------------------------------------------------+
+// Get current daily loss limit
     double GetDailyLossLimit() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -496,9 +461,7 @@ public:
         return 15.0;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current drawdown critical threshold                           |
-    //+------------------------------------------------------------------+
+// Get current drawdown critical threshold
     double GetDrawdownCritical() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -506,9 +469,7 @@ public:
         return 10.0;
     }
 
-    //+------------------------------------------------------------------+
-        //| Check if account qualifies for higher tier (milestone check)      |
-        //+------------------------------------------------------------------+
+// Check if account qualifies for higher tier (milestone check)
         string CheckMilestone(double prevEquity, double currEquity)
         {
             // L5-005: Milestones as percentage of starting equity (25%, 50%, 100%, 200%, 500% growth)
@@ -528,15 +489,11 @@ public:
             return "";
         }
 
-    //+------------------------------------------------------------------+
-    //| Enable/disable auto-switching                                     |
-    //+------------------------------------------------------------------+
+// Enable/disable auto-switching
     void SetAutoSwitch(bool enabled) { m_autoSwitchEnabled = enabled; }
     bool IsAutoSwitchEnabled() const { return m_autoSwitchEnabled; }
 
-    //+------------------------------------------------------------------+
-        //| Get tier info for diagnostics                                     |
-        //+------------------------------------------------------------------+
+// Get tier info for diagnostics
         string GetDiagnostics() const
         {
             return StringFormat("Tier=%s | Equity=$%.2f | Switches=%d | Peak=$%.2f",
@@ -544,9 +501,7 @@ public:
                                 m_previousEquity, m_switchCount, m_peakEquity);
         }
 
-        //+------------------------------------------------------------------+
-        //| Get heartbeat string for periodic logging (L9-003)               |
-        //+------------------------------------------------------------------+
+// Get heartbeat string for periodic logging (L9-003)
         string GetHeartbeatString() const
         {
             if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)

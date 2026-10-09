@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| Safe Trade Execution Engine                                      |
-//| Handles all trade operations with comprehensive safety checks    |
-//| and enhanced error handling                                      |
-//+------------------------------------------------------------------+
+// Safe Trade Execution Engine
+// Handles all trade operations with comprehensive safety checks
+// and enhanced error handling
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "2.00"
@@ -71,9 +69,6 @@ class CPerformanceAnalytics;
 // Phase D T4: SSymbolMagicOffset moved to CTradeMgrSymbolTradeRegistry
 // (Core/Trading/TradeMgrSymbolTradeRegistry.mqh).
 
-//+------------------------------------------------------------------+
-//| Trade Manager Class                                            |
-//+------------------------------------------------------------------+
 class CTradeManager
 {
 private:
@@ -187,9 +182,7 @@ private:
         ENUM_ACCOUNT_MARGIN_MODE m_accountMarginMode;
         bool m_marginModeInitialized;
 
-        //+------------------------------------------------------------------+
-        //| Initialize account margin mode cache                             |
-        //+------------------------------------------------------------------+
+// Initialize account margin mode cache
         void InitializeMarginMode()
         {
            if(!m_marginModeInitialized)
@@ -200,9 +193,7 @@ private:
            }
         }
 
-        //+------------------------------------------------------------------+
-        //| Check if hedging is allowed for symbol (netting mode compliance) |
-        //+------------------------------------------------------------------+
+// Check if hedging is allowed for symbol (netting mode compliance)
         bool IsHedgingAllowed(const string symbol) const
         {
            if(m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
@@ -213,29 +204,23 @@ private:
            return true; // Allow for now, netting handled by broker
         }
 
-        //+------------------------------------------------------------------+
-        //| Get net position volume for netting mode compliance             |
-        //+------------------------------------------------------------------+
+// Get net position volume for netting mode compliance
         // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
         double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
 
-    //+------------------------------------------------------------------+
-    //| Position state registry — Phase D T3: thin forwarders onto       |
-    //| CPositionStateTracker (Core/Trading/PositionStateTracker.mqh).   |
-    //| FindPositionState / RemovePositionState are not forwarded: both  |
-    //| are internal to the module now (their only callers moved with    |
-    //| them, and they have no callers anywhere else in the repo).       |
-    //+------------------------------------------------------------------+
+// Position state registry — Phase D T3: thin forwarders onto
+// CPositionStateTracker (Core/Trading/PositionStateTracker.mqh).
+// FindPositionState / RemovePositionState are not forwarded: both
+// are internal to the module now (their only callers moved with
+// them, and they have no callers anywhere else in the repo).
     void UpdatePositionState(ulong ticket, double sl, double tp) { m_positionStateTracker.UpdatePositionState(ticket, sl, tp); }
 
     void CleanupPositionStates() { m_positionStateTracker.CleanupPositionStates(); }
 
     bool IsModificationNeeded(ulong ticket, double newSL, double newTP) { return m_positionStateTracker.IsModificationNeeded(ticket, newSL, newTP, m_minModifyIntervalSec); }
 
-    //+------------------------------------------------------------------+
-    //| EA-owned position ticket cache helpers (L12-008)               |
-    //| Phase D T4: thin forwarders onto CTradeMgrSymbolTradeRegistry.  |
-    //+------------------------------------------------------------------+
+// EA-owned position ticket cache helpers (L12-008)
+// Phase D T4: thin forwarders onto CTradeMgrSymbolTradeRegistry.
     void AddEAOwnedPosition(ulong ticket) { m_symbolRegistry.AddEAOwnedPosition(ticket); }
 
     void RemoveEAOwnedPosition(ulong ticket) { m_symbolRegistry.RemoveEAOwnedPosition(ticket); }
@@ -246,15 +231,11 @@ private:
 
     ulong GetEAOwnedPositionTicket(int index) const { return m_symbolRegistry.GetEAOwnedPositionTicket(index); }
 
-    //+------------------------------------------------------------------+
-    //| Check if two double values are approximately equal               |
-    //+------------------------------------------------------------------+
+// Check if two double values are approximately equal
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
     bool DoubleEquals(double a, double b, double epsilon = 0.00001) { return CTradeMgrPricing::DoubleEquals(a, b, epsilon); }
 
-    //+------------------------------------------------------------------+
-    //| Log error with context                                           |
-    //+------------------------------------------------------------------+
+// Log error with context
     void LogError(const string message, const string symbolParam = "", int errorCode = 0)
     {
         if(m_errorHandler != NULL)
@@ -293,26 +274,17 @@ private:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Calculate Average True Range (ATR) for volatility measurement    |
-    //+------------------------------------------------------------------+
+// Calculate Average True Range (ATR) for volatility measurement
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
     double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period) { return CTradeMgrPricing::CalculateATR(symbolParam, timeframe, period); }
 
-    //+------------------------------------------------------------------+
-    //| Log trade error with context                                     |
-    //+------------------------------------------------------------------+
+// Log trade error with context
     void LogTradeError(const MqlTradeResult &result, const string operation = "TradeOperation");
 
-    //+------------------------------------------------------------------+
-    //| Get trade error description                                      |
-    //+------------------------------------------------------------------+
     // Phase D T1: moved to CTradeDescriptor (Core/Trading/TradeDescriptor.mqh)
     string GetTradeErrorDescription(int errorCode) { return CTradeDescriptor::GetTradeErrorDescription(errorCode); }
 
-    //+------------------------------------------------------------------+
-    //| Check if market is open for trading                             |
-    //+------------------------------------------------------------------+
+// Check if market is open for trading
     bool IsMarketOpen(const string symbolParam)
     {
         return m_sessionManager.IsMarketOpen(symbolParam);
@@ -428,7 +400,6 @@ public:
         // Clean up persisted async trades file
         CleanupPersistedAsyncTrades();
 
-        // Reset ATR cache
         m_atrCache.Reset();
 
         // Free dynamic arrays — Phase D T4: owned by the extracted modules
@@ -487,7 +458,6 @@ public:
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
     void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
 
-    // Set dynamic slippage configuration
     void SetDynamicSlippageConfig(const bool enable, const double atrPercent, const uint minPoints,
                                    const uint maxMultiplier, const int atrPeriod)
     {
@@ -634,7 +604,6 @@ public:
                        const double newStopLoss,
                        const double newTakeProfit);
 
-    // Position management
     void ManageAllPositions(const double breakevenBuffer = 20.0,
                            const double trailingDistance = 50.0,
                            const double trailingStep = 10.0,
@@ -809,7 +778,6 @@ public:
 
     void UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin);
 
-    // Logging
     void LogTradeOperation(const string operation, const string symbolName, const ENUM_ORDER_TYPE orderType, const double volume, const bool success, const string details = "");
 
     // Logic helpers
@@ -832,9 +800,6 @@ public:
                                const double volume, const int estimatedHoldDays);
 };
 
-//+------------------------------------------------------------------+
-//| Initialize trade manager                                        |
-//+------------------------------------------------------------------+
 bool CTradeManager::Initialize(const long magicNumber,
                               const string expertName)
 {
@@ -861,15 +826,12 @@ bool CTradeManager::Initialize(const long magicNumber,
     return true;
     }
 
-    //+------------------------------------------------------------------+
-    //| Deinitialize trade manager - explicit cleanup for orchestrated shutdown
-    //+------------------------------------------------------------------+
+// Deinitialize trade manager - explicit cleanup for orchestrated shutdown
     void CTradeManager::Deinit()
     {
         // Clean up persisted async trades file
         CleanupPersistedAsyncTrades();
     
-        // Reset ATR cache
         m_atrCache.Reset();
     
         // Free dynamic arrays — Phase D T4: owned by the extracted modules
@@ -882,9 +844,7 @@ bool CTradeManager::Initialize(const long magicNumber,
         Print("[TRADE-MANAGER] Deinit complete - async trades cleaned up");
             }
 
-        //+------------------------------------------------------------------+
-        //| Get or create per-symbol CTrade instance (L10-013)              |
-        //+------------------------------------------------------------------+
+// Get or create per-symbol CTrade instance (L10-013)
         CTrade* CTradeManager::GetSymbolTrade(const string symbol)
         {
             // Phase D T4: pool owned by CTradeMgrSymbolTradeRegistry; the four
@@ -893,9 +853,7 @@ bool CTradeManager::Initialize(const long magicNumber,
             return m_symbolRegistry.GetSymbolTrade(symbol, m_magicNumber, m_slippage, m_orderFillMode, m_useAsyncMode);
         }
 
-        //+------------------------------------------------------------------+
-        //| Move position to breakeven                                      |
-        //+------------------------------------------------------------------+
+// Move position to breakeven
 bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 {
     if(!PositionSelectByTicket(ticket)) return false;
@@ -951,9 +909,6 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
     return ModifyPosition(ticket, newSL, currentTP);
 }
 
-//+------------------------------------------------------------------+
-//| Close Position                                                  |
-//+------------------------------------------------------------------+
 bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 {
     if(!PositionSelectByTicket(ticket))
@@ -1034,9 +989,6 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Close Position Partial                                           |
-//+------------------------------------------------------------------+
 bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, const string reason)
 {
     if(volume <= 0)
@@ -1145,9 +1097,6 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
     return allSuccess;
 }
 
-//+------------------------------------------------------------------+
-//| Modify Position                                                 |
-//+------------------------------------------------------------------+
 bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, const double takeProfit)
 {
     if(!PositionSelectByTicket(ticket))
@@ -1371,9 +1320,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Execute Market Order                                           |
-//+------------------------------------------------------------------+
 bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER_TYPE orderType,
                                       const double volume, const double requestedPrice,
                                       const double stopLossPips,
@@ -1483,13 +1429,9 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         // Batch 169: configure the fill mode on the instance that will send.
         ApplyFillingModeForSymbol(symbolName, symbolTrade);
 
-        // Batch 169: set the deviation on THIS instance, from THIS symbol.
-        // UpdateDynamicSlippage() writes one shared m_slippage and pushes it to every
-        // pooled instance, so a send for symbol B carried whichever symbol was
-        // evaluated last. Deviation is points, and points mean very different money
-        // across symbols (50 points = 5 pips on EURUSD, $0.50 on XAUUSD), so a
-        // stale cross-symbol value caused either chronic requotes or silently
-        // accepted slippage.
+        // Set deviation on this symbol's pooled instance: one shared m_slippage meant
+        // a send carried whichever symbol was evaluated last, and points differ in
+        // value across symbols.
         uint sendDeviation = m_enableDynamicSlippage ? GetDynamicSlippage(symbolName) : m_baseSlippage;
         symbolTrade.SetDeviationInPoints(sendDeviation);
 
@@ -1712,27 +1654,18 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     return executionConfirmed;
 }
 
-//+------------------------------------------------------------------+
-//| Normalize Price                                                |
-//+------------------------------------------------------------------+
 double CTradeManager::NormalizePrice(const string symbolName, const double price)
 {
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
     return CTradeMgrPricing::NormalizePrice(symbolName, price);
 }
 
-//+------------------------------------------------------------------+
-//| Normalize Volume                                               |
-//+------------------------------------------------------------------+
 double CTradeManager::NormalizeVolume(const string symbolName, const double volume)
 {
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
     return CTradeMgrPricing::NormalizeVolume(symbolName, volume);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Stop Loss                                            |
-//+------------------------------------------------------------------+
 double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                        const double price, const double stopLossPips)
 {
@@ -1740,9 +1673,6 @@ double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORD
     return CTradeMgrPricing::CalculateStopLoss(symbolParam, orderType, price, stopLossPips);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Take Profit                                          |
-//+------------------------------------------------------------------+
 double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                          const double price, const double takeProfitPips)
 {
@@ -1751,18 +1681,14 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
 }
 
 
-//+------------------------------------------------------------------+
-//| Check whether symbol trade mode supports requested order type    |
-//+------------------------------------------------------------------+
+// Check whether symbol trade mode supports requested order type
 bool CTradeManager::IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason)
 {
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
     return CTradeMgrPricing::IsOrderTypeAllowedForSymbol(symbolName, orderType, reason);
 }
 
-//+------------------------------------------------------------------+
-//| Current execution price for a market order                       |
-//+------------------------------------------------------------------+
+// Current execution price for a market order
 double CTradeManager::GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType)
 {
     // Phase D T4: moved to CTradeMgrPricing; m_symbolInfo is passed by
@@ -1770,9 +1696,7 @@ double CTradeManager::GetCurrentExecutionPrice(const string symbolName, const EN
     return CTradeMgrPricing::GetCurrentExecutionPrice(symbolName, orderType, m_symbolInfo);
 }
 
-//+------------------------------------------------------------------+
-//| Broker minimum stop/freeze distance                              |
-//+------------------------------------------------------------------+
+// Broker minimum stop/freeze distance
 double CTradeManager::GetMinimumStopDistance(const string symbolName)
 {
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
@@ -1780,9 +1704,6 @@ double CTradeManager::GetMinimumStopDistance(const string symbolName)
 }
 
 
-//+------------------------------------------------------------------+
-//| Log Trade Operation                                            |
-//+------------------------------------------------------------------+
 void CTradeManager::LogTradeOperation(const string operation, const string symbolName,
                                      const ENUM_ORDER_TYPE orderType, const double volume,
                                      const bool success, const string details)
@@ -1797,9 +1718,6 @@ void CTradeManager::LogTradeOperation(const string operation, const string symbo
     Print("[TRADE-OP] ", message);
 }
 
-//+------------------------------------------------------------------+
-//| Should Move to Breakeven                                       |
-//+------------------------------------------------------------------+
 bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffer)
 {
     if(!PositionSelectByTicket(ticket))
@@ -1823,9 +1741,6 @@ bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffe
     return (profitPoints >= buffer * 1.5);
 }
 
-//+------------------------------------------------------------------+
-//| Should Update Trailing Stop                                    |
-//+------------------------------------------------------------------+
 bool CTradeManager::ShouldUpdateTrailingStop(const ulong ticket, const double distance, const double step)
 {
     if(!PositionSelectByTicket(ticket))
@@ -1855,9 +1770,6 @@ bool CTradeManager::ShouldUpdateTrailingStop(const ulong ticket, const double di
     }
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Position Risk                                        |
-//+------------------------------------------------------------------+
 double CTradeManager::CalculatePositionRisk(const string symbolParam, const double volume,
                                            const double stopLossPips)
 {
@@ -1866,9 +1778,7 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
 }
 
 
-//+------------------------------------------------------------------+
-//| Get Round-Trip Commission Cost (entry + exit)                   |
-//+------------------------------------------------------------------+
+// Get Round-Trip Commission Cost (entry + exit)
 double CTradeManager::GetRoundTripCommissionCost(const string symbol, const double volume)
 {
     // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
@@ -1876,9 +1786,7 @@ double CTradeManager::GetRoundTripCommissionCost(const string symbol, const doub
 }
 
 
-//+------------------------------------------------------------------+
-//| Get Estimated Swap Cost for holding position overnight          |
-//+------------------------------------------------------------------+
+// Get Estimated Swap Cost for holding position overnight
 double CTradeManager::GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                           const double volume, const int estimatedHoldDays)
 {
@@ -1888,9 +1796,6 @@ double CTradeManager::GetEstimatedSwapCost(const string symbol, const ENUM_ORDER
 
 
 
-//+------------------------------------------------------------------+
-//| Update Performance Metrics                                      |
-//+------------------------------------------------------------------+
 void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin)
 {
     // Batch 151: this runs after PositionClose - the live position no longer
@@ -1929,9 +1834,6 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
 }
 
 
-//+------------------------------------------------------------------+
-//| Log Trade Error                                                  |
-//+------------------------------------------------------------------+
 void CTradeManager::LogTradeError(const MqlTradeResult &result, const string operation)
 {
     string errorMsg = StringFormat("Trade Error: Code=%d, Comment=%s, Request ID=%d",
@@ -1955,9 +1857,6 @@ void CTradeManager::LogTradeError(const MqlTradeResult &result, const string ope
     }
 }
 
-//+------------------------------------------------------------------+
-//| Manage All Positions                                            |
-//+------------------------------------------------------------------+
 void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                                        const double trailingDistance,
                                        const double trailingStep,
@@ -2004,9 +1903,6 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Set Trailing Stop                                               |
-//+------------------------------------------------------------------+
 bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR, const double atrMult)
 {
     if(ticket <= 0) return false;
@@ -2132,9 +2028,6 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Open Position                                                    |
-//+------------------------------------------------------------------+
 bool CTradeManager::OpenPosition(const string symbol,
                                 const ENUM_ORDER_TYPE orderType,
                                 const double volume,
@@ -2220,9 +2113,6 @@ bool CTradeManager::OpenPosition(const string symbol,
 // Phase D T2b: GetTradeStatistics / ResetStatistics are now inline
 // forwarders onto CTradeStatsTracker (declared in the class body).
 
-//+------------------------------------------------------------------+
-//| Normalize and Validate Stops                                    |
-//+------------------------------------------------------------------+
 bool CTradeManager::NormalizeAndValidateStops(const string symbol,
                                              const ENUM_ORDER_TYPE orderType,
                                              const double price,
@@ -2235,15 +2125,13 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
     return CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, price, tp, slOut, tpOut, errorMsg);
 }
 
-//+------------------------------------------------------------------+
-//| Send trade asynchronously via OrderSendAsync                     |
-//| Phase D T4: split across CTradeMgrAsyncExecutor. The guards that |
-//| only read async state live in CheckSendGuards(); the volume /    |
-//| price / preflight resolution stays here because it needs the     |
-//| CTradeManager-owned pricing, ATR cache and slippage config; the  |
-//| request build + OrderSendAsync + pending bookkeeping is          |
-//| SubmitAsync(). Order of operations is byte-for-byte unchanged.   |
-//+------------------------------------------------------------------+
+// Send trade asynchronously via OrderSendAsync
+// Phase D T4: split across CTradeMgrAsyncExecutor. The guards that
+// only read async state live in CheckSendGuards(); the volume /
+// price / preflight resolution stays here because it needs the
+// CTradeManager-owned pricing, ATR cache and slippage config; the
+// request build + OrderSendAsync + pending bookkeeping is
+// SubmitAsync(). Order of operations is byte-for-byte unchanged.
 bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
                                    double lot, double price, double sl, double tp,
                                    ulong magic, int timeoutMs)
@@ -2295,10 +2183,8 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
                                        magic, timeoutMs, m_slippage, m_orderFillMode);
 }
 
-//+------------------------------------------------------------------+
-//| Process trade transaction event (call from OnTradeTransaction)    |
-//| Phase D T4: moved to CTradeMgrAsyncExecutor                       |
-//+------------------------------------------------------------------+
+// Process trade transaction event (call from OnTradeTransaction)
+// Phase D T4: moved to CTradeMgrAsyncExecutor
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
                                             const MqlTradeRequest &request,
                                             const MqlTradeResult &result)
@@ -2306,58 +2192,42 @@ void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
     m_asyncExecutor.ProcessTradeTransaction(trans, request, result, m_execQuality);
 }
 
-//+------------------------------------------------------------------+
-//| Check for timed-out async trades (call from OnTimer)              |
-//| Phase D T4: moved to CTradeMgrAsyncExecutor                       |
-//+------------------------------------------------------------------+
+// Check for timed-out async trades (call from OnTimer)
+// Phase D T4: moved to CTradeMgrAsyncExecutor
 void CTradeManager::CheckAsyncTimeouts()
 {
     m_asyncExecutor.CheckAsyncTimeouts(m_execQuality);
 }
 
-//+------------------------------------------------------------------+
-//| Get pending async trade count                                     |
-//+------------------------------------------------------------------+
 int CTradeManager::GetPendingAsyncCount() const
 {
     return m_asyncExecutor.GetPendingAsyncCount();
 }
 
-//+------------------------------------------------------------------+
-//| Get pending async trade ticket by index                          |
-//+------------------------------------------------------------------+
 ulong CTradeManager::GetPendingAsyncTicket(int index) const
 {
     return m_asyncExecutor.GetPendingAsyncTicket(index);
 }
 
-//+------------------------------------------------------------------+
-//| Persist async trade request to CSV for replay on restart         |
-//+------------------------------------------------------------------+
+// Persist async trade request to CSV for replay on restart
 void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
 {
     CTradeMgrAsyncExecutor::PersistAsyncTradeRequest(asyncTrade);
 }
 
-//+------------------------------------------------------------------+
-//| Replay async trade requests from CSV on EA restart               |
-//+------------------------------------------------------------------+
+// Replay async trade requests from CSV on EA restart
 void CTradeManager::ReplayAsyncTradeRequests()
 {
     m_asyncExecutor.ReplayAsyncTradeRequests();
 }
 
-//+------------------------------------------------------------------+
-//| Check for duplicate idempotency key                               |
-//+------------------------------------------------------------------+
+// Check for duplicate idempotency key
 bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
 {
     return m_asyncExecutor.IsDuplicateIdempotencyKey(key);
 }
 
-//+------------------------------------------------------------------+
-//| Clean up confirmed/expired persisted async trades                 |
-//+------------------------------------------------------------------+
+// Clean up confirmed/expired persisted async trades
 void CTradeManager::CleanupPersistedAsyncTrades()
 {
     CTradeMgrAsyncExecutor::CleanupPersistedAsyncTrades();

@@ -1,32 +1,23 @@
-//+------------------------------------------------------------------+
-//| RiskValidationStats.mqh                                          |
-//| Validation-gate counters, timing metrics and audit-log sink.     |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E1). Owns the |
-//| state that used to live in the manager:                          |
-//|   m_auditLogging, m_auditLogFile, m_validationCount,             |
-//|   m_approvedCount, m_rejectedCount, m_lastValidation,            |
-//|   m_avgValidationTime                                            |
-//|                                                                  |
-//| The constructor performs the zero-initialisation that previously |
-//| happened in the CUnifiedRiskManager initialiser list, so default |
-//| values are unchanged.                                            |
-//|                                                                  |
-//| The message-formatting entry points take primitives instead of   |
-//| STradeValidationRequest / SValidationResult so this module has no |
-//| dependency on UnifiedRiskManager.mqh (which includes it).        |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| struct-based signatures.                                         |
-//+------------------------------------------------------------------+
+// Validation-gate counters, timing metrics and audit-log sink.
+// Extracted verbatim from CUnifiedRiskManager (Phase E1). Owns the
+// state that used to live in the manager:
+// m_auditLogging, m_auditLogFile, m_validationCount,
+// m_approvedCount, m_rejectedCount, m_lastValidation,
+// The constructor performs the zero-initialisation that previously
+// happened in the CUnifiedRiskManager initialiser list, so default
+// values are unchanged.
+// The message-formatting entry points take primitives instead of
+// STradeValidationRequest / SValidationResult so this module has no
+// dependency on UnifiedRiskManager.mqh (which includes it).
+// CUnifiedRiskManager keeps thin forwarders with the original
+// struct-based signatures.
 #ifndef CORE_RISK_RISK_VALIDATION_STATS_MQH
 #define CORE_RISK_RISK_VALIDATION_STATS_MQH
 
 #include "../Utils/ErrorHandling.mqh"
 #include "RiskClusterCodec.mqh"
 
-//+------------------------------------------------------------------+
-//| Validation statistics + audit log (stateful, owned by value)     |
-//+------------------------------------------------------------------+
+// Validation statistics + audit log (stateful, owned by value)
 class CRiskValidationStats
 {
 private:

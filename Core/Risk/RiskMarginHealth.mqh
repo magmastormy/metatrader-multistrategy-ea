@@ -1,24 +1,15 @@
-//+------------------------------------------------------------------+
-//| RiskMarginHealth.mqh                                             |
-//| Free-margin / margin-level pre-flight checks and the runtime      |
-//| margin-health monitor with protective de-risking actions.        |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E2, E-G):     |
-//|   m_maxFreeMarginUsage, m_minMarginLevel                         |
-//|   CUnifiedRiskManager::MonitorMarginHealth -> MonitorMarginHealth|
-//|   free-margin/margin-level tail of ValidateMarginRequirements    |
-//|       -> CheckFreeMarginAndLevel                                 |
-//|                                                                  |
-//| Behaviour is byte-identical to the original member functions;    |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| signatures so that all call sites remain unchanged.              |
-//|                                                                  |
-//| OWNERSHIP NOTE: the emergency halt performed at the <150% margin |
-//| level mutates circuit-breaker state (m_tradingEnabled /          |
-//| m_cbTriggeredAt) and the shared conservative-mode flag. Rather   |
-//| than duplicating that state or holding a back-pointer, both are  |
-//| passed in as parameters from the forwarder.                      |
-//+------------------------------------------------------------------+
+// Free-margin / margin-level pre-flight checks and the runtime
+// margin-health monitor with protective de-risking actions.
+// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-G):
+// free-margin/margin-level tail of ValidateMarginRequirements
+// Behaviour is byte-identical to the original member functions;
+// CUnifiedRiskManager keeps thin forwarders with the original
+// signatures so that all call sites remain unchanged.
+// OWNERSHIP NOTE: the emergency halt performed at the <150% margin
+// level mutates circuit-breaker state (m_tradingEnabled /
+// m_cbTriggeredAt) and the shared conservative-mode flag. Rather
+// than duplicating that state or holding a back-pointer, both are
+// passed in as parameters from the forwarder.
 #ifndef CORE_RISK_RISK_MARGIN_HEALTH_MQH
 #define CORE_RISK_RISK_MARGIN_HEALTH_MQH
 
@@ -27,9 +18,7 @@
 #include "RiskCircuitBreaker.mqh"
 #include <Trade/Trade.mqh>
 
-//+------------------------------------------------------------------+
-//| Margin health monitor (stateful config holder, owned by value)   |
-//+------------------------------------------------------------------+
+// Margin health monitor (stateful config holder, owned by value)
 class CRiskMarginHealth
 {
 private:
@@ -50,9 +39,7 @@ public:
         // No owned resources.
     }
 
-    //+--------------------------------------------------------------+
-    //| Pre-flight validation                                         |
-    //+--------------------------------------------------------------+
+// Pre-flight validation
 
     //--- Free-margin headroom + post-trade margin-level check used by
     //--- CUnifiedRiskManager::ValidateMarginRequirements.
@@ -84,9 +71,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Runtime monitoring                                            |
-    //+--------------------------------------------------------------+
+// Runtime monitoring
 
     //--- Margin Health Monitoring (Phase 2.4).
     //--- Checks margin level and takes protective action.
@@ -204,9 +189,7 @@ public:
         return MARGIN_HEALTH_OK;
     }
 
-    //+--------------------------------------------------------------+
-    //| Accessors                                                     |
-    //+--------------------------------------------------------------+
+// Accessors
 
     double GetMaxFreeMarginUsage() const
     {

@@ -1,22 +1,15 @@
-//+------------------------------------------------------------------+
-//| RiskClusterCodec.mqh                                             |
-//| Stateless cluster-code normalisation / parsing helpers.          |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E1) so that   |
-//| cluster-governance, audit formatting and position-sync code can  |
-//| share one canonical implementation. Behaviour is byte-identical  |
-//| to the original member functions; CUnifiedRiskManager keeps thin |
-//| forwarders with the original signatures.                         |
-//|                                                                  |
-//| NOTE (MQL5): static methods cannot be declared const, so the     |
-//| trailing const of the original members is dropped here.          |
-//+------------------------------------------------------------------+
+// Stateless cluster-code normalisation / parsing helpers.
+// Extracted verbatim from CUnifiedRiskManager (Phase E1) so that
+// cluster-governance, audit formatting and position-sync code can
+// share one canonical implementation. Behaviour is byte-identical
+// to the original member functions; CUnifiedRiskManager keeps thin
+// forwarders with the original signatures.
+// NOTE (MQL5): static methods cannot be declared const, so the
+// trailing const of the original members is dropped here.
 #ifndef CORE_RISK_RISK_CLUSTER_CODEC_MQH
 #define CORE_RISK_RISK_CLUSTER_CODEC_MQH
 
-//+------------------------------------------------------------------+
-//| Cluster code codec (pure, stateless)                             |
-//+------------------------------------------------------------------+
+// Cluster code codec (pure, stateless)
 class CRiskClusterCodec
 {
 public:

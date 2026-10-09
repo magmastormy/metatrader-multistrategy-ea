@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CorrelationId.mqh                                                |
-//| Correlation ID generation and propagation for trade tracing      |
-//+------------------------------------------------------------------+
+// Correlation ID generation and propagation for trade tracing
 #property strict
 #ifndef CORE_UTILS_CORRELATION_ID_MQH
 #define CORE_UTILS_CORRELATION_ID_MQH
@@ -9,9 +6,7 @@
 #include <Arrays/ArrayObj.mqh>
 #include <Arrays/ArrayString.mqh>
 
-//+------------------------------------------------------------------+
-//| Simple String Map (replacement for CMapStringToString)           |
-//+------------------------------------------------------------------+
+// Simple String Map (replacement for CMapStringToString)
 class CStringMap
 {
 private:
@@ -57,9 +52,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Helper: Integer to Hex String (MQL5 doesn't have IntegerToHexString) |
-//+------------------------------------------------------------------+
+// Helper: Integer to Hex String (MQL5 doesn't have IntegerToHexString)
 string IntToHex(int value, int digits = 4) {
     string hexChars = "0123456789ABCDEF";
     string result = "";
@@ -71,9 +64,6 @@ string IntToHex(int value, int digits = 4) {
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Correlation ID Manager                                           |
-//+------------------------------------------------------------------+
 class CCorrelationIdManager
 {
 private:
@@ -163,9 +153,7 @@ public:
 // Global instance
 extern CCorrelationIdManager g_corrIdManager;
 
-//+------------------------------------------------------------------+
-//| Helper functions for easy access                                 |
-//+------------------------------------------------------------------+
+// Helper functions for easy access
 inline string GenerateCorrelationId(string context = "") {
     return g_corrIdManager.GenerateNewId(context);
 }
@@ -186,9 +174,7 @@ inline void ClearCurrentCorrelationId() {
     g_corrIdManager.ClearCurrentId();
 }
 
-//+------------------------------------------------------------------+
-//| Correlation ID Context Holder (RAII-style for MQL5)              |
-//+------------------------------------------------------------------+
+// Correlation ID Context Holder (RAII-style for MQL5)
 class CCorrelationScope
 {
 private:
@@ -218,9 +204,7 @@ public:
     string GetId() const { return g_corrIdManager.GetCurrentId(); }
 };
 
-//+------------------------------------------------------------------+
-//| Strategy ID to short code mapping                                |
-//+------------------------------------------------------------------+
+// Strategy ID to short code mapping
 string StrategyIdToCode(int strategyId) {
     static const string codes[21] = {
         "MOM", "TND", "SR", "CSL", "MR", "VB", "FVG", "TS", "BB", "NY", 

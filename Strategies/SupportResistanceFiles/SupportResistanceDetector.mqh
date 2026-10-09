@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SupportResistanceDetector.mqh                                    |
-//| S/R Level Detection Engine                                       |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// S/R Level Detection Engine
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -15,9 +12,6 @@
 
 // Dynamic array approach - no fixed limit
 
-//+------------------------------------------------------------------+
-//| S/R Type Enum                                                    |
-//+------------------------------------------------------------------+
 enum ENUM_SR_TYPE
 {
     SR_SWING_HIGH_LOW,      // Previous swing points
@@ -29,9 +23,7 @@ enum ENUM_SR_TYPE
     SR_STRUCTURE            // Major market structure levels
 };
 
-//+------------------------------------------------------------------+
-//| S/R Level Structure                                              |
-//+------------------------------------------------------------------+
+// S/R Level Structure
 struct SSupportResistance
 {
     double price;
@@ -49,9 +41,6 @@ struct SSupportResistance
                           roleReversed(false), timeframe(PERIOD_CURRENT), isSupport(true) {}
 };
 
-//+------------------------------------------------------------------+
-//| Support/Resistance Detector Class                                |
-//+------------------------------------------------------------------+
 class CSupportResistanceDetector
 {
 private:
@@ -101,7 +90,6 @@ public:
     void                DetectLevels(int lookback = 200);
     void                Update();
     
-    // Getters
     int                 GetLevelCount() const { return m_levelCount; }
     bool                GetLevel(int index, SSupportResistance &level);
     int                 FindNearestLevel(double price, double tolerancePips = 15);
@@ -113,13 +101,10 @@ public:
     bool                IsAtResistanceLevel(double price, double tolerancePips = 15);
     bool                HasRoleReversed(double price);
     
-    // Breakout detection
     bool                DetectBreakout(double price, int &brokenLevelIndex);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSupportResistanceDetector::CSupportResistanceDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -132,9 +117,7 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
     ArrayResize(m_levels, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
@@ -142,9 +125,6 @@ CSupportResistanceDetector::~CSupportResistanceDetector()
     ArrayFree(m_levels);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            double clusterPips, int swingStrength)
 {
@@ -179,9 +159,6 @@ double CSupportResistanceDetector::GetAtrValue() const
     return atrBuf[0];
 }
 
-//+------------------------------------------------------------------+
-//| Detect All S/R Levels                                            |
-//+------------------------------------------------------------------+
 void CSupportResistanceDetector::DetectLevels(int lookback)
 {
     m_levelCount = 0;
@@ -193,7 +170,6 @@ void CSupportResistanceDetector::DetectLevels(int lookback)
     // 1. Swing-based S/R
     DetectSwingLevels(effectiveLookback);
     
-    // 2. Psychological levels
     DetectPsychologicalLevels();
     
     // 3. Daily/Weekly levels
@@ -202,16 +178,12 @@ void CSupportResistanceDetector::DetectLevels(int lookback)
     // 4. Cluster nearby levels
     ClusterLevels();
     
-    // 5. Calculate strength
     CalculateStrength();
     
-    // 6. Update touches
     UpdateTouches();
 }
 
-//+------------------------------------------------------------------+
-//| Detect Swing-Based Levels                                        |
-//+------------------------------------------------------------------+
+// Detect Swing-Based Levels
 void CSupportResistanceDetector::DetectSwingLevels(int lookback)
 {
     double high[], low[];
@@ -331,9 +303,6 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Psychological Levels                                      |
-//+------------------------------------------------------------------+
 void CSupportResistanceDetector::DetectPsychologicalLevels()
 {
     double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
@@ -367,9 +336,6 @@ void CSupportResistanceDetector::DetectPsychologicalLevels()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Timeframe Levels                                          |
-//+------------------------------------------------------------------+
 void CSupportResistanceDetector::DetectTimeframeLevels()
 {
     // Yesterday's high/low
@@ -421,9 +387,7 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Cluster Nearby Levels                                            |
-//+------------------------------------------------------------------+
+// Cluster Nearby Levels
 void CSupportResistanceDetector::ClusterLevels()
 {
     double tolerance = m_clusterTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -458,9 +422,7 @@ void CSupportResistanceDetector::ClusterLevels()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Level Strength                                         |
-//+------------------------------------------------------------------+
+// Calculate Level Strength
 void CSupportResistanceDetector::CalculateStrength()
 {
     for(int i = 0; i < m_levelCount; i++)
@@ -506,9 +468,7 @@ void CSupportResistanceDetector::CalculateStrength()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update Touch Count                                               |
-//+------------------------------------------------------------------+
+// Update Touch Count
 void CSupportResistanceDetector::UpdateTouches()
 {
     double atr = GetAtrValue();
@@ -536,17 +496,11 @@ void CSupportResistanceDetector::UpdateTouches()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CSupportResistanceDetector::Update()
 {
     DetectLevels(300);  // Increased from 200 to 300 for proper scaling and capturing more touch points
 }
 
-//+------------------------------------------------------------------+
-//| Get Level at Index                                               |
-//+------------------------------------------------------------------+
 bool CSupportResistanceDetector::GetLevel(int index, SSupportResistance &level)
 {
     if(index < 0 || index >= m_levelCount)
@@ -556,9 +510,6 @@ bool CSupportResistanceDetector::GetLevel(int index, SSupportResistance &level)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Find Nearest Level                                               |
-//+------------------------------------------------------------------+
 int CSupportResistanceDetector::FindNearestLevel(double price, double tolerancePips)
 {
     double tolerance = tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -578,9 +529,6 @@ int CSupportResistanceDetector::FindNearestLevel(double price, double toleranceP
     return nearestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Find Nearest Support                                             |
-//+------------------------------------------------------------------+
 int CSupportResistanceDetector::FindNearestSupport(double price)
 {
     double minDistance = DBL_MAX;
@@ -602,9 +550,6 @@ int CSupportResistanceDetector::FindNearestSupport(double price)
     return nearestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Find Nearest Resistance                                          |
-//+------------------------------------------------------------------+
 int CSupportResistanceDetector::FindNearestResistance(double price)
 {
     double minDistance = DBL_MAX;
@@ -626,27 +571,20 @@ int CSupportResistanceDetector::FindNearestResistance(double price)
     return nearestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Check if at Support Level                                        |
-//+------------------------------------------------------------------+
+// Check if at Support Level
 bool CSupportResistanceDetector::IsAtSupportLevel(double price, double tolerancePips)
 {
     int idx = FindNearestLevel(price, tolerancePips);
     return (idx >= 0 && m_levels[idx].isSupport);
 }
 
-//+------------------------------------------------------------------+
-//| Check if at Resistance Level                                     |
-//+------------------------------------------------------------------+
+// Check if at Resistance Level
 bool CSupportResistanceDetector::IsAtResistanceLevel(double price, double tolerancePips)
 {
     int idx = FindNearestLevel(price, tolerancePips);
     return (idx >= 0 && !m_levels[idx].isSupport);
 }
 
-//+------------------------------------------------------------------+
-//| Detect Breakout                                                  |
-//+------------------------------------------------------------------+
 bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIndex)
 {
     // Batch 156: scale-free floor - 5*point is ~0.05 absolute on synthetics, so
@@ -693,9 +631,7 @@ bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIn
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check Role Reversal                                              |
-//+------------------------------------------------------------------+
+// Check Role Reversal
 bool CSupportResistanceDetector::HasRoleReversed(double price)
 {
     for(int i = 0; i < m_levelCount; i++)

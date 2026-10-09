@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| NNModelStorage.mqh                                               |
-//| Helpers for persistent NN model checkpoint storage               |
-//+------------------------------------------------------------------+
+// Helpers for persistent NN model checkpoint storage
 #property strict
 
 #ifndef CORE_AI_NN_MODEL_STORAGE_MQH

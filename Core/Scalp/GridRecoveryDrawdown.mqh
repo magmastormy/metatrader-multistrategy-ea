@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryDrawdown.mqh                                         |
-//| Drawdown-based recovery guards: floating grid drawdown accounting |
-//| and L10-003 equity-floor gates for activation and per-level adds. |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Drawdown-based recovery guards: floating grid drawdown accounting
+// and L10-003 equity-floor gates for activation and per-level adds.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,15 +11,11 @@
 
 #include "GridRecoveryTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryDrawdown — stateless drawdown / equity-floor guards  |
-//+------------------------------------------------------------------+
+// CGridRecoveryDrawdown — stateless drawdown / equity-floor guards
 class CGridRecoveryDrawdown
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Calculate grid drawdown as percentage of equity                   |
-   //+------------------------------------------------------------------+
+// Calculate grid drawdown as percentage of equity
    static double CalculateGridDrawdownPercent(const SGridSymbolState &state)
    {
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -46,11 +39,9 @@ public:
       return (totalDrawdown / equity) * 100.0;
    }
 
-   //+------------------------------------------------------------------+
-   //| L10-003: Equity floor check for initial grid activation.          |
-   //| For initial activation, current equity is used as the baseline;   |
-   //| the floor is enforced on subsequent levels via initialEquity.     |
-   //+------------------------------------------------------------------+
+// L10-003: Equity floor check for initial grid activation.
+// For initial activation, current equity is used as the baseline;
+// the floor is enforced on subsequent levels via initialEquity.
    static bool PassesActivationEquityFloor(double equityFloorPercent)
    {
       // Batch 152 (S-M-01): the old check computed the floor from CURRENT equity
@@ -73,10 +64,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| L10-003: Equity floor check when adding a grid level —            |
-   //| stop the grid if equity dropped below the floor of initialEquity. |
-   //+------------------------------------------------------------------+
+// L10-003: Equity floor check when adding a grid level —
+// stop the grid if equity dropped below the floor of initialEquity.
    static bool PassesLevelEquityFloor(double initialEquity, double equityFloorPercent, int level)
    {
       double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);

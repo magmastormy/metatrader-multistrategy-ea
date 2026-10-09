@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| PortfolioRiskManager.mqh                                         |
-//| Manages total portfolio risk and correlation exposure            |
-//| Rebuilt to fix corruption and standardize risk units (0-100%)    |
-//+------------------------------------------------------------------+
+// Manages total portfolio risk and correlation exposure
+// Rebuilt to fix corruption and standardize risk units (0-100%)
 #property copyright "Copyright 2024, Windsurf AI"
 #property strict
 
@@ -15,9 +12,6 @@
 #include "CorrelationEngine.mqh"
 #include "../Utils/RiskMath.mqh"
 
-//+------------------------------------------------------------------+
-//| Portfolio Risk Manager Class                                     |
-//+------------------------------------------------------------------+
 class CPortfolioRiskManager
 {
 private:
@@ -148,9 +142,7 @@ private:
         // (Declared above at line 75-76)
     };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CPortfolioRiskManager::CPortfolioRiskManager() :
     m_maxPortfolioRisk(10.0),
     m_maxCorrelation(0.7),
@@ -189,9 +181,7 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     ArrayInitialize(m_equityCurveReturns, 0.0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CPortfolioRiskManager::~CPortfolioRiskManager()
 {
     // No manual cleanup required - all owned resources use RAII via value members:
@@ -201,9 +191,6 @@ CPortfolioRiskManager::~CPortfolioRiskManager()
     // This class owns NO raw pointers to dynamically allocated memory.
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelation)
 {
     if(maxRiskPercent <= 0 || maxRiskPercent > 500)
@@ -239,9 +226,7 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get Current Portfolio Risk (%)                                   |
-//+------------------------------------------------------------------+
+// Get Current Portfolio Risk (%)
 double CPortfolioRiskManager::GetPortfolioRisk()
 {
     // Check if cache needs refresh
@@ -276,9 +261,7 @@ double CPortfolioRiskManager::GetPortfolioRisk()
     return m_currentTotalRisk;
 }
 
-//+------------------------------------------------------------------+
-//| Check if a new trade is allowed                                  |
-//+------------------------------------------------------------------+
+// Check if a new trade is allowed
 bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double stopLossPoints)
 {
     m_lastBlockReason = "";
@@ -322,9 +305,6 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check Correlation Limits                                         |
-//+------------------------------------------------------------------+
 bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 {
     m_lastBlockReason = "";
@@ -397,9 +377,7 @@ void CPortfolioRiskManager::RecordBlockReason(const string reason)
     m_lastPrintedBlockTime = nowTime;
 }
 
-//+------------------------------------------------------------------+
-//| Update total risk from open positions                            |
-//+------------------------------------------------------------------+
+// Update total risk from open positions
 void CPortfolioRiskManager::UpdateCurrentRisk()
 {
     double totalRiskDollar = 0.0;
@@ -437,17 +415,13 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Equity-aware denominator for stress-state risk normalization      |
-//+------------------------------------------------------------------+
+// Equity-aware denominator for stress-state risk normalization
 double CPortfolioRiskManager::GetRiskDenominator() const
 {
     return CRiskMath::GetRiskDenominator();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate risk for a single position ($)                         |
-//+------------------------------------------------------------------+
+// Calculate risk for a single position ($)
 double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
 {
     if(!PositionSelectByTicket(ticket)) return 0.0;
@@ -469,9 +443,7 @@ double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
     return (diff / tickSize) * tickValue * volume;
 }
 
-//+------------------------------------------------------------------+
-//| Approximate new trade risk                                       |
-//+------------------------------------------------------------------+
+// Approximate new trade risk
 double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints)
 {
     if(lotSize <= 0.0 || symbol == "")
@@ -550,9 +522,7 @@ int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Find symbol index in risk cache                                  |
-//+------------------------------------------------------------------+
+// Find symbol index in risk cache
 int CPortfolioRiskManager::FindSymbolInCache(string symbol)
 {
     for(int i = 0; i < ArraySize(m_riskCache.perSymbolName); i++)
@@ -563,9 +533,7 @@ int CPortfolioRiskManager::FindSymbolInCache(string symbol)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Add position risk to cache incrementally                         |
-//+------------------------------------------------------------------+
+// Add position risk to cache incrementally
 void CPortfolioRiskManager::AddPositionToCache(string symbol, double riskPct)
 {
     // Add risk to total
@@ -587,9 +555,7 @@ void CPortfolioRiskManager::AddPositionToCache(string symbol, double riskPct)
     m_riskCache.positionCount++;
 }
 
-//+------------------------------------------------------------------+
-//| Remove position risk from cache incrementally                    |
-//+------------------------------------------------------------------+
+// Remove position risk from cache incrementally
 void CPortfolioRiskManager::RemovePositionFromCache(string symbol, double riskPct)
 {
     m_riskCache.totalRiskPct -= riskPct;
@@ -604,9 +570,7 @@ void CPortfolioRiskManager::RemovePositionFromCache(string symbol, double riskPc
     m_riskCache.positionCount--;
 }
 
-//+------------------------------------------------------------------+
-//| Full refresh of risk cache from all open positions               |
-//+------------------------------------------------------------------+
+// Full refresh of risk cache from all open positions
 void CPortfolioRiskManager::RefreshRiskCache()
 {
     // L5-006 FIX: Increment version counter at start of refresh
@@ -665,9 +629,7 @@ void CPortfolioRiskManager::RefreshRiskCache()
         m_riskCache.version++; // Increment again to mark completion
     }
 
-//+------------------------------------------------------------------+
-//| Public: notify cache that a position was opened                  |
-//+------------------------------------------------------------------+
+// Public: notify cache that a position was opened
 void CPortfolioRiskManager::OnPositionOpened(string symbol, double riskPct)
 {
     AddPositionToCache(symbol, riskPct);
@@ -675,9 +637,7 @@ void CPortfolioRiskManager::OnPositionOpened(string symbol, double riskPct)
     m_currentTotalRisk = m_riskCache.totalRiskPct;
 }
 
-//+------------------------------------------------------------------+
-//| Public: notify cache that a position was closed                  |
-//+------------------------------------------------------------------+
+// Public: notify cache that a position was closed
 void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
 {
     RemovePositionFromCache(symbol, riskPct);
@@ -685,17 +645,13 @@ void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
     m_currentTotalRisk = m_riskCache.totalRiskPct;
 }
 
-//+------------------------------------------------------------------+
-//| Public: force cache invalidation                                 |
-//+------------------------------------------------------------------+
+// Public: force cache invalidation
 void CPortfolioRiskManager::InvalidateRiskCache()
 {
     m_riskCache.isValid = false;
 }
 
-//+------------------------------------------------------------------+
-//| Determine if two symbols belong to the same asset class          |
-//+------------------------------------------------------------------+
+// Determine if two symbols belong to the same asset class
 bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
 {
     // Asset class heuristics based on symbol name patterns
@@ -777,10 +733,8 @@ bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
            (sym1IsMetal && sym2IsMetal);
 }
 
-//+------------------------------------------------------------------+
-//| Get effective correlation threshold based on asset class         |
-//| L5-016 FIX: Uses configurable thresholds instead of hardcoded    |
-//+------------------------------------------------------------------+
+// Get effective correlation threshold based on asset class
+// L5-016 FIX: Uses configurable thresholds instead of hardcoded
 double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, string symbol2)
 {
     if(IsSameAssetClass(symbol1, symbol2))
@@ -789,11 +743,9 @@ double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, s
     return m_crossAssetCorrThreshold;
 }
 
-//+------------------------------------------------------------------+
-//| Record equity curve return for CVaR calculation (L5-015)        |
-//| Uses equity curve returns instead of trade returns for better    |
-//| risk estimation as equity curve captures full portfolio dynamics |
-//+------------------------------------------------------------------+
+// Record equity curve return for CVaR calculation (L5-015)
+// Uses equity curve returns instead of trade returns for better
+// risk estimation as equity curve captures full portfolio dynamics
 void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
 {
     // Batch 151: this buffer is m_maxEquityCurveHistory-sized (500); the old
@@ -816,9 +768,7 @@ void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
                 equityPercentChange, m_equityCurveReturnCount);
 }
 
-//+------------------------------------------------------------------+
-//| Update equity curve from current account equity (call each bar) |
-//+------------------------------------------------------------------+
+// Update equity curve from current account equity (call each bar)
 void CPortfolioRiskManager::UpdateEquityCurve()
 {
     // Batch 151: the caller (URM::RefreshRuntimeState) runs per cycle, so
@@ -842,10 +792,8 @@ void CPortfolioRiskManager::UpdateEquityCurve()
     m_lastEquity = currentEquity;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate CVaR (Conditional Value at Risk) at given confidence   |
-//| L5-015 FIX: Uses equity curve returns instead of trade returns   |
-//+------------------------------------------------------------------+
+// Calculate CVaR (Conditional Value at Risk) at given confidence
+// L5-015 FIX: Uses equity curve returns instead of trade returns
 double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 {
     // Use equity curve returns for CVaR (L5-015)
@@ -881,9 +829,7 @@ double CPortfolioRiskManager::CalculateCVaR(double confidence) const
     return cvar; // Negative value = expected loss
 }
 
-//+------------------------------------------------------------------+
-//| Check if new position would exceed CVaR limit                    |
-//+------------------------------------------------------------------+
+// Check if new position would exceed CVaR limit
 bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 {
     // Not enough data to make a reliable CVaR estimate — don't block
@@ -917,9 +863,7 @@ bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get current CVaR value at stored confidence level                |
-//+------------------------------------------------------------------+
+// Get current CVaR value at stored confidence level
 double CPortfolioRiskManager::GetCurrentCVaR() const
 {
     return CalculateCVaR(m_cvarConfidence);

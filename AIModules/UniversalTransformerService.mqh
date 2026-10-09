@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Universal Transformer Service for Multi-Symbol AI               |
-//| Centralized transformer with symbol-specific adaptation          |
-//+------------------------------------------------------------------+
+// Universal Transformer Service for Multi-Symbol AI
+// Centralized transformer with symbol-specific adaptation
 #ifndef UNIVERSAL_TRANSFORMER_SERVICE_MQH
 #define UNIVERSAL_TRANSFORMER_SERVICE_MQH
 
@@ -21,9 +19,7 @@ enum ENUM_SYMBOL_CLASS
     SYMBOL_CLASS_CRYPTO
 };
 
-//+------------------------------------------------------------------+
-//| ITransformerEncoder Interface - Allows swapping implementations   |
-//+------------------------------------------------------------------+
+// ITransformerEncoder Interface - Allows swapping implementations
 interface ITransformerEncoder
 {
     bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]);
@@ -51,9 +47,7 @@ public:
     int GetNumLayers() const { return m_transformer.GetNumLayers(); }
 };
 
-//+------------------------------------------------------------------+
-//| Symbol Adaptation Head - Lightweight symbol-specific processing  |
-//+------------------------------------------------------------------+
+// Symbol Adaptation Head - Lightweight symbol-specific processing
 class CSymbolEmbedding
 {
 private:
@@ -361,9 +355,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Cache entry for symbol features                                  |
-//+------------------------------------------------------------------+
+// Cache entry for symbol features
 struct SSymbolFeatureCache
 {
     string symbol;
@@ -380,9 +372,7 @@ struct SSymbolFeatureCache
     }
 };
 
-//+------------------------------------------------------------------+
-//| Universal Transformer Service - Centralized AI brain             |
-//+------------------------------------------------------------------+
+// Universal Transformer Service - Centralized AI brain
 class CUniversalTransformerService
 {
 private:

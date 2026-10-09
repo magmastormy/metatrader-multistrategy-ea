@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| AdvancedOrderBlocks.mqh                                          |
-//| Source, Continuation, and Breaker Block Detection                |
-//| For Unified ICT Strategy                                         |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Source, Continuation, and Breaker Block Detection
+// For Unified ICT Strategy
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -11,9 +8,6 @@
 #ifndef UICT_ADVANCED_ORDER_BLOCKS_MQH
 #define UICT_ADVANCED_ORDER_BLOCKS_MQH
 
-//+------------------------------------------------------------------+
-//| Order Block Type Enum                                            |
-//+------------------------------------------------------------------+
 enum ENUM_ORDER_BLOCK_TYPE
 {
     OB_NONE = 0,
@@ -31,9 +25,6 @@ enum ENUM_ORDER_BLOCK_TYPE
     OB_VACUUM_BEAR
 };
 
-//+------------------------------------------------------------------+
-//| Order Block Structure                                            |
-//+------------------------------------------------------------------+
 struct SAdvancedOrderBlock
 {
     // --- EXISTING FIELDS (keep all unchanged) ---
@@ -75,9 +66,6 @@ struct SAdvancedOrderBlock
                            mitigationLevel(0), shadowUsedForSL(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| Advanced Order Block Detector Class                              |
-//+------------------------------------------------------------------+
 class CAdvancedOrderBlockDetector
 {
 private:
@@ -109,7 +97,6 @@ public:
     void                Update();
     void                ScanForOrderBlocks(int lookback = 50);
     
-    // Source OB Detection
     bool                DetectBullishSourceOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishSourceOB(SAdvancedOrderBlock &ob);
     
@@ -117,7 +104,6 @@ public:
     bool                DetectBullishOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishOB(SAdvancedOrderBlock &ob);
     
-    // Breaker Block Detection
     bool                DetectBullishBreakerBlock(SAdvancedOrderBlock &ob);
     bool                DetectBearishBreakerBlock(SAdvancedOrderBlock &ob);
     bool                DetectBullishPropulsionBlock(SAdvancedOrderBlock &ob);
@@ -131,7 +117,6 @@ public:
     bool                ValidateOrderBlock(SAdvancedOrderBlock &ob);
     bool                CheckMitigation(SAdvancedOrderBlock &ob);
     
-    // Getters
     int                 GetOBCount() const { return m_obCount; }
     bool                GetOrderBlock(int index, SAdvancedOrderBlock &ob);
     int                 FindActiveOBAtPrice(double price, double tolerance);
@@ -154,9 +139,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CAdvancedOrderBlockDetector::CAdvancedOrderBlockDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -166,17 +149,12 @@ CAdvancedOrderBlockDetector::CAdvancedOrderBlockDetector() :
     ArrayResize(m_orderBlocks, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CAdvancedOrderBlockDetector::~CAdvancedOrderBlockDetector()
 {
     ArrayFree(m_orderBlocks);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
@@ -186,9 +164,6 @@ bool CAdvancedOrderBlockDetector::Initialize(const string symbol, ENUM_TIMEFRAME
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CAdvancedOrderBlockDetector::Update()
 {
     ScanForOrderBlocks(500);  // Expanded from 50 for historical memory
@@ -200,9 +175,6 @@ void CAdvancedOrderBlockDetector::Update()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Scan For Order Blocks                                            |
-//+------------------------------------------------------------------+
 void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
 {
     m_obCount = 0;
@@ -366,9 +338,7 @@ bool CAdvancedOrderBlockDetector::IsBearishType(const ENUM_ORDER_BLOCK_TYPE type
             type == OB_VACUUM_BEAR);
 }
 
-//+------------------------------------------------------------------+
-//| Find Impulse Start — P1-A Helper                                |
-//+------------------------------------------------------------------+
+// Find Impulse Start — P1-A Helper
 // Returns the starting bar index of the most recent impulsive move in the given direction.
 // An impulse is 3+ consecutive bars moving in the same direction with bodies >= 50% of range.
 // Returns -1 if no impulse found within lookback.
@@ -410,9 +380,7 @@ int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
     return impulseStartBar;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bullish Source OB — P1-A Rewrite                         |
-//+------------------------------------------------------------------+
+// Detect Bullish Source OB — P1-A Rewrite
 // Algorithm:
 // 1. Find the most recent bullish impulse (3+ strong bullish candles)
 // 2. Starting at the bar just BEFORE the impulse began, walk backward
@@ -476,9 +444,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bearish Source OB — P1-A Rewrite                         |
-//+------------------------------------------------------------------+
+// Detect Bearish Source OB — P1-A Rewrite
 bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
 {
     int impulseStartBar = FindImpulseStart(false, 50);  // false = bearish impulse
@@ -532,9 +498,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bullish Continuation OB                                   |
-//+------------------------------------------------------------------+
+// Detect Bullish Continuation OB
 bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
 {
     int swingHighBar = FindMostRecentSwingHigh();
@@ -591,9 +555,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bearish Continuation OB                                   |
-//+------------------------------------------------------------------+
+// Detect Bearish Continuation OB
 bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
 {
     int swingLowBar = FindMostRecentSwingLow();
@@ -649,9 +611,6 @@ bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bullish Breaker Block                                     |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock &ob)
 {
     int swingHighBar = FindMostRecentSwingHigh();
@@ -706,9 +665,6 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bearish Breaker Block                                     |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock &ob)
 {
     int swingLowBar = FindMostRecentSwingLow();
@@ -1102,9 +1058,6 @@ bool CAdvancedOrderBlockDetector::DetectBearishVacuumBlock(SAdvancedOrderBlock &
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Validate Order Block                                             |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
 {
     if(ob.isValidated) return true;
@@ -1137,9 +1090,7 @@ bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check Mitigation — P0-B Rewrite                                 |
-//+------------------------------------------------------------------+
+// Check Mitigation — P0-B Rewrite
 // ICT Rule: OB is mitigated only when a candle CLOSES through the full boundary.
 // Bullish OBs: mitigated when close < bottom.
 // Bearish OBs: mitigated when close > top.
@@ -1220,9 +1171,6 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
     return ob.isMitigated;
 }
 
-//+------------------------------------------------------------------+
-//| Find Most Recent Swing High                                      |
-//+------------------------------------------------------------------+
 int CAdvancedOrderBlockDetector::FindMostRecentSwingHigh(int lookback)
 {
     for(int i = 3; i < lookback - 3; i++)
@@ -1240,9 +1188,6 @@ int CAdvancedOrderBlockDetector::FindMostRecentSwingHigh(int lookback)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Find Most Recent Swing Low                                       |
-//+------------------------------------------------------------------+
 int CAdvancedOrderBlockDetector::FindMostRecentSwingLow(int lookback)
 {
     for(int i = 3; i < lookback - 3; i++)
@@ -1260,9 +1205,6 @@ int CAdvancedOrderBlockDetector::FindMostRecentSwingLow(int lookback)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Find Old Low                                                     |
-//+------------------------------------------------------------------+
 double CAdvancedOrderBlockDetector::FindOldLow(int startBar, int endBar)
 {
     double lowestLow = DBL_MAX;
@@ -1277,9 +1219,6 @@ double CAdvancedOrderBlockDetector::FindOldLow(int startBar, int endBar)
     return (lowestLow == DBL_MAX) ? 0 : lowestLow;
 }
 
-//+------------------------------------------------------------------+
-//| Find Old High                                                    |
-//+------------------------------------------------------------------+
 double CAdvancedOrderBlockDetector::FindOldHigh(int startBar, int endBar)
 {
     double highestHigh = 0;
@@ -1294,9 +1233,6 @@ double CAdvancedOrderBlockDetector::FindOldHigh(int startBar, int endBar)
     return highestHigh;
 }
 
-//+------------------------------------------------------------------+
-//| Is Near Support Level                                            |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::IsNearSupportLevel(double price)
 {
     // Batch 156: ATR-relative floor - 20*point is ~0.2 absolute on synthetics,
@@ -1313,9 +1249,6 @@ bool CAdvancedOrderBlockDetector::IsNearSupportLevel(double price)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Is Near Resistance Level                                         |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::IsNearResistanceLevel(double price)
 {
     double tolerance = 20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -1329,9 +1262,6 @@ bool CAdvancedOrderBlockDetector::IsNearResistanceLevel(double price)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get Order Block                                                  |
-//+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::GetOrderBlock(int index, SAdvancedOrderBlock &ob)
 {
     if(index < 0 || index >= m_obCount) return false;
@@ -1339,9 +1269,6 @@ bool CAdvancedOrderBlockDetector::GetOrderBlock(int index, SAdvancedOrderBlock &
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Find Active OB at Price                                          |
-//+------------------------------------------------------------------+
 int CAdvancedOrderBlockDetector::FindActiveOBAtPrice(double price, double tolerance)
 {
     for(int i = 0; i < m_obCount; i++)
@@ -1357,9 +1284,6 @@ int CAdvancedOrderBlockDetector::FindActiveOBAtPrice(double price, double tolera
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Find Best Bullish OB                                             |
-//+------------------------------------------------------------------+
 int CAdvancedOrderBlockDetector::FindBestBullishOB()
 {
     int bestIndex = -1;
@@ -1382,9 +1306,6 @@ int CAdvancedOrderBlockDetector::FindBestBullishOB()
     return bestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Find Best Bearish OB                                             |
-//+------------------------------------------------------------------+
 int CAdvancedOrderBlockDetector::FindBestBearishOB()
 {
     int bestIndex = -1;
@@ -1407,10 +1328,8 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
     return bestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Get Freshness — Batch 103: OB freshness decay 0.0-1.0            |
-//| Fresh OBs (0-5 bars old) = 1.0, linear decay to 0.0 over 50 bars|
-//+------------------------------------------------------------------+
+// Get Freshness — Batch 103: OB freshness decay 0.0-1.0
+// Fresh OBs (0-5 bars old) = 1.0, linear decay to 0.0 over 50 bars
 double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
 {
     if(obIndex < 0 || obIndex >= m_obCount)

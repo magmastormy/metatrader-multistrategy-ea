@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| StructureScore.mqh - Swing strength + structure state scoring    |
-//| Extracted verbatim from StructureEngine.mqh (no behavior change) |
-//|                                                                  |
-//| Stateless: the engine state is injected by reference so the      |
-//| scorer stays free of engine ownership.                           |
-//+------------------------------------------------------------------+
+// StructureScore.mqh - Swing strength + structure state scoring
+// Extracted verbatim from StructureEngine.mqh (no behavior change)
+// Stateless: the engine state is injected by reference so the
+// scorer stays free of engine ownership.
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -14,9 +11,7 @@
 
 #include "StructureTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless structure scoring helpers                              |
-//+------------------------------------------------------------------+
+// Stateless structure scoring helpers
 class CStructureScore
 {
 public:
@@ -35,9 +30,6 @@ public:
                                       double minSwingSize);
 };
 
-//+------------------------------------------------------------------+
-//| Calculate swing point strength                                  |
-//+------------------------------------------------------------------+
 double CStructureScore::CalculateSwingStrength(const MqlRates &rates[], int index, bool isHigh)
 {
     double strength = 50.0; // Base strength
@@ -89,9 +81,6 @@ double CStructureScore::CalculateSwingStrength(const MqlRates &rates[], int inde
     return MathMin(100.0, strength);
 }
 
-//+------------------------------------------------------------------+
-//| Update market structure state                                   |
-//+------------------------------------------------------------------+
 void CStructureScore::UpdateStructureState(MarketStructureState &state,
                                            const SwingPoint &newPoint,
                                            bool isHigh)
@@ -152,9 +141,7 @@ void CStructureScore::UpdateStructureState(MarketStructureState &state,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Calculate overall structure strength / directional bias         |
-//+------------------------------------------------------------------+
+// Calculate overall structure strength / directional bias
 void CStructureScore::UpdateBiasAndStrength(MarketStructureState &state,
                                             const SwingPoint &swingHighs[],
                                             const SwingPoint &swingLows[],

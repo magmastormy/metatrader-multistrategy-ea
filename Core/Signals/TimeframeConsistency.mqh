@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| TimeframeConsistency.mqh                                        |
-//| Ensures consistent multi-timeframe signal alignment             |
-//| Prevents hedging due to conflicting TF signals                  |
-//+------------------------------------------------------------------+
+// Ensures consistent multi-timeframe signal alignment
+// Prevents hedging due to conflicting TF signals
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
 #property strict
@@ -25,9 +22,6 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Timeframe Signal Structure                                      |
-//+------------------------------------------------------------------+
 struct STimeframeSignal
 {
     ENUM_TIMEFRAMES timeframe;
@@ -50,9 +44,7 @@ struct STimeframeSignal
     }
 };
 
-//+------------------------------------------------------------------+
-//| Conflict Resolution Mode                                        |
-//+------------------------------------------------------------------+
+// Conflict Resolution Mode
 enum ENUM_CONFLICT_RESOLUTION
 {
     CONFLICT_RES_NEUTRAL,      // Return neutral signal on conflict
@@ -63,9 +55,6 @@ enum ENUM_CONFLICT_RESOLUTION
     CONFLICT_RES_WEIGHTED      // Weighted by confidence and timeframe
 };
 
-//+------------------------------------------------------------------+
-//| Timeframe Consistency Class                                     |
-//+------------------------------------------------------------------+
 class CTimeframeConsistency
 {
 private:
@@ -90,14 +79,12 @@ public:
     CTimeframeConsistency();
     ~CTimeframeConsistency();
     
-    // Initialize
     bool Initialize(ENUM_CONFLICT_RESOLUTION mode = CONFLICT_RES_WEIGHTED,
                    double minAlignment = 0.6,
                    bool requireFull = false);
                    
     void SetDiagnostics(CSignalDiagnostics* diag) { m_diagnostics = diag; }
     
-    // Add timeframe signal
     void AddTimeframeSignal(ENUM_TIMEFRAMES tf,
                            ENUM_TRADE_SIGNAL signal,
                            double confidence,
@@ -151,9 +138,7 @@ private:
                               double confidence);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTimeframeConsistency::CTimeframeConsistency() :
     m_signalCount(0),
     m_resolutionMode(CONFLICT_RES_WEIGHTED),
@@ -170,17 +155,12 @@ CTimeframeConsistency::CTimeframeConsistency() :
     ArrayResize(m_signals, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTimeframeConsistency::~CTimeframeConsistency()
 {
     ArrayFree(m_signals);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTimeframeConsistency::Initialize(ENUM_CONFLICT_RESOLUTION mode,
                                        double minAlignment,
                                        bool requireFull)
@@ -196,9 +176,6 @@ bool CTimeframeConsistency::Initialize(ENUM_CONFLICT_RESOLUTION mode,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Add Timeframe Signal                                            |
-//+------------------------------------------------------------------+
 void CTimeframeConsistency::AddTimeframeSignal(ENUM_TIMEFRAMES tf,
                                               ENUM_TRADE_SIGNAL signal,
                                               double confidence,
@@ -218,9 +195,6 @@ void CTimeframeConsistency::AddTimeframeSignal(ENUM_TIMEFRAMES tf,
     m_signalCount++;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve Signals                                                 |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveSignals(double &finalConfidence, string &reasoning)
 {
     if(m_signalCount == 0)
@@ -273,9 +247,7 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveSignals(double &finalConfidence,
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Check for Conflicts                                             |
-//+------------------------------------------------------------------+
+// Check for Conflicts
 bool CTimeframeConsistency::HasConflicts() const
 {
     if(m_signalCount < 2) return false;
@@ -294,9 +266,6 @@ bool CTimeframeConsistency::HasConflicts() const
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get Conflict Count                                              |
-//+------------------------------------------------------------------+
 int CTimeframeConsistency::GetConflictCount() const
 {
     int conflicts = 0;
@@ -317,9 +286,6 @@ int CTimeframeConsistency::GetConflictCount() const
     return conflicts;
 }
 
-//+------------------------------------------------------------------+
-//| Get Conflict Details                                            |
-//+------------------------------------------------------------------+
 string CTimeframeConsistency::GetConflictDetails() const
 {
     string details = "";
@@ -337,9 +303,6 @@ string CTimeframeConsistency::GetConflictDetails() const
     return details;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Alignment                                             |
-//+------------------------------------------------------------------+
 double CTimeframeConsistency::CalculateAlignment() const
 {
     if(m_signalCount < 2) return 1.0;
@@ -374,9 +337,7 @@ double CTimeframeConsistency::CalculateAlignment() const
     return alignment;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Aligned                                                |
-//+------------------------------------------------------------------+
+// Check if Aligned
 bool CTimeframeConsistency::IsAligned() const
 {
     double alignment = CalculateAlignment();
@@ -387,9 +348,6 @@ bool CTimeframeConsistency::IsAligned() const
         return alignment >= m_minAlignmentThreshold;
 }
 
-//+------------------------------------------------------------------+
-//| Would Cause Hedge                                               |
-//+------------------------------------------------------------------+
 bool CTimeframeConsistency::WouldCauseHedge(ENUM_TRADE_SIGNAL newSignal) const
 {
     // Check if we have opposing signals that would cause hedging
@@ -404,9 +362,6 @@ bool CTimeframeConsistency::WouldCauseHedge(ENUM_TRADE_SIGNAL newSignal) const
     return (hasBuy && hasSell);
 }
 
-//+------------------------------------------------------------------+
-//| Prevent Hedging                                                 |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::PreventHedging(ENUM_TRADE_SIGNAL signal1,
                                                        ENUM_TRADE_SIGNAL signal2)
 {
@@ -422,18 +377,13 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::PreventHedging(ENUM_TRADE_SIGNAL signal
     return signal1; // Return first signal if not conflicting
 }
 
-//+------------------------------------------------------------------+
-//| Reset                                                            |
-//+------------------------------------------------------------------+
+// Reset
 void CTimeframeConsistency::Reset()
 {
     m_signalCount = 0;
     ArrayResize(m_signals, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Resolve Neutral                                                 |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveNeutral(double &confidence, string &reasoning)
 {
     if(HasConflicts())
@@ -453,9 +403,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveNeutral(double &confidence, stri
     return m_signals[0].signal;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve Strongest                                               |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveStrongest(double &confidence, string &reasoning)
 {
     int strongestIdx = 0;
@@ -475,9 +422,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveStrongest(double &confidence, st
     return m_signals[strongestIdx].signal;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve HTF Priority                                            |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveHTFPriority(double &confidence, string &reasoning)
 {
     int highestTFIdx = 0;
@@ -498,9 +442,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveHTFPriority(double &confidence, 
     return m_signals[highestTFIdx].signal;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve LTF Priority                                            |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveLTFPriority(double &confidence, string &reasoning)
 {
     int lowestTFIdx = 0;
@@ -521,9 +462,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveLTFPriority(double &confidence, 
     return m_signals[lowestTFIdx].signal;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve Majority                                                |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveMajority(double &confidence, string &reasoning)
 {
     int buyVotes = 0, sellVotes = 0;
@@ -561,9 +499,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveMajority(double &confidence, str
     return TRADE_SIGNAL_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| Resolve Weighted                                                |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveWeighted(double &confidence, string &reasoning)
 {
     double buyWeight = 0.0, sellWeight = 0.0;
@@ -613,9 +548,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveWeighted(double &confidence, str
     return TRADE_SIGNAL_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| Get Timeframe Rank                                              |
-//+------------------------------------------------------------------+
 int CTimeframeConsistency::GetTimeframeRank(ENUM_TIMEFRAMES tf) const
 {
     switch(tf)
@@ -633,9 +565,6 @@ int CTimeframeConsistency::GetTimeframeRank(ENUM_TIMEFRAMES tf) const
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Timeframe Weight                                            |
-//+------------------------------------------------------------------+
 double CTimeframeConsistency::GetTimeframeWeight(ENUM_TIMEFRAMES tf) const
 {
     int rank = GetTimeframeRank(tf);
@@ -645,9 +574,6 @@ double CTimeframeConsistency::GetTimeframeWeight(ENUM_TIMEFRAMES tf) const
         return 1.0;
 }
 
-//+------------------------------------------------------------------+
-//| Timeframe to String                                             |
-//+------------------------------------------------------------------+
 string CTimeframeConsistency::TimeframeToString(ENUM_TIMEFRAMES tf) const
 {
     switch(tf)
@@ -665,18 +591,12 @@ string CTimeframeConsistency::TimeframeToString(ENUM_TIMEFRAMES tf) const
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Conflict Rate                                               |
-//+------------------------------------------------------------------+
 double CTimeframeConsistency::GetConflictRate() const
 {
     if(m_totalChecks == 0) return 0.0;
     return (double)m_conflictsDetected / m_totalChecks;
 }
 
-//+------------------------------------------------------------------+
-//| Log Conflict Resolution                                         |
-//+------------------------------------------------------------------+
 void CTimeframeConsistency::LogConflictResolution(const string method,
                                                  ENUM_TRADE_SIGNAL result,
                                                  double confidence)

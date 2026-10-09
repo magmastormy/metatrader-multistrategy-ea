@@ -1,24 +1,18 @@
-//+------------------------------------------------------------------+
-//| SpikeHunterAlerts.mqh                                            |
-//| Decomposition extraction from CSpikeHunterEngine (behaviour      |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the push-notification throttle state that used to be the    |
-//| loose member pair:                                               |
-//|   CSpikeHunterEngine::m_lastPushAlertTick  (L10-016 GetTickCount)|
-//|   CSpikeHunterEngine::m_pushAlertCount                           |
-//|                                                                  |
-//| Moved logic (verbatim):                                          |
-//|   SendThrottledAlert() — enable gate, GetTickCount() delta vs    |
-//|   alertThrottleSeconds*1000, SendNotification() success/failure  |
-//|   branches and all three log tags.                               |
-//|                                                                  |
-//| The module keeps its own by-value copy of SSpikeHunterConfig.    |
-//| The engine assigns it in Init() exactly where m_config was       |
-//| assigned; before Init() the default-constructed copy carries the |
-//| identical production defaults, so the pre-Init behaviour of the  |
-//| original (enablePushAlerts=true, throttle=120s) is unchanged.    |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CSpikeHunterEngine (behaviour
+// preserving).
+// Owns the push-notification throttle state that used to be the
+// loose member pair:
+// CSpikeHunterEngine::m_lastPushAlertTick  (L10-016 GetTickCount)
+// CSpikeHunterEngine::m_pushAlertCount
+// Moved logic (verbatim):
+// SendThrottledAlert() — enable gate, GetTickCount() delta vs
+// alertThrottleSeconds*1000, SendNotification() success/failure
+// branches and all three log tags.
+// The module keeps its own by-value copy of SSpikeHunterConfig.
+// The engine assigns it in Init() exactly where m_config was
+// assigned; before Init() the default-constructed copy carries the
+// identical production defaults, so the pre-Init behaviour of the
+// original (enablePushAlerts=true, throttle=120s) is unchanged.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_ALERTS_MQH
@@ -26,9 +20,7 @@
 
 #include "SpikeHunterTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CSpikeHunterAlerts — stateful throttled push alert dispatcher     |
-//+------------------------------------------------------------------+
+// CSpikeHunterAlerts — stateful throttled push alert dispatcher
 class CSpikeHunterAlerts
 {
 private:
@@ -49,9 +41,7 @@ public:
    //--- Accessor (was CSpikeHunterEngine::m_pushAlertCount)
    int GetAlertCount() const { return m_pushAlertCount; }
 
-   //+------------------------------------------------------------------+
-   //| Send a throttled push notification                               |
-   //+------------------------------------------------------------------+
+// Send a throttled push notification
    void SendThrottledAlert(const string message)
    {
       if(!m_config.enablePushAlerts)

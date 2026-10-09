@@ -1,44 +1,36 @@
-//+------------------------------------------------------------------+
-//| Strategy Manager Infrastructure (Phase G - G5)                    |
-//|                                                                   |
-//| Owns the collaborator "plumbing" of CEnterpriseStrategyManager -  |
-//| every engine / profiler / manager pointer it holds, the symbol &  |
-//| timeframe context, the init flags and the cached ADX handle -     |
-//| together with the two-phase Initialize() body and both teardown   |
-//| paths (destructor + explicit Deinit).                             |
-//|                                                                   |
-//| Relocated state (was loose members of the manager):               |
-//|   m_pipeline, m_tfConsistency, m_tradeManager, m_positionSizer,   |
-//|   m_unifiedRiskManager, m_derivProfiler, m_multiAssetProfiler,    |
-//|   m_drawingManager, m_vpinFilter, m_ofiEngine,                    |
-//|   m_familyWeightMatrix, m_fourStateRegimeDetector,                |
-//|   m_strategyRegistry, m_diagnostics, m_attribution,               |
-//|   m_healthMonitor, m_regimeDetectorInitialized, m_symbol,         |
-//|   m_baseTimeframe, m_initialized, m_usePipeline, m_adxHandleCached|
-//|                                                                   |
-//| *** BEHAVIOUR CONTRACT ***                                        |
-//| Initialize(), the destructor teardown and the Deinit teardown are |
-//| byte-for-byte relocations, including every Print() string, the    |
-//| Phase-1 rollback order (pipeline deleted when TimeframeConsistency|
-//| fails) and the LEAK-FIX health-monitor re-allocation. The health  |
-//| monitor is configured from the manager's quorum/adaptation config |
-//| object, which is passed in by reference - the original body read  |
-//| exactly those same fields from its own members.                   |
-//|                                                                   |
-//| The Deinit path is split into ReleaseOnDeinit() + FinishDeinit()  |
-//| so the manager can re-bind its attribution delegator between the  |
-//| attribution delete and the health-monitor delete, preserving the  |
-//| original statement order exactly.                                 |
-//|                                                                   |
-//| This module deliberately has NO back-pointer to the manager: it   |
-//| is a leaf value object, held BY VALUE, and never observes manager |
-//| state.                                                            |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Manager Infrastructure (Phase G - G5)
+// Owns the collaborator "plumbing" of CEnterpriseStrategyManager -
+// every engine / profiler / manager pointer it holds, the symbol &
+// timeframe context, the init flags and the cached ADX handle -
+// together with the two-phase Initialize() body and both teardown
+// paths (destructor + explicit Deinit).
+// Relocated state (was loose members of the manager):
+// m_pipeline, m_tfConsistency, m_tradeManager, m_positionSizer,
+// m_unifiedRiskManager, m_derivProfiler, m_multiAssetProfiler,
+// m_drawingManager, m_vpinFilter, m_ofiEngine,
+// m_familyWeightMatrix, m_fourStateRegimeDetector,
+// m_strategyRegistry, m_diagnostics, m_attribution,
+// m_healthMonitor, m_regimeDetectorInitialized, m_symbol,
+// m_baseTimeframe, m_initialized, m_usePipeline, m_adxHandleCached
+// *** BEHAVIOUR CONTRACT ***
+// Initialize(), the destructor teardown and the Deinit teardown are
+// byte-for-byte relocations, including every Print() string, the
+// Phase-1 rollback order (pipeline deleted when TimeframeConsistency
+// fails) and the LEAK-FIX health-monitor re-allocation. The health
+// monitor is configured from the manager's quorum/adaptation config
+// object, which is passed in by reference - the original body read
+// exactly those same fields from its own members.
+// The Deinit path is split into ReleaseOnDeinit() + FinishDeinit()
+// so the manager can re-bind its attribution delegator between the
+// attribution delete and the health-monitor delete, preserving the
+// original statement order exactly.
+// This module deliberately has NO back-pointer to the manager: it
+// is a leaf value object, held BY VALUE, and never observes manager
+// state.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_MGR_INFRASTRUCTURE_MQH
 #define STRATEGY_MGR_INFRASTRUCTURE_MQH
 
@@ -60,9 +52,7 @@
 class CTradeManager;
 class CPositionSizer;
 
-//+------------------------------------------------------------------+
-//| Collaborator plumbing / lifecycle for CEnterpriseStrategyManager  |
-//+------------------------------------------------------------------+
+// Collaborator plumbing / lifecycle for CEnterpriseStrategyManager
 class CStrategyMgrInfrastructure
 {
 private:
@@ -158,9 +148,7 @@ public:
     int             GetAdxHandleCached() const          { return m_adxHandleCached; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - relocated from the manager's initialiser list       |
-//+------------------------------------------------------------------+
+// Constructor - relocated from the manager's initialiser list
 CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_pipeline(NULL),
     m_tfConsistency(NULL),
@@ -187,28 +175,24 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_symbol = "";
 }
 
-//+------------------------------------------------------------------+
-//| L1-007: Create the health monitor instance                        |
-//| (the manager's constructor used to do this inline)                |
-//+------------------------------------------------------------------+
+// L1-007: Create the health monitor instance
+// (the manager's constructor used to do this inline)
 void CStrategyMgrInfrastructure::AllocateHealthMonitor()
 {
     m_healthMonitor = new CStrategyHealthMonitor();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Manager                                              |
-//| Two-Phase Initialization Pattern (L2-023):                      |
-//|   Phase 1 (Required): Core infrastructure - Pipeline,            |
-//|       TimeframeConsistency (must succeed or full init fails)    |
-//|   Phase 2 (Optional): Enhancements - FourStateRegimeDetector,   |
-//|       FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)  |
-//| This pattern ensures core consensus machinery is ready before   |
-//| registering strategies, while allowing optional engines to      |
-//| degrade gracefully without blocking the manager.                |
-//| Ownership: Phase 1 objects owned by manager (deleted in dtor).  |
-//| Phase 2 objects also owned but failure does not roll back Phase 1.|
-//+------------------------------------------------------------------+
+// Initialize Manager
+// Two-Phase Initialization Pattern (L2-023):
+// Phase 1 (Required): Core infrastructure - Pipeline,
+// TimeframeConsistency (must succeed or full init fails)
+// Phase 2 (Optional): Enhancements - FourStateRegimeDetector,
+// FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)
+// This pattern ensures core consensus machinery is ready before
+// registering strategies, while allowing optional engines to
+// degrade gracefully without blocking the manager.
+// Ownership: Phase 1 objects owned by manager (deleted in dtor).
+// Phase 2 objects also owned but failure does not roll back Phase 1.
 bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                             bool usePipeline,
                                             CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
@@ -333,9 +317,7 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor teardown (verbatim relocation)                         |
-//+------------------------------------------------------------------+
+// Destructor teardown (verbatim relocation)
 void CStrategyMgrInfrastructure::ReleaseOnDestruct()
 {
     if(m_pipeline != NULL)
@@ -374,9 +356,7 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Explicit-Deinit teardown, part 1 (verbatim relocation)            |
-//+------------------------------------------------------------------+
+// Explicit-Deinit teardown, part 1 (verbatim relocation)
 void CStrategyMgrInfrastructure::ReleaseOnDeinit()
 {
     // Clean up components
@@ -420,9 +400,7 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Explicit-Deinit teardown, part 2 (verbatim relocation)            |
-//+------------------------------------------------------------------+
+// Explicit-Deinit teardown, part 2 (verbatim relocation)
 void CStrategyMgrInfrastructure::FinishDeinit()
 {
     if(m_healthMonitor != NULL)
@@ -434,9 +412,7 @@ void CStrategyMgrInfrastructure::FinishDeinit()
     m_initialized = false;
 }
 
-//+------------------------------------------------------------------+
-//| Set Pipeline Filters (pipeline half - verbatim relocation)        |
-//+------------------------------------------------------------------+
+// Set Pipeline Filters (pipeline half - verbatim relocation)
 void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &settings)
 {
     if(m_pipeline != NULL)
@@ -456,9 +432,7 @@ void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &sett
     }
 }
 
-//+------------------------------------------------------------------+
-//| Consensus diagnostics log interval (verbatim relocation)          |
-//+------------------------------------------------------------------+
+// Consensus diagnostics log interval (verbatim relocation)
 void CStrategyMgrInfrastructure::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
 {
     if(m_diagnostics != NULL)

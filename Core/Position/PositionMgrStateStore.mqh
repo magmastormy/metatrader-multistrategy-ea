@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| PositionMgrStateStore.mqh                                        |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATEFUL module: owns the SPositionState registry that maps      |
-//| broker position tickets to strategy metadata, prediction IDs and |
-//| AI prediction snapshots. Method bodies are copied verbatim from  |
-//| CPositionManager - zero behaviour change.                        |
-//|                                                                  |
-//| NOTE: 'SPositionState' intentionally remains a TOP-LEVEL struct   |
-//| (exactly as it was declared in PositionManager.mqh) so that any   |
-//| translation unit including PositionManager.mqh keeps seeing it.   |
-//| It must stay declared AFTER Core/Trading/TradeManager.mqh is      |
-//| pulled in, which PositionManager.mqh guarantees by include order. |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATEFUL module: owns the SPositionState registry that maps
+// broker position tickets to strategy metadata, prediction IDs and
+// AI prediction snapshots. Method bodies are copied verbatim from
+// CPositionManager - zero behaviour change.
+// NOTE: 'SPositionState' intentionally remains a TOP-LEVEL struct
+// (exactly as it was declared in PositionManager.mqh) so that any
+// translation unit including PositionManager.mqh keeps seeing it.
+// It must stay declared AFTER Core/Trading/TradeManager.mqh is
+// pulled in, which PositionManager.mqh guarantees by include order.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_STATE_STORE_MQH
@@ -20,9 +15,7 @@
 
 #include "../Utils/Enums.mqh"   // ENUM_TRADE_SIGNAL / TRADE_SIGNAL_NONE
 
-//+------------------------------------------------------------------+
-//| Position State Structure (merged from PositionStateManager)     |
-//+------------------------------------------------------------------+
+// Position State Structure (merged from PositionStateManager)
 struct SPositionState
 {
     ulong positionId;           // Position ticket ID
@@ -55,10 +48,7 @@ struct SPositionState
     }
 };
 
-//+------------------------------------------------------------------+
-//| CPositionMgrStateStore                                           |
-//| Owns: m_positionStates[] / m_positionStateCount / MAX bound.     |
-//+------------------------------------------------------------------+
+// Owns: m_positionStates[] / m_positionStateCount / MAX bound.
 class CPositionMgrStateStore
 {
 private:

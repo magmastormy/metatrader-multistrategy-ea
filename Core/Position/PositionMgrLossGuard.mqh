@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| PositionMgrLossGuard.mqh                                         |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATEFUL module: owns loss-minimization configuration plus the   |
-//| consecutive-loss / daily-loss accounting state, and enforces the |
-//| per-position loss limit. Bodies are copied verbatim from         |
-//| CPositionManager - zero behaviour change.                        |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATEFUL module: owns loss-minimization configuration plus the
+// consecutive-loss / daily-loss accounting state, and enforces the
+// per-position loss limit. Bodies are copied verbatim from
+// CPositionManager - zero behaviour change.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_LOSS_GUARD_MQH
@@ -15,9 +11,6 @@
 #include "../Trading/TradeManager.mqh"     // CTradeManager (complete type, called by pointer)
 #include "PositionMgrMagicFilter.mqh"      // CPositionMgrMagicFilter::IsEAOwnedMagic
 
-//+------------------------------------------------------------------+
-//| CPositionMgrLossGuard                                            |
-//+------------------------------------------------------------------+
 class CPositionMgrLossGuard
 {
 private:
@@ -88,7 +81,6 @@ public:
 
     double GetDailyLossAmount() const { return m_dailyLossAmount; }
 
-    // --- Loss Minimization ---
     void ManageLossMinimization(CTradeManager* tradeManager, const int magicNumber)
     {
         if(!m_adverseMomentumExitEnabled && m_consecutiveLossLimit <= 0) return;

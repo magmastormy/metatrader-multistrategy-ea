@@ -1,22 +1,16 @@
-//+------------------------------------------------------------------+
-//| FastScalpIndicators.mqh                                          |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the per-symbol cached indicator state that used to live as  |
-//| six loose members on CFastScalpEngine:                           |
-//|   m_cachedSymbol, m_cachedBarTime, m_cachedATR,                  |
-//|   m_cachedFastEMA, m_cachedSlowEMA, m_cachedRSI                  |
-//|                                                                  |
-//| Moved methods (bodies verbatim):                                 |
-//|   RefreshIndicators(), GetATRCached(), GetEMACrossover(),        |
-//|   IsRSIConfirmed()                                               |
-//|                                                                  |
-//| The engine now holds one CFastScalpIndicators BY VALUE and       |
-//| forwards to it with one-line forwarders keeping the exact        |
-//| original private signatures. Config values that were read from   |
-//| m_config are passed in as a const SScalpConfig reference.        |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the per-symbol cached indicator state that used to live as
+// six loose members on CFastScalpEngine:
+// m_cachedSymbol, m_cachedBarTime, m_cachedATR,
+// m_cachedFastEMA, m_cachedSlowEMA, m_cachedRSI
+// Moved methods (bodies verbatim):
+// RefreshIndicators(), GetATRCached(), GetEMACrossover(),
+// IsRSIConfirmed()
+// The engine now holds one CFastScalpIndicators BY VALUE and
+// forwards to it with one-line forwarders keeping the exact
+// original private signatures. Config values that were read from
+// m_config are passed in as a const SScalpConfig reference.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_INDICATORS_MQH
@@ -26,9 +20,7 @@
 #include "../../IndicatorManager.mqh"
 #include "FastScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpIndicators — stateful M1 indicator cache                |
-//+------------------------------------------------------------------+
+// CFastScalpIndicators — stateful M1 indicator cache
 class CFastScalpIndicators
 {
 private:
@@ -41,9 +33,7 @@ private:
    double                    m_cachedRSI;
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor — reproduces the original CFastScalpEngine ctor list  |
-   //+------------------------------------------------------------------+
+// Constructor — reproduces the original CFastScalpEngine ctor list
    CFastScalpIndicators() :
       m_cachedSymbol(""),
       m_cachedBarTime(0),
@@ -62,10 +52,8 @@ public:
    double   GetCachedSlowEMA() const { return m_cachedSlowEMA; }
    double   GetCachedRSI()     const { return m_cachedRSI; }
 
-   //+------------------------------------------------------------------+
-   //| Overwrite the cache from an external source (signal cache path)   |
-   //| Assignment order matches the original EvaluateScalpSignal block.  |
-   //+------------------------------------------------------------------+
+// Overwrite the cache from an external source (signal cache path)
+// Assignment order matches the original EvaluateScalpSignal block.
    void SetCachedValues(const string symbol, datetime barTime, double atr,
                         double fastEMA, double slowEMA, double rsi)
    {
@@ -77,9 +65,7 @@ public:
       m_cachedBarTime = barTime;
    }
 
-   //+------------------------------------------------------------------+
-   //| Refresh cached indicator values for a symbol                      |
-   //+------------------------------------------------------------------+
+// Refresh cached indicator values for a symbol
    bool RefreshIndicators(const string symbol, const SScalpConfig &config)
    {
       // Only refresh on new bar for M1
@@ -136,9 +122,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get ATR value cached                                              |
-   //+------------------------------------------------------------------+
+// Get ATR value cached
    double GetATRCached(const string symbol, const SScalpConfig &config)
    {
       if(!RefreshIndicators(symbol, config))
@@ -146,10 +130,8 @@ public:
       return m_cachedATR;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get EMA values for crossover detection                            |
-   //| Stateless — reads handles/buffers only, touches no member state.  |
-   //+------------------------------------------------------------------+
+// Get EMA values for crossover detection
+// Stateless — reads handles/buffers only, touches no member state.
    static bool GetEMACrossover(const string symbol, const SScalpConfig &config,
                                ENUM_TRADE_SIGNAL &signal)
    {
@@ -183,9 +165,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check RSI confirmation: not overbought for BUY, not oversold     |
-   //+------------------------------------------------------------------+
+// Check RSI confirmation: not overbought for BUY, not oversold
    bool IsRSIConfirmed(ENUM_TRADE_SIGNAL signal, const SScalpConfig &config) const
    {
       if(m_cachedRSI <= 0.0)

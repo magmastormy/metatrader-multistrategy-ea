@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Risk-Aware Position Sizing System                              |
-//| Calculates optimal position sizes based on risk parameters     |
-//+------------------------------------------------------------------+
+// Risk-Aware Position Sizing System
+// Calculates optimal position sizes based on risk parameters
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -22,21 +20,17 @@ class CEnhancedErrorHandler;
 class CPositionSizer;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Batch 170: hard ceiling on the min-lot round-up multiplier.      |
-//| Rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies    |
-//| the risk the pre-trade gate approved, because sizing happens     |
-//| after that gate. 3x on a 1% account means a 3% worst-case fill   |
-//| which is survivable; 15x (what live_overrides.json asked for)    |
-//| is not.                                                          |
-//+------------------------------------------------------------------+
+// Batch 170: hard ceiling on the min-lot round-up multiplier.
+// Rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies
+// the risk the pre-trade gate approved, because sizing happens
+// after that gate. 3x on a 1% account means a 3% worst-case fill
+// which is survivable; 15x (what live_overrides.json asked for)
+// is not.
 #ifndef MAX_MIN_LOT_RISK_MULTIPLIER
 #define MAX_MIN_LOT_RISK_MULTIPLIER 3.0
 #endif
 
-//+------------------------------------------------------------------+
-//| Position Sizing Parameters Structure                           |
-//+------------------------------------------------------------------+
+// Position Sizing Parameters Structure
 struct SPositionSizingParams
 {
     ENUM_POSITION_SIZING_MODE sizingMode;    // Position sizing method
@@ -92,9 +86,6 @@ struct SPositionSizingParams
     {}
 };
 
-//+------------------------------------------------------------------+
-//| Position Sizer Class                                             |
-//+------------------------------------------------------------------+
 class CPositionSizer
 {
 private:
@@ -129,7 +120,6 @@ private:
     string m_atrSymbol;
     int m_atrPeriod;
     
-    // Modifiers
     CEquityCurveLotModifier* m_equityCurveModifier;
     CVolatilityTargetingModifier* m_volatilityTargetingModifier;
     CADXLotModifier* m_adxModifier;
@@ -170,7 +160,6 @@ public:
         double CalculatePositionSizeWithMode(const string symbol, double stopLossPips, ENUM_POSITION_SIZING_MODE mode, double confidence = 1.0);
         double CalculatePositionSizeWithRisk(const string symbol, double stopLossPips, double riskPercent, double confidence = 1.0);
     
-        // Daily budget capping
                 double CapLotForDailyBudget(const string symbol, ENUM_ORDER_TYPE orderType, double lotSize,
                                              double stopLossPips, double tradeRiskPercent,
                                              double remainingDailyRisk, double maxBudgetFraction);
@@ -200,7 +189,6 @@ public:
     double GetRiskDenominator(void);
     double CalculateRiskPerLot(const string symbol, const double stopLossPips);
     
-        // Correlation
         void SetCorrelationThresholds(double blockThreshold, double reduceThreshold);
     
         // Volume normalization
@@ -209,22 +197,16 @@ public:
         // Modifier management
         void ClearModifiers();
     
-        // Logging
         void SetLogLevel(int level);
     
-        // Diagnostics
         string GetDiagnostics() const;
     };
 
     #endif // CORE_POSITION_SIZER_MQH
 
-//+------------------------------------------------------------------+
-//| Implementation                                                   |
-//+------------------------------------------------------------------+
+// Implementation
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CPositionSizer::CPositionSizer() :
     m_currentTotalRisk(0.0),
     m_modifierCount(0),
@@ -249,9 +231,7 @@ CPositionSizer::CPositionSizer() :
         m_modifiers[i] = NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CPositionSizer::~CPositionSizer()
 {
     // Delete internally created modifiers (volatility targeting, equity curve, ADX, VPIN)
@@ -278,9 +258,6 @@ CPositionSizer::~CPositionSizer()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CPositionSizer::Initialize(const SPositionSizingParams &params)
 {
     m_params = params;
@@ -316,7 +293,6 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
         AddModifier(m_adxModifier);
     }
     
-    // VPIN modifier
     m_vpinModifier = new CVPINLotModifier();
     if(m_vpinModifier.Initialize())
     {
@@ -331,42 +307,32 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
         return true;
     }
 
-//+------------------------------------------------------------------+
-//| Set correlation engine reference                                 |
-//+------------------------------------------------------------------+
+// Set correlation engine reference
 void CPositionSizer::SetCorrelationEngine(CCorrelationEngine* engine)
 {
     m_correlationEngine = engine;
     Print("[PositionSizer] Correlation engine linked");
 }
 
-//+------------------------------------------------------------------+
-//| Set indicator manager reference                                  |
-//+------------------------------------------------------------------+
+// Set indicator manager reference
 void CPositionSizer::SetIndicatorManager(CIndicatorManager* manager)
 {
     m_indicatorManager = manager;
 }
 
-//+------------------------------------------------------------------+
-//| Set error handler reference                                      |
-//+------------------------------------------------------------------+
+// Set error handler reference
 void CPositionSizer::SetErrorHandler(CEnhancedErrorHandler* handler)
 {
     m_errorHandler = handler;
 }
 
-//+------------------------------------------------------------------+
-//| Set performance analytics reference                              |
-//+------------------------------------------------------------------+
+// Set performance analytics reference
 void CPositionSizer::SetPerformanceAnalytics(CPerformanceAnalytics* analytics)
 {
     m_performanceAnalytics = analytics;
 }
 
-//+------------------------------------------------------------------+
-//| Add modifier to chain                                            |
-//+------------------------------------------------------------------+
+// Add modifier to chain
 bool CPositionSizer::AddModifier(CPositionSizerModifier* modifier)
 {
     if(m_modifierCount >= 10)
@@ -384,9 +350,7 @@ bool CPositionSizer::AddModifier(CPositionSizerModifier* modifier)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Main position sizing interface                                   |
-//+------------------------------------------------------------------+
+// Main position sizing interface
 double CPositionSizer::CalculatePositionSize(const string symbol, double stopLossPips, double confidence)
 {
     if(symbol == "" || stopLossPips <= 0.0)
@@ -444,9 +408,7 @@ double CPositionSizer::CalculatePositionSize(const string symbol, double stopLos
     return finalSize;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate position size with explicit mode                       |
-//+------------------------------------------------------------------+
+// Calculate position size with explicit mode
 double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double stopLossPips, ENUM_POSITION_SIZING_MODE mode, double confidence)
 {
     ENUM_POSITION_SIZING_MODE oldMode = m_params.sizingMode;
@@ -456,9 +418,7 @@ double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double
         return size;
     }
 
-    //+------------------------------------------------------------------+
-    //| Calculate position size with custom risk percent                 |
-    //+------------------------------------------------------------------+
+// Calculate position size with custom risk percent
     double CPositionSizer::CalculatePositionSizeWithRisk(const string symbol, double stopLossPips, double riskPercent, double confidence)
     {
         if(riskPercent <= 0.0)
@@ -471,9 +431,6 @@ double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double
         return size;
     }
 
-    //+------------------------------------------------------------------+
-    //| Cap lot size to daily budget                                     |
-    //+------------------------------------------------------------------+
     double CPositionSizer::CapLotForDailyBudget(const string symbol, ENUM_ORDER_TYPE orderType, double lotSize,
                                                 double stopLossPips, double proposedRisk,
                                                 double remainingDailyRisk, double maxBudgetFraction)
@@ -523,9 +480,7 @@ double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double
         return cappedLot;
     }
 
-//+------------------------------------------------------------------+
-//| Fixed risk position sizing                                       |
-//+------------------------------------------------------------------+
+// Fixed risk position sizing
 double CPositionSizer::CalculateFixedRiskSize(const string symbol, double stopLossPips)
 {
     double riskAmount = GetRiskDenominator() * (m_params.riskPercent / 100.0);
@@ -560,9 +515,7 @@ double CPositionSizer::CalculateFixedRiskSize(const string symbol, double stopLo
     return NormalizeVolume(symbol, lotSize);
 }
 
-//+------------------------------------------------------------------+
-//| Volatility targeting position sizing                             |
-//+------------------------------------------------------------------+
+// Volatility targeting position sizing
 double CPositionSizer::CalculateVolatilityTargetSize(const string symbol, double stopLossPips)
 {
     if(m_volatilityTargetingModifier == NULL)
@@ -572,9 +525,7 @@ double CPositionSizer::CalculateVolatilityTargetSize(const string symbol, double
     return m_volatilityTargetingModifier.AdjustLotSize(baseSize, symbol, 1.0);
 }
 
-//+------------------------------------------------------------------+
-//| Equity curve position sizing                                     |
-//+------------------------------------------------------------------+
+// Equity curve position sizing
 double CPositionSizer::CalculateEquityCurveSize(const string symbol, double stopLossPips)
 {
     if(m_equityCurveModifier == NULL)
@@ -584,9 +535,7 @@ double CPositionSizer::CalculateEquityCurveSize(const string symbol, double stop
     return m_equityCurveModifier.AdjustLotSize(baseSize, symbol, 1.0);
 }
 
-//+------------------------------------------------------------------+
-//| Correlation adjustment                                           |
-//+------------------------------------------------------------------+
+// Correlation adjustment
 double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, double baseSize)
 {
     if(m_correlationEngine == NULL)
@@ -637,9 +586,6 @@ double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, dou
     return baseSize;
 }
 
-//+------------------------------------------------------------------+
-//| Count highly correlated positions                                |
-//+------------------------------------------------------------------+
 int CPositionSizer::CountHighlyCorrelatedPositions(const string symbolParam, double threshold)
 {
     if(m_correlationEngine == NULL)
@@ -663,9 +609,7 @@ int CPositionSizer::CountHighlyCorrelatedPositions(const string symbolParam, dou
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Apply modifier chain                                             |
-//+------------------------------------------------------------------+
+// Apply modifier chain
 double CPositionSizer::ApplyModifiers(double baseSize, const string symbol, double stopLossPips, double confidence, const string corrId = "")
 {
     double currentSize = baseSize;
@@ -701,9 +645,6 @@ double CPositionSizer::ApplyModifiers(double baseSize, const string symbol, doub
     return currentSize;
 }
 
-//+------------------------------------------------------------------+
-//| Validate position size                                           |
-//+------------------------------------------------------------------+
 bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, double stopLossPips)
 {
     if(lotSize <= 0.0)
@@ -763,9 +704,7 @@ bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, 
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Normalize volume to broker step                                  |
-//+------------------------------------------------------------------+
+// Normalize volume to broker step
 double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
 {
     double step = SymbolInfoDouble(symbolParam, SYMBOL_VOLUME_STEP);
@@ -793,9 +732,7 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
     return normalized;
 }
 
-//+------------------------------------------------------------------+
-//| Risk metrics                                                     |
-//+------------------------------------------------------------------+
+// Risk metrics
 double CPositionSizer::GetCurrentTotalRisk() const
 {
     return m_currentTotalRisk;
@@ -826,9 +763,7 @@ void CPositionSizer::ResetDailyRisk()
     Print("[PositionSizer] Daily risk reset");
 }
 
-//+------------------------------------------------------------------+
-//| Configuration updates                                            |
-//+------------------------------------------------------------------+
+// Configuration updates
 void CPositionSizer::UpdateRiskPercent(double newRiskPercent)
 {
     m_params.riskPercent = MathMax(0.01, MathMin(100.0, newRiskPercent));
@@ -865,9 +800,7 @@ void CPositionSizer::SetMinLotRiskMultiplier(double multiplier)
     m_params.minLotRiskMultiplier = clamped;
 }
 
-//+------------------------------------------------------------------+
-//| Parameter access (L5-006)                                        |
-//+------------------------------------------------------------------+
+// Parameter access (L5-006)
 SPositionSizingParams CPositionSizer::GetParameters() const
 {
     return m_params;
@@ -880,9 +813,7 @@ bool CPositionSizer::SetParameters(const SPositionSizingParams &params)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Account risk denominator                                         |
-//+------------------------------------------------------------------+
+// Account risk denominator
 // AUDIT FIX: This implementation must be kept in sync with CPortfolioRiskManager::GetRiskDenominator
 // to ensure consistent risk calculation across all risk components.
 double CPositionSizer::GetRiskDenominator(void)
@@ -890,9 +821,7 @@ double CPositionSizer::GetRiskDenominator(void)
     return CRiskMath::GetRiskDenominator();
 }
 
-//+------------------------------------------------------------------+
-//| Risk per 1.0 lot for a stop distance                            |
-//+------------------------------------------------------------------+
+// Risk per 1.0 lot for a stop distance
 double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const double stopLossPips)
 {
     if(symbolParam == "" || stopLossPips <= 0.0) {
@@ -947,18 +876,13 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
     return riskPerLot;
 }
 
-//+------------------------------------------------------------------+
-//| Correlation thresholds                                           |
-//+------------------------------------------------------------------+
 void CPositionSizer::SetCorrelationThresholds(double blockThreshold, double reduceThreshold)
 {
     m_params.correlationBlockThreshold = MathMax(0.0, MathMin(1.0, blockThreshold));
     m_params.correlationReduceThreshold = MathMax(0.0, MathMin(1.0, reduceThreshold));
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR value                                                    |
-//+------------------------------------------------------------------+
+// Get ATR value
 double CPositionSizer::GetATR(const string symbol, int period, ENUM_TIMEFRAMES timeframe)
 {
     // Try to use IndicatorManager if available
@@ -994,9 +918,6 @@ double CPositionSizer::GetATR(const string symbol, int period, ENUM_TIMEFRAMES t
     return atr[0];
 }
 
-//+------------------------------------------------------------------+
-//| Invalidate ATR handle                                            |
-//+------------------------------------------------------------------+
 void CPositionSizer::InvalidateATRHandle(const string symbol)
 {
     if(m_atrHandle != INVALID_HANDLE && m_atrSymbol == symbol)
@@ -1007,9 +928,6 @@ void CPositionSizer::InvalidateATRHandle(const string symbol)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update risk metrics                                              |
-//+------------------------------------------------------------------+
 void CPositionSizer::UpdateRiskMetrics()
 {
     m_currentTotalRisk = 0.0;
@@ -1063,18 +981,13 @@ void CPositionSizer::UpdateRiskMetrics()
     // permanently disarmed the portfolio-risk cap.
 }
 
-//+------------------------------------------------------------------+
-//| Diagnostics                                                      |
-//+------------------------------------------------------------------+
 string CPositionSizer::GetDiagnostics() const
 {
     return StringFormat("PosSizer: Risk=%.2f%% | Daily=%.2f%% | Open=%d | Modifiers=%d",
                         m_currentTotalRisk, m_dailyRiskUsed, m_openPositions, m_modifierCount);
 }
 
-//+------------------------------------------------------------------+
-//| Clear all modifiers (non-owning clear - EA owns modifiers)       |
-//+------------------------------------------------------------------+
+// Clear all modifiers (non-owning clear - EA owns modifiers)
 void CPositionSizer::ClearModifiers()
 {
     for(int i = 0; i < m_modifierCount; i++)
@@ -1085,9 +998,6 @@ void CPositionSizer::ClearModifiers()
     Print("[PositionSizer] All modifiers cleared (non-owning)");
 }
 
-//+------------------------------------------------------------------+
-//| Set log level                                                    |
-//+------------------------------------------------------------------+
 void CPositionSizer::SetLogLevel(int level)
 {
     if(level < 0) level = 0;

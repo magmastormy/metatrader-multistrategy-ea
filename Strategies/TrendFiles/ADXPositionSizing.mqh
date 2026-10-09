@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ADXPositionSizing.mqh                                            |
-//| ADX-Based Adaptive Position Sizing                               |
-//| Adjusts lot size based on trend strength                         |
-//+------------------------------------------------------------------+
+// ADX-Based Adaptive Position Sizing
+// Adjusts lot size based on trend strength
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -12,9 +9,6 @@
 
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| ADX Tier Enum                                                    |
-//+------------------------------------------------------------------+
 enum ENUM_ADX_TIER
 {
     ADX_NO_TREND,       // ADX < 20 - no trade
@@ -26,16 +20,12 @@ enum ENUM_ADX_TIER
 
 #include "../../Core/Utils/Instruments.mqh"
 
-//+------------------------------------------------------------------+
-//| ADX Position Sizing Class                                        |
-//+------------------------------------------------------------------+
 class CADXPositionSizing
 {
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
     
-    // ADX handle
     int                 m_adxHandle;
     
     // Configuration
@@ -56,15 +46,13 @@ private:
     ENUM_ADX_TIER       GetADXTier(double adx);
     
 public:
-    //+------------------------------------------------------------------+
-    //| Input Parameters - Standardized ADX Thresholds                    |
-    //| Rationale:                                                      |
-    //|   ADX < 20: No trend - range-bound market, avoid entries         |
-    //|   ADX 20-25: Weak trend - low conviction, use half position size  |
-    //|   ADX 25-30: Normal trend - acceptable strength, full size        |
-    //|   ADX 30-40: Strong trend - high conviction, 1.3x size           |
-    //|   ADX > 40: Very strong trend - maximum conviction, 1.5x size     |
-    //+------------------------------------------------------------------+
+// Input Parameters - Standardized ADX Thresholds
+// Rationale:
+// ADX < 20: No trend - range-bound market, avoid entries
+// ADX 20-25: Weak trend - low conviction, use half position size
+// ADX 25-30: Normal trend - acceptable strength, full size
+// ADX 30-40: Strong trend - high conviction, 1.3x size
+// ADX > 40: Very strong trend - maximum conviction, 1.5x size
                         CADXPositionSizing();
                        ~CADXPositionSizing();
     
@@ -79,7 +67,6 @@ public:
     bool                ShouldTrade();
     bool                IsDirectionallyClear();
     
-    // Getters
     ENUM_ADX_TIER       GetCurrentTier();
     double              GetCurrentADX() { return GetADX(); }
     string              GetTierName();
@@ -91,9 +78,7 @@ public:
     void                InitForAssetClass(int assetClass);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - Uses input parameters for standardized thresholds  |
-//+------------------------------------------------------------------+
+// Constructor - Uses input parameters for standardized thresholds
 CADXPositionSizing::CADXPositionSizing() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -111,17 +96,12 @@ CADXPositionSizing::CADXPositionSizing() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CADXPositionSizing::~CADXPositionSizing()
 {
     Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
@@ -138,9 +118,6 @@ bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize                                                     |
-//+------------------------------------------------------------------+
 void CADXPositionSizing::Deinit()
 {
     // Batch 156: this handle comes from CIndicatorManager's shared cache
@@ -155,9 +132,7 @@ void CADXPositionSizing::Deinit()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get ADX Value                                                    |
-//+------------------------------------------------------------------+
+// Get ADX Value
 double CADXPositionSizing::GetADX()
 {
     if(m_adxHandle == INVALID_HANDLE) return 0;
@@ -171,9 +146,6 @@ double CADXPositionSizing::GetADX()
     return adx[0];
 }
 
-//+------------------------------------------------------------------+
-//| Get ADX Tier                                                     |
-//+------------------------------------------------------------------+
 ENUM_ADX_TIER CADXPositionSizing::GetADXTier(double adx)
 {
     if(adx < m_noTrendThreshold)
@@ -188,17 +160,12 @@ ENUM_ADX_TIER CADXPositionSizing::GetADXTier(double adx)
         return ADX_VERY_STRONG;
 }
 
-//+------------------------------------------------------------------+
-//| Get Current Tier                                                 |
-//+------------------------------------------------------------------+
 ENUM_ADX_TIER CADXPositionSizing::GetCurrentTier()
 {
     return GetADXTier(GetADX());
 }
 
-//+------------------------------------------------------------------+
-//| Get Tier Name - Dynamic based on configured thresholds            |
-//+------------------------------------------------------------------+
+// Get Tier Name - Dynamic based on configured thresholds
 string CADXPositionSizing::GetTierName()
 {
     ENUM_ADX_TIER tier = GetCurrentTier();
@@ -220,17 +187,12 @@ string CADXPositionSizing::GetTierName()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Should Trade                                                     |
-//+------------------------------------------------------------------+
 bool CADXPositionSizing::ShouldTrade()
 {
     return (GetADX() >= m_noTrendThreshold);
 }
 
-//+------------------------------------------------------------------+
-//| Is Directionally Clear (Regime Lockout)                          |
-//+------------------------------------------------------------------+
+// Is Directionally Clear (Regime Lockout)
 bool CADXPositionSizing::IsDirectionallyClear()
 {
     if(m_adxHandle == INVALID_HANDLE) return false;
@@ -255,9 +217,6 @@ bool CADXPositionSizing::IsDirectionallyClear()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get Position Size Multiplier                                     |
-//+------------------------------------------------------------------+
 double CADXPositionSizing::GetPositionSizeMultiplier()
 {
     ENUM_ADX_TIER tier = GetCurrentTier();
@@ -273,17 +232,11 @@ double CADXPositionSizing::GetPositionSizeMultiplier()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Adjusted Risk Percent                                        |
-//+------------------------------------------------------------------+
 double CADXPositionSizing::GetAdjustedRiskPercent()
 {
     return m_baseRiskPercent * GetPositionSizeMultiplier();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Lot Size                                               |
-//+------------------------------------------------------------------+
 double CADXPositionSizing::CalculateLotSize(double entryPrice, double stopLossPrice)
 {
     if(entryPrice <= 0 || stopLossPrice <= 0 || entryPrice == stopLossPrice) return 0;
@@ -320,9 +273,6 @@ double CADXPositionSizing::CalculateLotSize(double entryPrice, double stopLossPr
     return lots;
 }
 
-//+------------------------------------------------------------------+
-//| Set Multipliers                                                  |
-//+------------------------------------------------------------------+
 void CADXPositionSizing::SetMultipliers(double weak, double normal, double strong, double veryStrong)
 {
     m_weakTrendMultiplier = weak;
@@ -331,9 +281,6 @@ void CADXPositionSizing::SetMultipliers(double weak, double normal, double stron
     m_veryStrongMultiplier = veryStrong;
 }
 
-//+------------------------------------------------------------------+
-//| Set Thresholds                                                   |
-//+------------------------------------------------------------------+
 void CADXPositionSizing::SetThresholds(double noTrend, double weak, double normal, double strong)
 {
     m_noTrendThreshold = noTrend;
@@ -342,10 +289,8 @@ void CADXPositionSizing::SetThresholds(double noTrend, double weak, double norma
     m_strongThreshold = strong;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize ADX thresholds based on asset class                   |
-//| Synthetics have lower ADX due to algorithmic price generation    |
-//+------------------------------------------------------------------+
+// Initialize ADX thresholds based on asset class
+// Synthetics have lower ADX due to algorithmic price generation
 void CADXPositionSizing::InitForAssetClass(int assetClass)
 {
     switch(assetClass)

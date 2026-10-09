@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| EAOrchestrator.mqh                                               |
-//| Main coordination class - replaces monolithic EA logic           |
-//| Single composition root (Factory/Builder pattern) - Batch 123    |
-//+------------------------------------------------------------------+
+// Main coordination class - replaces monolithic EA logic
+// Single composition root (Factory/Builder pattern) - Batch 123
 #property strict
 
 #ifndef CORE_ORCHESTRATION_EA_ORCHESTRATOR_MQH
@@ -110,14 +107,12 @@
 #include "OrchestratorConfig.mqh"
 #include "StrategyConfigBuilder.mqh"
 
-// ------------------------------------------------------------------
 // Phase F decomposition modules.
 // Every cluster below was extracted out of CEAOrchestrator verbatim; the
 // orchestrator keeps thin forwarders with the original signatures so no
 // caller (internal or external) had to change. Included here - after the
 // engine/profiler/registry headers above - because the two stateful hubs
 // are held BY VALUE and therefore need their complete type.
-// ------------------------------------------------------------------
 #include "OrchestratorSymbolClassifier.mqh"     // static: symbol / roster classification
 #include "OrchestratorStrategyFlagBuilder.mqh"  // static: global + per-symbol strategy flags
 #include "OrchestratorIntrabarPolicy.mqh"       // static: L7-009/L7-010 intrabar + timeframe policy
@@ -125,9 +120,7 @@
 #include "OrchestratorProfitGuard.mqh"          // stateful: daily profit target / trading halt
 #include "OrchestratorMathEngineHub.mqh"        // stateful: Batch 100/114/107 engine fleets
 
-//+------------------------------------------------------------------+
-//| CEAOrchestratorBuilder - Builder pattern for orchestrator        |
-//+------------------------------------------------------------------+
+// CEAOrchestratorBuilder - Builder pattern for orchestrator
 class CEAOrchestratorBuilder
 {
     private:
@@ -356,7 +349,6 @@ class CEAOrchestrator
     int m_callCount;
     int m_managerCount;
 
-    // ============ Configuration ============
     SOrchestratorConfig m_config;
 
     public:
@@ -446,7 +438,6 @@ class CEAOrchestrator
         // L2-002: Cleanup AI subsystems using helper method
         CleanupAISubsystems();
 
-        // Shutdown JSON Logger
         CJsonLogger::Shutdown();
         
         // Shutdown production monitoring components
@@ -461,7 +452,6 @@ class CEAOrchestrator
             m_signalDiagnostics = NULL;
         }
 
-        // Deinit diagnostics logger
         m_diagLogger.Deinit();
 
         // L2-015: Call attribution diag print BEFORE releasing enterprise managers (which clears data)
@@ -486,10 +476,8 @@ class CEAOrchestrator
         // Cleanup TradeManager (L8-025: explicit Deinit for async trade persistence)
         m_tradeManager.Deinit();
 
-        // Cleanup scalp cache
         m_scalpCache.Cleanup();
 
-        // Uncertainty deinit
         UncertaintyDeinit();
 
         // L2-003/L2-013: Write crash recovery state on shutdown.
@@ -506,9 +494,7 @@ class CEAOrchestrator
     Print("[EAOrchestrator] Shutdown complete");
 }
 
-//+------------------------------------------------------------------+
-//| Batch 168: apply crash-recovery state after risk-manager init     |
-//+------------------------------------------------------------------+
+// Batch 168: apply crash-recovery state after risk-manager init
 void RestoreRiskRuntimeState()
 {
     if(!m_recoveryStateLoaded)
@@ -546,9 +532,7 @@ void RestoreRiskRuntimeState()
     m_recoveryStateLoaded = false;
 }
 
-//+------------------------------------------------------------------+
-//| Batch 168: persist circuit-breaker state. Throttled unless forced |
-//+------------------------------------------------------------------+
+// Batch 168: persist circuit-breaker state. Throttled unless forced
 void PersistRiskRuntimeState(const bool force)
 {
     // Wall-clock throttle. TimeCurrent() only advances with ticks, so gating a
@@ -604,7 +588,6 @@ void CleanupOnInitFailure()
     if(m_adxModifier != NULL) { delete m_adxModifier; m_adxModifier = NULL; }
     if(m_equityCurveManager != NULL) { delete m_equityCurveManager; m_equityCurveManager = NULL; }
 
-    // Neural net strategies
     for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
     {
         if(m_neuralNetStrategies[i] != NULL) { delete m_neuralNetStrategies[i]; m_neuralNetStrategies[i] = NULL; }
@@ -612,7 +595,6 @@ void CleanupOnInitFailure()
     ArrayResize(m_neuralNetStrategies, 0);
     ArrayResize(m_neuralNetStrategySymbols, 0);
 
-    // Drawing managers
     for(int i = 0; i < ArraySize(m_drawingManagers); i++)
     {
         if(m_drawingManagers[i] != NULL) { delete m_drawingManagers[i]; m_drawingManagers[i] = NULL; }
@@ -631,7 +613,6 @@ void CleanupOnInitFailure()
     // Cleanup registry aggregator (which owns strategy registry and other sub-registries)
     m_registryAggregator.Deinitialize();
 
-    // Cleanup AI subsystems
     CleanupAISubsystems();
 
     // Destroy error handler singleton
@@ -669,19 +650,9 @@ void InitializeStrategyConfigs() { CStrategyConfigBuilder::Initialize(m_config);
 // Initialize with config only - orchestrator creates its own managers
 bool Initialize(const SOrchestratorConfig& config)
 {
-    // L2-003/L2-013: Read crash recovery state at start of Initialize() so it is in
-    // hand before anything can fail, but DO NOT apply it here.
-    //
-    // Batch 168: the old code applied the restore here and then called
-    // CUnifiedRiskManager::Initialize() further down the same call chain, whose
-    // InitializeState() overwrote peak equity with current equity, zeroed the
-    // breach count and cleared both halts. The restore was therefore a no-op on
-    // every restart. It is now stashed and applied by RestoreRiskRuntimeState()
-    // after the risk manager is initialized.
-    //
-    // The file is no longer deleted after a successful read: state is now written
-    // periodically, so the file is the crash-recovery record and deleting it was
-    // what made a second restart lose everything.
+    // Read now (before anything can fail), apply after CUnifiedRiskManager::Initialize
+    // - that init resets peak equity, breach count and both halts, so restoring here
+    // was a no-op on every restart. The file is the crash record: never delete it.
     m_recoveryStateLoaded = false;
     m_savedEquityBaseline = 0.0;
     m_savedPeakEquity     = 0.0;
@@ -853,7 +824,6 @@ m_config.dashboardPushIntervalSec,
 );
 m_dashboardBridge.SetEnabled(m_config.dashboardEnabled);
 
-// Startup Health Check
 Print("[HEALTH-CHECK] Performing startup validation...");
 bool healthCheckPassed = true;
 if(m_config.enableAIMode) {
@@ -1130,7 +1100,6 @@ else
 }
 }
 
-// Configure cluster governance
 m_unifiedRiskManager.ConfigureClusterGovernance(m_config.enableClusterRiskGovernance,
 MathMax(1, m_config.riskMaxConcurrentPerCluster),
 MathMax(0.1, m_config.riskMaxClusterExposurePct),
@@ -1316,7 +1285,6 @@ m_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
 m_tickSafetyMonitor.SetMinMarginLevel(150.0);
 m_tickSafetyMonitor.SetEmergencyStop(false);
 
-// Initialize spike monitor
 m_spikeMonitor.Initialize(m_tradeManager, m_unifiedRiskManager, m_tickSafetyMonitor);
 
 // Initialize AI subsystems if enabled
@@ -1590,18 +1558,13 @@ return true;
 
 private:
 
-//+------------------------------------------------------------------+
-//| RequireDependency                                                  |
-//|                                                                    |
-//| Validation helper for WireAndValidateDependencies(). Emits a       |
-//| uniform [INIT-FAIL] diagnostic when a required dependency is       |
-//| missing and returns whether the dependency is present.             |
-//|                                                                    |
-//| isPresent   - result of the caller's non-NULL test                 |
-//| managerName - manager that needed the dependency                   |
-//| depName     - human-readable name of the missing dependency        |
-//| returns     - true when present, false when missing                |
-//+------------------------------------------------------------------+
+// Validation helper for WireAndValidateDependencies(). Emits a
+// uniform [INIT-FAIL] diagnostic when a required dependency is
+// missing and returns whether the dependency is present.
+// isPresent   - result of the caller's non-NULL test
+// managerName - manager that needed the dependency
+// depName     - human-readable name of the missing dependency
+// returns     - true when present, false when missing
 bool RequireDependency(const bool isPresent, const string managerName, const string depName)
 {
     if(isPresent)
@@ -1614,32 +1577,25 @@ bool RequireDependency(const bool isPresent, const string managerName, const str
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| WireAndValidateDependencies                                        |
-//|                                                                    |
-//| EXEC-01: single, centralized dependency-wiring pass followed by    |
-//| an init-time validation block.                                     |
-//|                                                                    |
-//| Every cross-manager dependency injection the orchestrator performs |
-//| lives here. Previously these calls were scattered through          |
-//| Initialize() and InitializeComponents(); a forgotten               |
-//| SetDependencies() left manager fields NULL and crashed mid-trade   |
-//| (CandidateBuilder.mqh:552, TradeExecutor.mqh:109). Centralizing    |
-//| the wiring and validating it converts that latent runtime crash    |
-//| into a loud, deterministic startup failure.                        |
-//|                                                                    |
-//| Ordering contract - this method MUST run:                          |
-//|   * after m_registryAggregator.Initialize() (REGISTRY-SYNC fix),   |
-//|     so GetNeuralNetRegistry() returns a live pointer;              |
-//|   * after InitializeSubsystems()/InitializeComponents(), so the    |
-//|     PositionManager, CandidateBuilder and lifecycle/diagnostics    |
-//|     managers already exist.                                        |
-//| It is therefore called exactly once, at the end of Initialize().   |
-//|                                                                    |
-//| Sets m_dependenciesValid = true only when every required           |
-//| dependency is non-NULL. On any failure it logs, leaves the flag    |
-//| false and returns early; Initialize() then aborts and OnInit fails.|
-//+------------------------------------------------------------------+
+// EXEC-01: single, centralized dependency-wiring pass followed by
+// an init-time validation block.
+// Every cross-manager dependency injection the orchestrator performs
+// lives here. Previously these calls were scattered through
+// Initialize() and InitializeComponents(); a forgotten
+// SetDependencies() left manager fields NULL and crashed mid-trade
+// (CandidateBuilder.mqh:552, TradeExecutor.mqh:109). Centralizing
+// the wiring and validating it converts that latent runtime crash
+// into a loud, deterministic startup failure.
+// Ordering contract - this method MUST run:
+// * after m_registryAggregator.Initialize() (REGISTRY-SYNC fix),
+// so GetNeuralNetRegistry() returns a live pointer;
+// * after InitializeSubsystems()/InitializeComponents(), so the
+// PositionManager, CandidateBuilder and lifecycle/diagnostics
+// managers already exist.
+// It is therefore called exactly once, at the end of Initialize().
+// Sets m_dependenciesValid = true only when every required
+// dependency is non-NULL. On any failure it logs, leaves the flag
+// false and returns early; Initialize() then aborts and OnInit fails.
 void WireAndValidateDependencies()
 {
     m_dependenciesValid = false;
@@ -1744,13 +1700,11 @@ public:
 bool InitializeComponents()
 {
     // Initialize core signal processing components
-    // SignalGenerator
     m_signalGenerator.Initialize(m_enterpriseManagers, m_enterpriseManagerSymbols, m_managerCount, &m_consensusCache);
     Print("[INIT] SignalGenerator initialized");
 
     // SignalValidator - now merged into EnterpriseStrategyManager
 
-    // CandidateBuilder
     if(!m_candidateBuilder.Initialize(&m_positionSizer, &m_unifiedRiskManager, &m_riskTierManager,
     &m_compoundingTierManager, &m_familyWeightMatrix,
     &m_sessionWeightManager, &m_skewStepAnalyzer))
@@ -1774,16 +1728,13 @@ bool InitializeComponents()
     // EXEC-01: CandidateBuilder + TradeExecutor dependency wiring moved to
     // WireAndValidateDependencies() (called once at the end of Initialize).
 
-    // TradeExecutor
     Print("[INIT] TradeExecutor initialized");
 
-    // LiveAuthorityResolver
     if(m_config.enableLiveAuthorityGate)
     {
         Print("[INIT] LiveAuthorityResolver initialized");
     }
 
-    // PositionManager
     if(!m_positionManager.Initialize(&m_tradeManager, NULL, &m_riskTierManager,
     &m_safeMode, &m_fullMarginMode, NULL,
     (int)m_config.magicNumber))
@@ -1808,7 +1759,6 @@ bool InitializeComponents()
             if(mathReg != NULL)
             {
                 mathReg.SetSignalDiagnostics(m_signalDiagnostics);
-                // Initialize pipeline engines for all registered symbols
                 mathReg.InitializePipelineEngines(m_enterpriseManagerSymbols, m_managerCount);
             }
         }
@@ -1824,7 +1774,6 @@ bool InitializeComponents()
 // (NULL-check on the registry is performed inside the hub, as before)
 m_mathEngineHub.RegisterMathEngines(m_registryAggregator.GetMathRegistry());
 
-// Register institutional engines with registry
 m_mathEngineHub.RegisterInstitutionalEngines(m_registryAggregator.GetInstitutionalRegistry(),
 m_enterpriseManagerSymbols, m_managerCount);
 
@@ -1836,7 +1785,6 @@ m_config.enableEnsemble || m_config.enableOnnxAI))
     // m_registryAggregator.GetNeuralNetRegistry() has its own internal management via GetOrCreateNeuralNet
 }
 
-// Register drawing managers
 CDrawingManagerRegistry* drawReg = m_registryAggregator.GetDrawingRegistry();
 if(drawReg != NULL)
 drawReg.RegisterAll(m_drawingManagers, m_drawingManagerSymbols,
@@ -3291,7 +3239,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         // Update daily profit target logic
         UpdateDailyProfitTarget();
 
-        // Update auto mode switching
         UpdateAutoModeSwitch();
 
         // Check unprotected positions
@@ -3329,16 +3276,12 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
                 if(m_enterpriseManagers[m] != NULL)
                 {
                     // Update AI strategy weights based on AI feedback
-                    // Neural Network AI
                     if(m_config.enableNeuralNetwork)
                     m_enterpriseManagers[m].UpdateAIPerformanceMetrics("Neural Network AI", aiMetrics);
-                    // Transformer AI
                     if(m_config.enableTransformer)
                     m_enterpriseManagers[m].UpdateAIPerformanceMetrics("Transformer AI", aiMetrics);
-                    // Ensemble AI
                     if(m_config.enableEnsemble)
                     m_enterpriseManagers[m].UpdateAIPerformanceMetrics("Ensemble AI", aiMetrics);
-                    // ONNX AI
                     if(m_config.enableOnnxAI)
                     m_enterpriseManagers[m].UpdateAIPerformanceMetrics("ONNX AI", aiMetrics);
                 }
@@ -3346,10 +3289,8 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         }
     }
 
-    // Detect new bars per symbol
     void DetectNewBarsPerSymbol()
     {
-        // Process new bars
         ProcessNewBars();
     }
 
@@ -3367,19 +3308,10 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         UpdateAIVoteActivity();
     }
 
-    // Manage open positions
     void ManageOpenPositions()
     {
-        // Batch 168: single exit authority. CPositionLifecycleManager is the object
-        // that receives ConfigureSRE / ConfigureLifecycle / ConfigureMaxHoldTime /
-        // ConfigurePyramiding from the EA inputs (see InitializeSubsystems), but its
-        // ManagePositions() had no caller at all. The live caller was
-        // CPositionManager::ManagePositions(), which is never configured and whose
-        // signal-reversal exit is a hardcoded stub (PositionMgrSRE.mqh
-        // `opposingSignal = false`), so every exit input was dead and losers rode to
-        // the broker-side SL.
-        // m_positionManager still owns the position-state registry and closed-trade
-        // recording consumed by attribution and the NN linkage below.
+        // The configured exit authority. CPositionManager is never configured and its
+        // signal-reversal exit is a stub; it still owns the position-state registry.
         m_lifecycleManager.ManagePositions();
 
         // Process closed positions for NN training linkage (L11-014)
@@ -3422,7 +3354,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     // Process AI subsystems - neural network, AI engine, AI feedback
     ProcessAISubsystems();
 
-    // Detect new bars per symbol
     DetectNewBarsPerSymbol();
 
     // Run signal evaluation cycle - generate and process signals
@@ -3431,7 +3362,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     // Post-consensus filtering - update AI vote activity
     PostConsensusFiltering();
 
-    // Manage open positions
     ManageOpenPositions();
     
     CJsonLogger::ClearCorrelationId();
@@ -3796,7 +3726,6 @@ void ProcessNewBars()
         if(m_config.enableAIMode && m_aiEngine != NULL)
             m_aiEngine.ProcessAdaptation();
 
-        // AI feedback
         if(m_aiFeedbackReady)
             m_aiFeedback.CheckAutomaticRetraining();
     }
@@ -3867,7 +3796,6 @@ void GenerateAndProcessSignals(const string cycleCorrId)
             continue;
         }
 
-        // Build candidate
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, newBarSignals[i].decisionContext,
                 manager, m_scanCycleSequence, candidate, cycleCorrId))
@@ -3875,7 +3803,6 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         candidateBuilt = true;
         candidatesBuilt++;
 
-        // Resolve live authority
         CLiveAuthorityResolver::SAuthorityResult authority;
         int strategyIndices[];
         manager.GetLastSignalContributorIndices(strategyIndices);
@@ -4120,10 +4047,8 @@ bool GetTradingEnabled() const { return m_tradingEnabled; }
 // L10-012: Getters for engine state restoration on restart
 CTradeManager* GetTradeManager() { return GetPointer(m_tradeManager); }
 
-//+------------------------------------------------------------------+
-//| Update AI vote activity for DiagnosticsManager [L11-004]         |
-//| Call after signal generation to track [AI-VOTE] heartbeats       |
-//+------------------------------------------------------------------+
+// Update AI vote activity for DiagnosticsManager [L11-004]
+// Call after signal generation to track [AI-VOTE] heartbeats
 void UpdateAIVoteActivity()
 {
     if(!m_config.enableAIMode)

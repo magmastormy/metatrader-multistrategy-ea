@@ -1,15 +1,10 @@
-//+------------------------------------------------------------------+
-//| PositionMgrDynamicSL.mqh                                         |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATEFUL module: owns the per-symbol volatility regime cache and |
-//| the dynamic SL/TP configuration, and re-prices SL/TP from ATR.   |
-//| Bodies are copied verbatim from CPositionManager - zero          |
-//| behaviour change.                                                |
-//|                                                                  |
-//| NOTE: 'SVolatilityRegime' intentionally remains a TOP-LEVEL       |
-//| struct (exactly as it was declared in PositionManager.mqh).       |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATEFUL module: owns the per-symbol volatility regime cache and
+// the dynamic SL/TP configuration, and re-prices SL/TP from ATR.
+// Bodies are copied verbatim from CPositionManager - zero
+// behaviour change.
+// NOTE: 'SVolatilityRegime' intentionally remains a TOP-LEVEL
+// struct (exactly as it was declared in PositionManager.mqh).
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_DYNAMIC_SL_MQH
@@ -31,9 +26,6 @@ struct SVolatilityRegime
     SVolatilityRegime() : symbol(""), atr14(0), atr50(0), regime(1), lastUpdate(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| CPositionMgrDynamicSL                                            |
-//+------------------------------------------------------------------+
 class CPositionMgrDynamicSL
 {
 private:
@@ -124,7 +116,6 @@ public:
 
     int GetRegimeCount() const { return m_volatilityRegimeCount; }
 
-    // --- Dynamic SL/TP ---
     void ManageDynamicSLTP(CTradeManager* tradeManager, const int magicNumber)
     {
         if(!m_dynamicSLEnabled) return;

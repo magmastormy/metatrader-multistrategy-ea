@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| TurtleSoupStrategy.mqh                                           |
-//| Turtle Soup: false breakout of liquidity + structure alignment   |
-//| + FVG confluence bonus                                           |
-//| Batch 103: New ICT/SMC strategy                                  |
-//+------------------------------------------------------------------+
+// Turtle Soup: false breakout of liquidity + structure alignment
+// + FVG confluence bonus
+// Batch 103: New ICT/SMC strategy
 #ifndef TURTLE_SOUP_STRATEGY_MQH
 #define TURTLE_SOUP_STRATEGY_MQH
 

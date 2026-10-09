@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Order Flow Imbalance (OFI) Proxy Engine                          |
-//| Proxy OFI from tick data for synthetic CFDs / forex              |
-//+------------------------------------------------------------------+
+// Order Flow Imbalance (OFI) Proxy Engine
+// Proxy OFI from tick data for synthetic CFDs / forex
 #property copyright "Enterprise Trading Solutions"
 #property version   "1.0"
 #property strict
@@ -11,9 +9,6 @@
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| OFI Snapshot Structure                                           |
-//+------------------------------------------------------------------+
 struct SOFISnapshot
 {
     double   compositeOFI;       // Weighted composite OFI z-score
@@ -39,9 +34,7 @@ struct SOFISnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| Per-level rolling window state (Welford + cumulative volumes)    |
-//+------------------------------------------------------------------+
+// Per-level rolling window state (Welford + cumulative volumes)
 struct SOFIWindowState
 {
     int    windowSize;           // Number of ticks in rolling window
@@ -138,9 +131,6 @@ struct SOFIWindowState
     }
 };
 
-//+------------------------------------------------------------------+
-//| COrderFlowImbalanceEngine                                        |
-//+------------------------------------------------------------------+
 class COrderFlowImbalanceEngine
 {
 private:
@@ -191,9 +181,7 @@ public:
     void              Deinit();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor / Destructor                                         |
-//+------------------------------------------------------------------+
+// Constructor / Destructor
 COrderFlowImbalanceEngine::COrderFlowImbalanceEngine() :
     m_symbol(""),
     m_fastWindow(5),
@@ -215,9 +203,7 @@ COrderFlowImbalanceEngine::~COrderFlowImbalanceEngine()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Parse comma-separated composite weights string                   |
-//+------------------------------------------------------------------+
+// Parse comma-separated composite weights string
 void COrderFlowImbalanceEngine::ParseCompositeWeights(const string weightsStr)
 {
     // Default weights
@@ -252,9 +238,7 @@ void COrderFlowImbalanceEngine::ParseCompositeWeights(const string weightsStr)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Initialise engine with parameters                                |
-//+------------------------------------------------------------------+
+// Initialise engine with parameters
 void COrderFlowImbalanceEngine::Init(const string symbol,
                                       int fastWindow,
                                       int mediumWindow,
@@ -286,9 +270,7 @@ void COrderFlowImbalanceEngine::Init(const string symbol,
                 m_signalThreshold, m_weightFast, m_weightMedium, m_weightSlow);
 }
 
-//+------------------------------------------------------------------+
-//| Classify a tick as buy-pressure (+1) or sell-pressure (-1)       |
-//+------------------------------------------------------------------+
+// Classify a tick as buy-pressure (+1) or sell-pressure (-1)
 int COrderFlowImbalanceEngine::ClassifyTick(double price, double bidAskMid)
 {
     if(m_prevPrice <= 0.0)
@@ -312,9 +294,7 @@ int COrderFlowImbalanceEngine::ClassifyTick(double price, double bidAskMid)
     return m_lastClassification;
 }
 
-//+------------------------------------------------------------------+
-//| Process each incoming tick                                       |
-//+------------------------------------------------------------------+
+// Process each incoming tick
 void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double bid, double ask)
 {
     if(price <= 0.0)
@@ -395,17 +375,13 @@ void COrderFlowImbalanceEngine::OnTick(double price, double tickVolume, double b
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get current composite OFI z-score                                |
-//+------------------------------------------------------------------+
+// Get current composite OFI z-score
 double COrderFlowImbalanceEngine::GetOFI() const
 {
     return m_snapshot.compositeOFI;
 }
 
-//+------------------------------------------------------------------+
-//| Get individual OFI levels (fast / medium / slow)                 |
-//+------------------------------------------------------------------+
+// Get individual OFI levels (fast / medium / slow)
 bool COrderFlowImbalanceEngine::GetOFILevels(double &fast, double &medium, double &slow) const
 {
     fast   = m_snapshot.fastOFI;
@@ -414,17 +390,12 @@ bool COrderFlowImbalanceEngine::GetOFILevels(double &fast, double &medium, doubl
     return IsWarmedUp();
 }
 
-//+------------------------------------------------------------------+
-//| Get buy pressure ratio [0-1]                                     |
-//+------------------------------------------------------------------+
 double COrderFlowImbalanceEngine::GetBuyPressureRatio() const
 {
     return m_snapshot.buyPressureRatio;
 }
 
-//+------------------------------------------------------------------+
-//| Get discretised signal                                           |
-//+------------------------------------------------------------------+
+// Get discretised signal
 ENUM_TRADE_SIGNAL COrderFlowImbalanceEngine::GetSignal() const
 {
     if(!IsWarmedUp())
@@ -432,26 +403,20 @@ ENUM_TRADE_SIGNAL COrderFlowImbalanceEngine::GetSignal() const
     return m_snapshot.signal;
 }
 
-//+------------------------------------------------------------------+
-//| Get full snapshot                                                |
-//+------------------------------------------------------------------+
+// Get full snapshot
 bool COrderFlowImbalanceEngine::GetSnapshot(SOFISnapshot &snap) const
 {
     snap = m_snapshot;
     return IsWarmedUp();
 }
 
-//+------------------------------------------------------------------+
-//| Warmup guard — need at least slowWindow ticks                    |
-//+------------------------------------------------------------------+
+// Warmup guard — need at least slowWindow ticks
 bool COrderFlowImbalanceEngine::IsWarmedUp() const
 {
     return (m_tickCount >= m_slowWindow);
 }
 
-//+------------------------------------------------------------------+
-//| Reset all state                                                  |
-//+------------------------------------------------------------------+
+// Reset all state
 void COrderFlowImbalanceEngine::Reset()
 {
     m_fast.Init(m_fastWindow);
@@ -468,9 +433,7 @@ void COrderFlowImbalanceEngine::Reset()
     PrintFormat("[OFI] RESET | symbol=%s", m_symbol);
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup external resources                                       |
-//+------------------------------------------------------------------+
+// Cleanup external resources
 void COrderFlowImbalanceEngine::Deinit()
 {
     // COrderFlowImbalanceEngine owns dynamic arrays in SOFIWindowState structs

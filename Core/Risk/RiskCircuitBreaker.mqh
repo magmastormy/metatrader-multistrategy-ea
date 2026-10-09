@@ -1,48 +1,35 @@
-//+------------------------------------------------------------------+
-//| RiskCircuitBreaker.mqh                                           |
-//| Drawdown / daily-loss circuit breakers plus graduated            |
-//| auto-recovery and emergency-close escalation state.              |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E2, E-F):     |
-//|   m_tradingEnabled, m_peakEquity, m_maxDrawdownFromPeak,         |
-//|   m_drawdownBreachCount, m_dailyLossHaltActive,                  |
-//|   m_dailyLossHaltDate, m_cbTriggeredAt, m_cbRecoveryAttempts,    |
-//|   m_cbMaxRecoveryAttempts, m_cbRecoveryCooldownMin,              |
-//|   m_cbLastRecoverySuccessTime, m_cbRecoveryLevel,                |
-//|   m_emergencyCloseRequested                                      |
-//|                                                                  |
-//|   CUnifiedRiskManager::CheckDrawdownCircuitBreaker               |
-//|   CUnifiedRiskManager::CheckCircuitBreakerRecovery               |
-//|   CUnifiedRiskManager::CheckDailyLossLimit (P&L half)            |
-//|   CUnifiedRiskManager::ResetCircuitBreaker                       |
-//|   CUnifiedRiskManager::RestoreCircuitBreakerState                |
-//|   + all circuit-breaker getters                                  |
-//|                                                                  |
-//| Behaviour is byte-identical to the original member functions;    |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| signatures so that all call sites remain unchanged.              |
-//|                                                                  |
-//| OWNERSHIP NOTES (deliberately NOT moved here, to avoid           |
-//| back-pointers and to keep behaviour identical):                  |
-//|  * m_config           -> thresholds are passed in as arguments.  |
-//|  * m_initialized      -> the `if(!m_initialized)` guards stay in |
-//|                          the forwarders.                         |
-//|  * m_conservativeMode -> shared with adaptive sizing / snapshot; |
-//|                          passed in by reference where mutated.   |
-//|  * m_dailyStartEquity -> shared with daily budget accounting;    |
-//|                          passed in by value / by reference.      |
-//|  * IsNewTradingDay()  -> mutates m_lastTradingDayKey, so it must |
-//|                          keep its original short-circuit         |
-//|                          evaluation order in the owner.          |
-//+------------------------------------------------------------------+
+// Drawdown / daily-loss circuit breakers plus graduated
+// auto-recovery and emergency-close escalation state.
+// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-F):
+// m_tradingEnabled, m_peakEquity, m_maxDrawdownFromPeak,
+// m_drawdownBreachCount, m_dailyLossHaltActive,
+// m_dailyLossHaltDate, m_cbTriggeredAt, m_cbRecoveryAttempts,
+// m_cbMaxRecoveryAttempts, m_cbRecoveryCooldownMin,
+// m_cbLastRecoverySuccessTime, m_cbRecoveryLevel,
+// m_emergencyCloseRequested
+// CUnifiedRiskManager::CheckDailyLossLimit (P&L half)
+// + all circuit-breaker getters
+// Behaviour is byte-identical to the original member functions;
+// CUnifiedRiskManager keeps thin forwarders with the original
+// signatures so that all call sites remain unchanged.
+// OWNERSHIP NOTES (deliberately NOT moved here, to avoid
+// back-pointers and to keep behaviour identical):
+// * m_config           -> thresholds are passed in as arguments.
+// * m_initialized      -> the `if(!m_initialized)` guards stay in
+// the forwarders.
+// * m_conservativeMode -> shared with adaptive sizing / snapshot;
+// passed in by reference where mutated.
+// * m_dailyStartEquity -> shared with daily budget accounting;
+// passed in by value / by reference.
+// * IsNewTradingDay()  -> mutates m_lastTradingDayKey, so it must
+// keep its original short-circuit
+// evaluation order in the owner.
 #ifndef CORE_RISK_RISK_CIRCUIT_BREAKER_MQH
 #define CORE_RISK_RISK_CIRCUIT_BREAKER_MQH
 
 #include "../Utils/MagicRange.mqh"
 
-//+------------------------------------------------------------------+
-//| Circuit breaker state holder (stateful, owned by value)          |
-//+------------------------------------------------------------------+
+// Circuit breaker state holder (stateful, owned by value)
 class CRiskCircuitBreaker
 {
 private:
@@ -92,9 +79,7 @@ public:
         // No owned resources.
     }
 
-    //+--------------------------------------------------------------+
-    //| Lifecycle                                                     |
-    //+--------------------------------------------------------------+
+// Lifecycle
 
     //--- Re-arm the breaker at CUnifiedRiskManager::Initialize time.
     //--- Mirrors the original inline block verbatim.
@@ -144,9 +129,6 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Drawdown circuit breaker                                      |
-    //+--------------------------------------------------------------+
 
     //--- ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)
     //--- Checks if drawdown from peak equity exceeds limits.
@@ -306,9 +288,7 @@ public:
                     m_tradingEnabled ? "enabled" : "HALTED");
     }
 
-    //+--------------------------------------------------------------+
-    //| Auto-recovery                                                 |
-    //+--------------------------------------------------------------+
+// Auto-recovery
 
     //--- Circuit Breaker Auto-Recovery (Phase 2.4).
     //--- Attempts to re-enable trading after cooldown if drawdown recovers.
@@ -413,9 +393,7 @@ public:
         return false;
     }
 
-    //+--------------------------------------------------------------+
-    //| Daily P&L loss limit                                          |
-    //+--------------------------------------------------------------+
+// Daily P&L loss limit
 
     //--- Clear the daily-loss halt (called by the owner only after its
     //--- IsNewTradingDay() side-effecting check has fired, preserving the
@@ -514,9 +492,7 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Cross-module escalation hooks                                 |
-    //+--------------------------------------------------------------+
+// Cross-module escalation hooks
 
     //--- Hard halt requested by the margin-health monitor when the account
     //--- margin level breaches the emergency threshold. Mirrors the original
@@ -527,9 +503,7 @@ public:
         m_cbTriggeredAt = TimeCurrent();
     }
 
-    //+--------------------------------------------------------------+
-    //| Accessors                                                     |
-    //+--------------------------------------------------------------+
+// Accessors
 
     bool IsTradingEnabled() const
     {

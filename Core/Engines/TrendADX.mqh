@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendADX.mqh - ADX acquisition, validation and health tracking   |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendADX.mqh - ADX acquisition, validation and health tracking
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -12,14 +10,11 @@
 #include "../Utils/Instruments.mqh"
 #include "../Signals/SignalDiagnostics.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the whole ADX health/cache state machine that used to live  |
-//| inside CTrendEngine: failure counters, corruption counters,      |
-//| last-good value cache and handle reinitialization throttling.    |
-//|                                                                  |
-//| The ADX indicator handle itself remains owned by CTrendEngine    |
-//| and is passed in by reference so reinit can replace it in place. |
-//+------------------------------------------------------------------+
+// Owns the whole ADX health/cache state machine that used to live
+// inside CTrendEngine: failure counters, corruption counters,
+// last-good value cache and handle reinitialization throttling.
+// The ADX indicator handle itself remains owned by CTrendEngine
+// and is passed in by reference so reinit can replace it in place.
 class CTrendAdxHealth
 {
 private:
@@ -90,9 +85,7 @@ public:
     void ResetHealthState();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - mirrors original CTrendEngine defaults            |
-//+------------------------------------------------------------------+
+// Constructor - mirrors original CTrendEngine defaults
 CTrendAdxHealth::CTrendAdxHealth() :
     m_lastAdxValid(true),
     m_consecutiveAdxFailures(0),
@@ -112,25 +105,18 @@ CTrendAdxHealth::CTrendAdxHealth() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Does this symbol use the ADX trend model?                       |
-//+------------------------------------------------------------------+
+// Does this symbol use the ADX trend model?
 bool CTrendAdxHealth::UsesAdxTrendModel(const string symbol)
 {
     return !IsSyntheticIndexSymbolName(symbol);
 }
 
-//+------------------------------------------------------------------+
-//| Domain validation for ADX / DI values                           |
-//+------------------------------------------------------------------+
 bool CTrendAdxHealth::IsValidAdxDomainValue(const double value)
 {
     return (MathIsValidNumber(value) && value >= 0.0 && value <= 100.0);
 }
 
-//+------------------------------------------------------------------+
-//| Complete a pending ADX handle reinit once the new handle is warm |
-//+------------------------------------------------------------------+
+// Complete a pending ADX handle reinit once the new handle is warm
 bool CTrendAdxHealth::TryCompleteReinit(const string symbol,
                                         ENUM_TIMEFRAMES timeframe,
                                         const int handleADX,
@@ -152,9 +138,6 @@ bool CTrendAdxHealth::TryCompleteReinit(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Record ADX Failure                                              |
-//+------------------------------------------------------------------+
 void CTrendAdxHealth::RecordFailure(const string symbol,
                                     ENUM_TIMEFRAMES timeframe,
                                     const string reasonTag,
@@ -212,9 +195,6 @@ void CTrendAdxHealth::RecordFailure(const string symbol,
     MaybeReinitializeHandle(symbol, timeframe, handleADX, adxPeriod, diagnostics);
 }
 
-//+------------------------------------------------------------------+
-//| Maybe Reinitialize ADX Handle                                   |
-//+------------------------------------------------------------------+
 void CTrendAdxHealth::MaybeReinitializeHandle(const string symbol,
                                               ENUM_TIMEFRAMES timeframe,
                                               int &handleADX,
@@ -259,10 +239,8 @@ void CTrendAdxHealth::MaybeReinitializeHandle(const string symbol,
     // Note: m_consecutiveAdxFailures reset after new handle is validated in IndicatorsReadyForRead
 }
 
-//+------------------------------------------------------------------+
-//| Acquire ADX / +DI / -DI values with retry, cache and corruption  |
-//| handling. Logic transcribed verbatim from CTrendEngine::UpdateTrend|
-//+------------------------------------------------------------------+
+// Acquire ADX / +DI / -DI values with retry, cache and corruption
+// handling. Logic transcribed verbatim from CTrendEngine::UpdateTrend
 bool CTrendAdxHealth::Acquire(const string symbol,
                               ENUM_TIMEFRAMES timeframe,
                               int &handleADX,
@@ -406,11 +384,9 @@ bool CTrendAdxHealth::Acquire(const string symbol,
     return adxValid;
 }
 
-//+------------------------------------------------------------------+
-//| Reset - mirrors exactly the ADX subset of CTrendEngine::Reset()  |
-//| (deliberately does NOT touch reinitPending / corruption counters |
-//| / thresholds, matching the original implementation).             |
-//+------------------------------------------------------------------+
+// Reset - mirrors exactly the ADX subset of CTrendEngine::Reset()
+// (deliberately does NOT touch reinitPending / corruption counters
+// / thresholds, matching the original implementation).
 void CTrendAdxHealth::ResetHealthState()
 {
     m_lastAdxValid = true;

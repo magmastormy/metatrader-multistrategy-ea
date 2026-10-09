@@ -1,24 +1,18 @@
-//+------------------------------------------------------------------+
-//| FastScalpPendingOrders.mqh                                       |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the pending limit-order book that used to be three loose    |
-//| members on CFastScalpEngine:                                     |
-//|   SPendingScalpOrder m_pendingOrders[10];                        |
-//|   int                m_pendingOrderCount;                        |
-//|   CTrade             m_tradeObj;                                 |
-//|                                                                  |
-//| Moved methods (bodies verbatim):                                 |
-//|   PlaceScalpPendingOrder()  -> Place()                           |
-//|   CheckPendingScalpOrders() -> CheckExpired()                    |
-//|   RemovePendingOrder()      -> RemovePendingOrder()              |
-//|   ~CFastScalpEngine() cancel loop -> CancelAllOnShutdown()       |
-//|                                                                  |
-//| m_config / m_magicNumber / m_lastScalpTime are passed in so the  |
-//| engine stays the single owner of configuration and cooldown.     |
-//| All stop-distance math, retcodes and log tags are unchanged.     |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the pending limit-order book that used to be three loose
+// members on CFastScalpEngine:
+// SPendingScalpOrder m_pendingOrders[10];
+// int                m_pendingOrderCount;
+// CTrade             m_tradeObj;
+// Moved methods (bodies verbatim):
+// PlaceScalpPendingOrder()  -> Place()
+// CheckPendingScalpOrders() -> CheckExpired()
+// RemovePendingOrder()      -> RemovePendingOrder()
+// ~CFastScalpEngine() cancel loop -> CancelAllOnShutdown()
+// m_config / m_magicNumber / m_lastScalpTime are passed in so the
+// engine stays the single owner of configuration and cooldown.
+// All stop-distance math, retcodes and log tags are unchanged.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_PENDING_ORDERS_MQH
@@ -30,9 +24,7 @@
 #include "FastScalpTypes.mqh"
 #include "FastScalpFilters.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpPendingOrders — stateful scalp pending order book       |
-//+------------------------------------------------------------------+
+// CFastScalpPendingOrders — stateful scalp pending order book
 class CFastScalpPendingOrders
 {
 private:
@@ -52,9 +44,7 @@ public:
    //--- Was CFastScalpEngine::GetPendingOrderCount()
    int Count() const { return m_pendingOrderCount; }
 
-   //+------------------------------------------------------------------+
-   //| Cancel any remaining pending orders (was the engine destructor)   |
-   //+------------------------------------------------------------------+
+// Cancel any remaining pending orders (was the engine destructor)
    void CancelAllOnShutdown()
    {
       // Cancel any remaining pending orders
@@ -69,9 +59,7 @@ public:
       m_pendingOrderCount = 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)               |
-   //+------------------------------------------------------------------+
+// Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)
    bool Place(const string symbol, ENUM_TRADE_SIGNAL signal, double lotSize,
               const SScalpConfig &config, long magicNumber, datetime &lastScalpTime)
    {
@@ -207,9 +195,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check and manage pending scalp orders (cancel expired)            |
-   //+------------------------------------------------------------------+
+// Check and manage pending scalp orders (cancel expired)
    void CheckExpired(const SScalpConfig &config)
    {
       if(m_pendingOrderCount <= 0)
@@ -249,9 +235,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove pending order from tracking array by index                 |
-   //+------------------------------------------------------------------+
+// Remove pending order from tracking array by index
    void RemovePendingOrder(int index)
    {
       if(index < 0 || index >= m_pendingOrderCount)

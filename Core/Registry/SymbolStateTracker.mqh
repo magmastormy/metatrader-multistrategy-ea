@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SymbolStateTracker.mqh                                           |
-//| Consolidates per-symbol state: scalp blacklist, dormancy, etc.   |
-//+------------------------------------------------------------------+
+// Consolidates per-symbol state: scalp blacklist, dormancy, etc.
 #property strict
 
 #ifndef CORE_REGISTRY_SYMBOL_STATE_TRACKER_MQH
@@ -79,7 +76,6 @@ private:
     
     int Count() const { return m_stateCount; }
     
-    // --- Scalp Blacklist ---
     bool IsScalpBlacklisted(const string symbol)
     {
         int idx = GetIndex(symbol);

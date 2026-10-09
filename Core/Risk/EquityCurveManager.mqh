@@ -1,19 +1,13 @@
-//+------------------------------------------------------------------+
-//| EquityCurveManager.mqh                                           |
-//| Equity curve trading — reduces position size when equity drops   |
-//| below its EMA. Research shows 15-30% max DD reduction.          |
-//+------------------------------------------------------------------+
+// Equity curve trading — reduces position size when equity drops
+// below its EMA. Research shows 15-30% max DD reduction.
 #ifndef CORE_RISK_EQUITY_CURVE_MANAGER_MQH
 #define CORE_RISK_EQUITY_CURVE_MANAGER_MQH
 
 #include "../Utils/CommonTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Equity Curve Manager Class                                       |
-//| Tracks rolling equity via circular buffer, computes EMA, and     |
-//| returns a position size multiplier based on whether equity is    |
-//| above or below its moving average.                               |
-//+------------------------------------------------------------------+
+// Tracks rolling equity via circular buffer, computes EMA, and
+// returns a position size multiplier based on whether equity is
+// above or below its moving average.
 class CEquityCurveManager
 {
 private:
@@ -28,9 +22,7 @@ private:
    bool   m_isEquityBelowEma;   // Current state
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                      |
-   //+------------------------------------------------------------------+
+// Constructor
    CEquityCurveManager(int emaPeriod = 20, double reductionFactor = 0.50, double recoveryFactor = 1.0) :
       m_historySize(emaPeriod),
       m_currentIndex(0),
@@ -48,18 +40,14 @@ public:
       ArrayInitialize(m_equityHistory, 0.0);
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                       |
-   //+------------------------------------------------------------------+
+// Destructor
    ~CEquityCurveManager()
    {
       ArrayFree(m_equityHistory);
    }
 
-   //+------------------------------------------------------------------+
-   //| Update — call every evaluation cycle with current equity        |
-   //| Adds equity to circular buffer, calculates EMA                  |
-   //+------------------------------------------------------------------+
+// Update — call every evaluation cycle with current equity
+// Adds equity to circular buffer, calculates EMA
    void Update(double equityValue)
    {
       if(equityValue <= 0.0)
@@ -111,11 +99,9 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Get position size multiplier based on equity curve state        |
-   //| Below EMA → reductionFactor, above EMA → recoveryFactor        |
-   //| Insufficient data → 1.0 (no adjustment)                        |
-   //+------------------------------------------------------------------+
+// Get position size multiplier based on equity curve state
+// Below EMA → reductionFactor, above EMA → recoveryFactor
+// Insufficient data → 1.0 (no adjustment)
    double GetPositionSizeMultiplier() const
    {
       if(m_filledCount < m_emaPeriod)
@@ -124,17 +110,13 @@ public:
       return m_isEquityBelowEma ? m_reductionFactor : m_recoveryFactor;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get current state                                                |
-   //+------------------------------------------------------------------+
+// Get current state
    bool   IsEquityBelowEma() const { return m_isEquityBelowEma; }
    double GetCurrentEma()    const { return m_currentEma; }
    int    GetFilledCount()   const { return m_filledCount; }
    int    GetEmaPeriod()     const { return m_emaPeriod; }
 
-   //+------------------------------------------------------------------+
-   //| Reset — clear all history and state                              |
-   //+------------------------------------------------------------------+
+// Reset — clear all history and state
    void Reset()
    {
       ArrayInitialize(m_equityHistory, 0.0);

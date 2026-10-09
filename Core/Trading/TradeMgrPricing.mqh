@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| TradeMgrPricing.mqh                                              |
-//| Stateless price / volume / stop-level arithmetic for CTradeManager|
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
-//| Every member is a static pure function - this module holds NO    |
-//| instance state. Bodies are verbatim copies of the original       |
-//| CTradeManager methods, so execution behaviour is byte-identical. |
-//|                                                                  |
-//| NO BACK-POINTER: the two helpers that originally touched         |
-//| CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo)   |
-//| receive that object by reference, exactly like the pattern       |
-//| already used by CPositionStateTracker.                           |
-//+------------------------------------------------------------------+
+// Stateless price / volume / stop-level arithmetic for CTradeManager
+// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
+// Every member is a static pure function - this module holds NO
+// instance state. Bodies are verbatim copies of the original
+// CTradeManager methods, so execution behaviour is byte-identical.
+// NO BACK-POINTER: the two helpers that originally touched
+// CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo)
+// receive that object by reference, exactly like the pattern
+// already used by CPositionStateTracker.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -22,21 +17,9 @@
 #include <Trade/SymbolInfo.mqh>
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Stop-distance and stop-adjustment limits (Batch 169)             |
-//| MIN_STOP_SPREAD_MULTIPLIER  - a stop closer than 1.5 spreads is  |
-//|                               inside the noise band, not a stop. |
-//| MIN_STOP_DISTANCE_POINTS    - absolute floor when the broker     |
-//|                               reports stops level 0.             |
-//| MAX_ACCEPTABLE_STOP_WIDENING_RATIO - lots are sized on the       |
-//|                               requested stop; if the broker      |
-//|                               minimum forces it wider than this, |
-//|                               realised risk exceeds sized risk   |
-//|                               and the trade must be rejected.    |
-//| MIN_TP_COST_MULTIPLE - least the take-profit must clear the      |
-//|                               round-trip spread cost, or the     |
-//|                               trade cannot pay for itself.       |
-//+------------------------------------------------------------------+
+// A stop inside 1.5 spreads is noise, and brokers often report stops level 0, hence
+// MIN_STOP_DISTANCE_POINTS. Lots are sized on the requested stop, so a broker-forced
+// widening past MAX_ACCEPTABLE_STOP_WIDENING_RATIO risks more than was authorised.
 #ifndef MIN_STOP_SPREAD_MULTIPLIER
 #define MIN_STOP_SPREAD_MULTIPLIER 1.5
 #endif
@@ -50,24 +33,18 @@
 #define MIN_TP_COST_MULTIPLE 4.0
 #endif
 
-//+------------------------------------------------------------------+
-//| Trade Manager Pricing Helpers                                    |
-//| Broker-constraint aware normalisation and cost arithmetic.       |
-//+------------------------------------------------------------------+
+// Trade Manager Pricing Helpers
+// Broker-constraint aware normalisation and cost arithmetic.
 class CTradeMgrPricing
 {
 public:
-    //+--------------------------------------------------------------+
-    //| Check if two double values are approximately equal           |
-    //+--------------------------------------------------------------+
+// Check if two double values are approximately equal
     static bool DoubleEquals(double a, double b, double epsilon = 0.00001)
     {
         return MathAbs(a - b) < epsilon;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Average True Range (ATR) for volatility measurement|
-    //+--------------------------------------------------------------+
+// Calculate Average True Range (ATR) for volatility measurement
     static double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period)
     {
         double atrValues[];
@@ -88,9 +65,6 @@ public:
         return 0.0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Normalize Price                                              |
-    //+--------------------------------------------------------------+
     static double NormalizePrice(const string symbolName, const double price)
     {
         if(price <= 0) {
@@ -101,9 +75,6 @@ public:
         return NormalizeDouble(price, digits);
     }
 
-    //+--------------------------------------------------------------+
-    //| Normalize Volume                                             |
-    //+--------------------------------------------------------------+
     static double NormalizeVolume(const string symbolName, const double volume)
     {
         double minVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
@@ -135,9 +106,6 @@ public:
         return normalized;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Stop Loss                                          |
-    //+--------------------------------------------------------------+
     static double CalculateStopLoss(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                     const double price, const double stopLossPips)
     {
@@ -160,9 +128,6 @@ public:
         return NormalizePrice(symbolParam, stopLoss);
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Take Profit                                        |
-    //+--------------------------------------------------------------+
     static double CalculateTakeProfit(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                       const double price, const double takeProfitPips)
     {
@@ -185,9 +150,7 @@ public:
         return NormalizePrice(symbolParam, takeProfit);
     }
 
-    //+--------------------------------------------------------------+
-    //| Check whether symbol trade mode supports requested order type|
-    //+--------------------------------------------------------------+
+// Check whether symbol trade mode supports requested order type
     static bool IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason)
     {
         reason = "";
@@ -219,10 +182,8 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Current execution price for a market order                   |
-    //| symbolInfo is the caller-owned CSymbolInfo (was m_symbolInfo)|
-    //+--------------------------------------------------------------+
+// Current execution price for a market order
+// symbolInfo is the caller-owned CSymbolInfo (was m_symbolInfo)
     static double GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType,
                                            CSymbolInfo &symbolInfo)
     {
@@ -242,9 +203,7 @@ public:
         return NormalizePrice(symbolName, price);
     }
 
-    //+--------------------------------------------------------------+
-    //| Broker minimum stop/freeze distance                          |
-    //+--------------------------------------------------------------+
+// Broker minimum stop/freeze distance
     static double GetMinimumStopDistance(const string symbolName)
     {
         double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
@@ -268,13 +227,11 @@ public:
         return (double)requiredPoints * point;
     }
 
-    //+--------------------------------------------------------------+
-    //| Broker-declared stop/freeze distance only, in price units.    |
-    //| GetMinimumStopDistance() deliberately folds in a spread       |
-    //| multiple, which makes it circular for the spread-anomaly gate |
-    //| in preflight: a limit of 2 * (1.5 * spread) can never be      |
-    //| exceeded by that spread. This is the term that belongs there. |
-    //+--------------------------------------------------------------+
+// Broker-declared stop/freeze distance only, in price units.
+// GetMinimumStopDistance() deliberately folds in a spread
+// multiple, which makes it circular for the spread-anomaly gate
+// in preflight: a limit of 2 * (1.5 * spread) can never be
+// exceeded by that spread. This is the term that belongs there.
     static double GetBrokerStopLevelDistance(const string symbolName)
     {
         double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
@@ -286,15 +243,12 @@ public:
         return (double)MathMax(stopLevel, freezeLevel) * point;
     }
 
-    //+--------------------------------------------------------------+
-    //| Round-trip transaction cost, expressed in PRICE units        |
-    //|                                                              |
-    //| Buying at ask and selling at bid costs exactly one quoted    |
-    //| spread against the mid, so the factor is 1.0 - the previous  |
-    //| 2.0 "paid entering and leaving" double-counted the same half |
-    //| spread on each side and every risk estimate that adds this   |
-    //| term was inflated accordingly.                               |
-    //+--------------------------------------------------------------+
+// Round-trip transaction cost, expressed in PRICE units
+// Buying at ask and selling at bid costs exactly one quoted
+// spread against the mid, so the factor is 1.0 - the previous
+// 2.0 "paid entering and leaving" double-counted the same half
+// spread on each side and every risk estimate that adds this
+// term was inflated accordingly.
     static double GetRoundTripCostPrice(const string symbol)
     {
         double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -304,9 +258,6 @@ public:
         return spreadPoints * point;
     }
 
-    //+--------------------------------------------------------------+
-    //| Normalize and Validate Stops                                 |
-    //+--------------------------------------------------------------+
     static bool NormalizeAndValidateStops(const string symbol,
                                           const ENUM_ORDER_TYPE orderType,
                                           const double price,
@@ -395,19 +346,12 @@ public:
         return true;
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Round-Trip Commission Cost (entry + exit)                |
-    //+--------------------------------------------------------------+
+// Get Round-Trip Commission Cost (entry + exit)
     static double GetRoundTripCommissionCost(const string symbol, const double volume)
     {
-        // Batch 169: unit fix. SYMBOL_SPREAD is ALREADY expressed in points, so the
-        // old `spread / tickSize` produced ~2,000,000 "points" on a 20-point EURUSD
-        // spread and inflated every risk estimate that adds this term by orders of
-        // magnitude. Money moved per point = tickValue / tickSize * point.
-        // The explicit-commission branch was removed because MQL5 exposes no
-        // SYMBOL_TRADE_COMMISSION constant; a hard 0.0 made it dead code. Brokers
-        // that charge per-lot commission must supply it through the cost model
-        // (CTradeSpreadCostModel) rather than an uneditable literal here.
+        // SYMBOL_SPREAD is already points - dividing it by tickSize again inflated
+        // every risk estimate by ~10^5. Per-lot commission has no MQL5 constant;
+        // brokers charging it go through CTradeSpreadCostModel.
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -421,9 +365,7 @@ public:
         return costPoints * moneyPerPoint * volume;
     }
 
-    //+--------------------------------------------------------------+
-    //| Get Estimated Swap Cost for holding position overnight       |
-    //+--------------------------------------------------------------+
+// Get Estimated Swap Cost for holding position overnight
     static double GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                        const double volume, const int estimatedHoldDays)
     {
@@ -449,9 +391,6 @@ public:
         return swapPerLotPerDay * volume * estimatedHoldDays;
     }
 
-    //+--------------------------------------------------------------+
-    //| Calculate Position Risk                                      |
-    //+--------------------------------------------------------------+
     static double CalculatePositionRisk(const string symbolParam, const double volume,
                                         const double stopLossPips)
     {
@@ -471,9 +410,7 @@ public:
         return volume * riskPerLot + commissionCost;
     }
 
-    //+--------------------------------------------------------------+
-    //| Get net position volume for netting mode compliance          |
-    //+--------------------------------------------------------------+
+// Get net position volume for netting mode compliance
     static double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type,
                                        const ENUM_ACCOUNT_MARGIN_MODE accountMarginMode)
     {

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                     ThreeSoldiersDetector.mqh    |
-//|               Three White Soldiers / Three Black Crows Detection  |
-//+------------------------------------------------------------------+
+// Three White Soldiers / Three Black Crows Detection
 #property copyright "Copyright 2026"
 #property strict
 

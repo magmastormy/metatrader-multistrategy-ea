@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| SymbolScanScheduler.mqh - Symbol scan scheduling & intrabar scoring |
-//| Extracted from MultiStrategyAutonomousEA.mq5                     |
-//+------------------------------------------------------------------+
+// SymbolScanScheduler.mqh - Symbol scan scheduling & intrabar scoring
+// Extracted from MultiStrategyAutonomousEA.mq5
 #ifndef SYMBOL_SCAN_SCHEDULER_MQH
 #define SYMBOL_SCAN_SCHEDULER_MQH
 
@@ -10,9 +8,7 @@
 // Forward declaration for manager pointer storage
 class CEnterpriseStrategyManager;
 
-//+------------------------------------------------------------------+
-//| Per-symbol scan state tracking                                    |
-//+------------------------------------------------------------------+
+// Per-symbol scan state tracking
 struct SSymbolScanState
 {
     int consecutiveRawNone;
@@ -37,9 +33,7 @@ struct SSymbolScanState
     }
 };
 
-//+------------------------------------------------------------------+
-//| CSymbolScanScheduler - Symbol scan scheduling & intrabar scoring  |
-//+------------------------------------------------------------------+
+// CSymbolScanScheduler - Symbol scan scheduling & intrabar scoring
 class CSymbolScanScheduler
 {
 private:
@@ -339,7 +333,6 @@ public:
 
     //--- Direct array access for call-site compatibility
 
-    // Last symbol bar times
     datetime GetLastSymbolBarTime(const int idx) const
     {
         if(idx < 0 || idx >= ArraySize(m_lastSymbolBarTimes)) return 0;
@@ -352,7 +345,6 @@ public:
             m_lastSymbolBarTimes[idx] = val;
     }
 
-    // Last intrabar scan time
     datetime GetLastIntrabarScanTime(const int idx) const
     {
         if(idx < 0 || idx >= ArraySize(m_lastIntrabarScanTime)) return 0;
@@ -365,7 +357,6 @@ public:
             m_lastIntrabarScanTime[idx] = val;
     }
 
-    // Pending new bar scans
     bool IsPendingNewBarScan(const int idx) const
     {
         if(idx < 0 || idx >= ArraySize(m_pendingNewBarScans)) return false;
@@ -394,19 +385,15 @@ public:
 
     int GetScanStateCount() const { return ArraySize(m_symbolScanStates); }
 
-    // Symbol eval start index
     int GetSymbolEvalStartIndex() const { return m_symbolEvalStartIndex; }
     void SetSymbolEvalStartIndex(const int val) { m_symbolEvalStartIndex = val; }
 
-    // Last signal eval second
     datetime GetLastSignalEvalSecond() const { return m_lastSignalEvalSecond; }
     void SetLastSignalEvalSecond(const datetime val) { m_lastSignalEvalSecond = val; }
 
-    // Last scalp fast path second
     datetime GetLastScalpFastPathSecond() const { return m_lastScalpFastPathSecond; }
     void SetLastScalpFastPathSecond(const datetime val) { m_lastScalpFastPathSecond = val; }
 
-    // Last external capacity log time
     datetime GetLastExternalCapacityLogTime() const { return m_lastExternalCapacityLogTime; }
     void SetLastExternalCapacityLogTime(const datetime val) { m_lastExternalCapacityLogTime = val; }
 

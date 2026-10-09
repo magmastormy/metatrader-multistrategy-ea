@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryLevels.mqh                                           |
-//| Grid level management: symbol slot lookup/initialization, lot     |
-//| progression (Fibonacci / Martingale), lot normalization and       |
-//| margin capping. Stateless static helpers.                         |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Grid level management: symbol slot lookup/initialization, lot
+// progression (Fibonacci / Martingale), lot normalization and
+// margin capping. Stateless static helpers.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -15,15 +12,11 @@
 
 #include "GridRecoveryTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryLevels — stateless grid level helpers                |
-//+------------------------------------------------------------------+
+// CGridRecoveryLevels — stateless grid level helpers
 class CGridRecoveryLevels
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Find symbol index in the states array                             |
-   //+------------------------------------------------------------------+
+// Find symbol index in the states array
    static int FindSymbolIndex(const SGridSymbolState &states[], int count, const string symbol)
    {
       for(int i = 0; i < count; i++)
@@ -34,9 +27,7 @@ public:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize a symbol state slot with defaults                      |
-   //+------------------------------------------------------------------+
+// Initialize a symbol state slot with defaults
    static void InitializeSymbolState(SGridSymbolState &state, const string symbol, int maxGridLevels)
    {
       state.symbol                = symbol;
@@ -65,10 +56,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate Fibonacci number for a given level                      |
-   //| fib(0)=1, fib(1)=1, fib(2)=2, fib(3)=3, fib(4)=5, fib(5)=8     |
-   //+------------------------------------------------------------------+
+// Calculate Fibonacci number for a given level
    static int FibonacciNumber(int level)
    {
       if(level <= 1)
@@ -84,9 +72,7 @@ public:
       return b;
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate lot size for a grid level based on progression type     |
-   //+------------------------------------------------------------------+
+// Calculate lot size for a grid level based on progression type
    static double CalculateGridLot(const SGridRecoveryConfig &config, int level, double baseLot)
    {
       if(level == 0)
@@ -104,11 +90,9 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| L10-003: Cap cumulative lot multiplier to prevent unbounded       |
-   //| martingale risk. Returns false when the cap is exceeded and       |
-   //| reports the accumulated ratio through cumulativeLotRatio.         |
-   //+------------------------------------------------------------------+
+// L10-003: Cap cumulative lot multiplier to prevent unbounded
+// martingale risk. Returns false when the cap is exceeded and
+// reports the accumulated ratio through cumulativeLotRatio.
    static bool PassesCumulativeLotCap(const SGridRecoveryConfig &config, int level, double baseLot,
                                       double &cumulativeLotRatio)
    {
@@ -126,9 +110,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate SL and TP for a grid level entry                        |
-   //+------------------------------------------------------------------+
+// Calculate SL and TP for a grid level entry
    static void CalculateStops(int direction, double entryPrice, double slDistance, double tpDistance,
                               int digits, double &sl, double &tp)
    {
@@ -146,9 +128,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Normalize lot size to symbol volume constraints                   |
-   //+------------------------------------------------------------------+
+// Normalize lot size to symbol volume constraints
    static double NormalizeLot(const string symbol, double lotSize)
    {
       double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
@@ -169,9 +149,7 @@ public:
       return NormalizeDouble(lotSize, 2);
    }
 
-   //+------------------------------------------------------------------+
-   //| Cap lot size to available margin                                  |
-   //+------------------------------------------------------------------+
+// Cap lot size to available margin
    static double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType)
    {
       double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);

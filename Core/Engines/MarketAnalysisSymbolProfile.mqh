@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MarketAnalysisSymbolProfile.mqh - Symbol capability probes       |
-//| Extracted verbatim from MarketAnalysis.mqh (no behavior change)  |
-//+------------------------------------------------------------------+
+// MarketAnalysisSymbolProfile.mqh - Symbol capability probes
+// Extracted verbatim from MarketAnalysis.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -14,11 +12,9 @@
 // Global profiler access (g_multiAssetProfiler) is declared by the
 // including translation unit, exactly as before this extraction.
 
-//+------------------------------------------------------------------+
-//| Stateless symbol classification helpers.                         |
-//| Every method depends only on its argument and on the global      |
-//| multi-asset profiler, never on engine instance state.            |
-//+------------------------------------------------------------------+
+// Stateless symbol classification helpers.
+// Every method depends only on its argument and on the global
+// multi-asset profiler, never on engine instance state.
 class CMarketAnalysisSymbolProfile
 {
 public:
@@ -32,9 +28,7 @@ public:
     static bool RequiresSpecialHandling(const string symbolName);
 };
 
-//+------------------------------------------------------------------+
-//| Check if symbol is available for trading/analysis                |
-//+------------------------------------------------------------------+
+// Check if symbol is available for trading/analysis
 bool CMarketAnalysisSymbolProfile::IsSymbolAvailable(const string symbolName)
 {
     // Check if symbol exists in Market Watch
@@ -52,9 +46,7 @@ bool CMarketAnalysisSymbolProfile::IsSymbolAvailable(const string symbolName)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check if symbol is compatible with ADX indicator                 |
-//+------------------------------------------------------------------+
+// Check if symbol is compatible with ADX indicator
 bool CMarketAnalysisSymbolProfile::IsADXCompatible(const string symbolName)
 {
     // Use global multi-asset profiler for proper asset classification
@@ -87,9 +79,7 @@ bool CMarketAnalysisSymbolProfile::IsADXCompatible(const string symbolName)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check if symbol needs special indicator handling                 |
-//+------------------------------------------------------------------+
+// Check if symbol needs special indicator handling
 bool CMarketAnalysisSymbolProfile::RequiresSpecialHandling(const string symbolName)
 {
     // Use global multi-asset profiler for proper asset classification

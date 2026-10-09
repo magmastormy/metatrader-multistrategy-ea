@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendStrength.mqh - Trend strength scoring                       |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendStrength.mqh - Trend strength scoring
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -9,10 +7,8 @@
 #ifndef TREND_STRENGTH_MQH
 #define TREND_STRENGTH_MQH
 
-//+------------------------------------------------------------------+
-//| Stateless 0-100 trend strength scorer.                           |
-//| Thresholds are injected so the scorer stays free of engine state.|
-//+------------------------------------------------------------------+
+// Stateless 0-100 trend strength scorer.
+// Thresholds are injected so the scorer stays free of engine state.
 class CTrendStrength
 {
 public:
@@ -25,9 +21,6 @@ public:
                             const double strongTrendThreshold);
 };
 
-//+------------------------------------------------------------------+
-//| Calculate Trend Strength                                        |
-//+------------------------------------------------------------------+
 double CTrendStrength::Calculate(double &ma_fast[], double &ma_medium[],
                                  double &ma_slow[], double adx,
                                  const double trendThreshold,

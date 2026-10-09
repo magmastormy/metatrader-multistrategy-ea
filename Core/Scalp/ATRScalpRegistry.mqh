@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| ATRScalpRegistry.mqh                                             |
-//| Symbol slot registry for the ATR scalping engine: index lookup,  |
-//| state-slot defaults and the string-safe array growth pattern.    |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Symbol slot registry for the ATR scalping engine: index lookup,
+// state-slot defaults and the string-safe array growth pattern.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,15 +11,11 @@
 
 #include "ATRScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CATRScalpRegistry — stateless helpers over the symbol state array |
-//+------------------------------------------------------------------+
+// CATRScalpRegistry — stateless helpers over the symbol state array
 class CATRScalpRegistry
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Find symbol index in the states array                             |
-   //+------------------------------------------------------------------+
+// Find symbol index in the states array
    static int FindSymbolIndex(const SATRScalpSymbolState &states[], int symbolCount, const string symbol)
    {
       for(int i = 0; i < symbolCount; i++)
@@ -33,9 +26,7 @@ public:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize a symbol state slot with defaults                      |
-   //+------------------------------------------------------------------+
+// Initialize a symbol state slot with defaults
    static void InitializeSymbolState(SATRScalpSymbolState &states[], int idx, const string symbol, int spikeIntervalSec)
    {
       states[idx].symbol                   = symbol;
@@ -52,9 +43,7 @@ public:
       states[idx].inSpikeWindow            = false;
    }
 
-   //+------------------------------------------------------------------+
-   //| Grow the state array — temp struct pattern for string members     |
-   //+------------------------------------------------------------------+
+// Grow the state array — temp struct pattern for string members
    static void GrowStates(SATRScalpSymbolState &states[], int symbolCount, int newSize)
    {
       SATRScalpSymbolState tempStates[];

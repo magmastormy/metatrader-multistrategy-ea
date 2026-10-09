@@ -1,16 +1,13 @@
-//+------------------------------------------------------------------+
-//| Trend Detection Engine - Enterprise Grade                        |
-//| Unified trend analysis for all strategies                       |
-//|                                                                  |
-//| Coordinator only. The heavy lifting lives in focused modules:    |
-//|   TrendTypes.mqh      - shared value types                       |
-//|   TrendMath.mqh       - ATR/EMA fallbacks, momentum, angle       |
-//|   TrendStrength.mqh   - 0-100 strength scoring                   |
-//|   TrendRegime.mqh     - regime classification + label predicates |
-//|   TrendMTF.mqh        - multi-timeframe alignment / consensus    |
-//|   TrendADX.mqh        - ADX acquisition + health state machine   |
-//|   TrendReadiness.mqh  - readiness snapshot + last-good reuse     |
-//+------------------------------------------------------------------+
+// Trend Detection Engine - Enterprise Grade
+// Unified trend analysis for all strategies
+// Coordinator only. The heavy lifting lives in focused modules:
+// TrendTypes.mqh      - shared value types
+// TrendMath.mqh       - ATR/EMA fallbacks, momentum, angle
+// TrendStrength.mqh   - 0-100 strength scoring
+// TrendRegime.mqh     - regime classification + label predicates
+// TrendMTF.mqh        - multi-timeframe alignment / consensus
+// TrendADX.mqh        - ADX acquisition + health state machine
+// TrendReadiness.mqh  - readiness snapshot + last-good reuse
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -41,9 +38,7 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Trend Detection Engine Class                                    |
-//+------------------------------------------------------------------+
+// Trend Detection Engine Class
 class CTrendEngine
 {
 private:
@@ -75,7 +70,6 @@ private:
     CTrendAdxHealth m_adxHealth;
     CTrendReadiness m_readiness;
     
-    // Diagnostics
     CSignalDiagnostics* m_diagnostics;
     
     // Internal methods
@@ -143,7 +137,6 @@ public:
     bool UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf, 
                        ENUM_TIMEFRAMES mtf, ENUM_TIMEFRAMES ltf);
     
-    // Getters
     ENUM_TREND_TYPE GetCurrentTrend() const { return m_currentTrend.type; }
     TrendState GetTrendState() const { return m_currentTrend; }
     MTFTrendState GetMTFTrendState() const { return m_mtfTrend; }
@@ -163,7 +156,6 @@ public:
     bool IsMTFAligned() const { return m_mtfTrend.isAligned; }
     double GetMTFAlignment() const { return m_mtfTrend.alignment; }
     
-    // Trend confirmation
     bool ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES timeframe);
     
@@ -176,9 +168,7 @@ public:
     void Reset();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendEngine::CTrendEngine() :
     m_maPeriodFast(20),
     m_maPeriodMedium(50),
@@ -200,17 +190,12 @@ CTrendEngine::CTrendEngine() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendEngine::~CTrendEngine()
 {
     ReleaseIndicators();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Engine                                               |
-//+------------------------------------------------------------------+
 bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
                              int adxPeriod, CSignalDiagnostics* diagnostics)
 {
@@ -231,9 +216,6 @@ bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Indicators                                           |
-//+------------------------------------------------------------------+
 bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     // Resolve PERIOD_CURRENT to actual chart timeframe
@@ -568,9 +550,6 @@ bool CTrendEngine::TryReuseLastGoodTrend(const string symbol,
                                              m_currentTrend);
 }
 
-//+------------------------------------------------------------------+
-//| Release Indicators                                              |
-//+------------------------------------------------------------------+
 void CTrendEngine::ReleaseIndicators()
 {
     if(m_handleMAFast != INVALID_HANDLE)
@@ -604,9 +583,7 @@ void CTrendEngine::ReleaseIndicators()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update Trend Analysis                                           |
-//+------------------------------------------------------------------+
+// Update Trend Analysis
 bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     bool useAdxModel = UsesAdxTrendModel(symbol);
@@ -696,19 +673,15 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     
     double effectiveAdx = useAdxModel ? (adxValid ? adx[0] : 0.0) : -1.0;
 
-    // Calculate trend strength
     m_currentTrend.strength = CalculateTrendStrength(ma_fast, ma_medium, ma_slow, effectiveAdx);
     
-    // Calculate trend angle
     m_currentTrend.angle = CalculateTrendAngle(ma_medium, 5);
     
-    // Calculate momentum
     m_currentTrend.momentum = CalculateMomentum(symbol, timeframe, 14);
     
     // Set volatility
     m_currentTrend.volatility = atr[0];
     
-    // Determine trend type
     m_currentTrend.type = DetermineTrendType(m_currentTrend.strength, m_currentTrend.angle, effectiveAdx);
     if(useAdxModel && !adxValid)
         m_currentTrend.type = TREND_RANGING;
@@ -719,7 +692,6 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     m_currentTrend.isAccelerating = currMomentum > prevMomentum && m_currentTrend.strength > 50;
     m_currentTrend.isDecelerating = currMomentum < prevMomentum && m_currentTrend.strength < 50;
     
-    // Update timestamp
     m_currentTrend.lastUpdate = TimeCurrent();
     m_readiness.RecordGoodTrend(m_currentTrend);
     if(!atrFallbackUsed && !maFallbackUsed)
@@ -744,9 +716,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update Multi-Timeframe Trend                                    |
-//+------------------------------------------------------------------+
+// Update Multi-Timeframe Trend
 bool CTrendEngine::UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf,
                                   ENUM_TIMEFRAMES mtf, ENUM_TIMEFRAMES ltf)
 {
@@ -772,14 +742,11 @@ bool CTrendEngine::UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Analyze Trend for Specific Timeframe                           |
-//+------------------------------------------------------------------+
+// Analyze Trend for Specific Timeframe
 TrendState CTrendEngine::AnalyzeTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     TrendState state;
     
-    // Save current state
     TrendState savedState = m_currentTrend;
     STrendReadinessRestorePoint savedReadiness = m_readiness.Capture();
     
@@ -847,9 +814,6 @@ bool CTrendEngine::IsRanging() const
     return CTrendRegime::IsRanging(m_currentTrend.type);
 }
 
-//+------------------------------------------------------------------+
-//| Confirm Trend Continuation                                     |
-//+------------------------------------------------------------------+
 bool CTrendEngine::ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     if(!UpdateTrend(symbol, timeframe))
@@ -869,9 +833,6 @@ bool CTrendEngine::ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Trend Reversal                                          |
-//+------------------------------------------------------------------+
 bool CTrendEngine::DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     if(!UpdateTrend(symbol, timeframe))
@@ -891,9 +852,7 @@ bool CTrendEngine::DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES time
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Reset Engine State                                              |
-//+------------------------------------------------------------------+
+// Reset Engine State
 void CTrendEngine::Reset()
 {
     m_currentTrend = TrendState();

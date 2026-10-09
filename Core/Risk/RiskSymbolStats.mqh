@@ -1,33 +1,25 @@
-//+------------------------------------------------------------------+
-//| RiskSymbolStats.mqh                                              |
-//| Stateless per-symbol historical performance statistics derived   |
-//| from the terminal deal history.                                  |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E1):          |
-//|   CUnifiedRiskManager::GetSymbolWinRate      -> GetWinRate       |
-//|   CUnifiedRiskManager::GetSymbolProfitFactor -> GetProfitFactor  |
-//|                                                                  |
-//| Behaviour is byte-identical to the original member functions;    |
-//| CUnifiedRiskManager keeps thin forwarders with the original      |
-//| signatures so that all call sites remain unchanged.              |
-//|                                                                  |
-//| Batch 152 (M-14): HistorySelect(0, ...) materializes the entire  |
-//| terminal deal history on every call, and GetSymbolRiskAllocation |
-//| queries both metrics for every tracked symbol on each budget     |
-//| refresh. Both metrics are now computed in ONE shared pass and    |
-//| memoized per symbol for RISK_SYMBOL_STATS_TTL_SECONDS; deal      |
-//| history changes slowly so the staleness window is immaterial     |
-//| for adaptive weighting.                                          |
-//+------------------------------------------------------------------+
+// Stateless per-symbol historical performance statistics derived
+// from the terminal deal history.
+// Extracted verbatim from CUnifiedRiskManager (Phase E1):
+// CUnifiedRiskManager::GetSymbolWinRate      -> GetWinRate
+// CUnifiedRiskManager::GetSymbolProfitFactor -> GetProfitFactor
+// Behaviour is byte-identical to the original member functions;
+// CUnifiedRiskManager keeps thin forwarders with the original
+// signatures so that all call sites remain unchanged.
+// Batch 152 (M-14): HistorySelect(0, ...) materializes the entire
+// terminal deal history on every call, and GetSymbolRiskAllocation
+// queries both metrics for every tracked symbol on each budget
+// refresh. Both metrics are now computed in ONE shared pass and
+// memoized per symbol for RISK_SYMBOL_STATS_TTL_SECONDS; deal
+// history changes slowly so the staleness window is immaterial
+// for adaptive weighting.
 #ifndef CORE_RISK_RISK_SYMBOL_STATS_MQH
 #define CORE_RISK_RISK_SYMBOL_STATS_MQH
 
 #define RISK_SYMBOL_STATS_TTL_SECONDS 60
 #define RISK_SYMBOL_STATS_MAX_ENTRIES 64
 
-//+------------------------------------------------------------------+
-//| Per-symbol deal-history statistics (pure, memoized)              |
-//+------------------------------------------------------------------+
+// Per-symbol deal-history statistics (pure, memoized)
 class CRiskSymbolStats
 {
 private:

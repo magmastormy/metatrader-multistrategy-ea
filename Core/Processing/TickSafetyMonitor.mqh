@@ -1,16 +1,11 @@
-//+------------------------------------------------------------------+
-//| TickSafetyMonitor.mqh - Tick-level safety checks                  |
-//| Spread check, margin check, tick-level monitoring for OnTick       |
-//+------------------------------------------------------------------+
+// TickSafetyMonitor.mqh - Tick-level safety checks
+// Spread check, margin check, tick-level monitoring for OnTick
 #ifndef TICK_SAFETY_MONITOR_MQH
 #define TICK_SAFETY_MONITOR_MQH
 
 #include <Trade\AccountInfo.mqh>
 #include <Trade\SymbolInfo.mqh>
 
-//+------------------------------------------------------------------+
-//| Tick Safety Monitor Class                                         |
-//+------------------------------------------------------------------+
 class CTickSafetyMonitor
 {
 private:
@@ -57,9 +52,7 @@ public:
     bool HasTickGap();
 };
 
-//+------------------------------------------------------------------+
-//| Check if spread is acceptable                                     |
-//+------------------------------------------------------------------+
+// Check if spread is acceptable
 bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
 {
     long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -69,9 +62,7 @@ bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
     return ((double)spreadPoints <= m_maxSpreadPoints);
 }
 
-//+------------------------------------------------------------------+
-//| Check if margin is healthy                                        |
-//+------------------------------------------------------------------+
+// Check if margin is healthy
 bool CTickSafetyMonitor::IsMarginHealthy()
 {
     double freeMargin = m_accountInfo.FreeMargin();
@@ -100,9 +91,7 @@ bool CTickSafetyMonitor::IsMarginHealthy()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check if trading is allowed                                       |
-//+------------------------------------------------------------------+
+// Check if trading is allowed
 bool CTickSafetyMonitor::IsTradingAllowed()
 {
     // Auto-reset emergency stop after duration
@@ -125,9 +114,6 @@ bool CTickSafetyMonitor::IsTradingAllowed()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Set emergency stop with duration                                  |
-//+------------------------------------------------------------------+
 void CTickSafetyMonitor::SetEmergencyStop(bool stop, int durationSeconds = 300)
 {
     m_emergencyStop = stop;
@@ -139,9 +125,7 @@ void CTickSafetyMonitor::SetEmergencyStop(bool stop, int durationSeconds = 300)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check for tick gap                                               |
-//+------------------------------------------------------------------+
+// Check for tick gap
 bool CTickSafetyMonitor::HasTickGap()
 {
     if(m_lastValidTickTime == 0)
@@ -158,9 +142,7 @@ bool CTickSafetyMonitor::HasTickGap()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Validate tick data                                               |
-//+------------------------------------------------------------------+
+// Validate tick data
 bool CTickSafetyMonitor::ValidateTick(const string symbol, MqlTick &tick)
 {
     if(!SymbolInfoTick(symbol, tick))

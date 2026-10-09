@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| StrategyFactory.mqh                                              |
-//| Centralized strategy creation - eliminates registration bloat    |
-//+------------------------------------------------------------------+
+// Centralized strategy creation - eliminates registration bloat
 #property strict
 
 #ifndef CORE_FACTORY_STRATEGY_FACTORY_MQH
@@ -75,7 +72,6 @@ public:
     };
 
 private:
-    // Creator function type
     typedef IStrategy* (*CreatorFunc)(const SStrategyConfig&);
     
     // Static registry
@@ -87,7 +83,6 @@ private:
     // Private constructor - static class
     CStrategyFactory() {}
     
-    // Register a creator
     static bool RegisterInternal(const string name, CreatorFunc creator)
     {
         if(s_registryCount >= 50) return false; // Safety limit
@@ -111,9 +106,7 @@ private:
         return -1;
     }
     
-    // ============================================================
-    // STRATEGY CREATORS (one per strategy)
-    // ============================================================
+// STRATEGY CREATORS (one per strategy)
     
     static IStrategy* CreateMomentum(const SStrategyConfig& cfg)
     {
@@ -266,7 +259,6 @@ public:
         Print("[StrategyFactory] Initialized with ", s_registryCount, " strategy creators");
     }
     
-    // Create strategy by name with configuration
     static IStrategy* Create(const string name, const SStrategyConfig& cfg)
     {
         if(!s_initialized) Initialize();
@@ -304,7 +296,6 @@ public:
             names[i] = s_strategyNames[i];
     }
     
-    // Get count
     static int GetCount()
     {
         if(!s_initialized) Initialize();

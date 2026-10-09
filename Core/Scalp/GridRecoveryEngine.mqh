@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryEngine.mqh                                           |
-//| Grid recovery engine for mean-reverting synthetic indices        |
-//| Places progressive grid levels when Hurst confirms mean-reversion|
-//|                                                                  |
-//| Thin coordinator: shared types, grid level math, drawdown guards,|
-//| ATR handles, statistics and order execution live in the          |
-//| GridRecovery* modules included below. Behaviour is unchanged.    |
-//+------------------------------------------------------------------+
+// Grid recovery engine for mean-reverting synthetic indices
+// Places progressive grid levels when Hurst confirms mean-reversion
+// Thin coordinator: shared types, grid level math, drawdown guards,
+// ATR handles, statistics and order execution live in the
+// GridRecovery* modules included below. Behaviour is unchanged.
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -34,9 +30,7 @@ class CAIAdapter;
 #include "GridRecoveryAtr.mqh"
 #include "GridRecoveryExecution.mqh"
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryEngine â€?Grid recovery for mean-reverting synthetics |
-//+------------------------------------------------------------------+
+// CGridRecoveryEngine â€?Grid recovery for mean-reverting synthetics
 class CGridRecoveryEngine
 {
 private:
@@ -51,66 +45,50 @@ private:
    CGridRecoveryMetrics      m_metrics;     // Statistics
    CGridRecoveryExecution    m_execution;   // Risk gate + trade execution
 
-   //+------------------------------------------------------------------+
-   //| Find symbol index in the states array                             |
-   //+------------------------------------------------------------------+
+// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const
    {
       return CGridRecoveryLevels::FindSymbolIndex(m_symbolStates, m_symbolCount, symbol);
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize a symbol state slot with defaults                      |
-   //+------------------------------------------------------------------+
+// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol)
    {
       CGridRecoveryLevels::InitializeSymbolState(m_symbolStates[idx], symbol, m_config.maxGridLevels);
    }
 
-   //+------------------------------------------------------------------+
-   //| Update ATR value for a symbol                                     |
-   //+------------------------------------------------------------------+
+// Update ATR value for a symbol
    void UpdateATR(int idx)
    {
       m_atr.UpdateATR(idx, m_symbolStates[idx]);
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate Fibonacci number for a given level                      |
-   //+------------------------------------------------------------------+
+// Calculate Fibonacci number for a given level
    int FibonacciNumber(int level) const
    {
       return CGridRecoveryLevels::FibonacciNumber(level);
    }
 
-   //+------------------------------------------------------------------+
-   //| Normalize lot size to symbol volume constraints                   |
-   //+------------------------------------------------------------------+
+// Normalize lot size to symbol volume constraints
    double NormalizeLot(const string symbol, double lotSize) const
    {
       return CGridRecoveryLevels::NormalizeLot(symbol, lotSize);
    }
 
-   //+------------------------------------------------------------------+
-   //| Cap lot size to available margin                                  |
-   //+------------------------------------------------------------------+
+// Cap lot size to available margin
    double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType) const
    {
       return CGridRecoveryLevels::CapLotToMargin(lotSize, symbol, orderType);
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate grid drawdown as percentage of equity                   |
-   //+------------------------------------------------------------------+
+// Calculate grid drawdown as percentage of equity
    double CalculateGridDrawdownPercent(int idx) const
    {
       return CGridRecoveryDrawdown::CalculateGridDrawdownPercent(m_symbolStates[idx]);
    }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CGridRecoveryEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
@@ -118,17 +96,13 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                        |
-   //+------------------------------------------------------------------+
+// Destructor
    ~CGridRecoveryEngine()
    {
       Deinit();
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize the engine with config and dependencies               |
-   //+------------------------------------------------------------------+
+// Initialize the engine with config and dependencies
    bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
    {
       m_config         = config;
@@ -151,9 +125,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Add a symbol to monitor for grid recovery                        |
-   //+------------------------------------------------------------------+
+// Add a symbol to monitor for grid recovery
    bool AddSymbol(const string symbol)
    {
       // Check for duplicate
@@ -195,9 +167,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Release all indicator handles and clean up                       |
-   //+------------------------------------------------------------------+
+// Release all indicator handles and clean up
    void Deinit()
    {
       m_atr.ReleaseAll(m_symbolCount);
@@ -207,9 +177,7 @@ public:
                   m_metrics.TotalGridsOpened(), m_metrics.TotalGridsClosed(), m_metrics.TotalLevelsPlaced());
    }
 
-   //+------------------------------------------------------------------+
-   //| Process a tick for a given symbol â€?call every tick               |
-   //+------------------------------------------------------------------+
+// Process a tick for a given symbol â€?call every tick
    void ProcessTick(const string symbol, double bid, double ask)
    {
       int idx = FindSymbolIndex(symbol);
@@ -219,7 +187,6 @@ public:
       if(!m_symbolStates[idx].isActive)
          return;
 
-      // Update ATR
       UpdateATR(idx);
 
       double atr = m_symbolStates[idx].currentATR;
@@ -261,10 +228,8 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if grid should be activated                                 |
-   //| Requires: Hurst regime confirmed, no existing grid, cooldown ok   |
-   //+------------------------------------------------------------------+
+// Check if grid should be activated
+// Requires: Hurst regime confirmed, no existing grid, cooldown ok
    bool ShouldActivateGrid(int idx)
    {
       // Must have Hurst regime confirmed (mean-reversion)
@@ -295,9 +260,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Open a grid level order                                           |
-   //+------------------------------------------------------------------+
+// Open a grid level order
    bool OpenGridLevel(int idx, int direction, int level)
    {
       if(level < 0 || level >= m_config.maxGridLevels)
@@ -453,9 +416,7 @@ public:
       return result;
    }
 
-   //+------------------------------------------------------------------+
-   //| Manage grid positions â€?check filled levels, add next if needed    |
-   //+------------------------------------------------------------------+
+// Manage grid positions â€?check filled levels, add next if needed
    void ManageGridPositions(int idx)
    {
       string symbol = m_symbolStates[idx].symbol;
@@ -519,17 +480,13 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Calculate lot size for a grid level based on progression type     |
-   //+------------------------------------------------------------------+
+// Calculate lot size for a grid level based on progression type
    double CalculateGridLot(int level, double baseLot)
    {
       return CGridRecoveryLevels::CalculateGridLot(m_config, level, baseLot);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if a grid is currently running for a symbol                 |
-   //+------------------------------------------------------------------+
+// Check if a grid is currently running for a symbol
    bool IsGridActive(const string symbol)
    {
       int idx = FindSymbolIndex(symbol);
@@ -539,9 +496,6 @@ public:
       return (m_symbolStates[idx].activeLevelCount > 0);
    }
 
-   //+------------------------------------------------------------------+
-   //| Get total grid risk for a symbol                                  |
-   //+------------------------------------------------------------------+
    double GetTotalGridRisk(const string symbol)
    {
       int idx = FindSymbolIndex(symbol);
@@ -551,9 +505,7 @@ public:
       return m_symbolStates[idx].totalGridRisk;
    }
 
-   //+------------------------------------------------------------------+
-   //| Emergency close all grid positions for a symbol                   |
-   //+------------------------------------------------------------------+
+// Emergency close all grid positions for a symbol
    bool CloseAllGrids(const string symbol)
    {
       int idx = FindSymbolIndex(symbol);
@@ -592,17 +544,13 @@ public:
       return allClosed;
    }
 
-   //+------------------------------------------------------------------+
-   //| Count positions with "GRID-RECOVERY" in comment                   |
-   //+------------------------------------------------------------------+
+// Count positions with "GRID-RECOVERY" in comment
    int GetActiveGridPositions()
    {
       return CGridRecoveryMetrics::GetActiveGridPositions();
    }
 
-   //+------------------------------------------------------------------+
-   //| Update config parameters for family                               |
-   //+------------------------------------------------------------------+
+// Update config parameters for family
    void SetFamilyConfig(double gridFactorATR, int maxGridLevels, double progressionFactor,
                         double slAtrMult, double tpAtrMult, int magicOffset)
    {
@@ -617,10 +565,8 @@ public:
                   gridFactorATR, maxGridLevels, progressionFactor, slAtrMult, tpAtrMult, magicOffset);
    }
 
-   //+------------------------------------------------------------------+
-   //| Set Hurst regime confirmation for a symbol                        |
-   //| Called externally by Hurst calculator or indicator bridge          |
-   //+------------------------------------------------------------------+
+// Set Hurst regime confirmation for a symbol
+// Called externally by Hurst calculator or indicator bridge
    void SetHurstRegime(const string symbol, double hurstExponent)
    {
       int idx = FindSymbolIndex(symbol);
@@ -634,9 +580,6 @@ public:
                   m_symbolStates[idx].hurstRegimeConfirmed ? "MEAN-REVERSION" : "TRENDING");
    }
 
-   //+------------------------------------------------------------------+
-   //| Print diagnostics                                                 |
-   //+------------------------------------------------------------------+
    void PrintDiagnostics()
    {
       PrintFormat("[GRID-RECOVERY-DIAG] symbols=%d | gridsOpened=%d | gridsClosed=%d | levelsPlaced=%d | activePositions=%d",

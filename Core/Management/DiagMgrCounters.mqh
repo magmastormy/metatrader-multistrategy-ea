@@ -1,20 +1,14 @@
-//+------------------------------------------------------------------+
-//| DiagMgrCounters.mqh                                               |
-//| Extracted from DiagnosticsManager.mqh (God-Object decomposition)  |
-//| Owns the consensus-diagnostics counter bank: raw counts, root     |
-//| baselines, snapshot baselines, plus interval-gated logging.       |
-//|                                                                   |
-//| Behaviour is byte-identical to the original inline implementation:|
-//| identical field semantics, identical log strings, identical       |
-//| interval gating. CDiagnosticsManager keeps a by-value member of   |
-//| CDiagMgrCounters and forwards each public method one-to-one.      |
-//+------------------------------------------------------------------+
+// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
+// Owns the consensus-diagnostics counter bank: raw counts, root
+// baselines, snapshot baselines, plus interval-gated logging.
+// Behaviour is byte-identical to the original inline implementation:
+// identical field semantics, identical log strings, identical
+// interval gating. CDiagnosticsManager keeps a by-value member of
+// CDiagMgrCounters and forwards each public method one-to-one.
 #ifndef DIAG_MGR_COUNTERS_MQH
 #define DIAG_MGR_COUNTERS_MQH
 
-//+------------------------------------------------------------------+
-//| Consensus Diagnostics Snapshot Struct (moved from DiagnosticsCollector)
-//+------------------------------------------------------------------+
+// Consensus Diagnostics Snapshot Struct (moved from DiagnosticsCollector)
 struct SConsensusDiagnosticsSnapshot
 {
     // Root level counters
@@ -43,7 +37,6 @@ struct SConsensusDiagnosticsSnapshot
     ulong uictNeutralBias;
     ulong uictOtherFilters;
 
-    // Root baseline
     ulong rootBaselineRawNone;
     ulong rootBaselineFilteredOut;
     ulong rootBaselineQuorumFailed;
@@ -69,7 +62,6 @@ struct SConsensusDiagnosticsSnapshot
     ulong rootBaselineUICTNeutralBias;
     ulong rootBaselineUICTOtherFilters;
 
-    // Snapshot baseline
     ulong snapshotBaselineRawNone;
     ulong snapshotBaselineFilteredOut;
     ulong snapshotBaselineQuorumFailed;
@@ -101,9 +93,7 @@ struct SConsensusDiagnosticsSnapshot
     }
 };
 
-//+------------------------------------------------------------------+
-//| CDiagMgrCounters — consensus diagnostics counter bank             |
-//+------------------------------------------------------------------+
+// CDiagMgrCounters — consensus diagnostics counter bank
 class CDiagMgrCounters
 {
 private:
@@ -133,7 +123,6 @@ private:
     ulong m_diagUICTNeutralBias;
     ulong m_diagUICTOtherFilters;
 
-    // Root baselines
     ulong m_diagRootBaselineRawNone;
     ulong m_diagRootBaselineFilteredOut;
     ulong m_diagRootBaselineQuorumFailed;
@@ -159,7 +148,6 @@ private:
     ulong m_diagRootBaselineUICTNeutralBias;
     ulong m_diagRootBaselineUICTOtherFilters;
 
-    // Snapshot baselines
     ulong m_diagSnapshotBaselineRawNone;
     ulong m_diagSnapshotBaselineFilteredOut;
     ulong m_diagSnapshotBaselineQuorumFailed;
@@ -382,7 +370,6 @@ public:
     void IncrementUICTNeutralBias() { m_diagUICTNeutralBias++; }
     void IncrementUICTOtherFilters() { m_diagUICTOtherFilters++; }
 
-    // Root baseline increments
     void IncrementRootBaselineRawNone() { m_diagRootBaselineRawNone++; }
     void IncrementRootBaselineFilteredOut() { m_diagRootBaselineFilteredOut++; }
     void IncrementRootBaselineQuorumFailed() { m_diagRootBaselineQuorumFailed++; }
@@ -408,7 +395,6 @@ public:
     void IncrementRootBaselineUICTNeutralBias() { m_diagRootBaselineUICTNeutralBias++; }
     void IncrementRootBaselineUICTOtherFilters() { m_diagRootBaselineUICTOtherFilters++; }
 
-    // Snapshot baseline increments
     void IncrementSnapshotBaselineRawNone() { m_diagSnapshotBaselineRawNone++; }
     void IncrementSnapshotBaselineFilteredOut() { m_diagSnapshotBaselineFilteredOut++; }
     void IncrementSnapshotBaselineQuorumFailed() { m_diagSnapshotBaselineQuorumFailed++; }
@@ -457,7 +443,6 @@ public:
     // Full diagnostics snapshot for logging
     void GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot &snapshot) const;
 
-    // Logging
     void MaybeLogDiagnostics(const string symbol);
     void LogDiagnostics(const string symbol);
 
@@ -468,9 +453,6 @@ public:
     void SetSnapshotBaselines();
 };
 
-//+------------------------------------------------------------------+
-//| Reset Consensus Diagnostics                                      |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::ResetConsensusDiagnostics()
 {
     m_diagRawNone = 0;
@@ -548,9 +530,6 @@ void CDiagMgrCounters::ResetConsensusDiagnostics()
     m_lastDiagLogTime = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Accumulate Role/Cluster Signal Diagnostics                       |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
 {
     // Role/cluster signal attribution needs per-strategy role/cluster metadata, which is not
@@ -561,9 +540,6 @@ void CDiagMgrCounters::AccumulateRoleClusterSignalDiagnostics(const int strategy
         return;
 }
 
-//+------------------------------------------------------------------+
-//| Get Snapshot                                                     |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::GetSnapshot(ulong &rawNone,
                                    ulong &filteredOut,
                                    ulong &quorumFailed,
@@ -597,9 +573,6 @@ void CDiagMgrCounters::GetSnapshot(ulong &rawNone,
     clusterNoneSignals = m_diagClusterNoneSignals;
 }
 
-//+------------------------------------------------------------------+
-//| Get Full Diagnostics Snapshot                                    |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot &snapshot) const
 {
     // Root baseline (summary)
@@ -654,7 +627,6 @@ void CDiagMgrCounters::GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot 
     snapshot.rootBaselineUICTNeutralBias = m_diagRootBaselineUICTNeutralBias;
     snapshot.rootBaselineUICTOtherFilters = m_diagRootBaselineUICTOtherFilters;
 
-    // Snapshot baseline
     snapshot.snapshotBaselineRawNone = m_diagSnapshotBaselineRawNone;
     snapshot.snapshotBaselineFilteredOut = m_diagSnapshotBaselineFilteredOut;
     snapshot.snapshotBaselineQuorumFailed = m_diagSnapshotBaselineQuorumFailed;
@@ -681,9 +653,6 @@ void CDiagMgrCounters::GetFullDiagnosticsSnapshot(SConsensusDiagnosticsSnapshot 
     snapshot.snapshotBaselineUICTOtherFilters = m_diagSnapshotBaselineUICTOtherFilters;
 }
 
-//+------------------------------------------------------------------+
-//| Maybe Log Diagnostics                                            |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::MaybeLogDiagnostics(const string symbol)
 {
     datetime now = TimeCurrent();
@@ -694,9 +663,6 @@ void CDiagMgrCounters::MaybeLogDiagnostics(const string symbol)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log Diagnostics                                                  |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::LogDiagnostics(const string symbol)
 {
     PrintFormat("[CONSENSUS-DIAG] Symbol=%s | Generated=%llu | AfterPipeline=%llu | AfterQuorum=%llu | RawNone=%llu | FilteredOut=%llu | QuorumFailed=%llu | IntrabarNotEligible=%llu | VoteSuppressed=%llu",
@@ -719,9 +685,6 @@ void CDiagMgrCounters::LogDiagnostics(const string symbol)
                 m_diagClusterNoneSignals);
 }
 
-//+------------------------------------------------------------------+
-//| Set Snapshot Baselines                                           |
-//+------------------------------------------------------------------+
 void CDiagMgrCounters::SetSnapshotBaselines()
 {
     m_diagSnapshotBaselineRawNone = m_diagRawNone;

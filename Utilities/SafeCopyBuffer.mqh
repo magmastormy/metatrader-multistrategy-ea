@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SafeCopyBuffer.mqh                                               |
-//| Shared utility: retry-safe CopyBuffer wrapper                    |
-//+------------------------------------------------------------------+
+// Shared utility: retry-safe CopyBuffer wrapper
 #ifndef UTILS_SAFE_COPY_BUFFER_MQH
 #define UTILS_SAFE_COPY_BUFFER_MQH
 

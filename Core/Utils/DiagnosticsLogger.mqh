@@ -1,9 +1,7 @@
-//+------------------------------------------------------------------+
-//| DiagnosticsLogger.mqh - Off-Journal Diagnostic Logging           |
-//| Routes verbose/normal diagnostics to file instead of MT5 Journal |
-//| Blueprint Section 3.6: Logging Throttle                          |
-//| L9-007: Routes through CJsonLogger for unified correlation IDs   |
-//+------------------------------------------------------------------+
+// DiagnosticsLogger.mqh - Off-Journal Diagnostic Logging
+// Routes verbose/normal diagnostics to file instead of MT5 Journal
+// Blueprint Section 3.6: Logging Throttle
+// L9-007: Routes through CJsonLogger for unified correlation IDs
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -13,12 +11,9 @@
 
 #include "JsonLogger.mqh"
 
-//+------------------------------------------------------------------+
-//| Diagnostics Logger Class                                         |
-//| Writes level-gated diagnostic output to a dedicated log file     |
-//| so the MT5 Journal is not saturated by heartbeat/diagnostics.    |
-//| Routes through CJsonLogger for unified correlation IDs.          |
-//+------------------------------------------------------------------+
+// Writes level-gated diagnostic output to a dedicated log file
+// so the MT5 Journal is not saturated by heartbeat/diagnostics.
+// Routes through CJsonLogger for unified correlation IDs.
 class CDiagnosticsLogger
 {
 private:
@@ -68,19 +63,15 @@ public:
    // Flush buffer to disk
    void Flush();
 
-   // Set flush interval
    void SetFlushInterval(int flushIntervalSec) { m_flushIntervalSec = MathMax(1, flushIntervalSec); }
 
-   // Getters
    int  GetLogLevel() const { return m_logLevel; }
    bool IsVerbose() const { return m_logLevel >= 3; }
    bool IsNormal() const { return m_logLevel >= 2; }
    string GetComponent() const { return m_component; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CDiagnosticsLogger::CDiagnosticsLogger() :
    m_fileHandle(INVALID_HANDLE),
    m_filePath(""),
@@ -94,25 +85,17 @@ CDiagnosticsLogger::CDiagnosticsLogger() :
    m_fileCreationTime(0)
 {}
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CDiagnosticsLogger::~CDiagnosticsLogger()
 {
    Deinit();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CDiagnosticsLogger::Initialize(string eaName, int logLevel, int flushIntervalSec)
 {
    return InitializeEx(eaName, "", logLevel, flushIntervalSec);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize with component name                                   |
-//+------------------------------------------------------------------+
 bool CDiagnosticsLogger::InitializeEx(string eaName, string component, int logLevel, int flushIntervalSec)
 {
    m_logLevel = MathMax(0, MathMin(4, logLevel));
@@ -140,9 +123,6 @@ bool CDiagnosticsLogger::InitializeEx(string eaName, string component, int logLe
    return m_enabled;
 }
 
-//+------------------------------------------------------------------+
-//| Deinit                                                           |
-//+------------------------------------------------------------------+
 void CDiagnosticsLogger::Deinit()
 {
    if(m_fileHandle != INVALID_HANDLE)
@@ -155,9 +135,7 @@ void CDiagnosticsLogger::Deinit()
    m_enabled = false;
 }
 
-//+------------------------------------------------------------------+
-//| Log Critical (level >= 1)                                        |
-//+------------------------------------------------------------------+
+// Log Critical (level >= 1)
 void CDiagnosticsLogger::LogCritical(string message)
 {
    if(m_logLevel < 1)
@@ -172,9 +150,7 @@ void CDiagnosticsLogger::LogCritical(string message)
    WriteToFile("[CRITICAL] " + message);
 }
 
-//+------------------------------------------------------------------+
-//| Log Normal (level >= 2)                                          |
-//+------------------------------------------------------------------+
+// Log Normal (level >= 2)
 void CDiagnosticsLogger::LogNormal(string message)
 {
    if(m_logLevel < 2)
@@ -189,9 +165,7 @@ void CDiagnosticsLogger::LogNormal(string message)
    WriteToFile("[NORMAL] " + message);
 }
 
-//+------------------------------------------------------------------+
-//| Log Verbose (level >= 3)                                         |
-//+------------------------------------------------------------------+
+// Log Verbose (level >= 3)
 void CDiagnosticsLogger::LogVerbose(string message)
 {
    if(m_logLevel < 3)
@@ -206,10 +180,8 @@ void CDiagnosticsLogger::LogVerbose(string message)
    WriteToFile("[VERBOSE] " + message);
 }
 
-//+------------------------------------------------------------------+
-//| Write to file (not journal)                                      |
-//| Falls back to Print if file handle is invalid                    |
-//+------------------------------------------------------------------+
+// Write to file (not journal)
+// Falls back to Print if file handle is invalid
 void CDiagnosticsLogger::WriteToFile(string message)
 {
    string timestamp = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
@@ -236,9 +208,7 @@ void CDiagnosticsLogger::WriteToFile(string message)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Flush buffer to disk (throttled to every m_flushIntervalSec)     |
-//+------------------------------------------------------------------+
+// Flush buffer to disk (throttled to every m_flushIntervalSec)
 void CDiagnosticsLogger::Flush()
 {
    datetime now = TimeCurrent();
@@ -250,9 +220,7 @@ void CDiagnosticsLogger::Flush()
    }
 }
 
-//+------------------------------------------------------------------+
-//| Get base file name without rotation suffix                       |
-//+------------------------------------------------------------------+
+// Get base file name without rotation suffix
 string CDiagnosticsLogger::GetBaseFileName() const
 {
    if(m_filePath == "") return "";
@@ -261,9 +229,6 @@ string CDiagnosticsLogger::GetBaseFileName() const
    return StringSubstr(m_filePath, 0, lastDot + 4);
 }
 
-//+------------------------------------------------------------------+
-//| Get rotated file name                                            |
-//+------------------------------------------------------------------+
 string CDiagnosticsLogger::GetRotatedFileName(int rotationIndex) const
 {
    string base = GetBaseFileName();
@@ -273,9 +238,7 @@ string CDiagnosticsLogger::GetRotatedFileName(int rotationIndex) const
    return base + "_" + dateStr + "_" + IntegerToString(rotationIndex) + ".log";
 }
 
-//+------------------------------------------------------------------+
-//| Rotate log file if needed                                        |
-//+------------------------------------------------------------------+
+// Rotate log file if needed
 void CDiagnosticsLogger::RotateIfNeeded()
 {
    if(!m_enabled || m_fileHandle == INVALID_HANDLE)
@@ -336,9 +299,7 @@ void CDiagnosticsLogger::RotateIfNeeded()
    }
 }
 
-//+------------------------------------------------------------------+
-//| Clean up old rotated files                                       |
-//+------------------------------------------------------------------+
+// Clean up old rotated files
 void CDiagnosticsLogger::CleanupOldFiles()
 {
    for(int i = MAX_RETAINED_FILES + 1; i <= MAX_RETAINED_FILES + 10; i++)
@@ -354,10 +315,8 @@ void CDiagnosticsLogger::CleanupOldFiles()
 
 #endif // DIAGNOSTICS_LOGGER_MQH
 
-//+------------------------------------------------------------------+
-//| ErrorAggregator.mqh - Periodic Error Aggregate Logging           |
-//| Aggregates errors by type and logs summary periodically          |
-//+------------------------------------------------------------------+
+// ErrorAggregator.mqh - Periodic Error Aggregate Logging
+// Aggregates errors by type and logs summary periodically
 #ifndef ERROR_AGGREGATOR_MQH
 #define ERROR_AGGREGATOR_MQH
 

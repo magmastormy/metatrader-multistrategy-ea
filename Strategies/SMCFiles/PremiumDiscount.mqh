@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| PremiumDiscount.mqh                                              |
-//| Premium/Discount Arrays & OTE Zone Detection                     |
-//| ICT Concepts: Trade buys in discount, sells in premium           |
-//+------------------------------------------------------------------+
+// Premium/Discount Arrays & OTE Zone Detection
+// ICT Concepts: Trade buys in discount, sells in premium
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -10,9 +7,7 @@
 #ifndef SMC_PREMIUM_DISCOUNT_MQH
 #define SMC_PREMIUM_DISCOUNT_MQH
 
-//+------------------------------------------------------------------+
-//| Zone Type                                                        |
-//+------------------------------------------------------------------+
+// Zone Type
 enum ENUM_PRICE_ZONE
 {
     ZONE_EXTREME_PREMIUM,    // Above 78.6%
@@ -22,9 +17,7 @@ enum ENUM_PRICE_ZONE
     ZONE_EXTREME_DISCOUNT    // Below 21.4%
 };
 
-//+------------------------------------------------------------------+
-//| OTE (Optimal Trade Entry) Zone                                   |
-//+------------------------------------------------------------------+
+// OTE (Optimal Trade Entry) Zone
 struct SOTEZone
 {
     double      high;        // Top of OTE (61.8%)
@@ -40,9 +33,6 @@ struct SOTEZone
                  isBullish(false), isActive(false), createdTime(0), score(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Premium/Discount Class                                           |
-//+------------------------------------------------------------------+
 class CSMCPremiumDiscount
 {
 private:
@@ -61,7 +51,6 @@ private:
     bool                m_anchorIsBullish;  // true = retracement of a bullish leg (buying discount)
     bool                m_hasAnchor;        // whether a swing anchor has been set
     
-    // OTE zones
     SOTEZone            m_bullishOTE;
     SOTEZone            m_bearishOTE;
     
@@ -77,7 +66,6 @@ public:
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   int rangeLookback = 100);
 
-    // Update
     void                Update();
 
     // Swing anchor setter (P0-C) — call after structure analyzer updates
@@ -97,7 +85,6 @@ public:
     bool                GetBullishOTE(SOTEZone &ote);
     bool                GetBearishOTE(SOTEZone &ote);
     
-    // Getters
     double              GetRangeHigh() const { return m_rangeHigh; }
     double              GetRangeLow() const { return m_rangeLow; }
     double              GetRangeMid() const { return m_rangeMid; }
@@ -112,9 +99,7 @@ public:
     double              Get786Level() { return GetFibLevel(0.786); }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSMCPremiumDiscount::CSMCPremiumDiscount() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -129,16 +114,11 @@ CSMCPremiumDiscount::CSMCPremiumDiscount() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSMCPremiumDiscount::~CSMCPremiumDiscount()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                      int rangeLookback)
 {
@@ -152,9 +132,7 @@ bool CSMCPremiumDiscount::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Range — P0-C: Anchor-Aware                            |
-//+------------------------------------------------------------------+
+// Calculate Range — P0-C: Anchor-Aware
 void CSMCPremiumDiscount::CalculateRange()
 {
     // If an anchor has been set externally (preferred), use it
@@ -212,9 +190,6 @@ void CSMCPremiumDiscount::CalculateRange()
     m_rangeMid = (m_rangeHigh + m_rangeLow) / 2.0;
 }
 
-//+------------------------------------------------------------------+
-//| Set Swing Anchor — P0-C                                          |
-//+------------------------------------------------------------------+
 void CSMCPremiumDiscount::SetSwingAnchor(double swingHigh, double swingLow, bool isBullishLeg)
 {
     if(swingHigh <= swingLow) return;
@@ -232,9 +207,7 @@ void CSMCPremiumDiscount::SetSwingAnchor(double swingHigh, double swingLow, bool
     CalculateOTEZones();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate OTE Zones — P0-C: Both Leg Directions                 |
-//+------------------------------------------------------------------+
+// Calculate OTE Zones — P0-C: Both Leg Directions
 void CSMCPremiumDiscount::CalculateOTEZones()
 {
     double range = m_rangeHigh - m_rangeLow;
@@ -267,34 +240,22 @@ void CSMCPremiumDiscount::CalculateOTEZones()
     m_bearishOTE.score        = 70.0;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CSMCPremiumDiscount::Update()
 {
     CalculateRange();
     CalculateOTEZones();
 }
 
-//+------------------------------------------------------------------+
-//| Is Premium                                                       |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsPremium(double price)
 {
     return (price > m_rangeMid);
 }
 
-//+------------------------------------------------------------------+
-//| Is Discount                                                      |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsDiscount(double price)
 {
     return (price < m_rangeMid);
 }
 
-//+------------------------------------------------------------------+
-//| Is Extreme Premium                                               |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsExtremePremium(double price)
 {
     double range = m_rangeHigh - m_rangeLow;
@@ -302,9 +263,6 @@ bool CSMCPremiumDiscount::IsExtremePremium(double price)
     return (price > threshold);
 }
 
-//+------------------------------------------------------------------+
-//| Is Extreme Discount                                              |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsExtremeDiscount(double price)
 {
     double range = m_rangeHigh - m_rangeLow;
@@ -312,9 +270,6 @@ bool CSMCPremiumDiscount::IsExtremeDiscount(double price)
     return (price < threshold);
 }
 
-//+------------------------------------------------------------------+
-//| Is Equilibrium                                                   |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsEquilibrium(double price)
 {
     double range = m_rangeHigh - m_rangeLow;
@@ -322,9 +277,6 @@ bool CSMCPremiumDiscount::IsEquilibrium(double price)
     return (MathAbs(price - m_rangeMid) < tolerance);
 }
 
-//+------------------------------------------------------------------+
-//| Get Price Zone                                                   |
-//+------------------------------------------------------------------+
 ENUM_PRICE_ZONE CSMCPremiumDiscount::GetPriceZone(double price)
 {
     double range = m_rangeHigh - m_rangeLow;
@@ -342,27 +294,18 @@ ENUM_PRICE_ZONE CSMCPremiumDiscount::GetPriceZone(double price)
         return ZONE_EXTREME_DISCOUNT;
 }
 
-//+------------------------------------------------------------------+
-//| Is In Bullish OTE                                                |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsInBullishOTE(double price)
 {
     if(!m_bullishOTE.isActive) return false;
     return (price >= m_bullishOTE.low && price <= m_bullishOTE.high);
 }
 
-//+------------------------------------------------------------------+
-//| Is In Bearish OTE                                                |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::IsInBearishOTE(double price)
 {
     if(!m_bearishOTE.isActive) return false;
     return (price >= m_bearishOTE.low && price <= m_bearishOTE.high);
 }
 
-//+------------------------------------------------------------------+
-//| Get Bullish OTE                                                  |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::GetBullishOTE(SOTEZone &ote)
 {
     if(!m_bullishOTE.isActive) return false;
@@ -370,9 +313,6 @@ bool CSMCPremiumDiscount::GetBullishOTE(SOTEZone &ote)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get Bearish OTE                                                  |
-//+------------------------------------------------------------------+
 bool CSMCPremiumDiscount::GetBearishOTE(SOTEZone &ote)
 {
     if(!m_bearishOTE.isActive) return false;
@@ -380,9 +320,6 @@ bool CSMCPremiumDiscount::GetBearishOTE(SOTEZone &ote)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get Fibonacci Level                                              |
-//+------------------------------------------------------------------+
 double CSMCPremiumDiscount::GetFibLevel(double ratio)
 {
     return m_rangeLow + ((m_rangeHigh - m_rangeLow) * ratio);

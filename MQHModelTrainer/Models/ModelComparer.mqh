@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| ModelComparer.mqh                                                |
-//| Compare multiple trained models                                   |
-//+------------------------------------------------------------------+
+// Compare multiple trained models
 #ifndef MQH_MODEL_COMPARER_MQH
 #define MQH_MODEL_COMPARER_MQH
 

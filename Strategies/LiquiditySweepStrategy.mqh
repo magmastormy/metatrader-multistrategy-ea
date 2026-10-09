@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| LiquiditySweepStrategy.mqh                                       |
-//| Liquidity Sweep / Stop Hunt Detection Strategy                   |
-//| Detects when price briefly exceeds key levels then reverses      |
-//| Algorithmic equivalent of ICT liquidity grab concept             |
-//| Batch 114: New strategy — does NOT replace existing ICT/SMC      |
-//+------------------------------------------------------------------+
+// Liquidity Sweep / Stop Hunt Detection Strategy
+// Detects when price briefly exceeds key levels then reverses
+// Algorithmic equivalent of ICT liquidity grab concept
+// Batch 114: New strategy — does NOT replace existing ICT/SMC
 #ifndef LIQUIDITY_SWEEP_STRATEGY_MQH
 #define LIQUIDITY_SWEEP_STRATEGY_MQH
 
@@ -12,9 +9,6 @@
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
-//+------------------------------------------------------------------+
-//| Liquidity Level Types                                             |
-//+------------------------------------------------------------------+
 enum ENUM_LIQUIDITY_LEVEL_TYPE
 {
     LIQ_LEVEL_NONE = 0,
@@ -27,9 +21,6 @@ enum ENUM_LIQUIDITY_LEVEL_TYPE
     LIQ_LEVEL_EQUAL_LOWS
 };
 
-//+------------------------------------------------------------------+
-//| Liquidity Sweep Signal Structure                                 |
-//+------------------------------------------------------------------+
 struct SLiquiditySweepSignal
 {
     ENUM_TRADE_SIGNAL direction;
@@ -54,10 +45,7 @@ struct SLiquiditySweepSignal
         levelType(LIQ_LEVEL_NONE) {}
 };
 
-//+------------------------------------------------------------------+
-//| CLiquiditySweepStrategy                                           |
-//| Detects liquidity sweeps and enters on reversal                  |
-//+------------------------------------------------------------------+
+// Detects liquidity sweeps and enters on reversal
 class CLiquiditySweepStrategy : public CStrategyBase
 {
 private:
@@ -72,7 +60,6 @@ private:
     // Indicator handles
     int    m_atrHandle;
 
-    // Risk Manager
     CUnifiedRiskManager* m_riskManager;
 
     // State
@@ -130,7 +117,6 @@ private:
         }
     }
 
-    //--- Detect sweep of a level
     bool DetectSweep(double level, bool isHighLevel,
                      double high, double low, double close, double atr)
     {
@@ -270,7 +256,6 @@ public:
             IndicatorRelease(m_atrHandle);
     }
 
-    //--- Initialize
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                     CUnifiedRiskManager* riskManager = NULL)
     {
@@ -282,7 +267,6 @@ public:
         return (m_atrHandle != INVALID_HANDLE);
     }
 
-    //--- Configure
     void Configure(double sweepThresholdATR = 0.6, int lookbackBars = 100,
                    double minConfidence = 0.6, int roundNumberPips = 50)
     {

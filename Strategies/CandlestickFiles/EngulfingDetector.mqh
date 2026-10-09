@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                          EngulfingDetector.mqh   |
-//|                                   Engulfing Pattern Detection    |
-//+------------------------------------------------------------------+
+// Engulfing Pattern Detection
 #property copyright "Copyright 2024"
 #property strict
 

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| RegimeFault.mqh                                                  |
-//| Data-fault accounting, snapshot reuse and degraded-path logging  |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Data-fault accounting, snapshot reuse and degraded-path logging
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_FAULT_MQH
 #define REGIME_FAULT_MQH
 
@@ -10,10 +7,8 @@
 #include "RegimeComposite.mqh"
 #include "RegimeVolatility.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the consecutive fault counter, the reuse TTL and the two    |
-//| throttled degraded-path log timestamps.                          |
-//+------------------------------------------------------------------+
+// Owns the consecutive fault counter, the reuse TTL and the two
+// throttled degraded-path log timestamps.
 class CRegimeFaultTracker
 {
 private:
@@ -88,9 +83,7 @@ public:
                                 const SRegimeConfig &config);
 };
 
-//+------------------------------------------------------------------+
-//| Throttled generic fault line                                     |
-//+------------------------------------------------------------------+
+// Throttled generic fault line
 void CRegimeFaultTracker::LogFault(const string tag, const int errorCode, const string contextSymbol, const ENUM_TIMEFRAMES contextTimeframe)
 {
     datetime nowTime = TimeCurrent();
@@ -102,9 +95,7 @@ void CRegimeFaultTracker::LogFault(const string tag, const int errorCode, const 
     m_lastFaultLogTime = nowTime;
 }
 
-//+------------------------------------------------------------------+
-//| Count a data fault and report whether handles must be recycled   |
-//+------------------------------------------------------------------+
+// Count a data fault and report whether handles must be recycled
 bool CRegimeFaultTracker::RegisterDataFault(const string tag,
                                             const int errorCode,
                                             const string contextSymbol,
@@ -116,9 +107,7 @@ bool CRegimeFaultTracker::RegisterDataFault(const string tag,
     return (m_consecutiveDataFaults >= 3);
 }
 
-//+------------------------------------------------------------------+
-//| Throttled fallback-rates notice                                  |
-//+------------------------------------------------------------------+
+// Throttled fallback-rates notice
 void CRegimeFaultTracker::LogFallbackRates(const string symbol,
                                            const ENUM_TIMEFRAMES timeframe,
                                            const double atrValue,
@@ -136,9 +125,7 @@ void CRegimeFaultTracker::LogFallbackRates(const string symbol,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Reuse the last valid snapshot when it is still representative    |
-//+------------------------------------------------------------------+
+// Reuse the last valid snapshot when it is still representative
 bool CRegimeFaultTracker::TryReuseRecentSnapshot(SRegimeSnapshot &snapshot,
                                                  const string contextSymbol,
                                                  const ENUM_TIMEFRAMES contextTimeframe,

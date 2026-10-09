@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Enterprise Strategy Manager - Production Grade                   |
-//| Central manager for all strategies with unified pipeline        |
-//+------------------------------------------------------------------+
+// Enterprise Strategy Manager - Production Grade
+// Central manager for all strategies with unified pipeline
 #ifndef ENTERPRISE_STRATEGY_MANAGER_MQH
 #define ENTERPRISE_STRATEGY_MANAGER_MQH
 
@@ -48,16 +46,14 @@ class CFourStateRegimeDetector;  // Forward declaration for market regime detect
 // Forward declaration (fallback if include guard prevents inclusion)
 class CStrategyRegistry;
 
-//+------------------------------------------------------------------+
-//| Phase G / G1: struct StrategyEntry and the shared enum->text free  |
-//| helpers (StrategyRoleToString, StrategyClusterToString,            |
-//| StrategyClusterShortCode, IntrabarPolicyToString,                  |
-//| TradeSignalToString, IsInfrastructureNoSignalReasonTag,            |
-//| ClampUnitValue) moved verbatim into EntStrategyTypes.mqh. It is    |
-//| included at the exact position the originals occupied: after the   |
-//| strategy-registry include, before the slice-module includes, so    |
-//| every collaborator still sees them BEFORE its own definition.      |
-//+------------------------------------------------------------------+
+// Phase G / G1: struct StrategyEntry and the shared enum->text free
+// helpers (StrategyRoleToString, StrategyClusterToString,
+// StrategyClusterShortCode, IntrabarPolicyToString,
+// TradeSignalToString, IsInfrastructureNoSignalReasonTag,
+// ClampUnitValue) moved verbatim into EntStrategyTypes.mqh. It is
+// included at the exact position the originals occupied: after the
+// strategy-registry include, before the slice-module includes, so
+// every collaborator still sees them BEFORE its own definition.
 #include "EntStrategyTypes.mqh"
 
 // Phase C / Slice 1 extracted collaborators. Included here (after the shared
@@ -95,9 +91,6 @@ class CStrategyRegistry;
 #include "StrategyMgrInfrastructure.mqh"  // G5: collaborator plumbing + lifecycle
 #include "StrategyMgrTradeFeedback.mqh"   // G6: magic ownership + trade feedback
 
-//+------------------------------------------------------------------+
-//| Enterprise Strategy Manager Class                               |
-//+------------------------------------------------------------------+
 class CEnterpriseStrategyManager
 {
 private:
@@ -186,7 +179,6 @@ public:
                                             ulong scanCycleId, const string corrId = "");
     string GetValidationStatusReport() const;
 
-    // Validator configuration setters
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
                            bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
                            double baseSpreadATRRatio, double syntheticSpreadATRRatio);
@@ -639,9 +631,7 @@ public:
     void ApplyAssetClassEngineWeights(const string symbol);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 //--- Phase G: the whole initialiser list moved with the state it initialised.
 //--- Every former scalar now lives in the module that owns it and is set by
 //--- that module's own constructor, VERBATIM:
@@ -704,9 +694,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager()
     m_tradeFeedback.SetSource(GetPointer(this));
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 {
     // Phase G / G4: the strategy teardown loop moved to the roster (identical
@@ -722,19 +710,16 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     m_infra.ReleaseOnDestruct();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Manager                                              |
-//| Two-Phase Initialization Pattern (L2-023):                      |
-//|   Phase 1 (Required): Core infrastructure - Pipeline,            |
-//|       TimeframeConsistency (must succeed or full init fails)    |
-//|   Phase 2 (Optional): Enhancements - FourStateRegimeDetector,   |
-//|       FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)  |
-//| This pattern ensures core consensus machinery is ready before   |
-//| registering strategies, while allowing optional engines to      |
-//| degrade gracefully without blocking the manager.                |
-//| Ownership: Phase 1 objects owned by manager (deleted in dtor).  |
-//| Phase 2 objects also owned but failure does not roll back Phase 1.|
-//+------------------------------------------------------------------+
+// Two-Phase Initialization Pattern (L2-023):
+// Phase 1 (Required): Core infrastructure - Pipeline,
+// TimeframeConsistency (must succeed or full init fails)
+// Phase 2 (Optional): Enhancements - FourStateRegimeDetector,
+// FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)
+// This pattern ensures core consensus machinery is ready before
+// registering strategies, while allowing optional engines to
+// degrade gracefully without blocking the manager.
+// Ownership: Phase 1 objects owned by manager (deleted in dtor).
+// Phase 2 objects also owned but failure does not roll back Phase 1.
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool usePipeline,
                                            CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
@@ -760,9 +745,6 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
                               m_quorumConfig);
 }
 
-//+------------------------------------------------------------------+
-//| Register Strategy                                               |
-//+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const string name,
                                                  bool enabled, double weight,
                                                  ENUM_STRATEGY_TIER tier,
@@ -781,9 +763,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                             intrabarPolicy, role, cluster, liveVotingEnabled);
 }
 
-//+------------------------------------------------------------------+
-//| Configuration Setters - Store in mirrored config variables       |
-//+------------------------------------------------------------------+
+// Configuration Setters - Store in mirrored config variables
 void CEnterpriseStrategyManager::SetMinQuorum(int quorum)
 {
     m_quorumConfig.SetMinQuorum(quorum);
@@ -877,14 +857,11 @@ int CEnterpriseStrategyManager::GetMinQuorum() const
     return m_quorumConfig.GetMinQuorum();
 }
 
-//+------------------------------------------------------------------+
-//| Consensus entry funnel                                           |
-//|                                                                  |
-//| Phase C / Slice 5 (C9): the whole consensus core moved into      |
-//| CConsensusEngine. These public overloads are retained verbatim   |
-//| as one-line forwarders because EAOrchestrator, SignalGenerator,  |
-//| PositionLifecycleManager and TrainingDataExporter call them.     |
-//+------------------------------------------------------------------+
+// Consensus entry funnel
+// Phase C / Slice 5 (C9): the whole consensus core moved into
+// CConsensusEngine. These public overloads are retained verbatim
+// as one-line forwarders because EAOrchestrator, SignalGenerator,
+// PositionLifecycleManager and TrainingDataExporter call them.
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confidence)
 {
     return m_consensusEngine.GetConsensusSignal(confidence);
@@ -908,25 +885,19 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
 }
 
-//+------------------------------------------------------------------+
-//| Two-tier consensus evaluation - uses internal consensus logic   |
-//+------------------------------------------------------------------+
+// Two-tier consensus evaluation - uses internal consensus logic
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode)
 {
     return m_consensusEngine.EvaluateConsensusTwoTier(symbol, confidence, confluence, evalMode);
 }
 
-//+------------------------------------------------------------------+
-//| Get Consensus Signal For Specific Symbol                        |
-//+------------------------------------------------------------------+
+// Get Consensus Signal For Specific Symbol
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const string symbol, double &confidence)
 {
     return m_consensusEngine.GetConsensusSignalForSymbol(symbol, confidence);
 }
 
-//+------------------------------------------------------------------+
-//| Auto-register Strategies                                        |
-//+------------------------------------------------------------------+
+// Auto-register Strategies
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx)
 {
     // Phase C / Slice 4 (C6): table lookup + the idx 9/10 LIVE defaults moved.
@@ -1007,50 +978,36 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
           GetActiveStrategyCount());
 }
 
-//+------------------------------------------------------------------+
-//| Reconcile enabled flags with the finalized registry            |
-//| Strategies are auto-registered (AutoRegisterStrategies) BEFORE |
-//| the orchestrator's BuildStrategyRegistry populates the shared  |
-//| CStrategyRegistry with definitions. At that early point         |
-//| IsStrategyActive() returns false (definition not found), so the|
-//| override at RegisterStrategy() locks every strategy disabled.   |
-//| After BuildStrategyRegistry finalizes the mode, this method     |
-//| re-applies the registry's active state so the live strategy     |
-//| objects actually participate in consensus.                      |
-//+------------------------------------------------------------------+
+// Reconcile enabled flags with the finalized registry
+// Strategies are auto-registered (AutoRegisterStrategies) BEFORE
+// the orchestrator's BuildStrategyRegistry populates the shared
+// CStrategyRegistry with definitions. At that early point
+// IsStrategyActive() returns false (definition not found), so the
+// override at RegisterStrategy() locks every strategy disabled.
+// After BuildStrategyRegistry finalizes the mode, this method
+// re-applies the registry's active state so the live strategy
+// objects actually participate in consensus.
 void CEnterpriseStrategyManager::SyncEnabledWithRegistry()
 {
     m_consensusEngine.SyncEnabledWithRegistry();
 }
 
 
-//+------------------------------------------------------------------+
-//| Get Active Strategy Count                                       |
-//+------------------------------------------------------------------+
 int CEnterpriseStrategyManager::GetActiveStrategyCount() const
 {
     return m_stateReporter.GetActiveStrategyCount();
 }
 
-//+------------------------------------------------------------------+
-//| Get Active Brain Strategy Count                                  |
-//+------------------------------------------------------------------+
 int CEnterpriseStrategyManager::GetActiveBrainStrategyCount() const
 {
     return m_stateReporter.GetActiveBrainStrategyCount();
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy Report                                             |
-//+------------------------------------------------------------------+
 string CEnterpriseStrategyManager::GetStrategyReport() const
 {
     return m_stateReporter.GetStrategyReport();
 }
 
-//+------------------------------------------------------------------+
-//| Set Pipeline Filters                                             |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)
 {
     // Phase G / G2: cache pipeline base confidence floor for quorum eligibility
@@ -1062,9 +1019,6 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
     m_infra.ApplyPipelineFilters(settings);
 }
 
-//+------------------------------------------------------------------+
-//| Set Orchestrator Mode                                            |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxLosses)
 {
     // Phase G / G2: both adaptation thresholds and the summary PrintFormat
@@ -1087,9 +1041,7 @@ string CEnterpriseStrategyManager::GetConsensusContextJSON() const
     return m_stateReporter.GetConsensusContextJSON();
 }
 
-//+------------------------------------------------------------------+
-//| Consensus Decision Class to String Conversion                    |
-//+------------------------------------------------------------------+
+// Consensus Decision Class to String Conversion
 string CEnterpriseStrategyManager::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
 {
     return CStrategyStateReporter::ConsensusDecisionClassToString(decisionClass);
@@ -1152,9 +1104,7 @@ bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const st
     return m_registryState.SetStrategyLiveVotingEligibilityByName(name, enabled);
 }
 
-//+------------------------------------------------------------------+
-//| Phase C / Slice 4 (C8): per-field accessors for slice modules    |
-//+------------------------------------------------------------------+
+// Phase C / Slice 4 (C8): per-field accessors for slice modules
 void CEnterpriseStrategyManager::SetStrategyRole(int index, int role)
 {
     m_roster.SetStrategyRole(index, role);
@@ -1180,10 +1130,8 @@ void CEnterpriseStrategyManager::SetStrategyIntrabarEligible(int index, bool eli
     m_roster.SetStrategyIntrabarEligible(index, eligible);
 }
 
-//+------------------------------------------------------------------+
-//| Phase C / Slice 4 (C8): 35-field StrategyEntry append           |
-//| Mirrors the original RegisterStrategy append block exactly.      |
-//+------------------------------------------------------------------+
+// Phase C / Slice 4 (C8): 35-field StrategyEntry append
+// Mirrors the original RegisterStrategy append block exactly.
 void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                                               double weight, ENUM_STRATEGY_TIER tier,
                                                               ENUM_TIMEFRAMES resolvedTf,
@@ -1254,11 +1202,9 @@ void CEnterpriseStrategyManager::GetLastSignalContributorIndices(int &indices[])
     m_signalContext.GetLastSignalContributorIndices(indices);
 }
 
-//+------------------------------------------------------------------+
-//| GetConsensusProposedStops - FINDING 0: surface designed stops    |
-//| Walks the consensus contributor indices (highest priority first)  |
-//| and returns the first strategy that stashed a real SL/TP.         |
-//+------------------------------------------------------------------+
+// GetConsensusProposedStops - FINDING 0: surface designed stops
+// Walks the consensus contributor indices (highest priority first)
+// and returns the first strategy that stashed a real SL/TP.
 bool CEnterpriseStrategyManager::GetConsensusProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
 {
     int indices[];
@@ -1286,10 +1232,8 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
                                                          clusterCode, contributorsCsv);
 }
 
-//+------------------------------------------------------------------+
-//| Explicit Deinitialization                                        |
-//| Called before destructor to ensure proper cleanup order          |
-//+------------------------------------------------------------------+
+// Explicit Deinitialization
+// Called before destructor to ensure proper cleanup order
 void CEnterpriseStrategyManager::Deinit()
 {
     // Phase G / G4: strategy teardown loop, then the Deinit-only roster reset
@@ -1384,9 +1328,7 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
     return m_roster.FindStrategyIndexByName(name);
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy By Name �?Batch 103: returns strategy pointer       |
-//+------------------------------------------------------------------+
+// Get Strategy By Name �?Batch 103: returns strategy pointer
 IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
     // Phase C / Slice 4 (C8): same lookup + bounds guard + pointer return.
@@ -1398,15 +1340,11 @@ IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 
 
 
-//+------------------------------------------------------------------+
-//| Determine if current regime is trending for cross-cluster conflict |
-//+------------------------------------------------------------------+
+// Determine if current regime is trending for cross-cluster conflict
 
-//+------------------------------------------------------------------+
-//| FALLBACK SOLO SIGNAL: When all strategies abstain, pick best     |
-//| single strategy based on confidence and context quality          |
-//| Prevents trading paralysis during low-signal periods             |
-//+------------------------------------------------------------------+
+// FALLBACK SOLO SIGNAL: When all strategies abstain, pick best
+// single strategy based on confidence and context quality
+// Prevents trading paralysis during low-signal periods
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string symbol,
                                        ENUM_SIGNAL_EVAL_MODE evalMode,
                                        double &outConfidence,
@@ -1458,14 +1396,11 @@ bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, 
     return m_attributionDelegator.PopPositionAttribution(positionId, contributors);
 }
 
-//+------------------------------------------------------------------+
-//| Performance / health accounting                                  |
-//|                                                                  |
-//| Phase C / Slice 3 (C5): the implementations moved wholesale into |
-//| CStrategyPerformanceHealth. The manager keeps only forwarders    |
-//| because every one of these is part of its public API (consumed   |
-//| by EAOrchestrator, AIEngine and OnTradeTransaction below).       |
-//+------------------------------------------------------------------+
+// Performance / health accounting
+// Phase C / Slice 3 (C5): the implementations moved wholesale into
+// CStrategyPerformanceHealth. The manager keeps only forwarders
+// because every one of these is part of its public API (consumed
+// by EAOrchestrator, AIEngine and OnTradeTransaction below).
 void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, double netProfit)
 {
     m_performanceHealth.UpdatePerformance(strategyName, netProfit);
@@ -1507,19 +1442,15 @@ void CEnterpriseStrategyManager::UpdateRegimePerformance(const int index, int re
 }
 
 
-//+------------------------------------------------------------------+
-//| OnNewBar - CRITICAL for zone scanning and chart drawings         |
-//| Must be called from main EA on each new bar                      |
-//+------------------------------------------------------------------+
+// OnNewBar - CRITICAL for zone scanning and chart drawings
+// Must be called from main EA on each new bar
 // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_lifecycle.OnNewBar(symbol, timeframe);
 }
 
-//+------------------------------------------------------------------+
-//| OnTradeTransaction - Handle trade events for AI feedback        |
-//+------------------------------------------------------------------+
+// OnTradeTransaction - Handle trade events for AI feedback
 void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& trans,
                                                    const MqlTradeRequest& request,
                                                    const MqlTradeResult& result)
@@ -1539,9 +1470,6 @@ bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) c
     return m_tradeFeedback.IsPositionIdStillOpen(positionId);
 }
 
-//+------------------------------------------------------------------+
-//| Apply Quorum Profile                                             |
-//+------------------------------------------------------------------+
 // Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 // The nested ENUM_QUORUM_PROFILE stays here (it is a user-facing MT5 `input`
 // type) and is forwarded as an int, whose ordinals match QUORUM_PROFILE_*.
@@ -1550,175 +1478,115 @@ void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
     m_weightingConfig.ApplyQuorumProfile((int)profile);
 }
 
-//+------------------------------------------------------------------+
-//| Apply family-based engine weights for Deriv synthetic indices    |
-//+------------------------------------------------------------------+
+// Apply family-based engine weights for Deriv synthetic indices
 // Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyFamilyEngineWeights(const string symbol)
 {
     m_weightingConfig.ApplyFamilyEngineWeights(symbol);
 }
 
-//+------------------------------------------------------------------+
-//| Apply asset-class-based engine weights using multi-asset profiler|
-//+------------------------------------------------------------------+
+// Apply asset-class-based engine weights using multi-asset profiler
 // Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbol)
 {
     m_weightingConfig.ApplyAssetClassEngineWeights(symbol);
 }
 
-//+------------------------------------------------------------------+
-//| Enable Strategy By Name                                         |
-//+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::EnableStrategy(const string name)
 {
     // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
     return m_lifecycle.EnableStrategy(name);
 }
 
-//+------------------------------------------------------------------+
-//| Disable Strategy By Name                                        |
-//+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::DisableStrategy(const string name)
 {
     // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
     return m_lifecycle.DisableStrategy(name);
 }
 
-//+------------------------------------------------------------------+
-//| Check if magic number is owned by this EA                        |
-//+------------------------------------------------------------------+
+// Check if magic number is owned by this EA
 bool CEnterpriseStrategyManager::IsEAOwnedMagic(long magic) const
 {
     // Phase G / G6: identical exact-match + [magic, rangeMax] window test.
     return m_tradeFeedback.IsEAOwnedMagic(magic);
 }
 
-//+------------------------------------------------------------------+
-//| Get Registered Strategy Count                                    |
-//+------------------------------------------------------------------+
 int CEnterpriseStrategyManager::GetRegisteredStrategyCount() const
 {
     return m_stateReporter.GetRegisteredStrategyCount();
 }
 
-//+------------------------------------------------------------------+
-//| Get Pipeline Pointer                                             |
-//+------------------------------------------------------------------+
+// Get Pipeline Pointer
 CUnifiedSignalPipeline* CEnterpriseStrategyManager::GetPipeline()
 {
     return m_infra.GetPipeline();
 }
 
-//+------------------------------------------------------------------+
-//| Get Ensemble Confidence                                          |
-//+------------------------------------------------------------------+
 double CEnterpriseStrategyManager::GetEnsembleConfidence() const
 {
     return m_stateReporter.GetEnsembleConfidence();
 }
 
-//+------------------------------------------------------------------+
-//| Get Current Market Regime                                        |
-//+------------------------------------------------------------------+
 ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
 {
     return m_signalContext.GetCurrentMarketRegime();
 }
 
-//+------------------------------------------------------------------+
-//| Set Drawing Manager                                              |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetDrawingManager(CChartDrawingManager* drawingManager)
 {
     m_infra.SetDrawingManager(drawingManager);
 }
 
-//+------------------------------------------------------------------+
-//| Get Drawing Manager                                              |
-//+------------------------------------------------------------------+
 CChartDrawingManager* CEnterpriseStrategyManager::GetDrawingManager()
 {
     return m_infra.GetDrawingManager();
 }
 
-//+------------------------------------------------------------------+
-//| Set Deriv Profiler                                               |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetDerivProfiler(CDerivAssetProfiler* profiler)
 {
     m_infra.SetDerivProfiler(profiler);
 }
 
-//+------------------------------------------------------------------+
-//| Set Family Weight Matrix                                         |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix)
 {
     m_infra.SetFamilyWeightMatrix(famMatrix);
 }
 
-//+------------------------------------------------------------------+
-//| Set Multi-Asset Profiler                                         |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetMultiAssetProfiler(CMultiAssetProfiler* profiler)
 {
     m_infra.SetMultiAssetProfiler(profiler);
 }
 
-//+------------------------------------------------------------------+
-//| Set VPIN Filter                                                  |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetVPINFilter(CVPINFilter* vpin)
 {
     m_infra.SetVPINFilter(vpin);
 }
 
-//+------------------------------------------------------------------+
-//| Set OFI Engine                                                   |
-//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetOFIEngine(COrderFlowImbalanceEngine* ofi)
 {
     m_infra.SetOFIEngine(ofi);
 }
 
-//+------------------------------------------------------------------+
-//| Update AI Performance Metrics for AI Strategies (L6-016)        |
-//+------------------------------------------------------------------+
+// Update AI Performance Metrics for AI Strategies (L6-016)
 void CEnterpriseStrategyManager::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
 {
     // Phase C / Slice 3 (C5): implementation moved to CStrategyPerformanceHealth.
     m_performanceHealth.UpdateAIPerformanceMetrics(strategyName, metrics);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Effective Quorum Parameters (Internal)                |
-//+------------------------------------------------------------------+
+// Calculate Effective Quorum Parameters (Internal)
 
-//+------------------------------------------------------------------+
-//| Evaluate Consensus Internal (Main Consensus Logic)              |
-//+------------------------------------------------------------------+
+// Evaluate Consensus Internal (Main Consensus Logic)
 
-//+------------------------------------------------------------------+
-//| Evaluate Consensus Two-Tier Internal (Probe + Full)             |
-//+------------------------------------------------------------------+
+// Evaluate Consensus Two-Tier Internal (Probe + Full)
 
-//+------------------------------------------------------------------+
-//| Evaluate Consensus Probe Only Internal (Fast Path)              |
-//+------------------------------------------------------------------+
+// Evaluate Consensus Probe Only Internal (Fast Path)
 
-//+------------------------------------------------------------------+
-//| Try Fallback Solo Signal Internal (When All Strategies Abstain) |
-//+------------------------------------------------------------------+
+// Try Fallback Solo Signal Internal (When All Strategies Abstain)
 
-//+------------------------------------------------------------------+
-//| Post-Consensus Signal Validation                                 |
-//|                                                                  |
-//| Phase C / Slice 2 (C3): the implementation and the whole         |
-//| validator configuration block now live in CPostConsensusValidator.|
-//| Only the externally-consumed entry points are forwarded here.    |
-//+------------------------------------------------------------------+
+// Phase C / Slice 2 (C3): the implementation and the whole
+// validator configuration block now live in CPostConsensusValidator.
+// Only the externally-consumed entry points are forwarded here.
 SPostConsensusValidation CEnterpriseStrategyManager::ValidateSignal(const string symbol,
                                                                     ENUM_TRADE_SIGNAL signal,
                                                                     double confidence,

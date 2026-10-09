@@ -1,28 +1,20 @@
-//+------------------------------------------------------------------+
-//| DiagMgrAggregator.mqh                                             |
-//| Extracted from DiagnosticsManager.mqh (God-Object decomposition)  |
-//| Stateless aggregation of consensus / role-cluster diagnostics     |
-//| across the registered CEnterpriseStrategyManager instances, plus  |
-//| dominant-cause resolution.                                        |
-//|                                                                   |
-//| All methods are static: they carry no state, they only fold the   |
-//| per-manager snapshots into totals exactly as the original inline  |
-//| private helpers did (same accumulation order, same zero-init).    |
-//+------------------------------------------------------------------+
+// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
+// Stateless aggregation of consensus / role-cluster diagnostics
+// across the registered CEnterpriseStrategyManager instances, plus
+// dominant-cause resolution.
+// All methods are static: they carry no state, they only fold the
+// per-manager snapshots into totals exactly as the original inline
+// private helpers did (same accumulation order, same zero-init).
 #ifndef DIAG_MGR_AGGREGATOR_MQH
 #define DIAG_MGR_AGGREGATOR_MQH
 
 #include "EnterpriseStrategyManager.mqh"
 
-//+------------------------------------------------------------------+
-//| CDiagMgrAggregator — stateless manager-fan-in helpers             |
-//+------------------------------------------------------------------+
+// CDiagMgrAggregator — stateless manager-fan-in helpers
 class CDiagMgrAggregator
 {
 public:
-    //+------------------------------------------------------------------+
-    //| Collect aggregated consensus diagnostics from all managers        |
-    //+------------------------------------------------------------------+
+// Collect aggregated consensus diagnostics from all managers
     static void GetAggregatedConsensusDiagnostics(CEnterpriseStrategyManager* &managers[],
                                                   const int managerCount,
                                                   ulong &rawNone,
@@ -122,9 +114,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Collect aggregated role/cluster diagnostics from all managers     |
-    //+------------------------------------------------------------------+
+// Collect aggregated role/cluster diagnostics from all managers
     static void GetAggregatedRoleClusterDiagnostics(CEnterpriseStrategyManager* &managers[],
                                                     const int managerCount,
                                                     ulong &primarySignals,
@@ -175,9 +165,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Determine which consensus cause is dominant                       |
-    //+------------------------------------------------------------------+
+// Determine which consensus cause is dominant
     static string GetDominantConsensusCause(const ulong rawNone,
                                             const ulong filteredOut,
                                             const ulong quorumFailed,

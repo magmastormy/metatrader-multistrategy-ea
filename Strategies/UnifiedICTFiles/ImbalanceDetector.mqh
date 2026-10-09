@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ImbalanceDetector.mqh                                            |
-//| Fair Value Gap / Imbalance Detection for Unified ICT             |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Fair Value Gap / Imbalance Detection for Unified ICT
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -10,9 +7,6 @@
 #ifndef UICT_IMBALANCE_DETECTOR_MQH
 #define UICT_IMBALANCE_DETECTOR_MQH
 
-//+------------------------------------------------------------------+
-//| Imbalance Structure                                              |
-//+------------------------------------------------------------------+
 struct SImbalance
 {
     // --- EXISTING FIELDS (keep unchanged) ---
@@ -49,9 +43,6 @@ struct SImbalance
                   lastTestedTime(0), displacementSize(0), createdInKillZone(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| Imbalance Detector Class                                         |
-//+------------------------------------------------------------------+
 class CImbalanceDetector
 {
 private:
@@ -73,7 +64,6 @@ public:
     void                Update();
     void                ScanForImbalances(int lookback = 50);
 
-    // Detection
     bool                DetectBullishImbalance(int startBar, SImbalance &imb);
     bool                DetectBearishImbalance(int startBar, SImbalance &imb);
 
@@ -81,7 +71,6 @@ public:
     bool                CheckRebalance(SImbalance &imb);
     void                CheckForIFVG();
 
-    // Getters
     int                 GetImbalanceCount() const { return m_imbCount; }
     bool                GetImbalance(int index, SImbalance &imb);
     int                 FindActiveImbalanceAtPrice(double price);
@@ -93,9 +82,7 @@ public:
     bool                IsInImbalance(double price);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CImbalanceDetector::CImbalanceDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -105,17 +92,12 @@ CImbalanceDetector::CImbalanceDetector() :
     ArrayResize(m_imbalances, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CImbalanceDetector::~CImbalanceDetector()
 {
     ArrayFree(m_imbalances);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CImbalanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
@@ -125,9 +107,6 @@ bool CImbalanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CImbalanceDetector::Update()
 {
     ScanForImbalances(50);
@@ -142,9 +121,6 @@ void CImbalanceDetector::Update()
     CheckForIFVG();
 }
 
-//+------------------------------------------------------------------+
-//| Scan For Imbalances                                              |
-//+------------------------------------------------------------------+
 void CImbalanceDetector::ScanForImbalances(int lookback)
 {
     m_imbCount = 0;
@@ -172,9 +148,7 @@ void CImbalanceDetector::ScanForImbalances(int lookback)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bullish Imbalance — P0-A Rewrite                         |
-//+------------------------------------------------------------------+
+// Detect Bullish Imbalance — P0-A Rewrite
 // ICT Bullish FVG Rule:
 // A gap exists when candle[startBar+1].high < candle[startBar-1].low
 // (candle 3 high is below candle 1 low — price never covered that range going up)
@@ -247,9 +221,7 @@ bool CImbalanceDetector::DetectBullishImbalance(int startBar, SImbalance &imb)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Bearish Imbalance — P0-A Rewrite                         |
-//+------------------------------------------------------------------+
+// Detect Bearish Imbalance — P0-A Rewrite
 // ICT Bearish FVG Rule:
 // A gap exists when candle[startBar+1].low > candle[startBar-1].high
 // (candle 3 low is above candle 1 high — price never covered that range going down)
@@ -312,9 +284,7 @@ bool CImbalanceDetector::DetectBearishImbalance(int startBar, SImbalance &imb)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check Rebalance — P0-A Corrected Mitigation Logic               |
-//+------------------------------------------------------------------+
+// Check Rebalance — P0-A Corrected Mitigation Logic
 // A bullish FVG is mitigated when a candle CLOSES BELOW the FVG's bottom boundary.
 // A bearish FVG is mitigated when a candle CLOSES ABOVE the FVG's top boundary.
 // A 100% fill (candle body + wick covers entire gap) also counts.
@@ -376,9 +346,6 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check For IFVG — P2-D                                            |
-//+------------------------------------------------------------------+
 // An FVG becomes an IFVG when price CLOSES through it fully (hasRebalanced = true)
 // and then price returns to the former FVG zone — acting as resistance/support.
 void CImbalanceDetector::CheckForIFVG()
@@ -416,9 +383,6 @@ void CImbalanceDetector::CheckForIFVG()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR                                                          |
-//+------------------------------------------------------------------+
 double CImbalanceDetector::GetATR(int period)
 {
     int handle = iATR(m_symbol, m_timeframe, period);
@@ -435,9 +399,7 @@ double CImbalanceDetector::GetATR(int period)
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Imbalance Strength — P0-A Updated Scoring             |
-//+------------------------------------------------------------------+
+// Calculate Imbalance Strength — P0-A Updated Scoring
 double CImbalanceDetector::CalculateImbalanceStrength(SImbalance &imb)
 {
     double strength = 0.40;  // Base (reduced from 0.50 to allow more differentiation)
@@ -465,9 +427,6 @@ double CImbalanceDetector::CalculateImbalanceStrength(SImbalance &imb)
     return MathMin(1.0, strength);
 }
 
-//+------------------------------------------------------------------+
-//| Get Imbalance                                                    |
-//+------------------------------------------------------------------+
 bool CImbalanceDetector::GetImbalance(int index, SImbalance &imb)
 {
     if(index < 0 || index >= m_imbCount) return false;
@@ -475,9 +434,6 @@ bool CImbalanceDetector::GetImbalance(int index, SImbalance &imb)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Find Active Imbalance at Price                                   |
-//+------------------------------------------------------------------+
 int CImbalanceDetector::FindActiveImbalanceAtPrice(double price)
 {
     for(int i = 0; i < m_imbCount; i++)
@@ -493,9 +449,6 @@ int CImbalanceDetector::FindActiveImbalanceAtPrice(double price)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Find Best Bullish Imbalance                                      |
-//+------------------------------------------------------------------+
 int CImbalanceDetector::FindBestBullishImbalance()
 {
     int bestIndex = -1;
@@ -516,9 +469,6 @@ int CImbalanceDetector::FindBestBullishImbalance()
     return bestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Find Best Bearish Imbalance                                      |
-//+------------------------------------------------------------------+
 int CImbalanceDetector::FindBestBearishImbalance()
 {
     int bestIndex = -1;
@@ -539,9 +489,6 @@ int CImbalanceDetector::FindBestBearishImbalance()
     return bestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Has Unfilled Imbalance                                           |
-//+------------------------------------------------------------------+
 bool CImbalanceDetector::HasUnfilledImbalance(bool bullish)
 {
     for(int i = 0; i < m_imbCount; i++)
@@ -554,9 +501,6 @@ bool CImbalanceDetector::HasUnfilledImbalance(bool bullish)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Is In Imbalance                                                  |
-//+------------------------------------------------------------------+
 bool CImbalanceDetector::IsInImbalance(double price)
 {
     return (FindActiveImbalanceAtPrice(price) >= 0);

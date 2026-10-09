@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                          HaramiDetector.mqh      |
-//|                      Bullish / Bearish Harami Detection           |
-//+------------------------------------------------------------------+
+// Bullish / Bearish Harami Detection
 #property copyright "Copyright 2026"
 #property strict
 

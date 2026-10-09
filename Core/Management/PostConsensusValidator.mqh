@@ -1,21 +1,17 @@
-//+------------------------------------------------------------------+
-//| Post-Consensus Validator (Phase C, Slice 2 - C3)                 |
-//| Validation applied AFTER a consensus decision has been produced:  |
-//| hard spread cutoff, exogenous (ATR/spread) filters, adaptive      |
-//| quality gate, OFI directional confirmation and VPIN toxicity.     |
-//|                                                                   |
-//| Extracted verbatim from CEnterpriseStrategyManager. This module   |
-//| OWNS the validator configuration block (it had no readers outside |
-//| the validator methods) and reads everything else through the      |
-//| manager's minimal const accessor surface, so every veto decision  |
-//| and every emitted log line is byte-for-byte identical to the      |
-//| original implementation.                                          |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Post-Consensus Validator (Phase C, Slice 2 - C3)
+// Validation applied AFTER a consensus decision has been produced:
+// hard spread cutoff, exogenous (ATR/spread) filters, adaptive
+// quality gate, OFI directional confirmation and VPIN toxicity.
+// Extracted verbatim from CEnterpriseStrategyManager. This module
+// OWNS the validator configuration block (it had no readers outside
+// the validator methods) and reads everything else through the
+// manager's minimal const accessor surface, so every veto decision
+// and every emitted log line is byte-for-byte identical to the
+// original implementation.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
 
@@ -30,18 +26,15 @@
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
 
-//+------------------------------------------------------------------+
-//| Post-consensus validation result                                  |
-//|                                                                   |
-//| Hoisted out of CEnterpriseStrategyManager (was the nested type    |
-//| CEnterpriseStrategyManager::SValidationResult). Two reasons:      |
-//|   1. a class declared BEFORE the manager cannot name a type       |
-//|      nested inside it, so the extraction is impossible otherwise; |
-//|   2. the old nested name shadowed the UNRELATED global            |
-//|      SValidationResult in Core/Utils/Enums.mqh (approved/message  |
-//|      vs passed/vetoReason) - a genuine footgun now removed.       |
-//| Fields and defaults are copied verbatim; no behaviour change.     |
-//+------------------------------------------------------------------+
+// Post-consensus validation result
+// Hoisted out of CEnterpriseStrategyManager (was the nested type
+// CEnterpriseStrategyManager::SValidationResult). Two reasons:
+// 1. a class declared BEFORE the manager cannot name a type
+// nested inside it, so the extraction is impossible otherwise;
+// 2. the old nested name shadowed the UNRELATED global
+// SValidationResult in Core/Utils/Enums.mqh (approved/message
+// vs passed/vetoReason) - a genuine footgun now removed.
+// Fields and defaults are copied verbatim; no behaviour change.
 struct SPostConsensusValidation
 {
     bool   passed;
@@ -60,9 +53,7 @@ struct SPostConsensusValidation
                                  atrReady(false), atrValue(0), atrLongValue(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Post-consensus validation facade over CEnterpriseStrategyManager  |
-//+------------------------------------------------------------------+
+// Post-consensus validation facade over CEnterpriseStrategyManager
 class CPostConsensusValidator
 {
 private:
@@ -125,9 +116,6 @@ public:
                             double baseSpreadATRRatio, double syntheticSpreadATRRatio);
 };
 
-//+------------------------------------------------------------------+
-//| Post-Consensus Signal Validation                                 |
-//+------------------------------------------------------------------+
 SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string symbol,
                                                                  ENUM_TRADE_SIGNAL signal,
                                                                  double confidence,
@@ -148,7 +136,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         return result;
     }
 
-    // 1. Hard spread cutoff
     if(!CheckHardSpreadCutoff(symbol, signal, confidence, confluence, scanCycleId, result, corrId))
         return result;
 
@@ -219,9 +206,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Check Hard Spread Cutoff                                         |
-//+------------------------------------------------------------------+
 bool CPostConsensusValidator::CheckHardSpreadCutoff(const string symbol,
                                                     ENUM_TRADE_SIGNAL signal,
                                                     double confidence,
@@ -262,9 +246,6 @@ bool CPostConsensusValidator::CheckHardSpreadCutoff(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check Exogenous Filters                                          |
-//+------------------------------------------------------------------+
 bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
                                                     ENUM_SIGNAL_EVAL_MODE evalMode,
                                                     bool &exogenousPass,
@@ -353,9 +334,6 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
     return exogenousPass;
 }
 
-//+------------------------------------------------------------------+
-//| Check OFI Confirmation                                           |
-//+------------------------------------------------------------------+
 bool CPostConsensusValidator::CheckOFIConfirmation(const string symbol,
                                                    ENUM_TRADE_SIGNAL signal,
                                                    double confidence,
@@ -406,9 +384,6 @@ bool CPostConsensusValidator::CheckOFIConfirmation(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check VPIN Filter                                                |
-//+------------------------------------------------------------------+
 bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
                                               ENUM_TRADE_SIGNAL signal,
                                               double confidence,
@@ -443,9 +418,6 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Direct                                                   |
-//+------------------------------------------------------------------+
 double CPostConsensusValidator::GetATRDirect(const string symbol, int period, bool &ready)
 {
     ready = false;
@@ -472,9 +444,6 @@ double CPostConsensusValidator::GetATRDirect(const string symbol, int period, bo
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Crisis Threshold                                         |
-//+------------------------------------------------------------------+
 double CPostConsensusValidator::GetATRCrisisThreshold(const string symbol)
 {
     // From EA inputs
@@ -486,9 +455,6 @@ double CPostConsensusValidator::GetATRCrisisThreshold(const string symbol)
     return 2.0; // Default for forex
 }
 
-//+------------------------------------------------------------------+
-//| Is Synthetic Symbol for Validation                               |
-//+------------------------------------------------------------------+
 bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol)
 {
     // Use multi-asset profiler for proper asset classification
@@ -507,9 +473,6 @@ bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol
             StringFind(symbol, "Pain") >= 0 || StringFind(symbol, "Flip") >= 0);
 }
 
-//+------------------------------------------------------------------+
-//| Get Adaptive Quality Threshold                                   |
-//+------------------------------------------------------------------+
 double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDecisionContext& ctx,
                                                             ENUM_SIGNAL_EVAL_MODE evalMode)
 {
@@ -546,9 +509,6 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Validation Status Report                                     |
-//+------------------------------------------------------------------+
 string CPostConsensusValidator::GetValidationStatusReport() const
 {
     string report = "[EnterpriseStrategyManager::Validation] Config:\n";
@@ -562,9 +522,6 @@ string CPostConsensusValidator::GetValidationStatusReport() const
     return report;
 }
 
-//+------------------------------------------------------------------+
-//| Set Validator Config                                             |
-//+------------------------------------------------------------------+
 void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
                                                  double newBarMinQuality,
                                                  double hardSpreadCutoff,

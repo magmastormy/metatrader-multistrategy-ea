@@ -1,16 +1,11 @@
-//+------------------------------------------------------------------+
-//| RiskMath.mqh                                                      |
-//| Centralized risk calculation utilities to ensure consistency     |
-//| across all risk components (UnifiedRiskManager, PositionSizer,   |
-//| PortfolioRiskManager, etc.)                                      |
-//| Fixes L5-001: Risk Denominator Inconsistency Across Components   |
-//+------------------------------------------------------------------+
+// Centralized risk calculation utilities to ensure consistency
+// across all risk components (UnifiedRiskManager, PositionSizer,
+// PortfolioRiskManager, etc.)
+// Fixes L5-001: Risk Denominator Inconsistency Across Components
 #ifndef CORE_UTILS_RISK_MATH_MQH
 #define CORE_UTILS_RISK_MATH_MQH
 
-//+------------------------------------------------------------------+
-//| Risk Math Utilities                                              |
-//+------------------------------------------------------------------+
+// Risk Math Utilities
 class CRiskMath
 {
 public:

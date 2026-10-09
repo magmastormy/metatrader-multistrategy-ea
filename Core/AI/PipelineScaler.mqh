@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| PipelineScaler.mqh                                               |
-//| Optional StandardScaler parameter loader for ONNX parity         |
-//+------------------------------------------------------------------+
+// Optional StandardScaler parameter loader for ONNX parity
 #property strict
 
 #ifndef CORE_AI_PIPELINE_SCALER_MQH

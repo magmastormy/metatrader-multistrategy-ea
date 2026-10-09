@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| CVDEngine.mqh                                                    |
-//| Cumulative Volume Delta — measures buy vs sell pressure            |
-//| For forex markets only                                           |
-//+------------------------------------------------------------------
+// Cumulative Volume Delta — measures buy vs sell pressure
+// For forex markets only
 #ifndef CORE_ENGINES_CVD_ENGINE_MQH
 #define CORE_ENGINES_CVD_ENGINE_MQH
 

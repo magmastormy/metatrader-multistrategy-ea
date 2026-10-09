@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendlineDetector.mqh                                            |
-//| Trendline Detection and Validation Engine                        |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Trendline Detection and Validation Engine
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -12,9 +9,6 @@
 
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Trendline Type Enum                                              |
-//+------------------------------------------------------------------+
 enum ENUM_TRENDLINE_TYPE
 {
     TRENDLINE_SUPPORT,
@@ -23,9 +17,6 @@ enum ENUM_TRENDLINE_TYPE
     TRENDLINE_CHANNEL_LOWER
 };
 
-//+------------------------------------------------------------------+
-//| Swing Point Structure                                            |
-//+------------------------------------------------------------------+
 struct SSwingPoint
 {
     datetime time;
@@ -36,9 +27,6 @@ struct SSwingPoint
     SSwingPoint() : time(0), price(0), barIndex(0), isHigh(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| Trendline Structure                                              |
-//+------------------------------------------------------------------+
 struct STrendline
 {
     ENUM_TRENDLINE_TYPE type;
@@ -78,9 +66,6 @@ struct STrendline
                   barsSinceLastTouch(0), atrAtFormation(0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Trendline Detector Class                                         |
-//+------------------------------------------------------------------+
 class CTrendlineDetector
 {
 private:
@@ -128,7 +113,6 @@ public:
     void                DetectTrendlines(int lookback = 100);
     void                Update();
     
-    // Getters
     int                 GetTrendlineCount() const { return m_trendlineCount; }
     bool                GetTrendline(int index, STrendline &trendline);
     int                 FindActiveTrendlineAtPrice(double price);
@@ -138,7 +122,6 @@ public:
     bool                GetBestSupport(STrendline &tl);
     bool                GetBestResistance(STrendline &tl);
     
-    // Projection
     double              ProjectTrendline(STrendline &trendline, datetime targetTime);
     
     // Checks
@@ -146,9 +129,7 @@ public:
     bool                IsTrendlineBroken(STrendline &trendline);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendlineDetector::CTrendlineDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -164,9 +145,7 @@ CTrendlineDetector::CTrendlineDetector() :
     ArrayResize(m_trendlines, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendlineDetector::~CTrendlineDetector()
 {
     ArrayFree(m_swingHighs);
@@ -174,9 +153,6 @@ CTrendlineDetector::~CTrendlineDetector()
     ArrayFree(m_trendlines);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTrendlineDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                    int swingStrength, double tolerancePips)
 {
@@ -188,15 +164,11 @@ bool CTrendlineDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect All Trendlines                                            |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::DetectTrendlines(int lookback)
 {
     m_trendlineCount = 0;
     ArrayResize(m_trendlines, 0);
     
-    // Find swing points
     FindSwingPoints(lookback);
     
     // Connect swing lows (support trendlines)
@@ -206,9 +178,6 @@ void CTrendlineDetector::DetectTrendlines(int lookback)
     FindResistanceTrendlines();
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR                                                          |
-//+------------------------------------------------------------------+
 double CTrendlineDetector::GetATR(int period)
 {
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
@@ -223,9 +192,6 @@ double CTrendlineDetector::GetATR(int period)
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Find Swing Points                                                |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::FindSwingPoints(int lookback)
 {
     m_swingHighCount = 0;
@@ -349,9 +315,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helpers                                                          |
-//+------------------------------------------------------------------+
+// Helpers
 bool CTrendlineDetector::IsValidSlopeAngle(double slopeDegrees, bool isSupport)
 {
     double absAngle = MathAbs(slopeDegrees);
@@ -389,9 +353,6 @@ double CTrendlineDetector::NormalizeSlope(double slope)
     return angleRad * 180.0 / M_PI;
 }
 
-//+------------------------------------------------------------------+
-//| Find Support Trendlines                                          |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::FindSupportTrendlines()
 {
     double atr = GetATR(14);
@@ -463,9 +424,6 @@ void CTrendlineDetector::FindSupportTrendlines()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Find Resistance Trendlines                                       |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::FindResistanceTrendlines()
 {
     double atr = GetATR(14);
@@ -521,9 +479,7 @@ void CTrendlineDetector::FindResistanceTrendlines()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Count Touches and Validate Break                                 |
-//+------------------------------------------------------------------+
+// Count Touches and Validate Break
 int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double slope,
                                       bool isSupport, int &wickTouches, int &closeTouches)
 {
@@ -620,9 +576,6 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
     return 2 + wickTouches + closeTouches;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Trendline Strength                                     |
-//+------------------------------------------------------------------+
 double CTrendlineDetector::CalculateTrendlineStrength(STrendline &tl)
 {
     double score = 0.30;  // Base
@@ -656,9 +609,6 @@ double CTrendlineDetector::CalculateTrendlineStrength(STrendline &tl)
     return MathMin(1.0, MathMax(0.10, score));
 }
 
-//+------------------------------------------------------------------+
-//| Deduplicate Trendlines                                           |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::DeduplicateTrendlines()
 {
     double atr   = GetATR(14);
@@ -711,9 +661,6 @@ void CTrendlineDetector::DeduplicateTrendlines()
     ArrayResize(m_trendlines, m_trendlineCount);
 }
 
-//+------------------------------------------------------------------+
-//| Update Break Status                                              |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::UpdateBreakStatus()
 {
     double atr   = GetATR(14);
@@ -743,9 +690,6 @@ void CTrendlineDetector::UpdateBreakStatus()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Update Recency                                                   |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::UpdateRecency()
 {
     double atr   = GetATR(14);
@@ -785,9 +729,6 @@ void CTrendlineDetector::UpdateRecency()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Find Best Line Index                                             |
-//+------------------------------------------------------------------+
 int CTrendlineDetector::FindBestLineIndex(bool isSupport)
 {
     int    bestIdx      = -1;
@@ -812,9 +753,7 @@ int CTrendlineDetector::FindBestLineIndex(bool isSupport)
     return bestIdx;
 }
 
-//+------------------------------------------------------------------+
-//| Get Best Support / Resistance                                    |
-//+------------------------------------------------------------------+
+// Get Best Support / Resistance
 bool CTrendlineDetector::GetBestSupport(STrendline &tl)
 {
     int idx = FindBestSupportLine();
@@ -831,9 +770,6 @@ bool CTrendlineDetector::GetBestResistance(STrendline &tl)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CTrendlineDetector::Update()
 {
     // Full re-scan every update
@@ -848,9 +784,6 @@ void CTrendlineDetector::Update()
     UpdateRecency();            // NEW — update barsSinceLastTouch
 }
 
-//+------------------------------------------------------------------+
-//| Get Trendline at Index                                           |
-//+------------------------------------------------------------------+
 bool CTrendlineDetector::GetTrendline(int index, STrendline &trendline)
 {
     if(index < 0 || index >= m_trendlineCount)
@@ -860,17 +793,12 @@ bool CTrendlineDetector::GetTrendline(int index, STrendline &trendline)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Project Trendline to Time                                        |
-//+------------------------------------------------------------------+
 double CTrendlineDetector::ProjectTrendline(STrendline &trendline, datetime targetTime)
 {
     return trendline.point1Price + trendline.slope * (double)(targetTime - trendline.point1Time);
 }
 
-//+------------------------------------------------------------------+
-//| Check if at Trendline                                            |
-//+------------------------------------------------------------------+
+// Check if at Trendline
 bool CTrendlineDetector::IsAtTrendline(double price, int &touchedLineIndex)
 {
     double tolerance = m_tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -893,9 +821,6 @@ bool CTrendlineDetector::IsAtTrendline(double price, int &touchedLineIndex)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Find Active Trendline at Price                                   |
-//+------------------------------------------------------------------+
 int CTrendlineDetector::FindActiveTrendlineAtPrice(double price)
 {
     int idx = -1;
@@ -904,9 +829,7 @@ int CTrendlineDetector::FindActiveTrendlineAtPrice(double price)
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Check if Trendline is Broken                                     |
-//+------------------------------------------------------------------+
+// Check if Trendline is Broken
 bool CTrendlineDetector::IsTrendlineBroken(STrendline &trendline)
 {
     // Check cached break flag first

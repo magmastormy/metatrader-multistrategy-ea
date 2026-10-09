@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Session Manager - Robust Market Session Tracking                |
-//| Prevents trading during closed markets and scheduled breaks       |
-//+------------------------------------------------------------------+
+// Session Manager - Robust Market Session Tracking
+// Prevents trading during closed markets and scheduled breaks
 #ifndef CORE_UTILS_SESSION_MANAGER_MQH
 #define CORE_UTILS_SESSION_MANAGER_MQH
 
@@ -16,9 +14,7 @@ public:
     CSessionManager() {}
     ~CSessionManager() {}
     
-//+------------------------------------------------------------------+
-//| Check if market is currently open for trading                   |
-//+------------------------------------------------------------------+
+// Check if market is currently open for trading
 bool IsMarketOpen(const string symbol)
 {
     if(symbol == "") return false;
@@ -96,9 +92,7 @@ bool IsMarketOpen(const string symbol)
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| Check if symbol is a synthetic index                            |
-    //+------------------------------------------------------------------+
+// Check if symbol is a synthetic index
     bool IsSynthetic(const string symbol)
     {
         string normalized = symbol;

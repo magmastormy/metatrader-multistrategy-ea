@@ -1,42 +1,35 @@
-//+------------------------------------------------------------------+
-//| Strategy Performance & Health (Phase C, Slice 3 - C5)            |
-//| Per-strategy performance accounting, rolling-window statistics    |
-//| and health/quality scoring extracted from                         |
-//| CEnterpriseStrategyManager:                                       |
-//|   - UpdatePerformance          (trade outcome accounting)         |
-//|   - UpdateRecentPerformance    (20-trade rolling ring buffer)     |
-//|   - CalculateRecentWinRate     (rolling win rate)                 |
-//|   - CalculateSharpeRatio       (rolling Sharpe)                   |
-//|   - CalculateStrategyMetrics   (winRate / profitFactor / Sharpe)  |
-//|   - ShouldDisableStrategy      (health governance predicate)      |
-//|   - ShouldReEnableStrategy     (cooldown expiry predicate)        |
-//|   - UpdateRegimePerformance    (regime-bucketed outcome hook)     |
-//|   - UpdateAIPerformanceMetrics (AI accuracy -> health blend)      |
-//|                                                                   |
-//| Like the Slice 2 collaborator CConsensusWeightingConfig this      |
-//| module MUTATES the manager, so it holds a NON-const back-pointer. |
-//| Every read and every write goes through the manager's narrow      |
-//| per-field accessor surface, so the resulting state transitions    |
-//| are byte-for-byte identical to the original inline bodies.        |
-//|                                                                   |
-//| DELIBERATELY NOT MOVED:                                           |
-//|   - GetStrategyReliabilityMultiplier / GetStrategyParticipation-  |
-//|     Multiplier. They are health/participation READS, but they are |
-//|     called from inside the DO-NOT-PIECEMEAL C9 consensus core     |
-//|     (EvaluateConsensusInternal, EvaluateConsensusProbeOnly-       |
-//|     Internal, TryFallbackSoloSignalInternal) on the hottest       |
-//|     per-strategy loop. Same rationale C4 used for the atomic      |
-//|     consensus setters: do not add indirection the C9 bodies must  |
-//|     traverse.                                                     |
-//|   - CStrategyHealthMonitor itself. This module only orchestrates  |
-//|     the manager-side mirror and the delegation to that monitor,   |
-//|     exactly as the original code did.                             |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Performance & Health (Phase C, Slice 3 - C5)
+// Per-strategy performance accounting, rolling-window statistics
+// and health/quality scoring extracted from
+// - UpdatePerformance          (trade outcome accounting)
+// - UpdateRecentPerformance    (20-trade rolling ring buffer)
+// - CalculateRecentWinRate     (rolling win rate)
+// - CalculateSharpeRatio       (rolling Sharpe)
+// - CalculateStrategyMetrics   (winRate / profitFactor / Sharpe)
+// - ShouldDisableStrategy      (health governance predicate)
+// - ShouldReEnableStrategy     (cooldown expiry predicate)
+// - UpdateRegimePerformance    (regime-bucketed outcome hook)
+// - UpdateAIPerformanceMetrics (AI accuracy -> health blend)
+// Like the Slice 2 collaborator CConsensusWeightingConfig this
+// module MUTATES the manager, so it holds a NON-const back-pointer.
+// Every read and every write goes through the manager's narrow
+// per-field accessor surface, so the resulting state transitions
+// are byte-for-byte identical to the original inline bodies.
+// DELIBERATELY NOT MOVED:
+// Multiplier. They are health/participation READS, but they are
+// called from inside the DO-NOT-PIECEMEAL C9 consensus core
+// (EvaluateConsensusInternal, EvaluateConsensusProbeOnly-
+// Internal, TryFallbackSoloSignalInternal) on the hottest
+// per-strategy loop. Same rationale C4 used for the atomic
+// consensus setters: do not add indirection the C9 bodies must
+// traverse.
+// - CStrategyHealthMonitor itself. This module only orchestrates
+// the manager-side mirror and the delegation to that monitor,
+// exactly as the original code did.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_PERFORMANCE_HEALTH_MQH
 #define STRATEGY_PERFORMANCE_HEALTH_MQH
 
@@ -47,9 +40,7 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-//+------------------------------------------------------------------+
-//| Performance / health facade over CEnterpriseStrategyManager       |
-//+------------------------------------------------------------------+
+// Performance / health facade over CEnterpriseStrategyManager
 class CStrategyPerformanceHealth
 {
 private:
@@ -71,9 +62,7 @@ public:
     void   UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics);
 };
 
-//+------------------------------------------------------------------+
-//| Record a closed-trade outcome against a named strategy            |
-//+------------------------------------------------------------------+
+// Record a closed-trade outcome against a named strategy
 void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, double netProfit)
 {
     if(m_src == NULL)
@@ -157,9 +146,7 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
     }
 }
 
-//+------------------------------------------------------------------+
-//| Push one trade result into the rolling ring buffer                |
-//+------------------------------------------------------------------+
+// Push one trade result into the rolling ring buffer
 void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const double result)
 {
     if(m_src == NULL)
@@ -187,9 +174,7 @@ void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const 
         m_src.SetStrategyRecentTradeCount(index, m_src.GetStrategyRecentTradeCount(index) + 1);
 }
 
-//+------------------------------------------------------------------+
-//| Rolling-window win rate                                           |
-//+------------------------------------------------------------------+
+// Rolling-window win rate
 double CStrategyPerformanceHealth::CalculateRecentWinRate(const int index)
 {
     if(m_src == NULL)
@@ -217,9 +202,7 @@ double CStrategyPerformanceHealth::CalculateRecentWinRate(const int index)
     return (double)wins / recentTradeCount;
 }
 
-//+------------------------------------------------------------------+
-//| Rolling-window Sharpe ratio                                       |
-//+------------------------------------------------------------------+
+// Rolling-window Sharpe ratio
 double CStrategyPerformanceHealth::CalculateSharpeRatio(const int index)
 {
     if(m_src == NULL)
@@ -254,9 +237,7 @@ double CStrategyPerformanceHealth::CalculateSharpeRatio(const int index)
     return mean / stdev;
 }
 
-//+------------------------------------------------------------------+
-//| Recompute derived per-strategy metrics                            |
-//+------------------------------------------------------------------+
+// Recompute derived per-strategy metrics
 void CStrategyPerformanceHealth::CalculateStrategyMetrics(const int index)
 {
     if(m_src == NULL)
@@ -288,9 +269,7 @@ void CStrategyPerformanceHealth::CalculateStrategyMetrics(const int index)
     m_src.SetStrategyRecentWinRate(index, CalculateRecentWinRate(index));
 }
 
-//+------------------------------------------------------------------+
-//| Governance predicate: should this strategy be disabled?           |
-//+------------------------------------------------------------------+
+// Governance predicate: should this strategy be disabled?
 bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
 {
     if(m_src == NULL)
@@ -318,9 +297,7 @@ bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Governance predicate: has the cooldown expired?                   |
-//+------------------------------------------------------------------+
+// Governance predicate: has the cooldown expired?
 bool CStrategyPerformanceHealth::ShouldReEnableStrategy(const int index)
 {
     if(m_src == NULL)
@@ -336,9 +313,7 @@ bool CStrategyPerformanceHealth::ShouldReEnableStrategy(const int index)
     return (TimeCurrent() >= m_src.GetStrategyDisabledUntil(index));
 }
 
-//+------------------------------------------------------------------+
-//| Regime-bucketed outcome hook                                      |
-//+------------------------------------------------------------------+
+// Regime-bucketed outcome hook
 void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int regime, const double result)
 {
     if(m_src == NULL)
@@ -359,9 +334,7 @@ void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int re
     // performs no per-trade regime update.
 }
 
-//+------------------------------------------------------------------+
-//| Update AI Performance Metrics for AI Strategies (L6-016)          |
-//+------------------------------------------------------------------+
+// Update AI Performance Metrics for AI Strategies (L6-016)
 void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
 {
     if(m_src == NULL)

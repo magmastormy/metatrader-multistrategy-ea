@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-09
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 170 - Engine send governance, min-lot risk ceiling, real-volume honesty, one exit authority per book
+- Latest Batch: Batch 171 - Comment hygiene (mechanical banner/echo sweep + prose collapse), no code change
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

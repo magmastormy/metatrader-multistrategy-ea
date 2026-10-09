@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ScalpSignalCache.mqh                                             |
-//| Tick-level cached indicator architecture for zero-computation    |
-//| fast-path signal evaluation in the scalp pipeline                |
-//+------------------------------------------------------------------+
+// Tick-level cached indicator architecture for zero-computation
+// fast-path signal evaluation in the scalp pipeline
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -15,9 +12,7 @@
 
 #define SCALP_CACHE_MAX_SYMBOLS 20
 
-//+------------------------------------------------------------------+
-//| Scalp indicator cache struct — one per symbol                     |
-//+------------------------------------------------------------------+
+// Scalp indicator cache struct — one per symbol
 struct SScalpIndicatorCache
 {
    string            symbol;
@@ -84,11 +79,9 @@ struct SScalpIndicatorCache
    }
 };
 
-//+------------------------------------------------------------------+
-//| CScalpSignalCache — Dedicated tick-level indicator cache          |
-//| UpdateOnNewBar()  = only place CopyBuffer is called               |
-//| UpdateTickValues() = zero computation, only SymbolInfoDouble      |
-//+------------------------------------------------------------------+
+// CScalpSignalCache — Dedicated tick-level indicator cache
+// UpdateOnNewBar()  = only place CopyBuffer is called
+// UpdateTickValues() = zero computation, only SymbolInfoDouble
 class CScalpSignalCache
 {
 private:
@@ -103,9 +96,7 @@ private:
    int                   m_adxPeriod;        // Default 14
    int                   m_volumePeriod;     // Default 20
 
-   //+------------------------------------------------------------------+
-   //| Find cache index by symbol name                                   |
-   //+------------------------------------------------------------------+
+// Find cache index by symbol name
    int FindIndex(string symbol) const
    {
       for(int i = 0; i < m_cacheCount; i++)
@@ -116,9 +107,7 @@ private:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Copy 2 values from a handle (current + previous bar)             |
-   //+------------------------------------------------------------------+
+// Copy 2 values from a handle (current + previous bar)
    bool CopyBuffer2(int handle, double &val0, double &val1) const
    {
       if(handle == INVALID_HANDLE)
@@ -132,9 +121,7 @@ private:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Copy 1 value from a handle (current bar only)                    |
-   //+------------------------------------------------------------------+
+// Copy 1 value from a handle (current bar only)
    bool CopyBuffer1(int handle, double &val0) const
    {
       if(handle == INVALID_HANDLE)
@@ -147,9 +134,7 @@ private:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Copy N values from a handle starting at a shift                  |
-   //+------------------------------------------------------------------+
+// Copy N values from a handle starting at a shift
    bool CopyBufferN(int handle, int shift, int count, double &buf[]) const
    {
       if(handle == INVALID_HANDLE)
@@ -161,9 +146,7 @@ private:
    }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CScalpSignalCache() :
       m_cacheCount(0),
       m_emaFastPeriod(5),
@@ -177,18 +160,14 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Destructor                                                        |
-   //+------------------------------------------------------------------+
+// Destructor
    ~CScalpSignalCache()
    {
       Cleanup();
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize cache for a set of symbols                             |
-   //| Obtains indicator handles from CIndicatorManager::Instance()      |
-   //+------------------------------------------------------------------+
+// Initialize cache for a set of symbols
+// Obtains indicator handles from CIndicatorManager::Instance()
    bool Initialize(const string &symbols[], int symbolCount, ENUM_TIMEFRAMES timeframe)
    {
       if(symbolCount <= 0 || symbolCount > SCALP_CACHE_MAX_SYMBOLS)
@@ -348,10 +327,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Update cached indicator values — call on new bar ONLY             |
-   //| This is the ONLY place CopyBuffer is called                      |
-   //+------------------------------------------------------------------+
+// Update cached indicator values — call on new bar ONLY
+// This is the ONLY place CopyBuffer is called
    void UpdateOnNewBar()
    {
       for(int i = 0; i < m_cacheCount; i++)
@@ -481,10 +458,8 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Update tick-level values — call every tick, ZERO computation      |
-   //| Only reads SymbolInfoDouble — no CopyBuffer calls                |
-   //+------------------------------------------------------------------+
+// Update tick-level values — call every tick, ZERO computation
+// Only reads SymbolInfoDouble — no CopyBuffer calls
    void UpdateTickValues()
    {
       for(int i = 0; i < m_cacheCount; i++)
@@ -500,9 +475,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Get cache for a specific symbol (copy values out)                |
-   //+------------------------------------------------------------------+
+// Get cache for a specific symbol (copy values out)
    bool GetCache(string symbol, SScalpIndicatorCache &outCache)
    {
       int idx = FindIndex(symbol);
@@ -512,15 +485,11 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if cache has been initialized                              |
-   //+------------------------------------------------------------------+
+// Check if cache has been initialized
    bool IsInitialized() const { return m_cacheCount > 0; }
 
-   //+------------------------------------------------------------------+
-   //| Lazy init: initialize on first access if not yet done            |
-   //| Call from OnTick path with the populated symbol array            |
-   //+------------------------------------------------------------------+
+// Lazy init: initialize on first access if not yet done
+// Call from OnTick path with the populated symbol array
    bool EnsureInitialized(const string &symbols[], int symbolCount, ENUM_TIMEFRAMES timeframe)
    {
       if(m_cacheCount > 0)
@@ -530,9 +499,7 @@ public:
       return Initialize(symbols, symbolCount, timeframe);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if a new bar has formed for a symbol                       |
-   //+------------------------------------------------------------------+
+// Check if a new bar has formed for a symbol
    bool HasNewBar(string symbol)
    {
       int idx = FindIndex(symbol);
@@ -543,9 +510,7 @@ public:
       return (barTime > m_cache[idx].lastBarTime);
    }
 
-   //+------------------------------------------------------------------+
-   //| Mark a symbol as pre-qualified for scalping                      |
-   //+------------------------------------------------------------------+
+// Mark a symbol as pre-qualified for scalping
    void SetScalpSetup(string symbol, bool active, int setupType)
    {
       int idx = FindIndex(symbol);
@@ -556,9 +521,7 @@ public:
       m_cache[idx].setupType = setupType;
    }
 
-   //+------------------------------------------------------------------+
-   //| Release all handles and reset cache                               |
-   //+------------------------------------------------------------------+
+// Release all handles and reset cache
    void Cleanup()
    {
       // Note: handles are owned by CIndicatorManager — do NOT call IndicatorRelease here.
@@ -583,14 +546,9 @@ public:
       m_cacheCount = 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get cache count                                                   |
-   //+------------------------------------------------------------------+
    int GetCacheCount() const { return m_cacheCount; }
 
-   //+------------------------------------------------------------------+
-   //| Set indicator periods (call before Initialize)                   |
-   //+------------------------------------------------------------------+
+// Set indicator periods (call before Initialize)
    void SetPeriods(int emaFast, int emaSlow, int atr, int rsi,
                    int bb, double bbDev, int adx, int volume)
    {

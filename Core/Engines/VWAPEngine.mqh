@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| VWAPEngine.mqh                                                   |
-//| Volume-Weighted Average Price with deviation bands                |
-//| For forex markets only (real volume required)                     |
-//+------------------------------------------------------------------
+// Volume-Weighted Average Price with deviation bands
+// For forex markets only (real volume required)
 #ifndef CORE_ENGINES_VWAP_ENGINE_MQH
 #define CORE_ENGINES_VWAP_ENGINE_MQH
 

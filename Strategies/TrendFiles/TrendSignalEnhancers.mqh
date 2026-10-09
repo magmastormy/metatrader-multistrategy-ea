@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendSignalEnhancers.mqh                                         |
-//| EMA Slope Detection & Trend Freshness Scoring                    |
-//| Batch 103: Signal quality boosters for Trend Strategy             |
-//+------------------------------------------------------------------+
+// EMA Slope Detection & Trend Freshness Scoring
+// Batch 103: Signal quality boosters for Trend Strategy
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -13,10 +10,7 @@
 #include "MultiEMASystem.mqh"
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Trend Signal Enhancer Class                                      |
-//| Provides EMA slope momentum detection and trend freshness scoring|
-//+------------------------------------------------------------------+
+// Provides EMA slope momentum detection and trend freshness scoring
 class CTrendSignalEnhancer
 {
 private:
@@ -40,9 +34,7 @@ public:
     double              GetTrendFreshnessMultiplier();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendSignalEnhancer::CTrendSignalEnhancer() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -51,18 +43,13 @@ CTrendSignalEnhancer::CTrendSignalEnhancer() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendSignalEnhancer::~CTrendSignalEnhancer()
 {
     // ATR handle managed by CIndicatorManager
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTrendSignalEnhancer::Initialize(const string symbol, ENUM_TIMEFRAMES tf, CMultiEMASystem* emaSystem)
 {
     m_symbol = symbol;
@@ -74,9 +61,7 @@ bool CTrendSignalEnhancer::Initialize(const string symbol, ENUM_TIMEFRAMES tf, C
     return (m_emaSystem != NULL);
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Value                                                    |
-//+------------------------------------------------------------------+
+// Get ATR Value
 double CTrendSignalEnhancer::GetATR()
 {
     if(m_atrHandle == INVALID_HANDLE)
@@ -92,10 +77,8 @@ double CTrendSignalEnhancer::GetATR()
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Check EMA Slope Momentum                                         |
-//| Slope of EMA8 over 3 bars > 0.1*ATR = strong momentum           |
-//+------------------------------------------------------------------+
+// Check EMA Slope Momentum
+// Slope of EMA8 over 3 bars > 0.1*ATR = strong momentum
 bool CTrendSignalEnhancer::HasEMAMomentum(ENUM_TRADE_SIGNAL direction)
 {
     if(m_emaSystem == NULL) return false;
@@ -113,11 +96,8 @@ bool CTrendSignalEnhancer::HasEMAMomentum(ENUM_TRADE_SIGNAL direction)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get Trend Freshness Multiplier                                   |
-//| New trends (consistency < 10) = +15% confidence                  |
-//| Mature trends (consistency > 50) = -10% confidence               |
-//+------------------------------------------------------------------+
+// New trends (consistency < 10) = +15% confidence
+// Mature trends (consistency > 50) = -10% confidence
 double CTrendSignalEnhancer::GetTrendFreshnessMultiplier()
 {
     if(m_emaSystem == NULL) return 1.0;

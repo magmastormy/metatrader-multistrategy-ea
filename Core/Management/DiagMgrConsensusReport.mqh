@@ -1,28 +1,19 @@
-//+------------------------------------------------------------------+
-//| DiagMgrConsensusReport.mqh                                        |
-//| Extracted from DiagnosticsManager.mqh (God-Object decomposition)  |
-//| Stateless emitters for the consensus diagnostics report lines     |
-//| produced during EmitConsensusDiagnostics().                       |
-//|                                                                   |
-//| Log tags ([CONSENSUS-SNAPSHOT], [STRATEGY-REJECTS], [ROLE-CLUSTER]|
-//| [QUIET-REASONS], [NO-SIGNAL-ALERT-CONSENSUS]), verbosity levels   |
-//| and argument order are byte-identical to the original inline body.|
-//+------------------------------------------------------------------+
+// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
+// Stateless emitters for the consensus diagnostics report lines
+// produced during EmitConsensusDiagnostics().
+// Log tags ([CONSENSUS-SNAPSHOT], [STRATEGY-REJECTS], [ROLE-CLUSTER]
+// [QUIET-REASONS], [NO-SIGNAL-ALERT-CONSENSUS]), verbosity levels
+// and argument order are byte-identical to the original inline body.
 #ifndef DIAG_MGR_CONSENSUS_REPORT_MQH
 #define DIAG_MGR_CONSENSUS_REPORT_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/LogMacros.mqh"
 
-//+------------------------------------------------------------------+
-//| CDiagMgrConsensusReport — stateless consensus report emitters     |
-//+------------------------------------------------------------------+
+// CDiagMgrConsensusReport — stateless consensus report emitters
 class CDiagMgrConsensusReport
 {
 public:
-    //+------------------------------------------------------------------+
-    //| [CONSENSUS-SNAPSHOT]                                              |
-    //+------------------------------------------------------------------+
     static void EmitConsensusSnapshotLine(const ulong signalsGenerated,
                                           const ulong signalsAfterPipeline,
                                           const ulong signalsAfterQuorum,
@@ -43,9 +34,6 @@ public:
                     reasonTotal);
     }
 
-    //+------------------------------------------------------------------+
-    //| [STRATEGY-REJECTS]                                                |
-    //+------------------------------------------------------------------+
     static void EmitStrategyRejectsLine(const ulong momentumNone,
                                         const ulong momentumCooldown,
                                         const ulong momentumLowVolatility,
@@ -68,9 +56,6 @@ public:
                     uictOtherFilters);
     }
 
-    //+------------------------------------------------------------------+
-    //| [ROLE-CLUSTER]                                                    |
-    //+------------------------------------------------------------------+
     static void EmitRoleClusterLine(const ulong rolePrimarySignals,
                                     const ulong roleFeatureSignals,
                                     const ulong roleShadowSignals,
@@ -91,9 +76,6 @@ public:
                     clusterNoneSignals);
     }
 
-    //+------------------------------------------------------------------+
-    //| [QUIET-REASONS]                                                   |
-    //+------------------------------------------------------------------+
     static void EmitQuietReasonsLine(const ulong quietNoNewBar,
                                      const ulong quietCadenceHold,
                                      const ulong quietMissingManager,
@@ -114,10 +96,7 @@ public:
                     sizingRejects);
     }
 
-    //+------------------------------------------------------------------+
-    //| [NO-SIGNAL-ALERT-CONSENSUS]                                       |
-    //| Caller owns the trigger condition and alert-time bookkeeping.     |
-    //+------------------------------------------------------------------+
+// Caller owns the trigger condition and alert-time bookkeeping.
     static void EmitNoSignalAlertConsensus(const ulong windowScans,
                                            const ulong windowNoSignal,
                                            const double noSignalRate,

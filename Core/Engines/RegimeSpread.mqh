@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| RegimeSpread.mqh                                                 |
-//| Rolling spread sampling, baseline and shock/cooldown state       |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Rolling spread sampling, baseline and shock/cooldown state
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_SPREAD_MQH
 #define REGIME_SPREAD_MQH
 
 #include "RegimeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Owns the circular spread sample buffer and the last spread-shock |
-//| timestamp; window / multiplier / cooldown stay in SRegimeConfig. |
-//+------------------------------------------------------------------+
+// Owns the circular spread sample buffer and the last spread-shock
+// timestamp; window / multiplier / cooldown stay in SRegimeConfig.
 class CRegimeSpreadTracker
 {
 private:
@@ -66,9 +61,7 @@ public:
                        bool &cooldownActive);
 };
 
-//+------------------------------------------------------------------+
-//| Sample the live spread and derive shock / cooldown state         |
-//+------------------------------------------------------------------+
+// Sample the live spread and derive shock / cooldown state
 void CRegimeSpreadTracker::CaptureSpread(const string symbol,
                                          const SRegimeConfig &config,
                                          double &spreadPrice,

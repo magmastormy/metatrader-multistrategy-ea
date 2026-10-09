@@ -1,25 +1,17 @@
-//+------------------------------------------------------------------+
-//| FastScalpTypes.mqh                                               |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the four plain-data structs that used to be declared inline |
-//| inside FastScalpEngine.mqh:                                      |
-//|   SScalpConfig, SPendingScalpOrder, SScalpPendingAsync,          |
-//|   SScalpPositionState                                            |
-//|                                                                  |
-//| FastScalpEngine.mqh #includes this header, so every existing     |
-//| consumer of these types keeps seeing them unchanged.             |
-//| Field order, defaults and comments are reproduced verbatim.      |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the four plain-data structs that used to be declared inline
+// inside FastScalpEngine.mqh:
+// SScalpConfig, SPendingScalpOrder, SScalpPendingAsync,
+// SScalpPositionState
+// FastScalpEngine.mqh #includes this header, so every existing
+// consumer of these types keeps seeing them unchanged.
+// Field order, defaults and comments are reproduced verbatim.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_TYPES_MQH
 #define CORE_SCALP_FAST_SCALP_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Scalp configuration struct                                        |
-//+------------------------------------------------------------------+
 struct SScalpConfig
 {
    int      maxScalpPositions;       // Max concurrent scalp positions (3)
@@ -65,9 +57,7 @@ struct SScalpConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Pending scalp order tracking                                      |
-//+------------------------------------------------------------------+
+// Pending scalp order tracking
 struct SPendingScalpOrder
 {
    ulong    ticket;
@@ -96,9 +86,7 @@ struct SPendingScalpOrder
    }
 };
 
-//+------------------------------------------------------------------+
-//| Async scalp order tracking (for OrderSendAsync confirmation)      |
-//+------------------------------------------------------------------+
+// Async scalp order tracking (for OrderSendAsync confirmation)
 struct SScalpPendingAsync
 {
    ulong    orderTicket;      // Order ticket from OrderSendAsync
@@ -129,9 +117,7 @@ struct SScalpPendingAsync
    }
 };
 
-//+------------------------------------------------------------------+
-//| Scalp position state for tick-level management                    |
-//+------------------------------------------------------------------+
+// Scalp position state for tick-level management
 struct SScalpPositionState
 {
    ulong    ticket;

@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| AI Performance Feedback System                                 |
-//| Tracks AI prediction accuracy and manages model retraining    |
-//+------------------------------------------------------------------+
+// AI Performance Feedback System
+// Tracks AI prediction accuracy and manages model retraining
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -25,9 +23,6 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| AI Prediction Record Structure                                 |
-//+------------------------------------------------------------------+
 struct SAIPredictionRecord
 {
     datetime predictionTime;      // When prediction was made
@@ -66,9 +61,7 @@ struct SAIPredictionRecord
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Model Performance Metrics                                  |
-//+------------------------------------------------------------------+
+// AI Model Performance Metrics
 struct SAIModelMetrics
 {
     int totalPredictions;         // Total predictions made
@@ -111,9 +104,6 @@ struct SAIModelMetrics
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Performance Feedback Class                                 |
-//+------------------------------------------------------------------+
 class CAIPerformanceFeedback
 {
 private:
@@ -159,7 +149,6 @@ public:
     // Initialize feedback system
     bool Initialize(int maxRecords = 1000);
     
-    // Record AI prediction
     void RecordPrediction(const string &predictionSymbol, const ENUM_TRADE_SIGNAL prediction,
                          const double confidence, const double uncertainty,
                          const ENUM_MARKET_REGIME regime, const datetime predictionTimeOverride = 0);
@@ -174,13 +163,11 @@ public:
     // Check if retraining is needed
     bool ShouldRetrain(void);
     
-    // Trigger retraining
     void TriggerRetraining(const string reason);
     
     // Get current AI performance metrics
     SAIModelMetrics GetCurrentMetrics(void) const { return m_currentMetrics; }
     
-    // Get AI accuracy by regime
     double GetAccuracyByRegime(const ENUM_MARKET_REGIME regime);
     
     // Get recent performance trend
@@ -196,7 +183,6 @@ public:
     bool ShouldRetrainBasedOnProfitability(void);
     void SetRetrainingThresholds(double minAccuracy, double minProfitability);
     
-    // Reporting
         void PrintPerformanceReport(void);
         string GetPerformanceSummary(void);
     
@@ -216,20 +202,16 @@ public:
     double CalculateCalibrationError(void);
     double CalculateSharpeRatio(void);
     
-    // Retraining persistence
     void PersistRetrainingRequest(const string reason);
     void ExportLabeledDataset(const string fileName, const int maxRows);
     
-    // Logging
     void LogFeedback(const string message)
     {
         PrintFormat("[AI-FEEDBACK] %s", message);
     }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                     |
-//+------------------------------------------------------------------+
+// Constructor
 CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_maxRecords(1000),
     m_currentIndex(0),
@@ -256,9 +238,7 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_currentMetrics = SAIModelMetrics();
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                      |
-//+------------------------------------------------------------------+
+// Destructor
 CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
 {
     if(m_initialized)
@@ -271,9 +251,7 @@ CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Feedback System                                     |
-//+------------------------------------------------------------------+
+// Initialize Feedback System
 bool CAIPerformanceFeedback::Initialize(int maxRecords = 1000)
 {
     m_maxRecords = maxRecords;
@@ -302,9 +280,6 @@ bool CAIPerformanceFeedback::Initialize(int maxRecords = 1000)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Record AI Prediction                                          |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, const ENUM_TRADE_SIGNAL prediction,
                                              const double confidence, const double uncertainty,
                                              const ENUM_MARKET_REGIME regime, const datetime predictionTimeOverride)
@@ -332,9 +307,7 @@ void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, co
                             predictionSymbol, EnumToString(prediction), confidence, uncertainty));
 }
 
-//+------------------------------------------------------------------+
-//| Record Actual Outcome                                         |
-//+------------------------------------------------------------------+
+// Record Actual Outcome
 void CAIPerformanceFeedback::RecordOutcome(const string &outcomeSymbol, const datetime predictionTime,
                                           const ENUM_TRADE_SIGNAL actualOutcome, const double actualReturn)
 {
@@ -362,7 +335,6 @@ void CAIPerformanceFeedback::RecordOutcome(const string &outcomeSymbol, const da
     m_predictions[index].calibrationScore = 1.0 - MathAbs(actualReturn - expectedReturn) / MathMax(0.01, maxExpectedReturn);
     m_predictions[index].calibrationScore = MathMax(0.0, MathMin(1.0, m_predictions[index].calibrationScore));
     
-    // Update metrics
     UpdateMetrics();
     
     LogFeedback(StringFormat("AI outcome recorded: %s - Predicted: %s, Actual: %s, Return: %.4f, Correct: %s",
@@ -371,9 +343,6 @@ void CAIPerformanceFeedback::RecordOutcome(const string &outcomeSymbol, const da
                             m_predictions[index].predictionCorrect ? "YES" : "NO"));
 }
 
-//+------------------------------------------------------------------+
-//| Update Performance Metrics                                    |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::UpdateMetrics(void)
 {
     if(!m_initialized) return;
@@ -392,9 +361,6 @@ void CAIPerformanceFeedback::UpdateMetrics(void)
     PersistMetrics();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Accuracy Metrics                                    |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
 {
     int totalPredictions = 0;
@@ -480,9 +446,6 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
     if(volatileTotal > 0) m_currentMetrics.volatileAccuracy = (double)volatileCorrect / volatileTotal;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Profitability Metrics                               |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::CalculateProfitabilityMetrics(void)
 {
     double totalReturn = 0.0;
@@ -504,21 +467,14 @@ void CAIPerformanceFeedback::CalculateProfitabilityMetrics(void)
         m_currentMetrics.profitability = totalReturn / m_currentMetrics.totalPredictions;
     }
     
-    // Calculate Sharpe ratio
     m_currentMetrics.sharpeRatio = CalculateSharpeRatio();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Calibration Metrics                                 |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::CalculateCalibrationMetrics(void)
 {
     m_currentMetrics.calibrationError = CalculateCalibrationError();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Recent Metrics                                      |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::CalculateRecentMetrics(void)
 {
     int recentCount = MathMin(50, m_currentMetrics.totalPredictions);
@@ -547,9 +503,7 @@ void CAIPerformanceFeedback::CalculateRecentMetrics(void)
     m_currentMetrics.recentProfitability = recentReturn / labeledCount;
 }
 
-//+------------------------------------------------------------------+
-//| Should Retrain AI Models                                      |
-//+------------------------------------------------------------------+
+// Should Retrain AI Models
 bool CAIPerformanceFeedback::ShouldRetrain(void)
 {
     if(!m_initialized) return false;
@@ -587,9 +541,6 @@ bool CAIPerformanceFeedback::ShouldRetrain(void)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Trigger Retraining                                           |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::TriggerRetraining(const string reason)
 {
     if(!m_initialized)
@@ -654,9 +605,6 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
           " | Sharpe: ", DoubleToString(m_currentMetrics.sharpeRatio, 3));
 }
 
-//+------------------------------------------------------------------+
-//| Is Performance Degrading                                      |
-//+------------------------------------------------------------------+
 bool CAIPerformanceFeedback::IsPerformanceDegrading(void)
 {
     if(m_currentMetrics.totalPredictions < 100) return false; // Need enough data
@@ -669,9 +617,6 @@ bool CAIPerformanceFeedback::IsPerformanceDegrading(void)
     return (accuracyDegradation > 0.10 || profitabilityDegradation > 0.01);
 }
 
-//+------------------------------------------------------------------+
-//| Find Prediction Index                                         |
-//+------------------------------------------------------------------+
 int CAIPerformanceFeedback::FindPredictionIndex(const string &searchSymbol, const datetime predictionTime)
 {
     int recordCount = m_bufferFull ? m_maxRecords : m_currentIndex;
@@ -688,9 +633,6 @@ int CAIPerformanceFeedback::FindPredictionIndex(const string &searchSymbol, cons
     return -1; // Not found
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Calibration Error                                   |
-//+------------------------------------------------------------------+
 double CAIPerformanceFeedback::CalculateCalibrationError(void)
 {
     double totalError = 0.0;
@@ -709,9 +651,6 @@ double CAIPerformanceFeedback::CalculateCalibrationError(void)
     return count > 0 ? totalError / count : 0.0;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Sharpe Ratio                                        |
-//+------------------------------------------------------------------+
 double CAIPerformanceFeedback::CalculateSharpeRatio(void)
 {
     if(m_currentMetrics.totalPredictions < 10) return 0.0;
@@ -738,9 +677,6 @@ double CAIPerformanceFeedback::CalculateSharpeRatio(void)
     return stdDev > 0 ? meanReturn / stdDev : 0.0;
 }
 
-//+------------------------------------------------------------------+
-//| Print Performance Report                                      |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::PrintPerformanceReport(void)
 {
     if(!m_initialized) return;
@@ -776,9 +712,6 @@ void CAIPerformanceFeedback::PrintPerformanceReport(void)
     Print("==========================================\n");
 }
 
-//+------------------------------------------------------------------+
-//| Get Performance Summary                                       |
-//+------------------------------------------------------------------+
 string CAIPerformanceFeedback::GetPerformanceSummary(void)
 {
     if(!m_initialized) return "AI feedback not initialized";
@@ -790,9 +723,7 @@ string CAIPerformanceFeedback::GetPerformanceSummary(void)
                        ShouldRetrain() ? "YES" : "NO");
 }
 
-//+------------------------------------------------------------------+
-//| Check Automatic Retraining (Task 5.3)                       |
-//+------------------------------------------------------------------+
+// Check Automatic Retraining (Task 5.3)
 void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
 {
     if(!m_initialized) return;
@@ -843,9 +774,7 @@ void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Should Retrain Based on Accuracy (Task 5.3)                 |
-//+------------------------------------------------------------------+
+// Should Retrain Based on Accuracy (Task 5.3)
 bool CAIPerformanceFeedback::ShouldRetrainBasedOnAccuracy(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
@@ -863,9 +792,7 @@ bool CAIPerformanceFeedback::ShouldRetrainBasedOnAccuracy(void)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Should Retrain Based on Profitability (Task 5.3)            |
-//+------------------------------------------------------------------+
+// Should Retrain Based on Profitability (Task 5.3)
 bool CAIPerformanceFeedback::ShouldRetrainBasedOnProfitability(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
@@ -879,9 +806,7 @@ bool CAIPerformanceFeedback::ShouldRetrainBasedOnProfitability(void)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Set Retraining Thresholds (Task 5.3)                        |
-//+------------------------------------------------------------------+
+// Set Retraining Thresholds (Task 5.3)
 void CAIPerformanceFeedback::SetRetrainingThresholds(double minAccuracy, double minProfitability)
 {
     m_minAccuracyThreshold = MathMax(0.3, MathMin(0.9, minAccuracy));
@@ -891,9 +816,6 @@ void CAIPerformanceFeedback::SetRetrainingThresholds(double minAccuracy, double 
                             m_minAccuracyThreshold * 100, m_minProfitabilityThreshold));
 }
 
-//+------------------------------------------------------------------+
-//| Persist retraining request                                      |
-//+------------------------------------------------------------------+
 void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
 {
     string cleanReason = reason;
@@ -936,9 +858,7 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
     FileClose(handle);
 }
 
-//+------------------------------------------------------------------+
-//| Export labeled dataset snapshot                                 |
-//+------------------------------------------------------------------+
+// Export labeled dataset snapshot
 void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const int maxRows)
 {
     int limit = MathMax(1, maxRows);
@@ -999,9 +919,7 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
     FileClose(handle);
 }
 
-//+------------------------------------------------------------------+
-//| Persist AI Health Dashboard Metrics to CSV (L11-012)          |
-//+------------------------------------------------------------------+
+// Persist AI Health Dashboard Metrics to CSV (L11-012)
 void CAIPerformanceFeedback::PersistMetrics(void)
 {
     PersistMetricsToCSV("AI_Health_Dashboard.csv");

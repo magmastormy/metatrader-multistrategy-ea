@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Performance Analytics System                                   |
-//| Tracks and analyzes trading performance metrics                |
-//+------------------------------------------------------------------+
+// Performance Analytics System
+// Tracks and analyzes trading performance metrics
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -13,22 +11,19 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 
-//+------------------------------------------------------------------+
-//| Structural decomposition (behaviour unchanged).                  |
-//| This header is a thin coordinator: it aggregates the extracted   |
-//| modules and forwards every call, so that each symbol previously  |
-//| declared here remains available to any translation unit.         |
-//|                                                                  |
-//|  PerfAnalyticsTypes.mqh        - MAX_TRADES, stateless math and  |
-//|                                  logging helpers                 |
-//|  PerfAnalyticsTradeStats.mqh   - trade statistics aggregation,   |
-//|                                  ratio metrics, rolling window,  |
-//|                                  streak momentum scaling         |
-//|  PerfAnalyticsEquity.mqh       - equity curve / drawdown tracking|
-//|  PerfAnalyticsRiskTriggers.mqh - performance triggers and risk   |
-//|                                  assessment recommendations      |
-//|  PerfAnalyticsReport.mqh       - reporting / snapshot assembly   |
-//+------------------------------------------------------------------+
+// Structural decomposition (behaviour unchanged).
+// This header is a thin coordinator: it aggregates the extracted
+// modules and forwards every call, so that each symbol previously
+// declared here remains available to any translation unit.
+// PerfAnalyticsTypes.mqh        - MAX_TRADES, stateless math and
+// logging helpers
+// PerfAnalyticsTradeStats.mqh   - trade statistics aggregation,
+// ratio metrics, rolling window,
+// streak momentum scaling
+// PerfAnalyticsEquity.mqh       - equity curve / drawdown tracking
+// PerfAnalyticsRiskTriggers.mqh - performance triggers and risk
+// assessment recommendations
+// PerfAnalyticsReport.mqh       - reporting / snapshot assembly
 #include "PerfAnalyticsTypes.mqh"
 #include "PerfAnalyticsTradeStats.mqh"
 #include "PerfAnalyticsEquity.mqh"
@@ -46,9 +41,6 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Performance Analytics Class                                    |
-//+------------------------------------------------------------------+
 class CPerformanceAnalytics : public CEnhancedErrorHandler
 {
 private:
@@ -114,7 +106,6 @@ public:
     bool IsPerformanceAcceptable(void);
     ENUM_RISK_LEVEL GetCurrentRiskLevel(void);
     
-    // Set risk-free rate
     void SetRiskFreeRate(double rate) { m_stats.SetRiskFreeRate(rate); }
     
     // Parameter adjustment recommendations (NEW)
@@ -122,7 +113,6 @@ public:
     double GetRecommendedConfidenceThreshold(void);
     bool ShouldEnableConservativeMode(void);
     
-    // Reporting
     void PrintPerformanceReport(void);
     void PrintRealTimeDashboard(void);
     string GetPerformanceSummary(void);
@@ -140,9 +130,7 @@ private:
     void LogPerformanceUpdate(const string message);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                     |
-//+------------------------------------------------------------------+
+// Constructor
 CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_lastUpdate(0),
     m_lastReportTime(0),
@@ -152,9 +140,7 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     // Sub-module members initialise their own state (arrays, counters)
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                      |
-//+------------------------------------------------------------------+
+// Destructor
 CPerformanceAnalytics::~CPerformanceAnalytics(void)
 {
     if(m_initialized)
@@ -165,9 +151,6 @@ CPerformanceAnalytics::~CPerformanceAnalytics(void)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Initialize analytics                                           |
-//+------------------------------------------------------------------+
 bool CPerformanceAnalytics::Initialize(void)
 {
     m_startTime = TimeCurrent();
@@ -180,9 +163,6 @@ bool CPerformanceAnalytics::Initialize(void)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Record Trade                                                   |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORDER_TYPE orderType,
                                        const double volume, const double price)
 {
@@ -192,9 +172,6 @@ void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORD
                                      tradeSymbol, EnumToString(orderType), volume, price));
 }
 
-//+------------------------------------------------------------------+
-//| Record Closed Trade                                           |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double profit)
 {
     if(!m_initialized) return;
@@ -213,7 +190,6 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
     UpdateEquityCurve();
     UpdateDrawdown();
     
-    // Recalculate metrics
     CalculateMetrics();
     CalculateRollingMetrics();
     CheckPerformanceTriggers();
@@ -222,9 +198,6 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
                                      (int)ticket, profit, m_stats.GetNetProfit()));
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Performance Metrics                                  |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateMetrics(void)
 {
     if(!m_initialized) return;
@@ -232,9 +205,6 @@ void CPerformanceAnalytics::CalculateMetrics(void)
     m_stats.CalculateMetrics(m_equity.GetMaxDrawdown(), m_equity.GetPeakEquity());
 }
 
-//+------------------------------------------------------------------+
-//| Update Equity Curve                                           |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::UpdateEquityCurve(void)
 {
     if(!m_initialized) return;
@@ -242,9 +212,6 @@ void CPerformanceAnalytics::UpdateEquityCurve(void)
     m_equity.UpdateEquityCurve(m_stats.GetBufferIndex());
 }
 
-//+------------------------------------------------------------------+
-//| Update Drawdown                                                |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::UpdateDrawdown(void)
 {
     if(!m_initialized) return;
@@ -252,17 +219,12 @@ void CPerformanceAnalytics::UpdateDrawdown(void)
     m_equity.UpdateDrawdown();
 }
 
-//+------------------------------------------------------------------+
-//| Get Performance Metrics                                        |
-//+------------------------------------------------------------------+
 SPerformanceMetrics CPerformanceAnalytics::GetPerformanceMetrics(void)
 {
     return CPerfAnalyticsReport::BuildPerformanceMetrics(m_stats, m_equity);
 }
 
-//+------------------------------------------------------------------+
-//| Check if Performance is Acceptable                            |
-//+------------------------------------------------------------------+
+// Check if Performance is Acceptable
 bool CPerformanceAnalytics::IsPerformanceAcceptable(void)
 {
     if(!m_initialized)
@@ -271,9 +233,6 @@ bool CPerformanceAnalytics::IsPerformanceAcceptable(void)
     return m_triggers.IsPerformanceAcceptable(m_stats, m_equity.GetMaxDrawdown());
 }
 
-//+------------------------------------------------------------------+
-//| Get Current Risk Level                                         |
-//+------------------------------------------------------------------+
 ENUM_RISK_LEVEL CPerformanceAnalytics::GetCurrentRiskLevel(void)
 {
     if(!m_initialized)
@@ -282,9 +241,6 @@ ENUM_RISK_LEVEL CPerformanceAnalytics::GetCurrentRiskLevel(void)
     return m_triggers.GetCurrentRiskLevel(m_stats, m_equity.GetCurrentDrawdown());
 }
 
-//+------------------------------------------------------------------+
-//| Print Performance Report                                       |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::PrintPerformanceReport(void)
 {
     if(!m_initialized) return;
@@ -292,9 +248,6 @@ void CPerformanceAnalytics::PrintPerformanceReport(void)
     CPerfAnalyticsReport::PrintPerformanceReport(m_stats, m_equity, m_triggers);
 }
 
-//+------------------------------------------------------------------+
-//| Save Report to CSV                                             |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::SaveReportToCSV(const string filename)
 {
     if(!m_initialized) return;
@@ -302,9 +255,6 @@ void CPerformanceAnalytics::SaveReportToCSV(const string filename)
     CPerfAnalyticsReport::SaveReportToCSV(filename, m_stats, m_equity);
 }
 
-//+------------------------------------------------------------------+
-//| Get Performance Summary                                        |
-//+------------------------------------------------------------------+
 string CPerformanceAnalytics::GetPerformanceSummary(void)
 {
     if(!m_initialized)
@@ -313,57 +263,36 @@ string CPerformanceAnalytics::GetPerformanceSummary(void)
     return CPerfAnalyticsReport::GetPerformanceSummary(m_stats, m_equity);
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Win Rate                                             |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateWinRate(void)
 {
     m_stats.CalculateWinRate();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Profit Factor                                        |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateProfitFactor(void)
 {
     m_stats.CalculateProfitFactor();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Sharpe Ratio                                          |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateSharpeRatio(void)
 {
     m_stats.CalculateSharpeRatio();
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Recovery Factor                                      |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateRecoveryFactor(void)
 {
     m_stats.CalculateRecoveryFactor(m_equity.GetMaxDrawdown(), m_equity.GetPeakEquity());
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Standard Deviation                                   |
-//+------------------------------------------------------------------+
 double CPerformanceAnalytics::CalculateStandardDeviation(const double &returns[])
 {
     return CPerfAnalyticsMath::CalculateStandardDeviation(returns);
 }
 
-//+------------------------------------------------------------------+
-//| Log Performance Update                                         |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::LogPerformanceUpdate(const string message)
 {
     CPerfAnalyticsLog::LogPerformanceUpdate(message);
 }
 
-//+------------------------------------------------------------------+
-//| Update Real-Time Metrics                                      |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::UpdateRealTimeMetrics(void)
 {
     if(!m_initialized) return;
@@ -379,10 +308,8 @@ void CPerformanceAnalytics::UpdateRealTimeMetrics(void)
     UpdateEquityCurve();
     UpdateDrawdown();
     
-    // Calculate rolling metrics
     CalculateRollingMetrics();
     
-    // Check for performance triggers
     CheckPerformanceTriggers();
     
     // Print dashboard every 5 minutes
@@ -393,17 +320,11 @@ void CPerformanceAnalytics::UpdateRealTimeMetrics(void)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Rolling Metrics                                     |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateRollingMetrics(void)
 {
     m_stats.CalculateRollingMetrics();
 }
 
-//+------------------------------------------------------------------+
-//| Check Performance Triggers                                     |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::CheckPerformanceTriggers(void)
 {
     if(!m_initialized) return;
@@ -411,25 +332,16 @@ void CPerformanceAnalytics::CheckPerformanceTriggers(void)
     m_triggers.CheckPerformanceTriggers(m_stats, m_equity.GetCurrentDrawdown());
 }
 
-//+------------------------------------------------------------------+
-//| Get Recommended Risk Reduction                                 |
-//+------------------------------------------------------------------+
 double CPerformanceAnalytics::GetRecommendedRiskReduction(void)
 {
     return m_triggers.GetRecommendedRiskReduction(m_stats, m_equity.GetCurrentDrawdown());
 }
 
-//+------------------------------------------------------------------+
-//| Get Recommended Confidence Threshold                          |
-//+------------------------------------------------------------------+
 double CPerformanceAnalytics::GetRecommendedConfidenceThreshold(void)
 {
     return m_triggers.GetRecommendedConfidenceThreshold(m_stats);
 }
 
-//+------------------------------------------------------------------+
-//| Should Enable Conservative Mode                               |
-//+------------------------------------------------------------------+
 bool CPerformanceAnalytics::ShouldEnableConservativeMode(void)
 {
     if(!m_initialized) return false;
@@ -437,9 +349,6 @@ bool CPerformanceAnalytics::ShouldEnableConservativeMode(void)
     return m_triggers.ShouldEnableConservativeMode(m_stats, m_equity.GetCurrentDrawdown());
 }
 
-//+------------------------------------------------------------------+
-//| Print Real-Time Dashboard                                     |
-//+------------------------------------------------------------------+
 void CPerformanceAnalytics::PrintRealTimeDashboard(void)
 {
     if(!m_initialized) return;
@@ -447,11 +356,9 @@ void CPerformanceAnalytics::PrintRealTimeDashboard(void)
     CPerfAnalyticsReport::PrintRealTimeDashboard(m_stats, m_equity, m_triggers);
 }
 
-//+------------------------------------------------------------------+
-//| Anti-Martingale Momentum Scale                                   |
-//| Win streak: scale up by 10% per win, capped at 1.5x             |
-//| Loss streak: scale down by 15% per loss, floored at 0.5x        |
-//+------------------------------------------------------------------+
+// Anti-Martingale Momentum Scale
+// Win streak: scale up by 10% per win, capped at 1.5x
+// Loss streak: scale down by 15% per loss, floored at 0.5x
 double CPerformanceAnalytics::CalculateMomentumScale(void)
 {
     return m_stats.CalculateMomentumScale();

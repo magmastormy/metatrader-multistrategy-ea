@@ -1,11 +1,8 @@
-//+------------------------------------------------------------------+
-//| DashBridgeTransport.mqh                                          |
-//| Connection lifecycle + HTTP transport + push/poll orchestration  |
-//| for the dashboard bridge. Owns the endpoint, enable flags,       |
-//| timeouts, push/poll timestamps, push counters, connection state, |
-//| last error and the error-log throttle.                           |
-//| Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)|
-//+------------------------------------------------------------------+
+// Connection lifecycle + HTTP transport + push/poll orchestration
+// for the dashboard bridge. Owns the endpoint, enable flags,
+// timeouts, push/poll timestamps, push counters, connection state,
+// last error and the error-log throttle.
+// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -14,9 +11,7 @@
 #ifndef CORE_DASHBRIDGE_TRANSPORT_MQH
 #define CORE_DASHBRIDGE_TRANSPORT_MQH
 
-//+------------------------------------------------------------------+
-//| Dashboard Bridge Transport / Connection State                    |
-//+------------------------------------------------------------------+
+// Dashboard Bridge Transport / Connection State
 class CDashBridgeTransport
 {
 private:
@@ -69,13 +64,10 @@ public:
    int               GetErrorCount() const { return m_pushErrorCount; }
    datetime          GetLastPushTime() const { return m_lastPushTime; }
 
-   // Setters
    void              SetEnabled(bool enabled) { m_enabled = enabled; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CDashBridgeTransport::CDashBridgeTransport()
 {
    m_endpoint = "http://127.0.0.1:8765";
@@ -96,9 +88,6 @@ CDashBridgeTransport::CDashBridgeTransport()
    m_pushInProgress = false;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize the transport                                         |
-//+------------------------------------------------------------------+
 bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
                                       bool controlEnabled, int pushIntervalSec,
                                       int requestTimeoutMs, int pushTimeoutMs)
@@ -135,9 +124,6 @@ bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Shutdown the transport                                           |
-//+------------------------------------------------------------------+
 void CDashBridgeTransport::Shutdown()
 {
    if(m_initialized)
@@ -166,9 +152,6 @@ void CDashBridgeTransport::Shutdown()
    }
 }
 
-//+------------------------------------------------------------------+
-//| Send HTTP request                                                |
-//+------------------------------------------------------------------+
 bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &url,
                                            const string &post_data, string &response,
                                            int timeoutMs)
@@ -212,9 +195,7 @@ bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &u
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Begin a state push — guards identical to the original PushState  |
-//+------------------------------------------------------------------+
+// Begin a state push — guards identical to the original PushState
 bool CDashBridgeTransport::BeginPush()
 {
    if(!m_initialized || !m_enabled)
@@ -228,9 +209,7 @@ bool CDashBridgeTransport::BeginPush()
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Complete a state push with the assembled payload                 |
-//+------------------------------------------------------------------+
+// Complete a state push with the assembled payload
 bool CDashBridgeTransport::FinishPush(const string &json)
 {
    string response;
@@ -268,9 +247,7 @@ bool CDashBridgeTransport::FinishPush(const string &json)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Poll for pending control commands                                |
-//+------------------------------------------------------------------+
+// Poll for pending control commands
 bool CDashBridgeTransport::PollCommands()
 {
    if(!m_initialized || !m_enabled || !m_controlEnabled)
@@ -343,18 +320,13 @@ bool CDashBridgeTransport::PollCommands()
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| Log dashboard bridge state                                       |
-//+------------------------------------------------------------------+
 void CDashBridgeTransport::LogState(string message, bool isError)
 {
    string prefix = isError ? "[DASHBOARD-BRIDGE-ERROR] " : "[DASHBOARD-BRIDGE] ";
    Print(prefix + message);
 }
 
-//+------------------------------------------------------------------+
-//| Should log error (throttled to every 60s)                        |
-//+------------------------------------------------------------------+
+// Should log error (throttled to every 60s)
 bool CDashBridgeTransport::ShouldLogError()
 {
    datetime now = TimeCurrent();

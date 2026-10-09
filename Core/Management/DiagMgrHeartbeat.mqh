@@ -1,14 +1,10 @@
-//+------------------------------------------------------------------+
-//| DiagMgrHeartbeat.mqh                                              |
-//| Extracted from DiagnosticsManager.mqh (God-Object decomposition)  |
-//| Stateless emitters for the individual heartbeat sub-blocks plus   |
-//| the windowed-delta / conversion-rate arithmetic.                  |
-//|                                                                   |
-//| Every log tag, format string and field order is byte-identical to |
-//| the original inline EmitHeartbeat() body. The caller retains all  |
-//| control flow (verbosity gates, guards, ordering) so the emitted   |
-//| heartbeat stream is directly comparable to prior regression logs. |
-//+------------------------------------------------------------------+
+// Extracted from DiagnosticsManager.mqh (God-Object decomposition)
+// Stateless emitters for the individual heartbeat sub-blocks plus
+// the windowed-delta / conversion-rate arithmetic.
+// Every log tag, format string and field order is byte-identical to
+// the original inline EmitHeartbeat() body. The caller retains all
+// control flow (verbosity gates, guards, ordering) so the emitted
+// heartbeat stream is directly comparable to prior regression logs.
 #ifndef DIAG_MGR_HEARTBEAT_MQH
 #define DIAG_MGR_HEARTBEAT_MQH
 
@@ -24,35 +20,27 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| CDiagMgrHeartbeat — stateless heartbeat emitters and math         |
-//+------------------------------------------------------------------+
+// CDiagMgrHeartbeat — stateless heartbeat emitters and math
 class CDiagMgrHeartbeat
 {
 public:
-    //+------------------------------------------------------------------+
-    //| Windowed delta with the original underflow fallback semantics.    |
-    //| NOTE: on underflow this returns the CURRENT value (not zero) —    |
-    //| this intentionally mirrors the inline EmitHeartbeat() arithmetic  |
-    //| and differs from CDiagnosticsManager::GetWindowScans(), which     |
-    //| clamps to 0. Both behaviours are preserved as-is.                 |
-    //+------------------------------------------------------------------+
+// Windowed delta with the original underflow fallback semantics.
+// NOTE: on underflow this returns the CURRENT value (not zero) —
+// this intentionally mirrors the inline EmitHeartbeat() arithmetic
+// and differs from CDiagnosticsManager::GetWindowScans(), which
+// clamps to 0. Both behaviours are preserved as-is.
     static ulong WindowDelta(const ulong current, const ulong previous)
     {
         return (current >= previous) ? (current - previous) : current;
     }
 
-    //+------------------------------------------------------------------+
-    //| Percentage ratio with divide-by-zero guard                        |
-    //+------------------------------------------------------------------+
+// Percentage ratio with divide-by-zero guard
     static double Ratio(const ulong numerator, const ulong denominator)
     {
         return (denominator > 0) ? (100.0 * (double)numerator / (double)denominator) : 0.0;
     }
 
-    //+------------------------------------------------------------------+
-    //| Core heartbeat line + funnel line                                 |
-    //+------------------------------------------------------------------+
+// Core heartbeat line + funnel line
     static void EmitCoreLines(const ulong scansAttempted,
                               const ulong intrabarScansExecuted,
                               const ulong noSignalCount,
@@ -81,10 +69,8 @@ public:
             signalsValidated, signalsRiskApproved, signalsSent), corrId);
     }
 
-    //+------------------------------------------------------------------+
-    //| Compounding tier / session weight / skew step / family weight     |
-    //| heartbeat diagnostics (L5-013 / L9-001 / L9-002 / L9-003 / L9-004)|
-    //+------------------------------------------------------------------+
+// Compounding tier / session weight / skew step / family weight
+// heartbeat diagnostics (L5-013 / L9-001 / L9-002 / L9-003 / L9-004)
     static void EmitModuleHeartbeats(CCompoundingTierManager* compoundingTierManager,
                                      CSessionWeightManager* sessionWeightManager,
                                      CSkewStepAnalyzer* skewStepAnalyzer,
@@ -127,10 +113,8 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Per-symbol family / asset-class detection diagnostics             |
-    //| Caller keeps the outer (derivProfiler != NULL && count > 0) guard.|
-    //+------------------------------------------------------------------+
+// Per-symbol family / asset-class detection diagnostics
+// Caller keeps the outer (derivProfiler != NULL && count > 0) guard.
     static void EmitSymbolProfileDiagnostics(CDerivAssetProfiler* derivProfiler,
                                              CMultiAssetProfiler* multiAssetProfiler,
                                              string &symbols[],
@@ -170,9 +154,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Grid-recovery and scalp position counts                           |
-    //+------------------------------------------------------------------+
+// Grid-recovery and scalp position counts
     static void EmitPositionCounts(const string corrId)
     {
         int gridRecoveryCount = 0;
@@ -194,9 +176,6 @@ public:
                 totalPositions, gridRecoveryCount, atrScalpCount), corrId);
     }
 
-    //+------------------------------------------------------------------+
-    //| Windowed conversion rates                                         |
-    //+------------------------------------------------------------------+
     static void EmitConversionRates(const ulong windowScans,
                                     const ulong windowGenerated,
                                     const double rateAfterPipeline,
@@ -214,10 +193,8 @@ public:
                 rateRiskApproved, rateSent, noSignalRate), corrId);
     }
 
-    //+------------------------------------------------------------------+
-    //| No-signal alert (heartbeat variant)                               |
-    //| Caller owns the trigger condition and the alert-time bookkeeping. |
-    //+------------------------------------------------------------------+
+// No-signal alert (heartbeat variant)
+// Caller owns the trigger condition and the alert-time bookkeeping.
     static void EmitNoSignalAlert(const ulong windowScans,
                                   const ulong windowNoSignal,
                                   const double noSignalRate,
@@ -232,9 +209,7 @@ public:
                 quietNoNewBar, quietCadenceHold, quietMissingManager), corrId);
     }
 
-    //+------------------------------------------------------------------+
-    //| Risk budget snapshot                                              |
-    //+------------------------------------------------------------------+
+// Risk budget snapshot
     static void EmitRiskBudget(CUnifiedRiskManager* riskManager, const string corrId)
     {
         if(riskManager != NULL)
@@ -252,9 +227,7 @@ public:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Indicator manager cleanup                                         |
-    //+------------------------------------------------------------------+
+// Indicator manager cleanup
     static void ReleaseUnusedIndicators()
     {
         CIndicatorManager* indicatorManager = CIndicatorManager::Instance();

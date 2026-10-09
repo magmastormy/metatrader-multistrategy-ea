@@ -1,27 +1,21 @@
-//+------------------------------------------------------------------+
-//| FastScalpEntry.mqh                                               |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the scalp entry path that used to live inline in            |
-//| CFastScalpEngine:                                                |
-//|   PassesEntryGates()     — cooldown / max-positions / budget     |
-//|                            pre-checks from ShouldEnterScalp()    |
-//|   ValidateRiskAndAdjust()— CUnifiedRiskManager gating +          |
-//|                            adjustedLotSize from ShouldEnterScalp |
-//|   FinalizeLotSize()      — margin cap + symbol min-lot check     |
-//|   Execute()              — the whole ExecuteScalpTrade() body     |
-//|                            (async + synchronous paths)           |
-//|                                                                  |
-//| All methods are `static`; mutable engine state (cooldown stamp,  |
-//| risk budget, trackers) is passed in by reference so the observed |
-//| side effects and their ordering are identical to the original.   |
-//|                                                                  |
-//| Every risk gate, retcode branch and log tag is verbatim,         |
-//| including the MANDATORY pre-trade CUnifiedRiskManager validation |
-//| (AGENTS.md Invariant #1) and the L10-015 partial-fill risk       |
-//| scaling.                                                         |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the scalp entry path that used to live inline in
+// CFastScalpEngine:
+// PassesEntryGates()     — cooldown / max-positions / budget
+// pre-checks from ShouldEnterScalp()
+// ValidateRiskAndAdjust()— CUnifiedRiskManager gating +
+// adjustedLotSize from ShouldEnterScalp
+// FinalizeLotSize()      — margin cap + symbol min-lot check
+// Execute()              — the whole ExecuteScalpTrade() body
+// (async + synchronous paths)
+// All methods are `static`; mutable engine state (cooldown stamp,
+// risk budget, trackers) is passed in by reference so the observed
+// side effects and their ordering are identical to the original.
+// Every risk gate, retcode branch and log tag is verbatim,
+// including the MANDATORY pre-trade CUnifiedRiskManager validation
+// (AGENTS.md Invariant #1) and the L10-015 partial-fill risk
+// scaling.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_ENTRY_MQH
@@ -41,15 +35,11 @@
 // Forward declaration for AI adapter (L10-018) — only ever NULL-checked here
 class CAIAdapter;
 
-//+------------------------------------------------------------------+
-//| CFastScalpEntry — stateless scalp entry gating + execution        |
-//+------------------------------------------------------------------+
+// CFastScalpEntry — stateless scalp entry gating + execution
 class CFastScalpEntry
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Pre-signal entry gates: cooldown, max positions, risk budget      |
-   //+------------------------------------------------------------------+
+// Pre-signal entry gates: cooldown, max positions, risk budget
    static bool PassesEntryGates(const SScalpConfig &config,
                                 datetime lastScalpTime,
                                 double usedScalpRiskPct)
@@ -72,10 +62,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Risk validation through CUnifiedRiskManager                       |
-   //| Applies the risk-adjusted lot size in place when provided.        |
-   //+------------------------------------------------------------------+
+// Risk validation through CUnifiedRiskManager
+// Applies the risk-adjusted lot size in place when provided.
    static bool ValidateRiskAndAdjust(const string symbol,
                                      ENUM_TRADE_SIGNAL signal,
                                      double confidence,
@@ -117,9 +105,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Cap lot size to available margin, then enforce symbol minimum     |
-   //+------------------------------------------------------------------+
+// Cap lot size to available margin, then enforce symbol minimum
    static bool FinalizeLotSize(const string symbol, double &lotSize)
    {
       // Cap lot size to available margin and symbol volume limits
@@ -137,10 +123,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Execute a scalp trade (market order)                              |
-   //| Supports both synchronous and async execution modes               |
-   //+------------------------------------------------------------------+
+// Execute a scalp trade (market order)
+// Supports both synchronous and async execution modes
    static bool Execute(const string symbol, ENUM_TRADE_SIGNAL signal,
                        double lotSize, double confidence,
                        const SScalpConfig &config,

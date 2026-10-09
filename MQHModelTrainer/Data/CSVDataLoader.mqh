@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CSVDataLoader.mqh                                                |
-//| Loads and parses CSV training data exported by TrainingDataExporter.mq5 |
-//+------------------------------------------------------------------+
+// Loads and parses CSV training data exported by TrainingDataExporter.mq5
 #ifndef MQH_CSV_DATA_LOADER_MQH
 #define MQH_CSV_DATA_LOADER_MQH
 

@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Unified Signal Pipeline - Enterprise Grade                       |
-//| Central hub for all strategy signals with filtering              |
-//+------------------------------------------------------------------+
+// Unified Signal Pipeline - Enterprise Grade
+// Central hub for all strategy signals with filtering
 #ifndef UNIFIED_SIGNAL_PIPELINE_MQH
 #define UNIFIED_SIGNAL_PIPELINE_MQH
 
@@ -23,9 +21,6 @@ extern CMultiAssetProfiler* g_multiAssetProfiler;
 #include "SignalPipelineFilter.mqh"
 #include "SignalPipelineAggregator.mqh"
 
-//+------------------------------------------------------------------+
-//| Unified Signal Pipeline Class                                   |
-//+------------------------------------------------------------------+
 class CUnifiedSignalPipeline
 {
 private:
@@ -38,7 +33,6 @@ private:
     // I3: Session weight manager (injected from EA)
     CSessionWeightManager* m_sessionWeightManager;
     
-    // Settings
     SignalFilterSettings m_filters;
     
     // Statistics
@@ -175,9 +169,7 @@ public:
                 bool IsBudgetExhausted() const { return m_budgetExhausted; }
     };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_mathRegistry(NULL),
     m_tfConsistency(NULL),
@@ -212,18 +204,13 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
         m_filterOrderMap[i] = -1;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
 {
     // Engines are owned by the registry, not by this pipeline
     if(m_tfConsistency != NULL) { delete m_tfConsistency; m_tfConsistency = NULL; }
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Pipeline                                             |
-//+------------------------------------------------------------------+
 bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
 {
     if(!settings.Validate())
@@ -289,9 +276,7 @@ void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Build filter order map from settings                            |
-//+------------------------------------------------------------------+
+// Build filter order map from settings
 void CUnifiedSignalPipeline::BuildFilterOrderMap()
 {
     // Reset map
@@ -308,9 +293,7 @@ void CUnifiedSignalPipeline::BuildFilterOrderMap()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check and auto-clear budget exhaustion (L4-007)                 |
-//+------------------------------------------------------------------+
+// Check and auto-clear budget exhaustion (L4-007)
 void CUnifiedSignalPipeline::CheckBudgetExhaustedAutoClear()
 {
     if(!m_budgetExhausted)
@@ -334,10 +317,8 @@ void CUnifiedSignalPipeline::CheckBudgetExhaustedAutoClear()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Evidence + scoring forwarders (extracted to SignalPipeline*)     |
-//| Thin delegators — original signatures preserved 1:1.             |
-//+------------------------------------------------------------------+
+// Evidence + scoring forwarders (extracted to SignalPipeline*)
+// Thin delegators — original signatures preserved 1:1.
 void CUnifiedSignalPipeline::ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     CSignalPipelineCollector::ResetEvidenceSnapshot(m_filters, m_lastEvidence, symbol, timeframe);
@@ -367,9 +348,7 @@ double CUnifiedSignalPipeline::ComputeContextScore(const ENUM_TRADE_SIGNAL signa
     return CSignalPipelineWeighter::ComputeContextScore(m_lastEvidence, signal);
 }
 
-//+------------------------------------------------------------------+
-//| Process Single Strategy Signal                                  |
-//+------------------------------------------------------------------+
+// Process Single Strategy Signal
 ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy, 
                                                        const string symbol,
                                                        ENUM_TIMEFRAMES timeframe, 
@@ -658,9 +637,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     return signal;
 }
 
-//+------------------------------------------------------------------+
-//| Process Multiple Timeframe Signals                              |
-//+------------------------------------------------------------------+
+// Process Multiple Timeframe Signals
 ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategies[], 
                                                            int count,
                                                            const string symbol, 
@@ -713,10 +690,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
     finalConfidence = 0;
     return CSignalPipelineAggregator::TallyConsensus(signals, confidences, count, finalConfidence);
 }
-//+------------------------------------------------------------------+
-//| Filter + quality + logging forwarders (extracted)                |
-//| Thin delegators — original signatures preserved 1:1.             |
-//+------------------------------------------------------------------+
+// Filter + quality + logging forwarders (extracted)
+// Thin delegators — original signatures preserved 1:1.
 bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
                                                     ENUM_TIMEFRAMES timeframe,
                                                     ENUM_TRADE_SIGNAL &signal,
@@ -791,9 +766,7 @@ void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, c
     CSignalPipelineFilter::LogResult(m_lastFilterName, m_lastFilterReason, filter, passed, reason);
 }
 
-//+------------------------------------------------------------------+
-//| Check Engine Health (private)                                    |
-//+------------------------------------------------------------------+
+// Check Engine Health (private)
 void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
 {
     // Health is now checked on-demand via registry
@@ -801,9 +774,7 @@ void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
     m_lastHealthCheckTime = TimeCurrent();
 }
 
-//+------------------------------------------------------------------+
-//| Is Engine Healthy (private)                                      |
-//+------------------------------------------------------------------+
+// Is Engine Healthy (private)
 bool CUnifiedSignalPipeline::IsEngineHealthy()
 {
     if(m_mathRegistry == NULL || m_lastEvaluatedSymbol == "")
@@ -828,9 +799,7 @@ bool CUnifiedSignalPipeline::IsEngineHealthy()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Perform Health Check (public)                                    |
-//+------------------------------------------------------------------+
+// Perform Health Check (public)
 void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
 {
     CheckEngineHealth(symbol);
@@ -868,17 +837,13 @@ void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
                 regimeOk ? "OK" : "FAIL");
 }
 
-//+------------------------------------------------------------------+
-//| Is Pipeline Healthy (public)                                     |
-//+------------------------------------------------------------------+
+// Is Pipeline Healthy (public)
 bool CUnifiedSignalPipeline::IsPipelineHealthy()
 {
     return IsEngineHealthy();
 }
 
-//+------------------------------------------------------------------+
-//| Get Engine Health Status (public)                               |
-//+------------------------------------------------------------------+
+// Get Engine Health Status (public)
 string CUnifiedSignalPipeline::GetEngineHealthStatus()
 {
     if(IsEngineHealthy())
@@ -906,9 +871,7 @@ string CUnifiedSignalPipeline::GetEngineHealthStatus()
     return status;
 }
 
-//+------------------------------------------------------------------+
-//| Apply Filter Preset (public)                                    |
-//+------------------------------------------------------------------+
+// Apply Filter Preset (public)
 void CUnifiedSignalPipeline::ApplyFilterPreset(ENUM_FILTER_PRESET preset)
 {
     m_filters.ApplyPreset(preset);

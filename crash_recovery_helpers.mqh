@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Crash Recovery State File Helpers (L2-003)                       |
-//| JSON with version, checksum, and atomic write                    |
-//+------------------------------------------------------------------+
+// Crash Recovery State File Helpers (L2-003)
+// JSON with version, checksum, and atomic write
 // Simple xorshift checksum (64-bit)
 ulong ComputeStateChecksum(const string &jsonData)
 {

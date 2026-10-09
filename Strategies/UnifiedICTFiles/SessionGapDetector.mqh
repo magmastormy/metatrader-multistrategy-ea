@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| SessionGapDetector.mqh                                           |
-//| NDOG (New Day Opening Gap) & NWOG (New Week Opening Gap)        |
-//| P2-A: Detects session gaps and tracks fill status               |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// NDOG (New Day Opening Gap) & NWOG (New Week Opening Gap)
+// P2-A: Detects session gaps and tracks fill status
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -11,9 +8,6 @@
 #ifndef SESSION_GAP_DETECTOR_MQH
 #define SESSION_GAP_DETECTOR_MQH
 
-//+------------------------------------------------------------------+
-//| Gap Type Enum                                                    |
-//+------------------------------------------------------------------+
 enum ENUM_GAP_TYPE
 {
     GAP_NONE   = 0,
@@ -21,9 +15,6 @@ enum ENUM_GAP_TYPE
     GAP_NWOG        // New Week Opening Gap
 };
 
-//+------------------------------------------------------------------+
-//| Session Gap Structure                                            |
-//+------------------------------------------------------------------+
 struct SSessionGap
 {
     ENUM_GAP_TYPE   type;
@@ -46,9 +37,6 @@ struct SSessionGap
                    size(0), isValid(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| Session Gap Detector Class                                       |
-//+------------------------------------------------------------------+
 class CSessionGapDetector
 {
 private:
@@ -92,9 +80,7 @@ public:
     int             GetHistoryCount() const { return m_historyCount; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSessionGapDetector::CSessionGapDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_D1),
@@ -104,17 +90,12 @@ CSessionGapDetector::CSessionGapDetector() :
     ArrayResize(m_history, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSessionGapDetector::~CSessionGapDetector()
 {
     ArrayFree(m_history);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSessionGapDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol    = symbol;
@@ -124,9 +105,6 @@ bool CSessionGapDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR                                                          |
-//+------------------------------------------------------------------+
 double CSessionGapDetector::GetATR(int period)
 {
     // Batch 157: shared indicator-manager handle (was created+released twice per
@@ -140,9 +118,6 @@ double CSessionGapDetector::GetATR(int period)
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CSessionGapDetector::Update()
 {
     DetectNDOG();
@@ -152,9 +127,7 @@ void CSessionGapDetector::Update()
     if(m_nwog.isValid) UpdateFillStatus(m_nwog);
 }
 
-//+------------------------------------------------------------------+
-//| Detect New Day Opening Gap                                       |
-//+------------------------------------------------------------------+
+// Detect New Day Opening Gap
 // NDOG: Gap between yesterday's close and today's open.
 // On daily bars: bar 1 = yesterday, bar 0 = today (if closed) or current day.
 // Gap zone: from Min(prevClose, todayOpen) to Max(prevClose, todayOpen).
@@ -191,9 +164,7 @@ bool CSessionGapDetector::DetectNDOG()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect New Week Opening Gap                                      |
-//+------------------------------------------------------------------+
+// Detect New Week Opening Gap
 // NWOG: Gap between Friday's close and Monday's open.
 bool CSessionGapDetector::DetectNWOG()
 {
@@ -227,9 +198,6 @@ bool CSessionGapDetector::DetectNWOG()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update Fill Status                                               |
-//+------------------------------------------------------------------+
 // Fill: close back THROUGH the entire gap (close past prevClose in gap direction).
 // Mitigated: price traded to the midpoint.
 void CSessionGapDetector::UpdateFillStatus(SSessionGap &gap)
@@ -277,9 +245,6 @@ void CSessionGapDetector::UpdateFillStatus(SSessionGap &gap)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Gap Getters                                                      |
-//+------------------------------------------------------------------+
 bool CSessionGapDetector::GetNDOG(SSessionGap &gap)
 {
     if(!m_ndog.isValid) return false;
@@ -311,9 +276,6 @@ bool CSessionGapDetector::IsInAnyGap(double price)
     return IsInNDOG(price) || IsInNWOG(price);
 }
 
-//+------------------------------------------------------------------+
-//| Is Near Gap Midpoint                                             |
-//+------------------------------------------------------------------+
 bool CSessionGapDetector::IsNearGapMidpoint(double price, double tolerancePct)
 {
     // NDOG check

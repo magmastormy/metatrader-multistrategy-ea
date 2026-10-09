@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| RegimeEngine.mqh                                                 |
-//| Deterministic regime + microstructure viability engine           |
-//| Thin coordinator: state lives in the Regime* modules below.      |
-//+------------------------------------------------------------------+
+// Deterministic regime + microstructure viability engine
+// Thin coordinator: state lives in the Regime* modules below.
 #ifndef REGIME_ENGINE_MQH
 #define REGIME_ENGINE_MQH
 

@@ -1,14 +1,11 @@
-//+------------------------------------------------------------------+
-//| Structure Detection Engine - Enterprise Grade                    |
-//| Unified ICT structure detection for all strategies               |
-//|                                                                  |
-//| Coordinator only. The heavy lifting lives in focused modules:    |
-//|   StructureTypes.mqh     - shared value types                    |
-//|   StructureSwing.mqh     - swing high/low + potential tracking   |
-//|   StructureScore.mqh     - swing strength + structure scoring    |
-//|   StructureBOSCHoCH.mqh  - break of structure / change of char.  |
-//|   StructureLiquidity.mqh - liquidity sweep detection             |
-//+------------------------------------------------------------------+
+// Structure Detection Engine - Enterprise Grade
+// Unified ICT structure detection for all strategies
+// Coordinator only. The heavy lifting lives in focused modules:
+// StructureTypes.mqh     - shared value types
+// StructureSwing.mqh     - swing high/low + potential tracking
+// StructureScore.mqh     - swing strength + structure scoring
+// StructureBOSCHoCH.mqh  - break of structure / change of char.
+// StructureLiquidity.mqh - liquidity sweep detection
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -37,9 +34,7 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Structure Detection Engine Class                                |
-//+------------------------------------------------------------------+
+// Structure Detection Engine Class
 class CStructureEngine
 {
 private:
@@ -59,7 +54,6 @@ private:
         // Extracted modules (by value)
         CStructureSwingDetector m_swing;  // Swing detection + potential swing slots
     
-    // Diagnostics
     CSignalDiagnostics* m_diagnostics;
     
     // Internal methods - thin forwarders into the extracted modules
@@ -106,16 +100,13 @@ public:
     bool IsBearishStructure() const { return m_state.isBearish; }
     void Reset();
     
-    // Getters for swing points
     bool GetLastSwingHigh(SwingPoint &point);
     bool GetLastSwingLow(SwingPoint &point);
     int GetSwingHighCount() const { return ArraySize(m_swingHighs); }
     int GetSwingLowCount() const { return ArraySize(m_swingLows); }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CStructureEngine::CStructureEngine() :
     m_swingPeriod(10),
     m_minSwingSize(10.0),
@@ -130,18 +121,13 @@ CStructureEngine::CStructureEngine() :
     ArrayResize(m_swingLows, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CStructureEngine::~CStructureEngine()
 {
     ArrayFree(m_swingHighs);
     ArrayFree(m_swingLows);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Engine                                               |
-//+------------------------------------------------------------------+
 bool CStructureEngine::Initialize(int swingPeriod, double minSwingSize, 
                                  bool useATR, CSignalDiagnostics* diagnostics)
 {
@@ -162,9 +148,6 @@ bool CStructureEngine::Initialize(int swingPeriod, double minSwingSize,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Detect Swing Points                                             |
-//+------------------------------------------------------------------+
 bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     MqlRates rates[];
@@ -209,7 +192,6 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             ArrayResize(m_swingHighs, size + 1);
             m_swingHighs[size] = point;
             
-            // Update structure state
             UpdateStructureState(point, true);
             
             if(m_diagnostics != NULL && size > 0)
@@ -246,7 +228,6 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             ArrayResize(m_swingLows, size + 1);
             m_swingLows[size] = point;
             
-            // Update structure state
             UpdateStructureState(point, false);
             
             if(m_diagnostics != NULL && size > 0)
@@ -293,9 +274,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Scan recent bars for NEW potential swings (left side only)      |
-//+------------------------------------------------------------------+
+// Scan recent bars for NEW potential swings (left side only)
 void CStructureEngine::ScanPotentialSwings(const MqlRates &rates[], int copied)
 {
     for(int i = 0; i < m_swingPeriod && i < copied; i++)
@@ -328,9 +307,7 @@ void CStructureEngine::ScanPotentialSwings(const MqlRates &rates[], int copied)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Confirm potential swings when right side becomes available
-//+------------------------------------------------------------------+
+// Confirm potential swings when right side becomes available
 void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int currentBarIndex)
 {
     // Check if potential swing high can now be confirmed (right side available)
@@ -410,49 +387,36 @@ void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int curre
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent bullish BOS                                    |
-//+------------------------------------------------------------------+
+// Check for recent bullish BOS
 bool CStructureEngine::HasBullishBOS(int lookback)
 {
     return CStructureBOSCHoCH::HasBullishBOS(m_swingHighs, m_swingLows, lookback);
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent bearish BOS                                    |
-//+------------------------------------------------------------------+
+// Check for recent bearish BOS
 bool CStructureEngine::HasBearishBOS(int lookback)
 {
     return CStructureBOSCHoCH::HasBearishBOS(m_swingHighs, m_swingLows, lookback);
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent bullish CHOCH                                  |
-//+------------------------------------------------------------------+
+// Check for recent bullish CHOCH
 bool CStructureEngine::HasBullishCHOCH(int lookback)
 {
     return CStructureBOSCHoCH::HasBullishCHOCH(m_state, m_swingLows, lookback);
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent bearish CHOCH                                  |
-//+------------------------------------------------------------------+
+// Check for recent bearish CHOCH
 bool CStructureEngine::HasBearishCHOCH(int lookback)
 {
     return CStructureBOSCHoCH::HasBearishCHOCH(m_state, m_swingHighs, lookback);
 }
 
-//+------------------------------------------------------------------+
-//| Check for recent liquidity sweep                                |
-//+------------------------------------------------------------------+
+// Check for recent liquidity sweep
 bool CStructureEngine::HasLiquiditySweep(int lookback)
 {
     return CStructureLiquidity::HasLiquiditySweep(m_state, lookback);
 }
 
-//+------------------------------------------------------------------+
-//| Get last swing high                                             |
-//+------------------------------------------------------------------+
 bool CStructureEngine::GetLastSwingHigh(SwingPoint &point)
 {
     int size = ArraySize(m_swingHighs);
@@ -463,9 +427,6 @@ bool CStructureEngine::GetLastSwingHigh(SwingPoint &point)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Get last swing low                                              |
-//+------------------------------------------------------------------+
 bool CStructureEngine::GetLastSwingLow(SwingPoint &point)
 {
     int size = ArraySize(m_swingLows);
@@ -476,9 +437,7 @@ bool CStructureEngine::GetLastSwingLow(SwingPoint &point)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Reset engine state                                              |
-//+------------------------------------------------------------------+
+// Reset engine state
 void CStructureEngine::Reset()
 {
     ArrayResize(m_swingHighs, 0);

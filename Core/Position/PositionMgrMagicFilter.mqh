@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| PositionMgrMagicFilter.mqh                                       |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATELESS helper: decides whether a broker position magic number |
-//| belongs to this EA instance. Batch 168 replaced the old           |
-//| `magicNumber + 10000 // Approximate range` guess with the         |
-//| CMagicRange authority so this and every other ownership test in   |
-//| the EA agree on one window.                                       |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATELESS helper: decides whether a broker position magic number
+// belongs to this EA instance. Batch 168 replaced the old
+// `magicNumber + 10000 // Approximate range` guess with the
+// CMagicRange authority so this and every other ownership test in
+// the EA agree on one window.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_MAGIC_FILTER_MQH
@@ -15,10 +11,7 @@
 
 #include "../Utils/MagicRange.mqh"
 
-//+------------------------------------------------------------------+
-//| CPositionMgrMagicFilter                                          |
-//| Pure static utility - holds no state, allocates nothing.         |
-//+------------------------------------------------------------------+
+// Pure static utility - holds no state, allocates nothing.
 class CPositionMgrMagicFilter
 {
 public:

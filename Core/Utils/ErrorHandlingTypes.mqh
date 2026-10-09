@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingTypes.mqh                                           |
-//| Shared enums, structs and severity macros for the error          |
-//| handling framework. Extracted verbatim from ErrorHandling.mqh.   |
-//+------------------------------------------------------------------+
+// Shared enums, structs and severity macros for the error
+// handling framework. Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_TYPES_MQH
 #define CORE_ERROR_HANDLING_TYPES_MQH
 
 // Forward declarations
 class CEnhancedErrorHandler;
 
-//+------------------------------------------------------------------+
-//| Logging Verbosity Levels                                         |
-//+------------------------------------------------------------------+
+// Logging Verbosity Levels
 enum ENUM_LOG_VERBOSITY
 {
     VERBOSITY_SILENT = 0,       // No logging at all
@@ -22,9 +17,6 @@ enum ENUM_LOG_VERBOSITY
     VERBOSITY_DEBUG = 5         // Debug-level logging
 };
 
-//+------------------------------------------------------------------+
-//| Retry Configuration Structure                                  |
-//+------------------------------------------------------------------+
 struct SRetryConfig
 {
     int maxRetries;          // Maximum number of retry attempts
@@ -35,9 +27,7 @@ struct SRetryConfig
     SRetryConfig() : maxRetries(3), retryDelay(100), exponentialBackoff(false), maxDelayMs(30000) {}
 };
 
-//+------------------------------------------------------------------+
-//| Error Classification System                                    |
-//+------------------------------------------------------------------+
+// Error Classification System
 enum ENUM_ERROR_SEVERITY
 {
     ERROR_INFO = 0,          // Informational, no action needed
@@ -81,9 +71,6 @@ enum ENUM_ERROR_SEVERITY
 #define COMPONENT_CRITICAL COMPONENT_FAILED
 #endif
 
-//+------------------------------------------------------------------+
-//| Error Aggregation Structure                                    |
-//+------------------------------------------------------------------+
 struct SErrorAggregation
 {
     int errorCode;
@@ -99,9 +86,7 @@ struct SErrorAggregation
         maxSeverity(ERROR_INFO), lastComponent(""), lastMessage("") {}
 };
 
-//+------------------------------------------------------------------+
-//| Component Health Status                                        |
-//+------------------------------------------------------------------+
+// Component Health Status
 enum ENUM_COMPONENT_STATUS
 {
     COMPONENT_HEALTHY = 0,       // Component operating normally
@@ -112,9 +97,7 @@ enum ENUM_COMPONENT_STATUS
     COMPONENT_UNKNOWN = 5        // Component status unknown
 };
 
-//+------------------------------------------------------------------+
-//| Retry Strategy Types                                           |
-//+------------------------------------------------------------------+
+// Retry Strategy Types
 enum ENUM_RETRY_STRATEGY
 {
     RETRY_NONE = 0,             // No retry
@@ -123,9 +106,6 @@ enum ENUM_RETRY_STRATEGY
     RETRY_EXPONENTIAL = 3       // Exponential backoff
 };
 
-//+------------------------------------------------------------------+
-//| Error Context Structure                                        |
-//+------------------------------------------------------------------+
 struct SErrorContext
 {
     string component;           // Component name
@@ -141,9 +121,6 @@ struct SErrorContext
         additionalInfo(""), timestamp(0), severity(ERROR_INFO) {}
 };
 
-//+------------------------------------------------------------------+
-//| Component Health Structure                                     |
-//+------------------------------------------------------------------+
 struct SComponentHealth
 {
     string componentName;

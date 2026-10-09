@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| StructureSwing.mqh - Swing high/low detection                    |
-//| Extracted verbatim from StructureEngine.mqh (no behavior change) |
-//|                                                                  |
-//| Owns the swing sizing configuration (minSwingSize / useATR) and  |
-//| the real-time "potential swing" tracking slots (L4-009 fix).     |
-//+------------------------------------------------------------------+
+// StructureSwing.mqh - Swing high/low detection
+// Extracted verbatim from StructureEngine.mqh (no behavior change)
+// Owns the swing sizing configuration (minSwingSize / useATR) and
+// the real-time "potential swing" tracking slots (L4-009 fix).
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -14,9 +11,7 @@
 
 #include "StructureTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Swing point detector - owns swing config + potential slots       |
-//+------------------------------------------------------------------+
+// Swing point detector - owns swing config + potential slots
 class CStructureSwingDetector
 {
 private:
@@ -93,9 +88,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - defaults mirror CStructureEngine::CStructureEngine |
-//+------------------------------------------------------------------+
+// Constructor - defaults mirror CStructureEngine::CStructureEngine
 CStructureSwingDetector::CStructureSwingDetector() :
     m_minSwingSize(10.0),
     m_useATR(true),
@@ -108,9 +101,7 @@ CStructureSwingDetector::CStructureSwingDetector() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a swing high                                    |
-//+------------------------------------------------------------------+
+// Check if bar is a swing high
 bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)
@@ -152,9 +143,7 @@ bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, in
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a swing low                                     |
-//+------------------------------------------------------------------+
+// Check if bar is a swing low
 bool CStructureSwingDetector::IsSwingLow(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)
@@ -195,9 +184,7 @@ bool CStructureSwingDetector::IsSwingLow(const MqlRates &rates[], int index, int
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a potential swing high (left side only - real-time)
-//+------------------------------------------------------------------+
+// Check if bar is a potential swing high (left side only - real-time)
 bool CStructureSwingDetector::IsPotentialSwingHigh(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates))
@@ -236,9 +223,7 @@ bool CStructureSwingDetector::IsPotentialSwingHigh(const MqlRates &rates[], int 
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a potential swing low (left side only - real-time)
-//+------------------------------------------------------------------+
+// Check if bar is a potential swing low (left side only - real-time)
 bool CStructureSwingDetector::IsPotentialSwingLow(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates))
@@ -277,9 +262,7 @@ bool CStructureSwingDetector::IsPotentialSwingLow(const MqlRates &rates[], int i
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a confirmed swing high (both sides - historical)
-//+------------------------------------------------------------------+
+// Check if bar is a confirmed swing high (both sides - historical)
 bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)
@@ -325,9 +308,7 @@ bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int 
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if bar is a confirmed swing low (both sides - historical)
-//+------------------------------------------------------------------+
+// Check if bar is a confirmed swing low (both sides - historical)
 bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int index, int period)
 {
     if(index < period || index >= ArraySize(rates) - period)

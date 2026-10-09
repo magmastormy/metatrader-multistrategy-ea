@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| SubsystemLogger.mqh - Separated Log Files for Different Modules  |
-//| Provides isolated logging for Drawing, AI, Trading, Risk, etc.   |
-//| L9-007: Routes through CJsonLogger for unified correlation IDs   |
-//+------------------------------------------------------------------+
+// SubsystemLogger.mqh - Separated Log Files for Different Modules
+// Provides isolated logging for Drawing, AI, Trading, Risk, etc.
+// L9-007: Routes through CJsonLogger for unified correlation IDs
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
 #property strict
@@ -12,9 +10,7 @@
 
 #include "JsonLogger.mqh"
 
-//+------------------------------------------------------------------+
-//| Log File Types                                                   |
-//+------------------------------------------------------------------+
+// Log File Types
 enum ENUM_LOG_SUBSYSTEM
 {
     LOG_DRAWING,      // Chart drawing operations
@@ -26,11 +22,8 @@ enum ENUM_LOG_SUBSYSTEM
     LOG_DEBUG         // General debugging
 };
 
-//+------------------------------------------------------------------+
-//| Subsystem Logger Class                                           |
-//| Creates separate .log files for each subsystem                   |
-//| Routes through CJsonLogger for unified correlation IDs           |
-//+------------------------------------------------------------------+
+// Creates separate .log files for each subsystem
+// Routes through CJsonLogger for unified correlation IDs
 class CSubsystemLogger
 {
 private:
@@ -73,9 +66,7 @@ public:
     void CloseAll();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSubsystemLogger::CSubsystemLogger() :
     m_basePath(""),
     m_symbol(""),
@@ -98,9 +89,7 @@ CSubsystemLogger::CSubsystemLogger() :
     ArrayInitialize(m_fileCreationTimes, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSubsystemLogger::~CSubsystemLogger()
 {
     if(m_initialized)
@@ -109,9 +98,7 @@ CSubsystemLogger::~CSubsystemLogger()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Map subsystem enum to component string for CJsonLogger           |
-//+------------------------------------------------------------------+
+// Map subsystem enum to component string for CJsonLogger
 string CSubsystemLogger::SubsystemToComponent(ENUM_LOG_SUBSYSTEM subsystem)
 {
     switch(subsystem)
@@ -127,9 +114,6 @@ string CSubsystemLogger::SubsystemToComponent(ENUM_LOG_SUBSYSTEM subsystem)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Log File Name                                                |
-//+------------------------------------------------------------------+
 string CSubsystemLogger::GetLogFileName(ENUM_LOG_SUBSYSTEM subsystem)
 {
     string prefix = "";
@@ -151,9 +135,6 @@ string CSubsystemLogger::GetLogFileName(ENUM_LOG_SUBSYSTEM subsystem)
     return m_basePath + prefix + m_symbol + "_" + dateStr + ".log";
 }
 
-//+------------------------------------------------------------------+
-//| Get Rotated File Name                                            |
-//+------------------------------------------------------------------+
 string CSubsystemLogger::GetRotatedFileName(ENUM_LOG_SUBSYSTEM subsystem, int rotationIndex)
 {
     string prefix = "";
@@ -175,9 +156,6 @@ string CSubsystemLogger::GetRotatedFileName(ENUM_LOG_SUBSYSTEM subsystem, int ro
     return m_basePath + prefix + m_symbol + "_" + dateStr + "_" + IntegerToString(rotationIndex) + ".log";
 }
 
-//+------------------------------------------------------------------+
-//| Open File If Needed                                              |
-//+------------------------------------------------------------------+
 void CSubsystemLogger::OpenFileIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
 {
     int idx = (int)subsystem;
@@ -197,9 +175,6 @@ void CSubsystemLogger::OpenFileIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Rotate If Needed                                                 |
-//+------------------------------------------------------------------+
 void CSubsystemLogger::RotateIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
 {
     int idx = (int)subsystem;
@@ -253,9 +228,7 @@ void CSubsystemLogger::RotateIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup Old Rotated Files                                        |
-//+------------------------------------------------------------------+
+// Cleanup Old Rotated Files
 void CSubsystemLogger::CleanupOldFiles(ENUM_LOG_SUBSYSTEM subsystem)
 {
     // Find and delete files beyond MAX_RETAINED_FILES
@@ -272,9 +245,6 @@ void CSubsystemLogger::CleanupOldFiles(ENUM_LOG_SUBSYSTEM subsystem)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Logger                                                |
-//+------------------------------------------------------------------+
 bool CSubsystemLogger::Initialize(const string symbol, const string basePath = "")
 {
     m_symbol = symbol;
@@ -290,9 +260,6 @@ bool CSubsystemLogger::Initialize(const string symbol, const string basePath = "
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize Logger                                              |
-//+------------------------------------------------------------------+
 void CSubsystemLogger::Deinitialize()
 {
     if(m_initialized)
@@ -303,9 +270,6 @@ void CSubsystemLogger::Deinitialize()
     Print("[SUBSYSTEM-LOGGER] Deinitialized");
 }
 
-//+------------------------------------------------------------------+
-//| Log Message                                                      |
-//+------------------------------------------------------------------+
 void CSubsystemLogger::Log(ENUM_LOG_SUBSYSTEM subsystem, const string message)
 {
     int idx = (int)subsystem;
@@ -375,9 +339,7 @@ void CSubsystemLogger::Log(ENUM_LOG_SUBSYSTEM subsystem, const string message)
         Print(fullMessage);
 }
 
-//+------------------------------------------------------------------+
-//| Flush All Logs                                                   |
-//+------------------------------------------------------------------+
+// Flush All Logs
 void CSubsystemLogger::Flush()
 {
     datetime now = TimeCurrent();
@@ -392,9 +354,7 @@ void CSubsystemLogger::Flush()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Close All Log Files                                              |
-//+------------------------------------------------------------------+
+// Close All Log Files
 void CSubsystemLogger::CloseAll()
 {
     for(int i = 0; i < ArraySize(m_fileHandles); i++)

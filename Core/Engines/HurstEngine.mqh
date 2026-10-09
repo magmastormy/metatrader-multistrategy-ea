@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| HurstEngine.mqh                                                  |
-//| Hurst Exponent engine — DFA + variance-time ensemble             |
-//| Provides regime classification and strategy weight multipliers   |
-//| Batch 114: DFA (Kantelhardt 2002) replaces pure variance-time    |
-//| with ensemble averaging for 30-50% lower estimation RMSE        |
-//+------------------------------------------------------------------+
+// Hurst Exponent engine — DFA + variance-time ensemble
+// Provides regime classification and strategy weight multipliers
+// Batch 114: DFA (Kantelhardt 2002) replaces pure variance-time
+// with ensemble averaging for 30-50% lower estimation RMSE
 #ifndef HURST_ENGINE_MQH
 #define HURST_ENGINE_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Hurst Regime Classification                                      |
-//+------------------------------------------------------------------+
+// Hurst Regime Classification
 enum ENUM_HURST_REGIME
 {
     HURST_MEAN_REVERTING = 0,   // H < 0.45
@@ -20,9 +15,6 @@ enum ENUM_HURST_REGIME
     HURST_TRENDING = 2          // H > 0.55
 };
 
-//+------------------------------------------------------------------+
-//| Hurst Snapshot Structure                                         |
-//+------------------------------------------------------------------+
 struct SHurstSnapshot
 {
     double hurstValue;            // Computed Hurst exponent
@@ -49,9 +41,7 @@ struct SHurstSnapshot
     }
 };
 
-//+------------------------------------------------------------------+
-//| CHurstEngine — DFA + Variance-Time Ensemble Hurst Calculator     |
-//+------------------------------------------------------------------+
+// CHurstEngine — DFA + Variance-Time Ensemble Hurst Calculator
 class CHurstEngine
 {
 private:
@@ -94,7 +84,6 @@ private:
         }
     }
 
-    // --- Regime to string ---
     string RegimeToString(const ENUM_HURST_REGIME regime) const
     {
         switch(regime)
@@ -408,7 +397,6 @@ private:
     }
 
 public:
-    // --- Constructor ---
     CHurstEngine(const string symbol = "",
                  const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                  const int lookbackPeriod = 300,
@@ -618,7 +606,6 @@ public:
             return false;
         }
 
-        // Calculate Hurst
         double hurst = CalculateHurst(closePrices, copied);
         ENUM_HURST_REGIME regime = GetRegimeClassification(hurst);
 

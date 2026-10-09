@@ -1,29 +1,22 @@
-//+------------------------------------------------------------------+
-//| TradeMgrConfirmationQueue.mqh                                    |
-//| Deferred execution-confirmation queue for CTradeManager          |
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
-//| This module OWNS the non-blocking fill-confirmation queue that   |
-//| used to live inside CTradeManager as                             |
-//| m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS] /              |
-//| m_pendingConfirmationCount:                                      |
-//|   - Enqueue()                  (was the deferred branch of       |
-//|                                 ConfirmExecutionReceipt)         |
-//|   - CheckPendingConfirmations()(the tick-loop resolver)          |
-//|   - Clear()                    (destructor / Deinit reset loop)  |
-//|                                                                  |
-//| STATE OWNERSHIP: CTradeManager holds this class BY VALUE and     |
-//| keeps thin forwarders with the original signatures.              |
-//|                                                                  |
-//| NO BACK-POINTER: the queue never needs to reach back into        |
-//| CTradeManager - it only touches MT5 history APIs.                |
-//|                                                                  |
-//| SPendingConfirmation + MAX_PENDING_CONFIRMATIONS are declared    |
-//| here (top-level, exactly as they were in TradeManager.mqh) so    |
-//| that every existing reference keeps resolving unchanged. Note    |
-//| Core/Orchestration/TradeExecutor.mqh has its own CLASS-NESTED    |
-//| struct of the same name; that one is unaffected.                 |
-//+------------------------------------------------------------------+
+// Deferred execution-confirmation queue for CTradeManager
+// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
+// This module OWNS the non-blocking fill-confirmation queue that
+// used to live inside CTradeManager as
+// m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS] /
+// m_pendingConfirmationCount:
+// - Enqueue()                  (was the deferred branch of
+// ConfirmExecutionReceipt)
+// - CheckPendingConfirmations()(the tick-loop resolver)
+// - Clear()                    (destructor / Deinit reset loop)
+// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
+// keeps thin forwarders with the original signatures.
+// NO BACK-POINTER: the queue never needs to reach back into
+// CTradeManager - it only touches MT5 history APIs.
+// SPendingConfirmation + MAX_PENDING_CONFIRMATIONS are declared
+// here (top-level, exactly as they were in TradeManager.mqh) so
+// that every existing reference keeps resolving unchanged. Note
+// Core/Orchestration/TradeExecutor.mqh has its own CLASS-NESTED
+// struct of the same name; that one is unaffected.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -46,11 +39,9 @@ struct SPendingConfirmation
     bool     isActive;
 };
 
-//+------------------------------------------------------------------+
-//| Trade Manager Confirmation Queue                                 |
-//| Resolves broker-accepted-but-not-yet-dealt orders lazily, so the |
-//| execution path never blocks on Sleep().                          |
-//+------------------------------------------------------------------+
+// Trade Manager Confirmation Queue
+// Resolves broker-accepted-but-not-yet-dealt orders lazily, so the
+// execution path never blocks on Sleep().
 class CTradeMgrConfirmationQueue
 {
 private:
@@ -62,9 +53,7 @@ public:
 
     int Count() const { return m_pendingConfirmationCount; }
 
-    //+--------------------------------------------------------------+
-    //| Queue an order whose deal has not appeared in history yet     |
-    //+--------------------------------------------------------------+
+// Queue an order whose deal has not appeared in history yet
     void Enqueue(const string symbolName, const ulong orderTicket, const double expectedPrice)
     {
         // Deal not found yet - defer to pending confirmation for later resolution
@@ -83,10 +72,8 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Check and resolve pending execution confirmations             |
-    //| (call from main tick loop)                                    |
-    //+--------------------------------------------------------------+
+// Check and resolve pending execution confirmations
+// (call from main tick loop)
     void CheckPendingConfirmations()
     {
         if(m_pendingConfirmationCount <= 0)
@@ -182,11 +169,9 @@ public:
         }
     }
 
-    //+--------------------------------------------------------------+
-    //| Does this EA hold an open position on the symbol?            |
-    //| Ownership comes from CMagicRange so only this EA's positions  |
-    //| are considered, never the user's or another EA's.            |
-    //+--------------------------------------------------------------+
+// Does this EA hold an open position on the symbol?
+// Ownership comes from CMagicRange so only this EA's positions
+// are considered, never the user's or another EA's.
     bool HasOpenPositionForSymbol(const string symbolName)
     {
         for(int p = PositionsTotal() - 1; p >= 0; p--)
@@ -200,20 +185,16 @@ public:
         return false;
     }
 
-    //+--------------------------------------------------------------+
-    //| Surface an unreconciled send loudly. This path used to be a   |
-    //| silent drop; the log signature is what an operator needs to   |
-    //| act on, and AGENTS.md requires decisions stay explainable.    |
-    //+--------------------------------------------------------------+
+// Surface an unreconciled send loudly. This path used to be a
+// silent drop; the log signature is what an operator needs to
+// act on, and AGENTS.md requires decisions stay explainable.
     void LogCriticalUnreconciled(const string symbolName, const ulong orderTicket, const string outcome)
     {
         PrintFormat("[RISK-UNRECONCILED] CRITICAL | %s | order=%I64u | outcome=%s | verify the basket and any unprotected position on this symbol",
                     symbolName, orderTicket, outcome);
     }
 
-    //+--------------------------------------------------------------+
-    //| Clear pending confirmations (destructor / Deinit)             |
-    //+--------------------------------------------------------------+
+// Clear pending confirmations (destructor / Deinit)
     void Clear()
     {
         m_pendingConfirmationCount = 0;

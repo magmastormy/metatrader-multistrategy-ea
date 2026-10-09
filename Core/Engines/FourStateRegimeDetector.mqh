@@ -1,19 +1,14 @@
-//+------------------------------------------------------------------+
-//| FourStateRegimeDetector.mqh                                      |
-//| Four-State Market Regime Detector (MSR + KAMA)                   |
-//| Combines volatility regime (MSR-inspired) with trend (KAMA)      |
-//| States: LowVol-Bull, LowVol-Bear, HighVol-Bull, HighVol-Bear    |
-//| Source: arXiv:2208.11574 (Springer 2023, cited 12 times)        |
-//| Batch 114: New engine for regime-conditional strategy weighting  |
-//+------------------------------------------------------------------+
+// Four-State Market Regime Detector (MSR + KAMA)
+// Combines volatility regime (MSR-inspired) with trend (KAMA)
+// States: LowVol-Bull, LowVol-Bear, HighVol-Bull, HighVol-Bear
+// Source: arXiv:2208.11574 (Springer 2023, cited 12 times)
+// Batch 114: New engine for regime-conditional strategy weighting
 #ifndef FOUR_STATE_REGIME_DETECTOR_MQH
 #define FOUR_STATE_REGIME_DETECTOR_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Four-State Market Regime                                          |
-//+------------------------------------------------------------------+
+// Four-State Market Regime
 enum ENUM_FOUR_STATE_REGIME
 {
     FSTATE_LOW_VOL_BULL = 0,   // Low volatility + Bullish trend
@@ -22,9 +17,7 @@ enum ENUM_FOUR_STATE_REGIME
     FSTATE_HIGH_VOL_BEAR = 3   // High volatility + Bearish trend
 };
 
-//+------------------------------------------------------------------+
-//| Four-State Regime Snapshot                                        |
-//+------------------------------------------------------------------+
+// Four-State Regime Snapshot
 struct SFourStateSnapshot
 {
     ENUM_FOUR_STATE_REGIME regime;
@@ -64,22 +57,16 @@ struct SFourStateSnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| CFourStateRegimeDetector                                          |
-//|                                                                  |
-//| Implementation:                                                   |
-//| Layer 1: Volatility regime via rolling percentile of realized vol|
-//|   - Uses 50-bar realized vol (log returns)                       |
-//|   - Compares to 252-bar rolling window                           |
-//|   - > 75th percentile = high vol, < 25th = low vol               |
-//|                                                                  |
-//| Layer 2: Trend direction via KAMA (Kaufman Adaptive MA)          |
-//|   - KAMA > price → bearish                                       |
-//|   - KAMA < price → bullish                                       |
-//|   - KAMA adapts to market efficiency (ER ratio)                  |
-//|                                                                  |
-//| Combined: 4 states × strategy weight multipliers                 |
-//+------------------------------------------------------------------+
+// Implementation:
+// Layer 1: Volatility regime via rolling percentile of realized vol
+// - Uses 50-bar realized vol (log returns)
+// - Compares to 252-bar rolling window
+// - > 75th percentile = high vol, < 25th = low vol
+// Layer 2: Trend direction via KAMA (Kaufman Adaptive MA)
+// - KAMA > price → bearish
+// - KAMA < price → bullish
+// - KAMA adapts to market efficiency (ER ratio)
+// Combined: 4 states × strategy weight multipliers
 class CFourStateRegimeDetector
 {
 private:
@@ -269,7 +256,6 @@ public:
         }
     }
 
-    //--- Configure
     void Configure(int kamaPeriod = 10, int volCalcPeriod = 50,
                    int volHistoryWindow = 252,
                    double highVolThreshold = 0.75, double lowVolThreshold = 0.25)
@@ -366,7 +352,6 @@ public:
         m_volCursor = (m_volCursor + 1) % m_volHistoryWindow;
         if(m_volCount < m_volHistoryWindow) m_volCount++;
 
-        // Compute volatility percentile
         double volPctile = ComputeVolPercentile();
         bool isHighVol = (volPctile > m_highVolThreshold);
 

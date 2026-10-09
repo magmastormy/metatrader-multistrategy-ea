@@ -1,36 +1,29 @@
-//+------------------------------------------------------------------+
-//| SpikeHunterExecutor.mqh                                          |
-//| Decomposition extraction from CSpikeHunterEngine (behaviour      |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the trade-execution collaborators and counters that used to |
-//| be the loose member group:                                       |
-//|   m_baseMagic, m_positionSizer, m_riskManager, m_tradeManager,   |
-//|   m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened    |
-//|                                                                  |
-//| Moved logic (verbatim):                                          |
-//|   GetActiveSpikePositions() �?SPIKE-HUNT comment scan (static,   |
-//|                               it never touched engine state)     |
-//|   CanOpenSpikeTrade()       �?cooldown + max concurrent gate     |
-//|   OpenSpikeTrade()          �?ATR SL/TP, position sizing, margin |
-//|                               cap, lot-step normalisation, magic |
-//|                               composition, UnifiedRiskManager    |
-//|                               pre-trade gate (AGENTS.md #1),     |
-//|                               TradeManager path (L10-008) and    |
-//|                               the raw CTrade fallback, plus the  |
-//|                               L10-014 dynamic slippage and the   |
-//|                               L10-018 AI-VOTE lines on BOTH      |
-//|                               paths.                             |
-//|                                                                  |
-//| Per-symbol state reads/writes are routed through the detector    |
-//| pointer (symbol, ATR, confluence, cooldown stamps) so the state  |
-//| stays single-owned by CSpikeHunterDetector. Every threshold,     |
-//| literal, log tag and short-circuit order is reproduced verbatim. |
-//|                                                                  |
-//| The includes below mirror SpikeHunterEngine.mqh exactly so this  |
-//| module sees the identical set of collaborator definitions the    |
-//| original class body saw.                                         |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CSpikeHunterEngine (behaviour
+// preserving).
+// Owns the trade-execution collaborators and counters that used to
+// be the loose member group:
+// m_baseMagic, m_positionSizer, m_riskManager, m_tradeManager,
+// m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened
+// Moved logic (verbatim):
+// GetActiveSpikePositions() �?SPIKE-HUNT comment scan (static,
+// it never touched engine state)
+// CanOpenSpikeTrade()       �?cooldown + max concurrent gate
+// OpenSpikeTrade()          �?ATR SL/TP, position sizing, margin
+// cap, lot-step normalisation, magic
+// composition, UnifiedRiskManager
+// pre-trade gate (AGENTS.md #1),
+// TradeManager path (L10-008) and
+// the raw CTrade fallback, plus the
+// L10-014 dynamic slippage and the
+// L10-018 AI-VOTE lines on BOTH
+// paths.
+// Per-symbol state reads/writes are routed through the detector
+// pointer (symbol, ATR, confluence, cooldown stamps) so the state
+// stays single-owned by CSpikeHunterDetector. Every threshold,
+// literal, log tag and short-circuit order is reproduced verbatim.
+// The includes below mirror SpikeHunterEngine.mqh exactly so this
+// module sees the identical set of collaborator definitions the
+// original class body saw.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_EXECUTOR_MQH
@@ -50,9 +43,7 @@ class CUnifiedRiskManager;
 // Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-//+------------------------------------------------------------------+
-//| CSpikeHunterExecutor �?stateful spike trade gating + execution    |
-//+------------------------------------------------------------------+
+// CSpikeHunterExecutor �?stateful spike trade gating + execution
 class CSpikeHunterExecutor
 {
 private:
@@ -81,10 +72,8 @@ public:
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Dependency injection �?mirrors the CSpikeHunterEngine::Init       |
-   //| assignment block one-for-one.                                     |
-   //+------------------------------------------------------------------+
+// Dependency injection �?mirrors the CSpikeHunterEngine::Init
+// assignment block one-for-one.
    void Init(const SSpikeHunterConfig &config,
              int baseMagic,
              CPositionSizer *pSizer,
@@ -105,9 +94,7 @@ public:
    //--- Accessor (was CSpikeHunterEngine::m_totalTradesOpened)
    int GetTotalTradesOpened() const { return m_totalTradesOpened; }
 
-   //+------------------------------------------------------------------+
-   //| Count active spike positions (positions with SPIKE-HUNT comment)  |
-   //+------------------------------------------------------------------+
+// Count active spike positions (positions with SPIKE-HUNT comment)
    static int GetActiveSpikePositions()
    {
       int count = 0;
@@ -126,9 +113,7 @@ public:
       return count;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if we can open a spike trade for this symbol                |
-   //+------------------------------------------------------------------+
+// Check if we can open a spike trade for this symbol
    bool CanOpenSpikeTrade(int idx) const
    {
       // Check cooldown (use family-specific cooldown)
@@ -147,9 +132,7 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Open a spike trade in the given direction                         |
-   //+------------------------------------------------------------------+
+// Open a spike trade in the given direction
    bool OpenSpikeTrade(int idx, int direction)
    {
       string symbol = m_detector.GetSymbolName(idx);

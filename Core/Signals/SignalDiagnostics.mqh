@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SignalDiagnostics.mqh                                           |
-//| Comprehensive Signal Diagnostic and Logging System              |
-//| Forensic-level logging for all strategy signals                 |
-//+------------------------------------------------------------------+
+// Comprehensive Signal Diagnostic and Logging System
+// Forensic-level logging for all strategy signals
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
 #property strict
@@ -27,9 +24,7 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Signal Decision Record                                          |
-//+------------------------------------------------------------------+
+// Signal Decision Record
 struct SSignalRecord
 {
     datetime timestamp;
@@ -74,9 +69,6 @@ struct SSignalRecord
     }
 };
 
-//+------------------------------------------------------------------+
-//| Signal Diagnostics Class                                        |
-//+------------------------------------------------------------------+
 class CSignalDiagnostics
 {
 private:
@@ -105,7 +97,6 @@ public:
     CSignalDiagnostics();
     ~CSignalDiagnostics();
     
-    // Initialize
     bool Initialize(int maxRecords = 1000, int logLevel = 3);
     void Shutdown();
     
@@ -180,7 +171,6 @@ public:
     string GetConflictAnalysis();
     string GetTimeframeAnalysis();
     
-    // Getters
     int GetTotalSignals() const { return m_totalSignals; }
     int GetConflictCount() const { return m_conflicts; }
     double GetConflictRate() const { return m_totalSignals > 0 ? (double)m_conflicts / m_totalSignals : 0.0; }
@@ -199,9 +189,7 @@ private:
     string TimeframeToString(int tf);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSignalDiagnostics::CSignalDiagnostics() :
     m_maxRecords(1000),
     m_currentIndex(0),
@@ -220,17 +208,12 @@ CSignalDiagnostics::CSignalDiagnostics() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSignalDiagnostics::~CSignalDiagnostics()
 {
     Shutdown();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSignalDiagnostics::Initialize(int maxRecords = 1000, int logLevel = 3)
 {
     m_maxRecords = maxRecords;
@@ -284,9 +267,6 @@ bool CSignalDiagnostics::Initialize(int maxRecords = 1000, int logLevel = 3)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Shutdown                                                         |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::Shutdown()
 {
     if(m_fileHandle != INVALID_HANDLE)
@@ -301,9 +281,6 @@ void CSignalDiagnostics::Shutdown()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log Signal Generation                                           |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogSignalGeneration(const string strategyName, 
                                             const string symbol,
                                             const int timeframe,
@@ -313,7 +290,6 @@ void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
 {
     if(!m_enabled) return;
     
-    // Validate confidence
     ValidateAndLogConfidence(strategyName, symbol, confidence);
     
     SSignalRecord record;
@@ -341,9 +317,6 @@ void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log No Signal                                                   |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogNoSignal(const string strategyName,
                                     const string symbol,
                                     const int timeframe,
@@ -371,9 +344,6 @@ void CSignalDiagnostics::LogNoSignal(const string strategyName,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log Signal Conflict                                             |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogSignalConflict(const string &strategies[],
                                           const ENUM_TRADE_SIGNAL &signals[],
                                           const int count,
@@ -395,9 +365,6 @@ void CSignalDiagnostics::LogSignalConflict(const string &strategies[],
     WriteToFile(conflictDetails);
 }
 
-//+------------------------------------------------------------------+
-//| Log Timeframe Conflict                                          |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogTimeframeConflict(const string strategy,
                                              const int tf1, const ENUM_TRADE_SIGNAL signal1,
                                              const int tf2, const ENUM_TRADE_SIGNAL signal2)
@@ -415,9 +382,6 @@ void CSignalDiagnostics::LogTimeframeConflict(const string strategy,
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Log Strategy Error                                              |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogStrategyError(const string strategyName,
                                          const string errorType,
                                          const string details)
@@ -443,9 +407,6 @@ void CSignalDiagnostics::LogStrategyError(const string strategyName,
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Log Orchestration Decision                                      |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogOrchestrationDecision(const string &selectedStrategies[],
                                                  const double &weights[],
                                                  const int count,
@@ -468,9 +429,6 @@ void CSignalDiagnostics::LogOrchestrationDecision(const string &selectedStrategi
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Log Hedging Prevented                                           |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogHedgingPrevented(const string strategy,
                                             ENUM_TRADE_SIGNAL attemptedSignal,
                                             const string reason)
@@ -486,9 +444,7 @@ void CSignalDiagnostics::LogHedgingPrevented(const string strategy,
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Log Unified ICT Structure Detection                             |
-//+------------------------------------------------------------------+
+// Log Unified ICT Structure Detection
 void CSignalDiagnostics::LogSMCDetection(const string type,
                                         const string symbol,
                                         const double price,
@@ -511,9 +467,7 @@ void CSignalDiagnostics::LogSMCDetection(const string type,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Log Unified ICT Structure Mitigation                            |
-//+------------------------------------------------------------------+
+// Log Unified ICT Structure Mitigation
 void CSignalDiagnostics::LogSMCMitigation(const string type,
                                          const double price,
                                          const bool successful)
@@ -528,9 +482,6 @@ void CSignalDiagnostics::LogSMCMitigation(const string type,
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Log BOS/CHOCH                                                   |
-//+------------------------------------------------------------------+
 void CSignalDiagnostics::LogBOSCHOCH(const bool isBOS,
                                     const double level,
                                     const bool bullish)
@@ -546,9 +497,6 @@ void CSignalDiagnostics::LogBOSCHOCH(const bool isBOS,
     WriteToFile(msg);
 }
 
-//+------------------------------------------------------------------+
-//| Get Diagnostic Summary                                          |
-//+------------------------------------------------------------------+
 string CSignalDiagnostics::GetDiagnosticSummary()
 {
     string summary = "";
@@ -563,9 +511,7 @@ string CSignalDiagnostics::GetDiagnosticSummary()
     return summary;
 }
 
-//+------------------------------------------------------------------+
-//| Helper: Write to File                                           |
-//+------------------------------------------------------------------+
+// Helper: Write to File
 void CSignalDiagnostics::WriteToFile(const string message)
 {
     if(m_fileHandle != INVALID_HANDLE)
@@ -581,9 +527,7 @@ void CSignalDiagnostics::WriteToFile(const string message)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helper: Add Record                                              |
-//+------------------------------------------------------------------+
+// Helper: Add Record
 void CSignalDiagnostics::AddRecord(const SSignalRecord &record)
 {
     if(m_currentIndex >= m_maxRecords)
@@ -593,9 +537,7 @@ void CSignalDiagnostics::AddRecord(const SSignalRecord &record)
     m_currentIndex++;
 }
 
-//+------------------------------------------------------------------+
-//| Helper: Signal to String                                        |
-//+------------------------------------------------------------------+
+// Helper: Signal to String
 string CSignalDiagnostics::SignalToString(ENUM_TRADE_SIGNAL signal)
 {
     switch(signal)
@@ -607,9 +549,7 @@ string CSignalDiagnostics::SignalToString(ENUM_TRADE_SIGNAL signal)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helper: Timeframe to String                                     |
-//+------------------------------------------------------------------+
+// Helper: Timeframe to String
 string CSignalDiagnostics::TimeframeToString(int tf)
 {
     switch(tf)
@@ -630,9 +570,6 @@ string CSignalDiagnostics::TimeframeToString(int tf)
 
 // Duplicate methods removed - already defined above
 
-//+------------------------------------------------------------------+
-//| Validate and Log Confidence                                     |
-//+------------------------------------------------------------------+
 bool CSignalDiagnostics::ValidateAndLogConfidence(const string strategyName, const string symbol, const double confidence)
 {
     if(confidence < 0.0 || confidence > 1.0)

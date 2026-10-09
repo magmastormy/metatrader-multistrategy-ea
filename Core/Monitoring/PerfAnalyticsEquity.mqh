@@ -1,16 +1,11 @@
-//+------------------------------------------------------------------+
-//| PerfAnalyticsEquity.mqh                                          |
-//| Equity curve tracking and drawdown computation.                  |
-//| Extracted verbatim from PerformanceAnalytics.mqh.                |
-//+------------------------------------------------------------------+
+// Equity curve tracking and drawdown computation.
+// Extracted verbatim from PerformanceAnalytics.mqh.
 #ifndef CORE_PERF_ANALYTICS_EQUITY_MQH
 #define CORE_PERF_ANALYTICS_EQUITY_MQH
 
 #include "PerfAnalyticsTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Equity / drawdown tracker                                        |
-//+------------------------------------------------------------------+
+// Equity / drawdown tracker
 class CPerfAnalyticsEquity
 {
 private:
@@ -25,9 +20,7 @@ private:
     double m_equityHistoryPeak; // Track peak in circular buffer for accurate drawdown
 
 public:
-    //+--------------------------------------------------------------+
-    //| Constructor                                                  |
-    //+--------------------------------------------------------------+
+// Constructor
     CPerfAnalyticsEquity(void) :
         m_currentDrawdown(0.0),
         m_maxDrawdown(0.0),
@@ -40,18 +33,14 @@ public:
         ArrayInitialize(m_equityCurve, 0.0);
     }
 
-    //+--------------------------------------------------------------+
-    //| Seed the tracker with the current account equity             |
-    //+--------------------------------------------------------------+
+// Seed the tracker with the current account equity
     void InitializeEquity(void)
     {
         m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
         m_peakEquity = m_currentEquity;
     }
 
-    //+--------------------------------------------------------------+
-    //| Store equity for a freshly registered trade slot             |
-    //+--------------------------------------------------------------+
+// Store equity for a freshly registered trade slot
     void RecordTradeEquity(const int slot)
     {
         // Update equity curve in circular buffer
@@ -63,9 +52,6 @@ public:
             m_peakEquity = m_currentEquity;
     }
 
-    //+--------------------------------------------------------------+
-    //| Update Equity Curve                                          |
-    //+--------------------------------------------------------------+
     void UpdateEquityCurve(const int bufferIndex)
     {
         m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -81,9 +67,6 @@ public:
             m_peakEquity = m_currentEquity;
     }
 
-    //+--------------------------------------------------------------+
-    //| Update Drawdown                                              |
-    //+--------------------------------------------------------------+
     void UpdateDrawdown(void)
     {
         if(m_peakEquity <= 0) return;
@@ -96,9 +79,7 @@ public:
             m_maxDrawdown = m_currentDrawdown;
     }
 
-    //+--------------------------------------------------------------+
-    //| Accessors                                                    |
-    //+--------------------------------------------------------------+
+// Accessors
     double GetCurrentDrawdown(void) const { return m_currentDrawdown; }
     double GetMaxDrawdown(void) const { return m_maxDrawdown; }
     double GetPeakEquity(void) const { return m_peakEquity; }

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| StrategyWrapper.mqh                                              |
-//| Wrapper for strategy objects                                     |
-//+------------------------------------------------------------------+
+// Wrapper for strategy objects
 #ifndef STRATEGY_WRAPPER_MQH
 #define STRATEGY_WRAPPER_MQH
 
@@ -19,9 +16,6 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Wrapper for strategy objects                                     |
-//+------------------------------------------------------------------+
 class CStrategyWrapper : public CObject
 {
 private:

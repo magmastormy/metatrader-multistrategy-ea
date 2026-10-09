@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| TradeDescriptor.mqh                                              |
-//| Stateless string<->enum descriptors for trade primitives         |
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh in Phase D T1.      |
-//| All members are static pure functions - no instance state.       |
-//| Bodies are verbatim copies; the original `const` qualifier on    |
-//| OrderTypeFromString was dropped because MQL5 does not permit     |
-//| `static ... const` methods.                                      |
-//+------------------------------------------------------------------+
+// Stateless string<->enum descriptors for trade primitives
+// Extracted from Core/Trading/TradeManager.mqh in Phase D T1.
+// All members are static pure functions - no instance state.
+// Bodies are verbatim copies; the original `const` qualifier on
+// OrderTypeFromString was dropped because MQL5 does not permit
+// `static ... const` methods.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -15,16 +11,10 @@
 #ifndef CORE_TRADING_TRADE_DESCRIPTOR_MQH
 #define CORE_TRADING_TRADE_DESCRIPTOR_MQH
 
-//+------------------------------------------------------------------+
-//| Trade Descriptor                                                 |
-//| Human-readable retcode text and order-type string parsing.       |
-//+------------------------------------------------------------------+
+// Human-readable retcode text and order-type string parsing.
 class CTradeDescriptor
 {
 public:
-    //+------------------------------------------------------------------+
-    //| Get trade error description                                      |
-    //+------------------------------------------------------------------+
     static string GetTradeErrorDescription(int errorCode)
     {
         switch(errorCode)

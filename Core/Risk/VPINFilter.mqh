@@ -1,16 +1,11 @@
-//+------------------------------------------------------------------+
-//| VPINFilter.mqh                                                    |
-//| Volume-Synchronized Probability of Informed Trading filter        |
-//| Detects toxic order flow via volume-bucket imbalance analysis     |
-//+------------------------------------------------------------------+
+// Volume-Synchronized Probability of Informed Trading filter
+// Detects toxic order flow via volume-bucket imbalance analysis
 #ifndef CORE_RISK_VPIN_FILTER_MQH
 #define CORE_RISK_VPIN_FILTER_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Toxicity Regime Enumeration                                       |
-//+------------------------------------------------------------------+
+// Toxicity Regime Enumeration
 enum ENUM_VPIN_TOXICITY
 {
     VPIN_TOXICITY_LOW      = 0,   // VPIN < 0.3 — safe to trade
@@ -19,9 +14,7 @@ enum ENUM_VPIN_TOXICITY
     VPIN_TOXICITY_EXTREME  = 3    // VPIN > 0.7 — kill new positions
 };
 
-//+------------------------------------------------------------------+
-//| VPIN Tick Classification Mode (L5-024)                          |
-//+------------------------------------------------------------------+
+// VPIN Tick Classification Mode (L5-024)
 enum ENUM_VPIN_CLASSIFICATION
 {
     VPIN_CLASSIFY_TICK_RULE    = 0, // Price change tick rule (default)
@@ -29,9 +22,6 @@ enum ENUM_VPIN_CLASSIFICATION
     VPIN_CLASSIFY_VOLUME_WEIGHTED = 2 // Weight by tick volume
 };
 
-//+------------------------------------------------------------------+
-//| VPIN Snapshot Structure                                           |
-//+------------------------------------------------------------------+
 struct SVPINSnapshot
 {
     double             vpinValue;              // Current VPIN value [0–1]
@@ -53,23 +43,18 @@ struct SVPINSnapshot
     {}
 };
 
-//+------------------------------------------------------------------+
-//| Constants                                                         |
-//+------------------------------------------------------------------+
+// Constants
 #define VPIN_MAX_BUCKETS          200   // Rolling window ring-buffer size
 #define VPIN_DEFAULT_NUM_BUCKETS  50    // Default number of buckets for VPIN average
 #define VPIN_DEFAULT_EXTREME      0.7   // Default extreme toxicity threshold
 #define VPIN_WARMUP_BARS          20    // Bars used to auto-calculate bucket volume
 #define VPIN_LOG_THROTTLE_SEC     60    // Minimum seconds between throttled log outputs
 
-//+------------------------------------------------------------------+
-//| CVPINFilter — VPIN toxicity filter for risk gating                |
-//|                                                                   |
-//| Uses volume-synchronized buckets (not time buckets) to compute    |
-//| the Volume-Synchronized Probability of Informed Trading (VPIN).   |
-//| For synthetic CFDs without real LOB data, tick price changes are  |
-//| used as proxy for buy/sell classification via the tick rule.      |
-//+------------------------------------------------------------------+
+// CVPINFilter — VPIN toxicity filter for risk gating
+// Uses volume-synchronized buckets (not time buckets) to compute
+// the Volume-Synchronized Probability of Informed Trading (VPIN).
+// For synthetic CFDs without real LOB data, tick price changes are
+// used as proxy for buy/sell classification via the tick rule.
 class CVPINFilter
 {
 private:
@@ -111,10 +96,8 @@ private:
     // Log throttling
     datetime           m_lastLogTime;          // Last time a throttled log was emitted
 
-    //+------------------------------------------------------------------+
-    //| Classify tick as buy or sell using configurable mode           |
-    //| L5-024: Support multiple classification modes                    |
-    //+------------------------------------------------------------------+
+// Classify tick as buy or sell using configurable mode
+// L5-024: Support multiple classification modes
     bool ClassifyTick(double tickPrice, double tickVolume = 0.0, double bid = 0.0, double ask = 0.0)
     {
         if(m_firstTick)
@@ -183,11 +166,9 @@ private:
         return isBuy;
     }
 
-    //+------------------------------------------------------------------+
-    //| Auto-calculate bucket volume size from average bar tick volume    |
-    //| Uses the first VPIN_WARMUP_BARS to compute average tick volume,  |
-    //| then sets bucket size = avgVolume * 0.5                           |
-    //+------------------------------------------------------------------+
+// Auto-calculate bucket volume size from average bar tick volume
+// Uses the first VPIN_WARMUP_BARS to compute average tick volume,
+// then sets bucket size = avgVolume * 0.5
     bool AutoCalculateBucketSize()
     {
         if(!SymbolSelect(m_symbol, true))
@@ -222,9 +203,7 @@ private:
         return true;
     }
 
-    //+------------------------------------------------------------------+
-    //| Complete current bucket and push imbalance into ring buffer       |
-    //+------------------------------------------------------------------+
+// Complete current bucket and push imbalance into ring buffer
     void CompleteBucket()
     {
         double totalVol = m_currentBucketBuyVol + m_currentBucketSellVol;
@@ -250,9 +229,7 @@ private:
         RecomputeVPIN();
     }
 
-    //+------------------------------------------------------------------+
-    //| Recompute VPIN from ring buffer                                   |
-    //+------------------------------------------------------------------+
+// Recompute VPIN from ring buffer
     void RecomputeVPIN()
     {
         if(m_imbalanceCount == 0)
@@ -274,9 +251,7 @@ private:
         m_currentVPIN = sum / (double)count;
     }
 
-    //+------------------------------------------------------------------+
-    //| Classify VPIN value into toxicity regime                          |
-    //+------------------------------------------------------------------+
+// Classify VPIN value into toxicity regime
     ENUM_VPIN_TOXICITY ClassifyToxicity(double vpin) const
     {
         if(vpin >= m_extremeThreshold)
@@ -288,9 +263,7 @@ private:
         return VPIN_TOXICITY_LOW;
     }
 
-    //+------------------------------------------------------------------+
-    //| Map toxicity regime to position size multiplier                   |
-    //+------------------------------------------------------------------+
+// Map toxicity regime to position size multiplier
     double ToxicityToMultiplier(ENUM_VPIN_TOXICITY regime) const
     {
         switch(regime)
@@ -303,9 +276,7 @@ private:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Throttled logging — emits at most once per VPIN_LOG_THROTTLE_SEC |
-    //+------------------------------------------------------------------+
+// Throttled logging — emits at most once per VPIN_LOG_THROTTLE_SEC
     void ThrottledLog(const string message)
     {
         datetime now = TimeCurrent();
@@ -316,13 +287,10 @@ private:
     }
 
 public:
-    //+------------------------------------------------------------------+
-    //| Constructor                                                       |
-    //| @param symbol           — trading symbol                          |
-    //| @param bucketVolumeSize — volume per bucket (0 = auto-calculate)  |
-    //| @param numBuckets       — number of buckets for VPIN average      |
-    //| @param extremeThreshold — VPIN level triggering EXTREME regime    |
-    //+------------------------------------------------------------------+
+// @param symbol           — trading symbol
+// @param bucketVolumeSize — volume per bucket (0 = auto-calculate)
+// @param numBuckets       — number of buckets for VPIN average
+// @param extremeThreshold — VPIN level triggering EXTREME regime
     CVPINFilter(const string symbol = "", double bucketVolumeSize = 0.0,
                         int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
                         double extremeThreshold = VPIN_DEFAULT_EXTREME,
@@ -374,21 +342,17 @@ public:
             PrintFormat("[VPIN] Classification mode set to %d", mode);
         }
 
-    //+------------------------------------------------------------------+
-    //| Destructor                                                        |
-    //+------------------------------------------------------------------+
+// Destructor
     ~CVPINFilter()
     {
         ArrayFree(m_imbalances);
     }
 
-    //+------------------------------------------------------------------+
-        //| OnTick — call every tick to classify and accumulate volume        |
-        //| @param tickPrice — current tick price                             |
-        //| @param tickVolume — current tick volume                           |
-        //| @param bid — current bid price (for bid/ask classification mode)  |
-        //| @param ask — current ask price (for bid/ask classification mode)  |
-        //+------------------------------------------------------------------+
+// OnTick — call every tick to classify and accumulate volume
+// @param tickPrice — current tick price
+// @param tickVolume — current tick volume
+// @param bid — current bid price (for bid/ask classification mode)
+// @param ask — current ask price (for bid/ask classification mode)
         void OnTick(double tickPrice, double tickVolume, double bid = 0.0, double ask = 0.0)
         {
             // Auto-calculate bucket size on first ticks if needed
@@ -447,27 +411,21 @@ public:
             }
         }
 
-    //+------------------------------------------------------------------+
-    //| Get current VPIN value                                            |
-    //| Returns 0.0 during warmup (insufficient completed buckets)        |
-    //+------------------------------------------------------------------+
+// Get current VPIN value
+// Returns 0.0 during warmup (insufficient completed buckets)
     double GetVPIN() const
     {
         return m_currentVPIN;
     }
 
-    //+------------------------------------------------------------------+
-    //| Get current toxicity regime                                       |
-    //+------------------------------------------------------------------+
+// Get current toxicity regime
     ENUM_VPIN_TOXICITY GetToxicityRegime() const
     {
         return ClassifyToxicity(m_currentVPIN);
     }
 
-    //+------------------------------------------------------------------+
-    //| Get position size multiplier based on toxicity [0.0–1.0]         |
-    //| Returns 1.0 during warmup (safe default)                          |
-    //+------------------------------------------------------------------+
+// Get position size multiplier based on toxicity [0.0–1.0]
+// Returns 1.0 during warmup (safe default)
     double GetPositionSizeMultiplier() const
     {
         // Warmup guard — not enough data, default to safe (full size)
@@ -477,9 +435,7 @@ public:
         return ToxicityToMultiplier(ClassifyToxicity(m_currentVPIN));
     }
 
-    //+------------------------------------------------------------------+
-    //| Should block new positions — true if VPIN > extreme threshold     |
-    //+------------------------------------------------------------------+
+// Should block new positions — true if VPIN > extreme threshold
     bool ShouldBlockNewPositions() const
     {
         if(!IsWarmedUp())
@@ -488,17 +444,13 @@ public:
         return (m_currentVPIN >= m_extremeThreshold);
     }
 
-    //+------------------------------------------------------------------+
-    //| Check if filter has completed warmup (enough buckets for VPIN)    |
-    //+------------------------------------------------------------------+
+// Check if filter has completed warmup (enough buckets for VPIN)
     bool IsWarmedUp() const
     {
         return (m_completedBuckets >= m_numBuckets);
     }
 
-    //+------------------------------------------------------------------+
-    //| Get full VPIN snapshot for diagnostics                            |
-    //+------------------------------------------------------------------+
+// Get full VPIN snapshot for diagnostics
     SVPINSnapshot GetSnapshot() const
     {
         SVPINSnapshot snap;
@@ -514,9 +466,7 @@ public:
         return snap;
     }
 
-    //+------------------------------------------------------------------+
-    //| Emit throttled diagnostic log                                     |
-    //+------------------------------------------------------------------+
+// Emit throttled diagnostic log
     void LogDiagnostics()
     {
         ENUM_VPIN_TOXICITY regime = ClassifyToxicity(m_currentVPIN);
@@ -542,9 +492,7 @@ public:
         ThrottledLog(msg);
     }
 
-    //+------------------------------------------------------------------+
-    //| Reset all state (call on deinit or symbol change)                 |
-    //+------------------------------------------------------------------+
+// Reset all state (call on deinit or symbol change)
     void Reset()
     {
         m_prevTickPrice = 0.0;
@@ -568,9 +516,7 @@ public:
         PrintFormat("[VPIN] Reset | symbol=%s", m_symbol);
     }
 
-    //+------------------------------------------------------------------+
-    //| Cleanup external resources                                        |
-    //+------------------------------------------------------------------+
+// Cleanup external resources
     void Deinit()
     {
         // CVPINFilter owns dynamic array m_imbalances[]

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SRSignalScorer.mqh                                               |
-//| Weighted Soft Confluence Scoring for S/R Bounce Strategy          |
-//| Batch 103: Replaces hard AND logic with 0-100 scoring             |
-//+------------------------------------------------------------------+
+// Weighted Soft Confluence Scoring for S/R Bounce Strategy
+// Batch 103: Replaces hard AND logic with 0-100 scoring
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -10,11 +7,8 @@
 #ifndef SR_SIGNAL_SCORER_MQH
 #define SR_SIGNAL_SCORER_MQH
 
-//+------------------------------------------------------------------+
-//| S/R Signal Scorer Class                                          |
-//| Weighted scoring instead of hard AND requirements                |
-//| Score >= 60 required for signal (out of 100 possible)            |
-//+------------------------------------------------------------------+
+// Weighted scoring instead of hard AND requirements
+// Score >= 60 required for signal (out of 100 possible)
 class CSRSignalScorer
 {
 private:

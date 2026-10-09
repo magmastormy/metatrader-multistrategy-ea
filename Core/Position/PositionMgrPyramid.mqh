@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| PositionMgrPyramid.mqh                                           |
-//| Extracted from PositionManager.mqh (Phase I decomposition)       |
-//|                                                                  |
-//| STATEFUL module: owns the pyramiding configuration plus the      |
-//| SPyramidState ledger and performs layer additions / cleanup.     |
-//| Bodies are copied verbatim from CPositionManager - zero          |
-//| behaviour change. SPyramidState stays a NESTED PRIVATE struct    |
-//| (as it was inside CPositionManager) so it adds no global symbol. |
-//+------------------------------------------------------------------+
+// Extracted from PositionManager.mqh (Phase I decomposition)
+// STATEFUL module: owns the pyramiding configuration plus the
+// SPyramidState ledger and performs layer additions / cleanup.
+// Bodies are copied verbatim from CPositionManager - zero
+// behaviour change. SPyramidState stays a NESTED PRIVATE struct
+// (as it was inside CPositionManager) so it adds no global symbol.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_PYRAMID_MQH
@@ -16,9 +12,6 @@
 #include "../Trading/TradeManager.mqh"     // CTradeManager (complete type, called by pointer)
 #include "PositionMgrMagicFilter.mqh"      // CPositionMgrMagicFilter::IsEAOwnedMagic
 
-//+------------------------------------------------------------------+
-//| CPositionMgrPyramid                                              |
-//+------------------------------------------------------------------+
 class CPositionMgrPyramid
 {
 private:
@@ -44,7 +37,6 @@ private:
     SPyramidState           m_pyramidStates[];
     int                     m_pyramidStateCount;
 
-    // Find pyramid state by base ticket
     int FindPyramidState(ulong baseTicket)
     {
         for(int i = 0; i < m_pyramidStateCount; i++)
@@ -117,7 +109,6 @@ public:
 
     int GetStateCount() const { return m_pyramidStateCount; }
 
-    // --- Pyramiding ---
     void ManagePyramiding(CTradeManager* tradeManager, const int magicNumber)
     {
         if(!m_pyramidingEnabled) return;

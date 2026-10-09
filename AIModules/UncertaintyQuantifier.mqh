@@ -1,15 +1,11 @@
-//+------------------------------------------------------------------+
-//| Uncertainty Quantification and Confidence Estimation           |
-//| Provides confidence intervals and risk-aware predictions        |
-//+------------------------------------------------------------------+
+// Uncertainty Quantification and Confidence Estimation
+// Provides confidence intervals and risk-aware predictions
 #ifndef UNCERTAINTY_QUANTIFIER_MQH
 #define UNCERTAINTY_QUANTIFIER_MQH
 
 #include <Math\Stat\Math.mqh>
 
-//+------------------------------------------------------------------+
-//| Prediction with Uncertainty (Extended version)                 |
-//+------------------------------------------------------------------+
+// Prediction with Uncertainty (Extended version)
 // Extended struct with additional fields beyond CommonTypes.mqh
 struct SPredictionWithUncertainty
 {
@@ -35,9 +31,7 @@ struct SPredictionWithUncertainty
     }
 };
 
-//+------------------------------------------------------------------+
-//| Uncertainty Quantification Methods                             |
-//+------------------------------------------------------------------+
+// Uncertainty Quantification Methods
 class CUncertaintyQuantifier
 {
 private:
@@ -222,7 +216,6 @@ public:
         Print("[UNCERTAINTY] Quantifier initialized with ", m_historySize, " history size");
     }
     
-    // Update prediction history
     bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0, bool hasOutcome = false)
     {
         RingPush(m_predictionHistory, m_predictionHead, m_predictionCount, prediction);
@@ -360,7 +353,6 @@ public:
         return expectedLoss * confidenceScale;
     }
     
-    // Bayesian confidence update
     bool UpdateBayesianConfidence(double priorConfidence, double likelihood, double &posteriorConfidence)
     {
         // Simple Bayesian update
@@ -399,7 +391,6 @@ public:
         }
     }
     
-    // Generate uncertainty report
     string GenerateUncertaintyReport(const SPredictionWithUncertainty &prediction)
     {
         string report = "\n=== UNCERTAINTY ANALYSIS ===\n";

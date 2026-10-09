@@ -1,6 +1,4 @@
-//+------------------------------------------------------------------+
-//| Indicator Manager - Centralized indicator handle management       |
-//+------------------------------------------------------------------+
+// Indicator Manager - Centralized indicator handle management
 #property strict
 
 #ifndef INDICATOR_MANAGER_MQH
@@ -29,9 +27,7 @@ enum ENUM_INDICATOR_TYPE
    INDICATOR_CUSTOM      // Custom indicator
 };
 
-//+------------------------------------------------------------------+
-//| Indicator Manager - Singleton Pattern                             |
-//+------------------------------------------------------------------+
+// Indicator Manager - Singleton Pattern
 class CIndicatorManager
 {
 private:
@@ -93,11 +89,9 @@ public:
 // NOTE: Singleton pattern is not thread-safe, but this is acceptable in MQL5's single-threaded context
 CIndicatorManager *CIndicatorManager::m_instance = NULL;
 
-//+------------------------------------------------------------------+
-//| Get the singleton instance                                        |
-//| Thread-safety: MQL5 is single-threaded, so no synchronization    |
-//| needed. This is acceptable for MT5's execution model.            |
-//+------------------------------------------------------------------+
+// Get the singleton instance
+// Thread-safety: MQL5 is single-threaded, so no synchronization
+// needed. This is acceptable for MT5's execution model.
 CIndicatorManager *CIndicatorManager::Instance()
 {
    if(m_instance == NULL)
@@ -106,9 +100,7 @@ CIndicatorManager *CIndicatorManager::Instance()
    return m_instance;
 }
 
-//+------------------------------------------------------------------+
-//| Check if a symbol is available and has data                      |
-//+------------------------------------------------------------------+
+// Check if a symbol is available and has data
 bool CIndicatorManager::IsSymbolAvailable(string symbol, ENUM_TIMEFRAMES tf)
 {
    if(symbol == "")
@@ -152,9 +144,7 @@ bool CIndicatorManager::IsSymbolAvailable(string symbol, ENUM_TIMEFRAMES tf)
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Destroy singleton instance explicitly                            |
-//+------------------------------------------------------------------+
+// Destroy singleton instance explicitly
 void CIndicatorManager::DestroyInstance()
 {
    if(m_instance != NULL)
@@ -171,9 +161,7 @@ void CIndicatorManager::DestroyInstance()
    }
 }
 
-//+------------------------------------------------------------------+
-//| Find an existing handle                                           |
-//+------------------------------------------------------------------+
+// Find an existing handle
 int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[])
 {
    for(int i = 0; i < ArraySize(m_handles); i++)
@@ -201,9 +189,7 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
    return INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Release all indicator handles                                    |
-//+------------------------------------------------------------------+
+// Release all indicator handles
 void CIndicatorManager::ReleaseAll()
 {
    for(int i = ArraySize(m_handles) - 1; i >= 0; i--)
@@ -216,9 +202,7 @@ void CIndicatorManager::ReleaseAll()
    ArrayFree(m_handles);
 }
 
-//+------------------------------------------------------------------+
-//| Release unused handles                                           |
-//+------------------------------------------------------------------+
+// Release unused handles
 void CIndicatorManager::ReleaseUnused(int maxAge)
 {
    datetime now = TimeCurrent();
@@ -235,9 +219,7 @@ void CIndicatorManager::ReleaseUnused(int maxAge)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Mark a handle as accessed                                        |
-//+------------------------------------------------------------------+
+// Mark a handle as accessed
 void CIndicatorManager::AccessHandle(int handle)
 {
    for(int i = 0; i < ArraySize(m_handles); i++)
@@ -250,9 +232,6 @@ void CIndicatorManager::AccessHandle(int handle)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Get RSI handle                                                  |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {period, applied_price};
@@ -308,9 +287,7 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get Moving Average handle                                        |
-//+------------------------------------------------------------------+
+// Get Moving Average handle
 int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int ma_shift, ENUM_MA_METHOD ma_method, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {period, ma_shift, ma_method, applied_price};
@@ -368,9 +345,6 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR handle                                                   |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int period)
 {
    int params[5] = {period};
@@ -425,9 +399,6 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get MACD handle                                                  |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast_ema_period, int slow_ema_period, int signal_period, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {fast_ema_period, slow_ema_period, signal_period, applied_price};
@@ -485,9 +456,6 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get ADX handle                                                   |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int period)
 {
    int params[5] = {period};
@@ -541,9 +509,6 @@ int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get Stochastic handle                                             |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetStochasticHandle(string symbol, ENUM_TIMEFRAMES tf, int period_k, int period_d, int period_slow, ENUM_MA_METHOD ma_method, ENUM_STO_PRICE price_field)
 {
    int params[5] = {period_k, period_d, period_slow, (int)ma_method, (int)price_field};
@@ -600,9 +565,7 @@ int CIndicatorManager::GetStochasticHandle(string symbol, ENUM_TIMEFRAMES tf, in
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get Bollinger Bands handle                                       |
-//+------------------------------------------------------------------+
+// Get Bollinger Bands handle
 int CIndicatorManager::GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int shift, double deviation, ENUM_APPLIED_PRICE applied_price)
 {
    int scaledDeviation = (int)MathRound(deviation * 1000.0);
@@ -660,9 +623,6 @@ int CIndicatorManager::GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int per
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get CCI handle                                                   |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {period, (int)applied_price};
@@ -717,9 +677,6 @@ int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| Get Volumes handle                                               |
-//+------------------------------------------------------------------+
 int CIndicatorManager::GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_APPLIED_VOLUME applied_volume)
 {
    int params[5] = {(int)applied_volume};
@@ -773,9 +730,7 @@ int CIndicatorManager::GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_
    return handle;
 }
 
-//+------------------------------------------------------------------+
-//| General method to get a handle                                   |
-//+------------------------------------------------------------------+
+// General method to get a handle
 int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[])
 {
    switch(type)
@@ -826,9 +781,7 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
    return INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CIndicatorManager::~CIndicatorManager()
 {
    ReleaseAll();

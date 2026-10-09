@@ -1,15 +1,10 @@
-//+------------------------------------------------------------------+
-//| ConsensusCache.mqh - Cache consensus results per symbol/mode     |
-//| Avoids repeated full consensus evaluation in SRE hot path        |
-//+------------------------------------------------------------------+
+// ConsensusCache.mqh - Cache consensus results per symbol/mode
+// Avoids repeated full consensus evaluation in SRE hot path
 #ifndef CONSENSUS_CACHE_MQH
 #define CONSENSUS_CACHE_MQH
 
 #include "..\Utils\Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Cache Entry Structure                                            |
-//+------------------------------------------------------------------+
 struct SConsensusCacheEntry
 {
     string              symbol;
@@ -32,9 +27,6 @@ struct SConsensusCacheEntry
     }
 };
 
-//+------------------------------------------------------------------+
-//| Consensus Cache Class                                            |
-//+------------------------------------------------------------------+
 class CConsensusCache
 {
 private:

@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| VirtualPosition.mqh                                              |
-//| Lightweight reservation book for scan-time portfolio budgeting   |
-//+------------------------------------------------------------------+
+// Lightweight reservation book for scan-time portfolio budgeting
 #ifndef CORE_RISK_VIRTUAL_POSITION_MQH
 #define CORE_RISK_VIRTUAL_POSITION_MQH
 
@@ -55,9 +52,7 @@ public:
         ArrayResize(m_positions, 0);
     }
 
-    //+------------------------------------------------------------------+
-    //| Remove entries older than their TTL                              |
-    //+------------------------------------------------------------------+
+// Remove entries older than their TTL
     int PruneExpired()
     {
         datetime now = TimeCurrent();

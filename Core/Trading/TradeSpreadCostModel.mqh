@@ -1,11 +1,7 @@
-//+------------------------------------------------------------------+
-//| TradeSpreadCostModel.mqh                                         |
-//| Stateless spread-cost estimation for a prospective/filled trade  |
-//|                                                                  |
-//| Extracted from Core/Trading/TradeManager.mqh in Phase D T1.      |
-//| All members are static pure functions - no instance state.       |
-//| Body is a verbatim copy of the original CalculateSpreadCost.     |
-//+------------------------------------------------------------------+
+// Stateless spread-cost estimation for a prospective/filled trade
+// Extracted from Core/Trading/TradeManager.mqh in Phase D T1.
+// All members are static pure functions - no instance state.
+// Body is a verbatim copy of the original CalculateSpreadCost.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -13,10 +9,7 @@
 #ifndef CORE_TRADING_TRADE_SPREAD_COST_MODEL_MQH
 #define CORE_TRADING_TRADE_SPREAD_COST_MODEL_MQH
 
-//+------------------------------------------------------------------+
-//| Trade Spread Cost Model                                          |
-//| Converts quoted spread into account-currency cost for a volume.  |
-//+------------------------------------------------------------------+
+// Converts quoted spread into account-currency cost for a volume.
 class CTradeSpreadCostModel
 {
 public:

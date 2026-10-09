@@ -1,25 +1,18 @@
-//+------------------------------------------------------------------+
-//| FastScalpPositionTracker.mqh                                     |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the scalp position tracking array that used to be two loose |
-//| members on CFastScalpEngine:                                     |
-//|   SScalpPositionState m_scalpPositions[20]; int m_scalpPositionCount;
-//|                                                                  |
-//| Moved methods (bodies verbatim):                                 |
-//|   RegisterScalpPosition(), RemoveScalpPosition(),                |
-//|   FindScalpPositionState(), CountScalpPositions(),               |
-//|   IsScalpPosition()                                              |
-//|                                                                  |
-//| CountScalpPositions()/IsScalpPosition() scan the terminal, not   |
-//| the local array, so they are `static`.                           |
-//|                                                                  |
-//| Element mutation is exposed through MarkPartialClosed() /        |
-//| MarkBreakevenSet() because MQL5 cannot return a struct by        |
-//| reference; callers read a snapshot via GetState() and mirror the |
-//| flag locally, which reproduces the original in-place semantics.  |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the scalp position tracking array that used to be two loose
+// members on CFastScalpEngine:
+// SScalpPositionState m_scalpPositions[20]; int m_scalpPositionCount;
+// Moved methods (bodies verbatim):
+// RegisterScalpPosition(), RemoveScalpPosition(),
+// FindScalpPositionState(), CountScalpPositions(),
+// IsScalpPosition()
+// CountScalpPositions()/IsScalpPosition() scan the terminal, not
+// the local array, so they are `static`.
+// Element mutation is exposed through MarkPartialClosed() /
+// MarkBreakevenSet() because MQL5 cannot return a struct by
+// reference; callers read a snapshot via GetState() and mirror the
+// flag locally, which reproduces the original in-place semantics.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_POSITION_TRACKER_MQH
@@ -27,9 +20,7 @@
 
 #include "FastScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpPositionTracker — stateful scalp position registry      |
-//+------------------------------------------------------------------+
+// CFastScalpPositionTracker — stateful scalp position registry
 class CFastScalpPositionTracker
 {
 private:
@@ -85,9 +76,7 @@ public:
       m_scalpPositions[index].breakevenSet = true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Register a scalp position in the tracking array                   |
-   //+------------------------------------------------------------------+
+// Register a scalp position in the tracking array
    void RegisterScalpPosition(ulong ticket, string symbol, double entryPrice,
                                double sl, double tp, double oneRPrice)
    {
@@ -105,9 +94,7 @@ public:
       m_scalpPositionCount++;
    }
 
-   //+------------------------------------------------------------------+
-   //| Remove a scalp position from tracking by ticket                   |
-   //+------------------------------------------------------------------+
+// Remove a scalp position from tracking by ticket
    void RemoveScalpPosition(ulong ticket)
    {
       for(int i = 0; i < m_scalpPositionCount; i++)
@@ -125,9 +112,6 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Find scalp position state by ticket                               |
-   //+------------------------------------------------------------------+
    int FindScalpPositionState(ulong ticket) const
    {
       for(int i = 0; i < m_scalpPositionCount; i++)
@@ -138,9 +122,7 @@ public:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Count positions with "SCALP" in comment                           |
-   //+------------------------------------------------------------------+
+// Count positions with "SCALP" in comment
    static int CountScalpPositions()
    {
       int count = 0;
@@ -162,9 +144,7 @@ public:
       return count;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if a position is a scalp position                           |
-   //+------------------------------------------------------------------+
+// Check if a position is a scalp position
    static bool IsScalpPosition(ulong ticket)
    {
       if(!PositionSelectByTicket(ticket))

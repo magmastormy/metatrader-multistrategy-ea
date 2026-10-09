@@ -1,37 +1,30 @@
-//+------------------------------------------------------------------+
-//| SpikeHunterDetector.mqh                                          |
-//| Decomposition extraction from CSpikeHunterEngine (behaviour      |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the per-symbol spike registry and the three detection       |
-//| layers that used to be the loose member group:                   |
-//|   CSpikeHunterEngine::m_symbolStates[] / m_symbolCount           |
-//|   CSpikeHunterEngine::m_atrHandles[]                             |
-//|   CSpikeHunterEngine::m_familyOverrides[] (now CSpikeHunter-     |
-//|                                            Overrides, by value)  |
-//|                                                                  |
-//| Moved logic (verbatim):                                          |
-//|   FindSymbolIndex(), InitializeSymbolState(), AddSymbol()        |
-//|   UpdateTickVelocity()          — Layer 1 tick rate EMA          |
-//|   UpdateDirectionAccumulation() — Layer 2 consecutive ticks      |
-//|   UpdateATRCompression()        — Layer 3 ATR vs manual ATR SMA  |
-//|   CountConfluence()                                              |
-//|   the handle-release loop out of Deinit()                        |
-//|   IsSymbolInSpikeCooldown() body (long-term entry cooldown)      |
-//|   the [SPIKE-HUNTER-DIAG] near-miss block out of ProcessTick()   |
-//|   the [SPIKE-HUNT-DETECT] confirmation line out of ProcessTick() |
-//|   the per-symbol [SPIKE-HUNT-DIAG] loop out of PrintDiagnostics()|
-//|                                                                  |
-//| The eight GetEffectiveXxx(idx) resolvers stay index-based here   |
-//| (same signature the engine had) and simply pair the state symbol |
-//| with the base-config fallback before delegating to the override  |
-//| table, so callers are unaffected.                                |
-//|                                                                  |
-//| The module keeps its own by-value copy of SSpikeHunterConfig,    |
-//| assigned by the engine in Init() at the same point m_config was  |
-//| assigned. Config is write-once (no setter existed), so the copy  |
-//| can never diverge.                                               |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CSpikeHunterEngine (behaviour
+// preserving).
+// Owns the per-symbol spike registry and the three detection
+// layers that used to be the loose member group:
+// CSpikeHunterEngine::m_symbolStates[] / m_symbolCount
+// CSpikeHunterEngine::m_atrHandles[]
+// CSpikeHunterEngine::m_familyOverrides[] (now CSpikeHunter-
+// Overrides, by value)
+// Moved logic (verbatim):
+// FindSymbolIndex(), InitializeSymbolState(), AddSymbol()
+// UpdateTickVelocity()          — Layer 1 tick rate EMA
+// UpdateDirectionAccumulation() — Layer 2 consecutive ticks
+// UpdateATRCompression()        — Layer 3 ATR vs manual ATR SMA
+// CountConfluence()
+// the handle-release loop out of Deinit()
+// IsSymbolInSpikeCooldown() body (long-term entry cooldown)
+// the [SPIKE-HUNTER-DIAG] near-miss block out of ProcessTick()
+// the [SPIKE-HUNT-DETECT] confirmation line out of ProcessTick()
+// the per-symbol [SPIKE-HUNT-DIAG] loop out of PrintDiagnostics()
+// The eight GetEffectiveXxx(idx) resolvers stay index-based here
+// (same signature the engine had) and simply pair the state symbol
+// with the base-config fallback before delegating to the override
+// table, so callers are unaffected.
+// The module keeps its own by-value copy of SSpikeHunterConfig,
+// assigned by the engine in Init() at the same point m_config was
+// assigned. Config is write-once (no setter existed), so the copy
+// can never diverge.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_DETECTOR_MQH
@@ -40,9 +33,7 @@
 #include "SpikeHunterTypes.mqh"
 #include "SpikeHunterOverrides.mqh"
 
-//+------------------------------------------------------------------+
-//| CSpikeHunterDetector — stateful symbol registry + 3 spike layers  |
-//+------------------------------------------------------------------+
+// CSpikeHunterDetector — stateful symbol registry + 3 spike layers
 class CSpikeHunterDetector
 {
 private:
@@ -70,9 +61,7 @@ public:
    int  GetSymbolCount() const { return m_symbolCount; }
    int  GetOverrideCount() const { return m_overrides.Count(); }
 
-   //+------------------------------------------------------------------+
-   //| Find symbol index in the states array                             |
-   //+------------------------------------------------------------------+
+// Find symbol index in the states array
    int FindSymbolIndex(const string symbol) const
    {
       for(int i = 0; i < m_symbolCount; i++)
@@ -83,9 +72,7 @@ public:
       return -1;
    }
 
-   //+------------------------------------------------------------------+
-   //| Family override table delegation (Batch 102)                      |
-   //+------------------------------------------------------------------+
+// Family override table delegation (Batch 102)
    int FindFamilyOverrideIndex(const string symbol) const
    {
       return m_overrides.FindFamilyOverrideIndex(symbol);
@@ -100,9 +87,7 @@ public:
 
    void LogOverridesSummary() const { m_overrides.LogConfigSummary(m_config.minConfluence); }
 
-   //+------------------------------------------------------------------+
-   //| Effective (override-aware) parameter resolution (Batch 102)       |
-   //+------------------------------------------------------------------+
+// Effective (override-aware) parameter resolution (Batch 102)
    double GetEffectiveVelocityMultiplier(int idx) const
    {
       return m_overrides.GetEffectiveVelocityMultiplier(m_symbolStates[idx].symbol, m_config.velocityMultiplier);
@@ -143,9 +128,7 @@ public:
       return m_overrides.GetEffectiveMinConfluence(m_symbolStates[idx].symbol, m_config.minConfluence);
    }
 
-   //+------------------------------------------------------------------+
-   //| Initialize a symbol state slot with defaults                      |
-   //+------------------------------------------------------------------+
+// Initialize a symbol state slot with defaults
    void InitializeSymbolState(int idx, const string symbol)
    {
       m_symbolStates[idx].symbol                = symbol;
@@ -170,9 +153,7 @@ public:
       m_symbolStates[idx].lastDiagTime          = 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Add a symbol to monitor for spikes                               |
-   //+------------------------------------------------------------------+
+// Add a symbol to monitor for spikes
    bool AddSymbol(const string symbol)
    {
       // Check for duplicate
@@ -204,7 +185,6 @@ public:
       for(int i = 0; i < m_symbolCount; i++)
          m_symbolStates[i] = tempStates[i];
 
-      // Resize handle arrays
       ArrayResize(m_atrHandles, newSize);
 
       // Initialize new slot
@@ -222,10 +202,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Release all indicator handles and clean up                       |
-   //| (was the loop body of CSpikeHunterEngine::Deinit)                 |
-   //+------------------------------------------------------------------+
+// Release all indicator handles and clean up
+// (was the loop body of CSpikeHunterEngine::Deinit)
    void ReleaseHandles()
    {
       for(int i = 0; i < m_symbolCount; i++)
@@ -239,11 +217,9 @@ public:
       m_symbolCount = 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Update tick velocity (Layer 1)                                    |
-   //| Count ticks per 1-second window, maintain EMA baseline,           |
-   //| trigger when currentRate > baseline * velocityMultiplier           |
-   //+------------------------------------------------------------------+
+// Update tick velocity (Layer 1)
+// Count ticks per 1-second window, maintain EMA baseline,
+// trigger when currentRate > baseline * velocityMultiplier
    void UpdateTickVelocity(int idx)
    {
       datetime now = TimeCurrent();
@@ -270,10 +246,8 @@ public:
       m_symbolStates[idx].tickWindowCount = 0;
    }
 
-   //+------------------------------------------------------------------+
-   //| Update direction accumulation (Layer 2)                           |
-   //| Track consecutive ticks in one direction within a time window     |
-   //+------------------------------------------------------------------+
+// Update direction accumulation (Layer 2)
+// Track consecutive ticks in one direction within a time window
    void UpdateDirectionAccumulation(int idx, double bid)
    {
       datetime now = TimeCurrent();
@@ -300,13 +274,11 @@ public:
 
       if(bid > m_symbolStates[idx].lastBid)
       {
-         // Up tick
          m_symbolStates[idx].consecutiveUpTicks++;
          m_symbolStates[idx].consecutiveDownTicks = 0;
       }
       else if(bid < m_symbolStates[idx].lastBid)
       {
-         // Down tick
          m_symbolStates[idx].consecutiveDownTicks++;
          m_symbolStates[idx].consecutiveUpTicks = 0;
       }
@@ -337,11 +309,9 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Update ATR compression (Layer 3)                                  |
-   //| Trigger when ATR(14) <= SMA(ATR,50) * atrCompressionRatio        |
-   //| ATR SMA is computed manually from ATR buffer values               |
-   //+------------------------------------------------------------------+
+// Update ATR compression (Layer 3)
+// Trigger when ATR(14) <= SMA(ATR,50) * atrCompressionRatio
+// ATR SMA is computed manually from ATR buffer values
    void UpdateATRCompression(int idx)
    {
       string symbol = m_symbolStates[idx].symbol;
@@ -387,9 +357,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Count how many detection layers are triggered                     |
-   //+------------------------------------------------------------------+
+// Count how many detection layers are triggered
    int CountConfluence(int idx) const
    {
       int count = 0;
@@ -399,9 +367,7 @@ public:
       return count;
    }
 
-   //+------------------------------------------------------------------+
-   //| Per-symbol state accessors used by the engine coordinator         |
-   //+------------------------------------------------------------------+
+// Per-symbol state accessors used by the engine coordinator
    bool     IsSymbolActive(int idx) const          { return m_symbolStates[idx].isActive; }
    string   GetSymbolName(int idx) const           { return m_symbolStates[idx].symbol; }
    int      GetConfluenceCount(int idx) const      { return m_symbolStates[idx].confluenceCount; }
@@ -413,18 +379,14 @@ public:
    bool     IsDirectionTriggered(int idx) const    { return m_symbolStates[idx].directionTriggered; }
    bool     IsCompressionTriggered(int idx) const  { return m_symbolStates[idx].compressionTriggered; }
 
-   //+------------------------------------------------------------------+
-   //| Spike detected — record detection time for long-term cooldown     |
-   //+------------------------------------------------------------------+
+// Spike detected — record detection time for long-term cooldown
    void MarkSpikeDetected(int idx)
    {
       m_symbolStates[idx].lastSpikeDetectionTime = TimeCurrent();
       m_symbolStates[idx].inSpikeCooldown = true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Spike trade filled — record trade time and arm the cooldown       |
-   //+------------------------------------------------------------------+
+// Spike trade filled — record trade time and arm the cooldown
    void MarkSpikeTradeOpened(int idx)
    {
       m_symbolStates[idx].lastSpikeTradeTime = TimeCurrent();
@@ -432,10 +394,8 @@ public:
       m_symbolStates[idx].inSpikeCooldown = true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if a symbol is in spike cooldown for long-term entries      |
-   //| Clears the cooldown flag if expired                               |
-   //+------------------------------------------------------------------+
+// Check if a symbol is in spike cooldown for long-term entries
+// Clears the cooldown flag if expired
    bool IsSymbolInSpikeCooldown(const string symbol, int spikeCooldownForLongTermMs)
    {
       int idx = FindSymbolIndex(symbol);
@@ -457,10 +417,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Diagnostic: log near-miss confluence once per minute per symbol   |
-   //| (was the inline sub-threshold block of ProcessTick)               |
-   //+------------------------------------------------------------------+
+// Diagnostic: log near-miss confluence once per minute per symbol
+// (was the inline sub-threshold block of ProcessTick)
    void LogNearMissDiagnostic(int idx)
    {
       if(m_symbolStates[idx].confluenceCount > 0)
@@ -479,9 +437,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Confirmed spike log line (was inline in ProcessTick)              |
-   //+------------------------------------------------------------------+
+// Confirmed spike log line (was inline in ProcessTick)
    void LogSpikeDetected(int idx, const string dirStr) const
    {
       PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 direction=%s vel=%s dir=%s comp=%s",
@@ -493,9 +449,7 @@ public:
                   m_symbolStates[idx].compressionTriggered ? "Y" : "N");
    }
 
-   //+------------------------------------------------------------------+
-   //| Per-symbol diagnostics (was the loop inside PrintDiagnostics)     |
-   //+------------------------------------------------------------------+
+// Per-symbol diagnostics (was the loop inside PrintDiagnostics)
    void PrintSymbolDiagnostics() const
    {
       for(int i = 0; i < m_symbolCount; i++)

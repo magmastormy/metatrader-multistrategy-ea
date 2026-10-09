@@ -1,14 +1,9 @@
-//+------------------------------------------------------------------+
-//| OrchestratorSymbolClassifier.mqh                                 |
-//| Phase F extraction from CEAOrchestrator (behaviour preserving).  |
-//|                                                                  |
-//| Pure symbol / strategy-roster classification helpers. Every      |
-//| method below was moved verbatim out of CEAOrchestrator; the      |
-//| orchestrator now keeps one-line forwarders with the original     |
-//| signatures so no caller had to change.                           |
-//|                                                                  |
-//| All methods are static - this cluster owns no state.             |
-//+------------------------------------------------------------------+
+// Phase F extraction from CEAOrchestrator (behaviour preserving).
+// Pure symbol / strategy-roster classification helpers. Every
+// method below was moved verbatim out of CEAOrchestrator; the
+// orchestrator now keeps one-line forwarders with the original
+// signatures so no caller had to change.
+// All methods are static - this cluster owns no state.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_SYMBOL_CLASSIFIER_MQH
@@ -31,9 +26,6 @@
 #define STRATEGY_ONNX_AI 20
 #endif
 
-//+------------------------------------------------------------------+
-//| COrchestratorSymbolClassifier                                    |
-//+------------------------------------------------------------------+
 class COrchestratorSymbolClassifier
 {
 public:

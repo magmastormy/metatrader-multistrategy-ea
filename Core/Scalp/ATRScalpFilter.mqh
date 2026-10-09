@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| ATRScalpFilter.mqh                                               |
-//| Entry gates for the ATR scalping engine: spike-window avoidance, |
-//| RSI confirmation and the spread-vs-ATR noise filter.             |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// Entry gates for the ATR scalping engine: spike-window avoidance,
+// RSI confirmation and the spread-vs-ATR noise filter.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,15 +11,11 @@
 
 #include "ATRScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CATRScalpFilter — stateless signal gates                          |
-//+------------------------------------------------------------------+
+// CATRScalpFilter — stateless signal gates
 class CATRScalpFilter
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Check if within spikeWindowAvoidMinutes of expected spike         |
-   //+------------------------------------------------------------------+
+// Check if within spikeWindowAvoidMinutes of expected spike
    static bool IsInSpikeWindow(SATRScalpSymbolState &state, int spikeWindowAvoidMinutes)
    {
       int spikeInterval = state.expectedSpikeIntervalSec;
@@ -48,10 +41,8 @@ public:
       return inWindow;
    }
 
-   //+------------------------------------------------------------------+
-   //| RSI confirmation for the pending EMA cross direction              |
-   //| crossDir: 1 = bullish cross (BUY), otherwise bearish cross (SELL) |
-   //+------------------------------------------------------------------+
+// RSI confirmation for the pending EMA cross direction
+// crossDir: 1 = bullish cross (BUY), otherwise bearish cross (SELL)
    static bool PassesRsiConfirmation(const SATRScalpSymbolState &state, const SATRScalpingConfig &config, int crossDir)
    {
       double rsi = state.rsiValue;
@@ -75,9 +66,6 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Spread gate: spread < spreadMaxATRRatio * ATR                     |
-   //+------------------------------------------------------------------+
    static bool PassesSpreadGate(const string symbol, double atr, double spreadMaxATRRatio)
    {
       if(atr <= 0.0)

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingRetry.mqh                                           |
-//| Retry / backoff logic and retry bookkeeping cleanup.             |
-//| Extracted verbatim from ErrorHandling.mqh.                       |
-//+------------------------------------------------------------------+
+// Retry / backoff logic and retry bookkeeping cleanup.
+// Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_RETRY_MQH
 #define CORE_ERROR_HANDLING_RETRY_MQH
 

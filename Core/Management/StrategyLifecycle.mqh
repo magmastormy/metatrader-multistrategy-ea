@@ -1,46 +1,39 @@
-//+------------------------------------------------------------------+
-//| Strategy Lifecycle (Phase C, Slice 3 - C7)                       |
-//| Enable/disable lifecycle, governance-driven activation and the    |
-//| per-bar strategy state transition extracted from                  |
-//| CEnterpriseStrategyManager:                                       |
-//|   - EnableStrategy          (manual activation by name)           |
-//|   - DisableStrategy         (manual deactivation by name)         |
-//|   - CheckStrategyDisabling  (governance/AI-degeneration sweep)    |
-//|   - CheckStrategyReEnabling (cooldown/AI-recovery sweep)          |
-//|   - OnNewBar                (per-bar readiness + state reset)     |
-//|                                                                   |
-//| Like C4/C5 this module MUTATES the manager, so it holds a         |
-//| NON-const back-pointer and writes through the manager's narrow    |
-//| per-field accessors.                                              |
-//|                                                                   |
-//| DELIBERATELY NOT MOVED:                                           |
-//|   - SyncEnabledWithRegistry(). It is enable/disable lifecycle by  |
-//|     nature but is an explicit DO-NOT-TOUCH C9 guard: its body     |
-//|     must stay verbatim in the manager and its only call site is   |
-//|     Core/Orchestration/EAOrchestrator.mqh:768.                    |
-//|   - RegisterStrategy(). Registration allocates and Init()s the    |
-//|     strategy object and owns the whole StrategyEntry construction |
-//|     (35+ field initialisers); relocating it would require a       |
-//|     write accessor for every field in the struct, which is a      |
-//|     wider contract than the extraction warrants.                  |
-//|   - The per-name governance setters (SetStrategyRoleByName,       |
-//|     SetStrategyClusterByName, ...). Those are C4-class config     |
-//|     setters that Slice 2 deliberately left in the manager.        |
-//|                                                                   |
-//| BEHAVIOURAL FIDELITY NOTES (both preserved verbatim, see the      |
-//| inline comments at the call sites):                               |
-//|   1. CheckStrategyDisabling returns after delegating to the       |
-//|      health monitor; CheckStrategyReEnabling does NOT and falls   |
-//|      through into its fallback loop. This asymmetry exists in the |
-//|      original and is intentionally reproduced.                    |
-//|   2. CheckStrategyReEnabling dereferences the strategy pointer    |
-//|      without a NULL guard. Reproduced as-is.                      |
-//|                                                                   |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy Lifecycle (Phase C, Slice 3 - C7)
+// Enable/disable lifecycle, governance-driven activation and the
+// per-bar strategy state transition extracted from
+// - EnableStrategy          (manual activation by name)
+// - DisableStrategy         (manual deactivation by name)
+// - CheckStrategyDisabling  (governance/AI-degeneration sweep)
+// - CheckStrategyReEnabling (cooldown/AI-recovery sweep)
+// - OnNewBar                (per-bar readiness + state reset)
+// Like C4/C5 this module MUTATES the manager, so it holds a
+// NON-const back-pointer and writes through the manager's narrow
+// per-field accessors.
+// DELIBERATELY NOT MOVED:
+// - SyncEnabledWithRegistry(). It is enable/disable lifecycle by
+// nature but is an explicit DO-NOT-TOUCH C9 guard: its body
+// must stay verbatim in the manager and its only call site is
+// Core/Orchestration/EAOrchestrator.mqh:768.
+// - RegisterStrategy(). Registration allocates and Init()s the
+// strategy object and owns the whole StrategyEntry construction
+// (35+ field initialisers); relocating it would require a
+// write accessor for every field in the struct, which is a
+// wider contract than the extraction warrants.
+// - The per-name governance setters (SetStrategyRoleByName,
+// SetStrategyClusterByName, ...). Those are C4-class config
+// setters that Slice 2 deliberately left in the manager.
+// BEHAVIOURAL FIDELITY NOTES (both preserved verbatim, see the
+// inline comments at the call sites):
+// 1. CheckStrategyDisabling returns after delegating to the
+// health monitor; CheckStrategyReEnabling does NOT and falls
+// through into its fallback loop. This asymmetry exists in the
+// original and is intentionally reproduced.
+// 2. CheckStrategyReEnabling dereferences the strategy pointer
+// without a NULL guard. Reproduced as-is.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_LIFECYCLE_MQH
 #define STRATEGY_LIFECYCLE_MQH
 
@@ -52,9 +45,7 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-//+------------------------------------------------------------------+
-//| Lifecycle facade over CEnterpriseStrategyManager                  |
-//+------------------------------------------------------------------+
+// Lifecycle facade over CEnterpriseStrategyManager
 class CStrategyLifecycle
 {
 private:
@@ -72,9 +63,6 @@ public:
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
 };
 
-//+------------------------------------------------------------------+
-//| Enable Strategy By Name                                          |
-//+------------------------------------------------------------------+
 bool CStrategyLifecycle::EnableStrategy(const string name)
 {
     if(m_src == NULL)
@@ -96,9 +84,6 @@ bool CStrategyLifecycle::EnableStrategy(const string name)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Disable Strategy By Name                                         |
-//+------------------------------------------------------------------+
 bool CStrategyLifecycle::DisableStrategy(const string name)
 {
     if(m_src == NULL)
@@ -118,9 +103,7 @@ bool CStrategyLifecycle::DisableStrategy(const string name)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Governance sweep: disable degraded strategies                     |
-//+------------------------------------------------------------------+
+// Governance sweep: disable degraded strategies
 void CStrategyLifecycle::CheckStrategyDisabling()
 {
     if(m_src == NULL)
@@ -170,9 +153,7 @@ void CStrategyLifecycle::CheckStrategyDisabling()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Governance sweep: re-enable recovered strategies                  |
-//+------------------------------------------------------------------+
+// Governance sweep: re-enable recovered strategies
 void CStrategyLifecycle::CheckStrategyReEnabling()
 {
     if(m_src == NULL)
@@ -224,10 +205,8 @@ void CStrategyLifecycle::CheckStrategyReEnabling()
     }
 }
 
-//+------------------------------------------------------------------+
-//| OnNewBar - CRITICAL for zone scanning and chart drawings         |
-//| Must be called from main EA on each new bar                      |
-//+------------------------------------------------------------------+
+// OnNewBar - CRITICAL for zone scanning and chart drawings
+// Must be called from main EA on each new bar
 void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     if(m_src == NULL)

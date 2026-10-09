@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Signal Pipeline Aggregator - MTF consensus tally (extracted)     |
-//| Stateless consensus vote counting for ProcessMTFSignals.         |
-//+------------------------------------------------------------------+
+// Signal Pipeline Aggregator - MTF consensus tally (extracted)
+// Stateless consensus vote counting for ProcessMTFSignals.
 #ifndef SIGNAL_PIPELINE_AGGREGATOR_MQH
 #define SIGNAL_PIPELINE_AGGREGATOR_MQH
 
@@ -10,10 +8,8 @@
 class CSignalPipelineAggregator
 {
 public:
-    //+--------------------------------------------------------------+
-    //| Tally per-timeframe consensus (no-conflict path).            |
-    //| Preserves exact original majority-vote + averaged confidence.|
-    //+--------------------------------------------------------------+
+// Tally per-timeframe consensus (no-conflict path).
+// Preserves exact original majority-vote + averaged confidence.
     static ENUM_TRADE_SIGNAL TallyConsensus(const ENUM_TRADE_SIGNAL &signals[],
                                             const double &confidences[],
                                             const int count,

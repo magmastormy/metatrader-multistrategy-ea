@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| PyBridgeTransport.mqh                                            |
-//| Connection/session state + HTTP transport + state logging for    |
-//| the Python bridge. Owns the endpoint, mode, timeout, connection  |
-//| state, initialization flag, request counters and last error.     |
-//| Extracted verbatim from PythonBridge.mqh (behaviour unchanged).  |
-//+------------------------------------------------------------------+
+// Connection/session state + HTTP transport + state logging for
+// the Python bridge. Owns the endpoint, mode, timeout, connection
+// state, initialization flag, request counters and last error.
+// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -17,9 +14,7 @@
 #include "ErrorHandling.mqh"
 #include "PyBridgeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Python Bridge Transport / Session State                          |
-//+------------------------------------------------------------------+
+// Python Bridge Transport / Session State
 class CPyBridgeTransport
 {
 private:
@@ -48,7 +43,6 @@ public:
                                      const string &post_data, string &response);
    void              LogBridgeState(string message, ENUM_ERROR_LEVEL level = ERROR_LEVEL_INFO);
 
-   // Getters
    ENUM_PYTHON_BRIDGE_STATE GetState() const { return m_state; }
    ENUM_PYTHON_BRIDGE_MODE  GetMode() const { return m_mode; }
    bool              IsConnected() const { return m_state == PYTHON_BRIDGE_CONNECTED; }
@@ -66,9 +60,7 @@ public:
    void              IncrementErrorCount() { m_error_count++; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor - defaults identical to the original CPythonBridge   |
-//+------------------------------------------------------------------+
+// Constructor - defaults identical to the original CPythonBridge
 CPyBridgeTransport::CPyBridgeTransport()
 {
    m_endpoint = "http://127.0.0.1:8000";
@@ -82,9 +74,7 @@ CPyBridgeTransport::CPyBridgeTransport()
    m_last_error = "";
 }
 
-//+------------------------------------------------------------------+
-//| Apply the connection configuration supplied to Initialize()      |
-//+------------------------------------------------------------------+
+// Apply the connection configuration supplied to Initialize()
 void CPyBridgeTransport::Configure(const string &endpoint, ENUM_PYTHON_BRIDGE_MODE mode,
                                    int request_timeout_ms)
 {
@@ -93,9 +83,7 @@ void CPyBridgeTransport::Configure(const string &endpoint, ENUM_PYTHON_BRIDGE_MO
    m_request_timeout = request_timeout_ms;
 }
 
-//+------------------------------------------------------------------+
-//| Finish initialization: flag, banner logging and initial state    |
-//+------------------------------------------------------------------+
+// Finish initialization: flag, banner logging and initial state
 bool CPyBridgeTransport::CompleteInitialization()
 {
    m_initialized = true;
@@ -118,18 +106,14 @@ bool CPyBridgeTransport::CompleteInitialization()
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Shutdown banner (uses the counters owned by this module)         |
-//+------------------------------------------------------------------+
+// Shutdown banner (uses the counters owned by this module)
 void CPyBridgeTransport::LogShutdown()
 {
    LogBridgeState("Python bridge shutting down | requests=" + IntegerToString(m_request_count) + 
                     " success=" + IntegerToString(m_success_count) + " errors=" + IntegerToString(m_error_count));
 }
 
-//+------------------------------------------------------------------+
-//| Reset all transport-owned state (Shutdown semantics)             |
-//+------------------------------------------------------------------+
+// Reset all transport-owned state (Shutdown semantics)
 void CPyBridgeTransport::Reset()
 {
    m_initialized = false;
@@ -143,9 +127,6 @@ void CPyBridgeTransport::Reset()
    m_last_error = "";
 }
 
-//+------------------------------------------------------------------+
-//| Send HTTP request                                                |
-//+------------------------------------------------------------------+
 bool CPyBridgeTransport::SendHttpRequest(const string &method, const string &url,
                                          const string &post_data, string &response)
 {
@@ -190,9 +171,6 @@ bool CPyBridgeTransport::SendHttpRequest(const string &method, const string &url
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Log bridge state                                                 |
-//+------------------------------------------------------------------+
 void CPyBridgeTransport::LogBridgeState(string message, ENUM_ERROR_LEVEL level)
 {
    string state_str;

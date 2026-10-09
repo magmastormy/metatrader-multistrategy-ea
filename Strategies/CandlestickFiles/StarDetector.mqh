@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//|                                              StarDetector.mqh    |
-//|                     Morning Star / Evening Star Detection         |
-//+------------------------------------------------------------------+
+// Morning Star / Evening Star Detection
 #property copyright "Copyright 2026"
 #property strict
 

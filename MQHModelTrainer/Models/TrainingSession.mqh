@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| TrainingSession.mqh                                              |
-//| Training session orchestration and management                     |
-//+------------------------------------------------------------------+
+// Training session orchestration and management
 #ifndef MQH_TRAINING_SESSION_MQH
 #define MQH_TRAINING_SESSION_MQH
 

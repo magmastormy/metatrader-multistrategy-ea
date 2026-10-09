@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| ModelEvaluator.mqh                                                |
-//| Model evaluation and validation utilities                          |
-//+------------------------------------------------------------------+
+// Model evaluation and validation utilities
 #ifndef MQH_MODEL_EVALUATOR_MQH
 #define MQH_MODEL_EVALUATOR_MQH
 

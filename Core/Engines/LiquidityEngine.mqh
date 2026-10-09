@@ -1,6 +1,4 @@
-//+------------------------------------------------------------------+
-//| Liquidity Detection Engine - Enterprise Grade                    |
-//+------------------------------------------------------------------+
+// Liquidity Detection Engine - Enterprise Grade
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict

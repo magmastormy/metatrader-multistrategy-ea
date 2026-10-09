@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| RegimeTypes.mqh                                                  |
-//| Shared regime value types (enums, snapshot, tuning config)       |
-//| Extracted verbatim from RegimeEngine.mqh (no behavior change)    |
-//+------------------------------------------------------------------+
+// Shared regime value types (enums, snapshot, tuning config)
+// Extracted verbatim from RegimeEngine.mqh (no behavior change)
 #ifndef REGIME_TYPES_MQH
 #define REGIME_TYPES_MQH
 
@@ -17,17 +14,14 @@ enum ENUM_REGIME_STATE
 // ENHANCEMENT: Multi-Dimensional Regime Classification (Batch 93 - Week 5)
 enum ENUM_DETAILED_REGIME
 {
-    // Trend regimes
     DETAILED_REGIME_STRONG_UPTREND = 0,
     DETAILED_REGIME_WEAK_UPTREND = 1,
     DETAILED_REGIME_STRONG_DOWNTREND = 2,
     DETAILED_REGIME_WEAK_DOWNTREND = 3,
 
-    // Range regimes
     DETAILED_REGIME_HIGH_VOL_RANGE = 4,
     DETAILED_REGIME_LOW_VOL_RANGE = 5,
 
-    // Transition regimes
     DETAILED_REGIME_TRANSITION_UP = 6,
     DETAILED_REGIME_TRANSITION_DOWN = 7,
 
@@ -103,11 +97,9 @@ struct SRegimeSnapshot
     }
 };
 
-//+------------------------------------------------------------------+
-//| Tuning parameters previously held as loose CRegimeEngine fields. |
-//| Defaults and clamping bounds are byte-identical to the original  |
-//| constructor / Initialize() / ConfigureCostLimits() logic.        |
-//+------------------------------------------------------------------+
+// Tuning parameters previously held as loose CRegimeEngine fields.
+// Defaults and clamping bounds are byte-identical to the original
+// constructor / Initialize() / ConfigureCostLimits() logic.
 struct SRegimeConfig
 {
     int atrPeriod;

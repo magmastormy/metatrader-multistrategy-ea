@@ -1,24 +1,18 @@
-//+------------------------------------------------------------------+
-//| FastScalpSignal.mqh                                              |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Owns the two evaluation paths that made up                       |
-//| CFastScalpEngine::EvaluateScalpSignal():                         |
-//|   EvaluateFromCache() — zero-CopyBuffer fast path driven by      |
-//|                         CScalpSignalCache                        |
-//|   EvaluateSlowPath()  — RefreshIndicators + spread gate +        |
-//|                         EMA crossover + RSI confirmation         |
-//|                                                                  |
-//| The engine keeps EvaluateScalpSignal() as a coordinator: it does |
-//| the m_initialized guard, pulls the cache entry, and — only when  |
-//| the fast path yields a non-NONE signal — mirrors the cached      |
-//| indicator values into CFastScalpIndicators, exactly as the       |
-//| original inline block did.                                       |
-//|                                                                  |
-//| Thresholds, comparison operators and short-circuit order are     |
-//| reproduced verbatim.                                             |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Owns the two evaluation paths that made up
+// CFastScalpEngine::EvaluateScalpSignal():
+// EvaluateFromCache() — zero-CopyBuffer fast path driven by
+// CScalpSignalCache
+// EvaluateSlowPath()  — RefreshIndicators + spread gate +
+// EMA crossover + RSI confirmation
+// The engine keeps EvaluateScalpSignal() as a coordinator: it does
+// the m_initialized guard, pulls the cache entry, and — only when
+// the fast path yields a non-NONE signal — mirrors the cached
+// indicator values into CFastScalpIndicators, exactly as the
+// original inline block did.
+// Thresholds, comparison operators and short-circuit order are
+// reproduced verbatim.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_SIGNAL_MQH
@@ -30,16 +24,12 @@
 #include "FastScalpIndicators.mqh"
 #include "FastScalpFilters.mqh"
 
-//+------------------------------------------------------------------+
-//| CFastScalpSignal — scalp signal evaluation                        |
-//+------------------------------------------------------------------+
+// CFastScalpSignal — scalp signal evaluation
 class CFastScalpSignal
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Fast path: evaluate purely from a populated SScalpIndicatorCache  |
-   //| Returns TRADE_SIGNAL_NONE on any gate rejection.                  |
-   //+------------------------------------------------------------------+
+// Fast path: evaluate purely from a populated SScalpIndicatorCache
+// Returns TRADE_SIGNAL_NONE on any gate rejection.
    static ENUM_TRADE_SIGNAL EvaluateFromCache(const string symbol,
                                               const SScalpConfig &config,
                                               const SScalpIndicatorCache &cache)
@@ -74,9 +64,7 @@ public:
       return emaSignal;
    }
 
-   //+------------------------------------------------------------------+
-   //| Fallback: existing RefreshIndicators path (slow path / timer path)|
-   //+------------------------------------------------------------------+
+// Fallback: existing RefreshIndicators path (slow path / timer path)
    static ENUM_TRADE_SIGNAL EvaluateSlowPath(const string symbol,
                                              const SScalpConfig &config,
                                              CFastScalpIndicators &indicators)

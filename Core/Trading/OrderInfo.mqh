@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| OrderInfo.mqh - Order information class                          |
-//| Copyright 2025, Your Company Name                                |
-//| https://www.yoursite.com                                        |
-//+------------------------------------------------------------------+
+// OrderInfo.mqh - Order information class
+// Copyright 2025, Your Company Name
+// https://www.yoursite.com
 #property copyright "Copyright 2025, Your Company Name"
 #property link      "https://www.yoursite.com"
 #property version   "1.00"
@@ -26,9 +24,7 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-//+------------------------------------------------------------------+
-//| Wrapper for MQL5 COrderInfo class                                |
-//+------------------------------------------------------------------+
+// Wrapper for MQL5 COrderInfo class
 class CWrapperOrderInfo : public CEnhancedErrorHandler
 {
 private:

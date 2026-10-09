@@ -1,19 +1,13 @@
-//+------------------------------------------------------------------+
-//| OrchestratorModeResolver.mqh                                     |
-//| Phase F extraction from CEAOrchestrator (behaviour preserving).  |
-//|                                                                  |
-//| Effective EA-mode degradation, AI runtime vote threshold and the |
-//| two startup topology log lines. Bodies moved verbatim out of     |
-//| CEAOrchestrator; the orchestrator keeps one-line forwarders with |
-//| the original signatures.                                         |
-//|                                                                  |
-//| NOTE: LogAIRuntimeTopology() prints __FILE__. Because that macro |
-//| expands at the *definition* site, the orchestrator forwarder     |
-//| passes its own __FILE__ in as `sourceFile` so the emitted        |
-//| [RUNTIME-FINGERPRINT] line is unchanged.                         |
-//|                                                                  |
-//| All methods are static - this cluster owns no state.             |
-//+------------------------------------------------------------------+
+// Phase F extraction from CEAOrchestrator (behaviour preserving).
+// Effective EA-mode degradation, AI runtime vote threshold and the
+// two startup topology log lines. Bodies moved verbatim out of
+// CEAOrchestrator; the orchestrator keeps one-line forwarders with
+// the original signatures.
+// NOTE: LogAIRuntimeTopology() prints __FILE__. Because that macro
+// expands at the *definition* site, the orchestrator forwarder
+// passes its own __FILE__ in as `sourceFile` so the emitted
+// [RUNTIME-FINGERPRINT] line is unchanged.
+// All methods are static - this cluster owns no state.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_MODE_RESOLVER_MQH
@@ -23,9 +17,6 @@
 #include "OrchestratorSymbolClassifier.mqh"
 #include "../../Core/Strategy/StrategyRegistry.mqh"
 
-//+------------------------------------------------------------------+
-//| COrchestratorModeResolver                                        |
-//+------------------------------------------------------------------+
 class COrchestratorModeResolver
 {
 public:

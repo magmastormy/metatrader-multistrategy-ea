@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TrendMTF.mqh - Multi-timeframe alignment / consensus             |
-//| Extracted verbatim from TrendEngine.mqh (no behavior change)     |
-//+------------------------------------------------------------------+
+// TrendMTF.mqh - Multi-timeframe alignment / consensus
+// Extracted verbatim from TrendEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -11,11 +9,9 @@
 
 #include "TrendTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Stateless multi-timeframe aggregator. Consumes the three         |
-//| per-timeframe TrendState members of MTFTrendState and fills in   |
-//| alignment / isAligned / consensus.                               |
-//+------------------------------------------------------------------+
+// Stateless multi-timeframe aggregator. Consumes the three
+// per-timeframe TrendState members of MTFTrendState and fills in
+// alignment / isAligned / consensus.
 class CTrendMTF
 {
 public:
@@ -23,9 +19,7 @@ public:
     static void ComputeAlignment(MTFTrendState &state);
 };
 
-//+------------------------------------------------------------------+
-//| Compute MTF Alignment and Consensus                             |
-//+------------------------------------------------------------------+
+// Compute MTF Alignment and Consensus
 void CTrendMTF::ComputeAlignment(MTFTrendState &state)
 {
     // Calculate alignment

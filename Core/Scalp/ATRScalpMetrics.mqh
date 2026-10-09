@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| ATRScalpMetrics.mqh                                              |
-//| ATR scalping statistics / accounting: skipped-trade counter,     |
-//| live scalp position census and the diagnostics dump.             |
-//| Extracted verbatim from ATRScalpingEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// ATR scalping statistics / accounting: skipped-trade counter,
+// live scalp position census and the diagnostics dump.
+// Extracted verbatim from ATRScalpingEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,32 +11,24 @@
 
 #include "ATRScalpTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CATRScalpMetrics — owns the skipped counter, census + diagnostics |
-//+------------------------------------------------------------------+
+// CATRScalpMetrics — owns the skipped counter, census + diagnostics
 class CATRScalpMetrics
 {
 private:
    int   m_totalTradesSkipped;
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor — counters start at zero                              |
-   //+------------------------------------------------------------------+
+// Constructor — counters start at zero
    CATRScalpMetrics() :
       m_totalTradesSkipped(0)
    {
    }
 
-   //+------------------------------------------------------------------+
-   //| Counter mutator / accessor                                        |
-   //+------------------------------------------------------------------+
+// Counter mutator / accessor
    void RecordTradeSkipped()      { m_totalTradesSkipped++;    }
    int  TotalTradesSkipped() const { return m_totalTradesSkipped; }
 
-   //+------------------------------------------------------------------+
-   //| Count positions with "ATR-SCALP" in comment                       |
-   //+------------------------------------------------------------------+
+// Count positions with "ATR-SCALP" in comment
    static int GetActiveScalpPositions()
    {
       int count = 0;
@@ -58,9 +47,6 @@ public:
       return count;
    }
 
-   //+------------------------------------------------------------------+
-   //| Print diagnostics                                                 |
-   //+------------------------------------------------------------------+
    static void PrintDiagnostics(const SATRScalpSymbolState &states[], int symbolCount,
                                 int totalTradesOpened, int totalTradesSkipped, int totalSpikeWindowBlocks)
    {

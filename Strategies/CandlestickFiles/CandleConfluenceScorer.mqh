@@ -1,19 +1,14 @@
-//+------------------------------------------------------------------+
-//|                                    CandleConfluenceScorer.mqh    |
-//|                     Confluence Scoring for Candlestick Patterns   |
-//|                     Scores 0-100 based on pattern + location +    |
-//|                     trend alignment quality                       |
-//+------------------------------------------------------------------+
+// Confluence Scoring for Candlestick Patterns
+// Scores 0-100 based on pattern + location +
+// trend alignment quality
 #property copyright "Copyright 2026"
 #property strict
 
-//+------------------------------------------------------------------+
-//| Confluence Score Components                                       |
-//| Pattern detected: +50 pts                                        |
-//| At key level (S/R, EMA, FVG): +30 pts                           |
-//| Trend aligned: +20 pts                                           |
-//| Signal threshold: >= 70 pts                                      |
-//+------------------------------------------------------------------+
+// Confluence Score Components
+// Pattern detected: +50 pts
+// At key level (S/R, EMA, FVG): +30 pts
+// Trend aligned: +20 pts
+// Signal threshold: >= 70 pts
 
 class CCandleConfluenceScorer
 {

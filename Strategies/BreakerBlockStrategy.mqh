@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| BreakerBlockStrategy.mqh                                         |
-//| ICT Breaker Block Strategy: breaker OB retest + FVG confluence   |
-//| with structure alignment and CISD displacement confirmation      |
-//|                                                                  |
-//| Detects breaker blocks (OB_BREAKER_BULL/OB_BREAKER_BEAR), waits  |
-//| for price retest of the breaker zone, and confirms with opposing |
-//| FVG confluence, CISD displacement, and market structure context. |
-//+------------------------------------------------------------------+
+// ICT Breaker Block Strategy: breaker OB retest + FVG confluence
+// with structure alignment and CISD displacement confirmation
+// Detects breaker blocks (OB_BREAKER_BULL/OB_BREAKER_BEAR), waits
+// for price retest of the breaker zone, and confirms with opposing
+// FVG confluence, CISD displacement, and market structure context.
 #ifndef BREAKER_BLOCK_STRATEGY_MQH
 #define BREAKER_BLOCK_STRATEGY_MQH
 

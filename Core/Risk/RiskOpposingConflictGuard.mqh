@@ -1,31 +1,18 @@
-//+------------------------------------------------------------------+
-//| RiskOpposingConflictGuard.mqh                                    |
-//| Opposing same-symbol cluster conflict cooldown cache (Fix #9).   |
-//|                                                                  |
-//| Extracted verbatim from CUnifiedRiskManager (Phase E2, E-E):     |
-//|   m_opposingConflictCooldownSec                                  |
-//|   m_lastOpposingConflictTime / m_lastOpposingConflictSymbol      |
-//|   cooldown short-circuit in ValidateClusterGovernance            |
-//|       -> IsCooldownActive                                        |
-//|   conflict-cache update in ValidateClusterGovernance             |
-//|       -> RegisterConflict                                        |
-//|   CUnifiedRiskManager::ClearOpposingConflictCache                |
-//|       -> ClearOpposingConflictCache                              |
-//|                                                                  |
-//| Behaviour is byte-identical to the original inline code;         |
-//| CUnifiedRiskManager keeps a thin forwarder with the original     |
-//| signature so that all call sites remain unchanged.               |
-//|                                                                  |
-//| OWNERSHIP NOTE: the `m_clusterMutexEnabled` master switch stays  |
-//| in CUnifiedRiskManager - the guard is only consulted while the   |
-//| mutex feature is enabled, exactly as before.                     |
-//+------------------------------------------------------------------+
+// Opposing same-symbol cluster conflict cooldown cache (Fix #9).
+// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-E):
+// cooldown short-circuit in ValidateClusterGovernance
+// -> IsCooldownActive
+// conflict-cache update in ValidateClusterGovernance
+// Behaviour is byte-identical to the original inline code;
+// CUnifiedRiskManager keeps a thin forwarder with the original
+// signature so that all call sites remain unchanged.
+// OWNERSHIP NOTE: the `m_clusterMutexEnabled` master switch stays
+// in CUnifiedRiskManager - the guard is only consulted while the
+// mutex feature is enabled, exactly as before.
 #ifndef CORE_RISK_RISK_OPPOSING_CONFLICT_GUARD_MQH
 #define CORE_RISK_RISK_OPPOSING_CONFLICT_GUARD_MQH
 
-//+------------------------------------------------------------------+
-//| Opposing-signal conflict cooldown cache (stateful, owned by value)|
-//+------------------------------------------------------------------+
+// Opposing-signal conflict cooldown cache (stateful, owned by value)
 class CRiskOpposingConflictGuard
 {
 private:

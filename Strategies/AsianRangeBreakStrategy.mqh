@@ -1,10 +1,6 @@
-//+------------------------------------------------------------------+
-//| AsianRangeBreakStrategy.mqh                                      |
-//| Asian Range Break: London-open breakout of Asian session range    |
-//| Tight Asian range + London expansion = high-probability breakout  |
-//|                                                                  |
-//| Batch 103: Session-specific strategy for forex/metals/indices     |
-//+------------------------------------------------------------------+
+// Asian Range Break: London-open breakout of Asian session range
+// Tight Asian range + London expansion = high-probability breakout
+// Batch 103: Session-specific strategy for forex/metals/indices
 #ifndef ASIAN_RANGE_BREAK_STRATEGY_MQH
 #define ASIAN_RANGE_BREAK_STRATEGY_MQH
 

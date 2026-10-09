@@ -1,6 +1,4 @@
-//+------------------------------------------------------------------+
-//| Volatility Analysis Engine - Enterprise Grade                    |
-//+------------------------------------------------------------------+
+// Volatility Analysis Engine - Enterprise Grade
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -111,7 +109,6 @@ public:
     bool Initialize(int atrPeriod = 14, int bbPeriod = 20, CSignalDiagnostics* diag = NULL);
     bool UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe);
     
-    // Getters
     ENUM_VOLATILITY_STATE GetVolatilityState() const { return m_metrics.state; }
     double GetATR() const { return m_metrics.atr; }
     double GetATRPercent() const { return m_metrics.atrPercent; }
@@ -365,9 +362,7 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
                 MathIsValidNumber(stdDevValue));
     }
 
-    //+------------------------------------------------------------------+
-        //| Shared ATR calculation helper (L4-014 Fix)                      |
-        //+------------------------------------------------------------------+
+// Shared ATR calculation helper (L4-014 Fix)
         double CVolatilityEngine::CalculateAtrFromRates(const MqlRates &rates[], int period, int startIndex, int copied)
         {
             int atrWindow = MathMin(period, copied - startIndex - 1);

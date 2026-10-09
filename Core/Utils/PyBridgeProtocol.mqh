@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| PyBridgeProtocol.mqh                                             |
-//| Stateless message framing / (de)serialization helpers for the    |
-//| Python bridge: JSON escaping, JSON scalar extraction, response   |
-//| parsing, request building and version validation.                |
-//| Extracted verbatim from PythonBridge.mqh (behaviour unchanged).  |
-//+------------------------------------------------------------------+
+// Stateless message framing / (de)serialization helpers for the
+// Python bridge: JSON escaping, JSON scalar extraction, response
+// parsing, request building and version validation.
+// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -15,9 +12,7 @@
 
 #include "PyBridgeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Python Bridge Protocol Helpers (static-only, no state)           |
-//+------------------------------------------------------------------+
+// Python Bridge Protocol Helpers (static-only, no state)
 class CPyBridgeProtocol
 {
 public:
@@ -44,9 +39,6 @@ public:
    static bool       CheckVersionCompatibility(const SPythonBridgeVersion &version);
 };
 
-//+------------------------------------------------------------------+
-//| Escape JSON string                                               |
-//+------------------------------------------------------------------+
 string CPyBridgeProtocol::EscapeJsonString(const string &str)
 {
    string result = str;
@@ -58,9 +50,7 @@ string CPyBridgeProtocol::EscapeJsonString(const string &str)
    return result;
 }
 
-//+------------------------------------------------------------------+
-//| JSON parsing helpers (Phase 6.3 — consolidated from 18+ patterns)|
-//+------------------------------------------------------------------+
+// JSON parsing helpers (Phase 6.3 — consolidated from 18+ patterns)
 double CPyBridgeProtocol::ParseJsonDouble(const string &json_str, const string &key)
 {
    string searchKey = "\"" + key + "\":";
@@ -100,9 +90,6 @@ long CPyBridgeProtocol::ParseJsonInteger(const string &json_str, const string &k
    return StringToInteger(val_str);
 }
 
-//+------------------------------------------------------------------+
-//| Validate JSON response                                           |
-//+------------------------------------------------------------------+
 bool CPyBridgeProtocol::ValidateJsonResponse(const string &json_str)
 {
    if(json_str == "")
@@ -135,9 +122,6 @@ bool CPyBridgeProtocol::ValidateJsonResponse(const string &json_str)
    return (brace_count == 0 && bracket_count == 0 && !in_string);
 }
 
-//+------------------------------------------------------------------+
-//| Parse prediction response JSON                                   |
-//+------------------------------------------------------------------+
 SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &json_str)
 {
    SPythonBridgeResponse result;
@@ -188,9 +172,7 @@ SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &j
    return result;
 }
 
-//+------------------------------------------------------------------+
-//| Build the /predict request payload                               |
-//+------------------------------------------------------------------+
+// Build the /predict request payload
 string CPyBridgeProtocol::BuildPredictRequest(const double &features[], int features_size,
                                               const string mode,
                                               int family_id,
@@ -219,9 +201,6 @@ string CPyBridgeProtocol::BuildPredictRequest(const double &features[], int feat
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Parse version response                                           |
-//+------------------------------------------------------------------+
 bool CPyBridgeProtocol::ParseVersionResponse(const string &json_str, SPythonBridgeVersion &version)
 {
    if(!ValidateJsonResponse(json_str))
@@ -240,15 +219,11 @@ bool CPyBridgeProtocol::ParseVersionResponse(const string &json_str, SPythonBrid
       if(parts_count >= 3) version.patch = (int)StringToInteger(parts[2]);
    }
    
-   // Check compatibility
    version.compatible = CheckVersionCompatibility(version);
    
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check version compatibility                                      |
-//+------------------------------------------------------------------+
 bool CPyBridgeProtocol::CheckVersionCompatibility(const SPythonBridgeVersion &version)
 {
    const int REQUIRED_MAJOR = 1;

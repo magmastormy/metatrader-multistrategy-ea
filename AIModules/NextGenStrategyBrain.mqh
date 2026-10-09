@@ -1,13 +1,10 @@
-//+------------------------------------------------------------------+
-//| Next-Generation Strategy Brain Integration                       |
-//| Local runtime adapter over shared transformer feature paths       |
-//|                                                                   |
-//| ROLE: Feature provider ONLY. This class produces features and    |
-//| uncertainty estimates for the AI adapters (Transformer/Ensemble/  |
-//| ONNX). It is NOT a direct live voter. Signals must flow through  |
-//| IAIStrategy adapters → EnterpriseStrategyManager consensus.      |
-//| Do NOT use GenerateSignal() output as a direct TRADE_SIGNAL.     |
-//+------------------------------------------------------------------+
+// Next-Generation Strategy Brain Integration
+// Local runtime adapter over shared transformer feature paths
+// ROLE: Feature provider ONLY. This class produces features and
+// uncertainty estimates for the AI adapters (Transformer/Ensemble/
+// ONNX). It is NOT a direct live voter. Signals must flow through
+// IAIStrategy adapters → EnterpriseStrategyManager consensus.
+// Do NOT use GenerateSignal() output as a direct TRADE_SIGNAL.
 #ifndef NEXTGEN_STRATEGY_BRAIN_MQH
 #define NEXTGEN_STRATEGY_BRAIN_MQH
 

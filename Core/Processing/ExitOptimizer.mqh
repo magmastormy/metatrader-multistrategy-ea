@@ -1,25 +1,18 @@
-//+------------------------------------------------------------------+
-//| ExitOptimizer.mqh                                                |
-//| Advanced exit optimization module                                |
-//| Chandelier exits, R-multiple partials, OU-based TP, time exits   |
-//| Batch 114: Research-driven exit improvements                     |
-//+------------------------------------------------------------------+
+// Advanced exit optimization module
+// Chandelier exits, R-multiple partials, OU-based TP, time exits
+// Batch 114: Research-driven exit improvements
 #ifndef EXIT_OPTIMIZER_MQH
 #define EXIT_OPTIMIZER_MQH
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Exit Optimization Configuration                                   |
-//+------------------------------------------------------------------+
+// Exit Optimization Configuration
 struct SExitConfig
 {
-    // Chandelier Exit
     bool   useChandelier;          // Enable Chandelier exit (default: true)
     int    chandelierPeriod;       // ATR period for Chandelier (default: 22)
     double chandelierMultiplier;   // ATR multiplier (default: 3.0)
 
-    // R-Multiple Partials
     bool   useRMultiplePartials;   // Enable R-multiple partials (default: true)
     double partial1RMultiple;      // R level for first partial (default: 1.0)
     double partial1Percent;        // % to close at partial 1 (default: 0.25)
@@ -32,12 +25,10 @@ struct SExitConfig
     bool   useOUTarget;           // Enable OU half-life TP (default: true)
     double ouMaxTargetBars;       // Max bars for OU target (default: 50)
 
-    // Time-Based Exits
     bool   useTimeExit;           // Enable time-based exit (default: true)
     int    maxHoldingBarsDefault; // Default max holding bars (default: 48 on M5)
     int    maxHoldingBarsHighVol; // Max holding bars in high vol (default: 24)
 
-    // Volatility-Adjusted TP
     bool   useVolAdjustedTP;      // Enable vol-adjusted TP (default: true)
     double baseTPMultiplier;      // Base TP = ATR * multiplier (default: 2.0)
     double lowVolTPMultiplier;    // TP multiplier in low vol (default: 1.5)
@@ -68,9 +59,7 @@ struct SExitConfig
     {}
 };
 
-//+------------------------------------------------------------------+
-//| Exit Action Types                                                 |
-//+------------------------------------------------------------------+
+// Exit Action Types
 enum ENUM_EXIT_ACTION
 {
     EXIT_ACTION_NONE = 0,
@@ -80,9 +69,6 @@ enum ENUM_EXIT_ACTION
     EXIT_ACTION_WIDEN_SL          // Widen stop loss (regime change)
 };
 
-//+------------------------------------------------------------------+
-//| Exit Decision Structure                                           |
-//+------------------------------------------------------------------+
 struct SExitDecision
 {
     ENUM_EXIT_ACTION action;
@@ -100,17 +86,14 @@ struct SExitDecision
     {}
 };
 
-//+------------------------------------------------------------------+
-//| CExitOptimizer — Advanced exit management                        |
-//|                                                                  |
-//| Research findings implemented:                                    |
-//| - Chandelier Exit (Le Beau 2000): uses highest-high since entry  |
-//|   instead of current price, prevents premature tightening        |
-//| - R-Multiple Partials: systematic profit taking at 1R, 2R, 3R   |
-//| - OU Half-Life TP: target based on mean-reversion speed          |
-//| - Time Exits: alpha decays after 1-5 days (Jegadeesh & Titman)  |
-//| - Vol-Adjusted TP: wider targets in high-vol regimes             |
-//+------------------------------------------------------------------+
+// CExitOptimizer — Advanced exit management
+// Research findings implemented:
+// - Chandelier Exit (Le Beau 2000): uses highest-high since entry
+// instead of current price, prevents premature tightening
+// - R-Multiple Partials: systematic profit taking at 1R, 2R, 3R
+// - OU Half-Life TP: target based on mean-reversion speed
+// - Time Exits: alpha decays after 1-5 days (Jegadeesh & Titman)
+// - Vol-Adjusted TP: wider targets in high-vol regimes
 class CExitOptimizer
 {
 private:
@@ -175,7 +158,6 @@ public:
             IndicatorRelease(m_atrHandle);
     }
 
-    //--- Initialize
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
         m_symbol = symbol;
@@ -184,7 +166,6 @@ public:
         return (m_atrHandle != INVALID_HANDLE);
     }
 
-    //--- Configure
     void Configure(const SExitConfig &config)
     {
         m_config = config;
@@ -354,7 +335,6 @@ public:
             }
         }
 
-        // 2. Check R-multiple partials
         int partialLevel = CheckRMultiplePartials(currentPrice, isLong);
         if(partialLevel > 0)
         {

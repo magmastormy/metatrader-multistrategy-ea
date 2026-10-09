@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryAtr.mqh                                              |
-//| ATR indicator handle lifecycle per symbol plus the L10-017        |
-//| incremental ATR/EMA refresh used by the grid recovery engine.     |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only). |
-//+------------------------------------------------------------------+
+// ATR indicator handle lifecycle per symbol plus the L10-017
+// incremental ATR/EMA refresh used by the grid recovery engine.
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -14,34 +11,26 @@
 
 #include "GridRecoveryTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| CGridRecoveryAtr — owns the per-symbol ATR indicator handles      |
-//+------------------------------------------------------------------+
+// CGridRecoveryAtr — owns the per-symbol ATR indicator handles
 class CGridRecoveryAtr
 {
 private:
    int   m_atrHandles[];
 
 public:
-   //+------------------------------------------------------------------+
-   //| Create an ATR indicator handle for a symbol                       |
-   //+------------------------------------------------------------------+
+// Create an ATR indicator handle for a symbol
    static int CreateHandle(const string symbol, int atrPeriod)
    {
       return iATR(symbol, PERIOD_M1, atrPeriod);
    }
 
-   //+------------------------------------------------------------------+
-   //| Grow the handle storage to hold newSize entries                   |
-   //+------------------------------------------------------------------+
+// Grow the handle storage to hold newSize entries
    void Resize(int newSize)
    {
       ArrayResize(m_atrHandles, newSize);
    }
 
-   //+------------------------------------------------------------------+
-   //| Store / read a handle for a symbol slot                           |
-   //+------------------------------------------------------------------+
+// Store / read a handle for a symbol slot
    void SetHandle(int idx, int handle)
    {
       m_atrHandles[idx] = handle;
@@ -52,9 +41,7 @@ public:
       return m_atrHandles[idx];
    }
 
-   //+------------------------------------------------------------------+
-   //| Release all indicator handles for the first count slots           |
-   //+------------------------------------------------------------------+
+// Release all indicator handles for the first count slots
    void ReleaseAll(int count)
    {
       for(int i = 0; i < count; i++)
@@ -67,9 +54,7 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Update ATR value for a symbol                                     |
-   //+------------------------------------------------------------------+
+// Update ATR value for a symbol
    void UpdateATR(int idx, SGridSymbolState &state)
    {
       if(m_atrHandles[idx] == INVALID_HANDLE)

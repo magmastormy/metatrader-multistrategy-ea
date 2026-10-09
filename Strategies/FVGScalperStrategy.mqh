@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| FVGScalperStrategy.mqh                                           |
-//| FVG Scalper: Fair Value Gap re-entry with rejection candle       |
-//| confirmation and structure context alignment                      |
-//+------------------------------------------------------------------+
+// FVG Scalper: Fair Value Gap re-entry with rejection candle
+// confirmation and structure context alignment
 #ifndef FVG_SCALPER_STRATEGY_MQH
 #define FVG_SCALPER_STRATEGY_MQH
 

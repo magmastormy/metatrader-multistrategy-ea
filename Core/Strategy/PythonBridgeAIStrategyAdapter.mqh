@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| PythonBridgeAIStrategyAdapter.mqh                                |
-//| Symbol-scoped Python Bridge AI strategy adapter                  |
-//+------------------------------------------------------------------+
+// Symbol-scoped Python Bridge AI strategy adapter
 #property strict
 
 #ifndef CORE_STRATEGY_PYTHON_BRIDGE_AI_STRATEGY_ADAPTER_MQH
@@ -50,7 +47,6 @@ private:
     double m_calibrationRatioThreshold;
     int  m_minDirectionalCount;
     
-    // Feature pipeline
     CFeaturePipelineONNX* m_featurePipeline;
     bool              m_ownsPipeline;
 
@@ -300,7 +296,6 @@ public:
 
         confidence = maxProb;
         
-        // Validate confidence
         if(!IsValidConfidence(confidence))
         {
             m_noneVotes++;
@@ -483,13 +478,11 @@ public:
         }
     }
     
-    // IModelHealth
     virtual double GetHealthScore(void) const override
     {
         return IsModelHealthy() ? 1.0 : 0.0;
     }
     
-    // IOnlineTraining
     virtual void EnableOnlineTraining(const bool enable) override
     {
         // Python bridge doesn't support online training
@@ -505,7 +498,6 @@ public:
         return "NOT_SUPPORTED";
     }
     
-    // IRegimeAware
     virtual void OnRegimeChange(const int newRegime) override
     {
         // Python bridge doesn't have regime awareness

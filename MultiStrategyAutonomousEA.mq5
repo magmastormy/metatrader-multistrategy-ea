@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| MultiStrategyAutonomousEA.mq5                                    |
-//| Simplified thin wrapper using EAOrchestrator as composition root  |
-//+------------------------------------------------------------------+
+// Simplified thin wrapper using EAOrchestrator as composition root
 #property copyright "Copyright 2024"
 #property link      "https://github.com/"
 #property version   "2.000"
@@ -9,9 +6,7 @@
 
 #include "Core/Orchestration/EAOrchestrator.mqh"
 
-//+------------------------------------------------------------------+
-//| Global variable definitions (declared extern in OrchestratorFwd) |
-//+------------------------------------------------------------------+
+// Global variable definitions (declared extern in OrchestratorFwd)
 #include "Core/Orchestration/GlobalDefs.mqh"
 
 // Production logging & tracing
@@ -395,14 +390,10 @@ input int      InpLogLevel = 1;
 input int      InpLogVerbosity = 3;  // 0=SILENT, 1=ERRORS_ONLY, 2=WARNING, 3=NORMAL, 4=VERBOSE, 5=DEBUG
 input bool     InpLogDerivFamilyDetection = true;  // L7-013: Enable logging for Deriv family detection
 
-//+------------------------------------------------------------------+
-//| EAOrchestrator instance - the composition root                   |
-//+------------------------------------------------------------------+
+// EAOrchestrator instance - the composition root
 CEAOrchestrator* g_orchestrator = NULL;
 
-//+------------------------------------------------------------------+
-//| Build orchestrator config from inputs                           |
-//+------------------------------------------------------------------+
+// Build orchestrator config from inputs
 SOrchestratorConfig BuildOrchestratorConfig()
 {
     SOrchestratorConfig config;
@@ -519,13 +510,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.aiWeightMultiplier = InpAIWeightMultiplier;
     config.aiDrawdownSizingLimit = InpAIDrawdownSizingLimit;
     
-    // Dashboard
     config.dashboardEnabled = InpDashboardEnabled;
     config.dashboardEndpoint = InpDashboardEndpoint;
     config.dashboardPushIntervalSec = InpDashboardPushIntervalSec;
     config.dashboardControlEnabled = InpDashboardControlEnabled;
     
-    // Live authority gate
     config.enableLiveAuthorityGate = InpEnableLiveAuthorityGate;
     config.allowAIWarmStartLive = InpAllowAIWarmStartLive;
     config.allowHybridAIStandalone = InpAllowHybridAIStandalone;
@@ -544,7 +533,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.aiPromotedRiskMultiplier = InpAIPromotedRiskMultiplier;
     config.nonAIPromotedRiskMultiplier = InpNonAIPromotedRiskMultiplier;
     
-    // NN attribution
     config.enableNNAttributionDiagnostics = InpEnableNNAttributionDiagnostics;
     config.runNNAttributionSelfTest = InpRunNNAttributionSelfTest;
     
@@ -625,13 +613,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.lifecycleUseATRTrailing = InpLifecycleUseATRTrailing;
     config.lifecycleATRMultiplier = InpLifecycleATRMultiplier;
     
-    // Max hold time
     config.enableMaxHoldTime = InpEnableMaxHoldTime;
     config.maxHoldHoursIntraday = InpMaxHoldHoursIntraday;
     config.maxHoldHoursSwing = InpMaxHoldHoursSwing;
     config.maxHoldOnlyIfLoss = InpMaxHoldOnlyIfLoss;
     
-    // Emergency
     config.emergencyFlattenAllAccountPositions = InpEmergencyFlattenAllAccountPositions;
     config.unprotectedRemediationIntervalSec = InpUnprotectedRemediationIntervalSec;
     config.unprotectedMaxRestoreAttempts = InpUnprotectedMaxRestoreAttempts;
@@ -644,7 +630,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.scalpAsyncMode = InpScalpAsyncMode;
     config.scalpMaxLatencyMs = InpScalpMaxLatencyMs;
     
-    // Dynamic slippage
     config.enableDynamicSlippage = InpEnableDynamicSlippage;
     config.dynamicSlippageAtrPercent = InpDynamicSlippageAtrPercent;
     config.dynamicSlippageMinPoints = InpDynamicSlippageMinPoints;
@@ -654,7 +639,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     // Spike detection
     config.spikeConfirmWindows = InpSpikeConfirmWindows;
     
-    // Spike Hunter
     config.spikeHunterEnabled = InpSpikeHunterEnabled;
     config.spikeHunterVelocityMult = InpSpikeHunterVelocityMult;
     config.spikeHunterMinConsecTicks = InpSpikeHunterMinConsecTicks;
@@ -669,7 +653,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.spikeHunterAlertThrottle = InpSpikeHunterAlertThrottle;
     config.spikeHunterMinConfluence = InpSpikeHunterMinConfluence;
     
-    // Multi-asset profiler
     config.multiAssetProfilerEnabled = InpMultiAssetProfilerEnabled;
     config.derivProfilerEnabled = InpDerivProfilerEnabled;
     config.gridRecoveryEnabled = InpGridRecoveryEnabled;
@@ -731,7 +714,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.symbolMinDailyVolumeLots = InpSymbolMinDailyVolumeLots;
         config.symbolEnableVolumeCheck = InpSymbolEnableVolumeCheck;
     
-        // Logging
                         config.logLevel = InpLogLevel;
                         config.logVerbosity = InpLogVerbosity;
                         config.logDerivFamilyDetection = InpLogDerivFamilyDetection;  // L7-013
@@ -764,9 +746,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
                 return config;
     }
 
-//+------------------------------------------------------------------+
-//| Validate all input parameters                                    |
-//+------------------------------------------------------------------+
+// Validate all input parameters
 bool ValidateInputs()
 {
     bool valid = true;
@@ -1151,9 +1131,7 @@ bool ValidateInputs()
     return valid;
     }
 
-    //+------------------------------------------------------------------+
-    //| L10-012: Restore engine states from open positions on restart   |
-    //+------------------------------------------------------------------+
+// L10-012: Restore engine states from open positions on restart
     void RestoreEngineStates()
     {
         if(g_orchestrator == NULL) return;
@@ -1223,9 +1201,7 @@ bool ValidateInputs()
                     foundGridPositions, foundScalpPositions, foundSpikePositions);
     }
 
-    //+------------------------------------------------------------------+
-    //| Expert Advisor Initialization                                    |
-    //+------------------------------------------------------------------+
+// Expert Advisor Initialization
     int OnInit()
 {
     // L7-001: Validate all inputs first
@@ -1249,7 +1225,6 @@ bool ValidateInputs()
         // Set global log level for legacy code compatibility
         g_logLevel = MathMax(0, MathMin(4, InpLogLevel));
     
-        // Initialize structured logger
         g_structLog.Init("MultiStrategyEA");
     
         Print("[MULTI-STRATEGY-EA] ========================================");
@@ -1325,9 +1300,7 @@ bool ValidateInputs()
                 return INIT_SUCCEEDED;
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Deinitialization                                  |
-//+------------------------------------------------------------------+
+// Expert Advisor Deinitialization
 void OnDeinit(const int reason)
 {
     Print("[DEINIT-START] Deinitialization begun | reason=", reason, " (", GetDeInitReasonText(reason), ")");
@@ -1348,10 +1321,8 @@ void OnDeinit(const int reason)
     // L9-006: Shutdown CJsonLogger to flush buffers and close file handles
     CJsonLogger::Shutdown();
     
-    // Shutdown structured logger
     g_structLog.Shutdown();
     
-    // Kill the timer
     EventKillTimer();
     
     Print("[MULTI-STRATEGY-EA] ========================================");
@@ -1361,9 +1332,7 @@ void OnDeinit(const int reason)
     Print("[DEINIT-COMPLETE] Deinitialization finished cleanly | reason=", reason, " (", GetDeInitReasonText(reason), ")");
 }
 
-//+------------------------------------------------------------------+
-//| Timer Handler                                                    |
-//+------------------------------------------------------------------+
+// Timer Handler
 void OnTimer()
 {
     // L2-001: Early exit during shutdown to prevent accessing invalid resources
@@ -1376,10 +1345,8 @@ void OnTimer()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Trade Transaction Handler                         |
-//| L10-007: Process async trade confirmations via TradeManager      |
-//+------------------------------------------------------------------+
+// Expert Advisor Trade Transaction Handler
+// L10-007: Process async trade confirmations via TradeManager
 void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
@@ -1405,9 +1372,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Expert Advisor Tick Handler                                      |
-//+------------------------------------------------------------------+
+// Expert Advisor Tick Handler
 void OnTick()
 {
     if(g_orchestrator != NULL && g_orchestrator.GetSystemInitialized())
@@ -1416,10 +1381,8 @@ void OnTick()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Chart Event Handler                                              |
-//| L5-018: Detect input parameter changes and propagate to risk manager |
-//+------------------------------------------------------------------+
+// Chart Event Handler
+// L5-018: Detect input parameter changes and propagate to risk manager
 void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
@@ -1442,9 +1405,6 @@ void OnChartEvent(const int id,
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get deinitialization reason text                                 |
-//+------------------------------------------------------------------+
 string GetDeInitReasonText(int reasonCode)
 {
     switch(reasonCode)
@@ -1463,8 +1423,6 @@ string GetDeInitReasonText(int reasonCode)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helper functions (kept for compatibility)                        |
-//+------------------------------------------------------------------+
+// Helper functions (kept for compatibility)
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
 

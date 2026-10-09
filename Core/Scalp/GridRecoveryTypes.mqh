@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| GridRecoveryTypes.mqh                                            |
-//| Shared types for the grid recovery engine                        |
-//| Extracted verbatim from GridRecoveryEngine.mqh (structural only) |
-//+------------------------------------------------------------------+
+// Shared types for the grid recovery engine
+// Extracted verbatim from GridRecoveryEngine.mqh (structural only)
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -11,18 +8,13 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 #define CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Grid progression type                                             |
-//+------------------------------------------------------------------+
+// Grid progression type
 enum ENUM_GRID_PROGRESSION
 {
    GRID_PROGRESSION_MARTINGALE,    // Lot = baseLot * (factor ^ level)
    GRID_PROGRESSION_FIBONACCI      // Lot = baseLot * fib(level)
 };
 
-//+------------------------------------------------------------------+
-//| Grid recovery configuration struct                                |
-//+------------------------------------------------------------------+
 struct SGridRecoveryConfig
 {
    double   gridFactorATR;           // Grid spacing as fraction of ATR (0.20)
@@ -60,9 +52,7 @@ struct SGridRecoveryConfig
    }
 };
 
-//+------------------------------------------------------------------+
-//| Single grid level tracking                                        |
-//+------------------------------------------------------------------+
+// Single grid level tracking
 struct SGridLevel
 {
    int      level;          // Grid level number (0-based)
@@ -74,9 +64,7 @@ struct SGridLevel
    bool     isActive;       // Whether this level is active/filled
 };
 
-//+------------------------------------------------------------------+
-//| Per-symbol grid state tracking                                    |
-//+------------------------------------------------------------------+
+// Per-symbol grid state tracking
 struct SGridSymbolState
 {
    string      symbol;

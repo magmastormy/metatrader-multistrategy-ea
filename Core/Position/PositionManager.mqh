@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| PositionManager.mqh                                              |
-//| SINGLE AUTHORITY for all position lifecycle management           |
-//| Replaces: TradeManager::ManageAllPositions + PositionLifecycleManager |
-//|                                                                  |
-//| Phase I decomposition: cohesive clusters were extracted into      |
-//| sibling PositionMgr*.mqh modules. The public API of              |
-//| CPositionManager is UNCHANGED - every former method survives as   |
-//| a thin forwarder with its original signature.                     |
-//+------------------------------------------------------------------+
+// SINGLE AUTHORITY for all position lifecycle management
+// Replaces: TradeManager::ManageAllPositions + PositionLifecycleManager
+// Phase I decomposition: cohesive clusters were extracted into
+// sibling PositionMgr*.mqh modules. The public API of
+// CPositionManager is UNCHANGED - every former method survives as
+// a thin forwarder with its original signature.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MANAGER_MQH
@@ -81,7 +77,6 @@ private:
         return m_sre.CheckSignalReversalExit(m_tradeManager, m_magicNumber);
     }
     
-    // --- Breakeven & Trailing ---
     void ManageBreakevenAndTrailing()
     {
         if(!m_enabled) return;
@@ -165,7 +160,6 @@ private:
         m_lossGuard.ManageLossMinimization(m_tradeManager, m_magicNumber);
     }
     
-    // --- Partial Profit Taking ---
     void ManagePartialProfitTaking()
     {
         if(!m_partialProfitTakingEnabled) return;

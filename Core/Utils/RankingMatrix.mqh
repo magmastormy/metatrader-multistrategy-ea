@@ -1,15 +1,10 @@
-//+------------------------------------------------------------------+
-//| RankingMatrix.mqh                                               |
-//| Tier-based prioritization for ICT and Indicator signals         |
-//+------------------------------------------------------------------+
+// Tier-based prioritization for ICT and Indicator signals
 #ifndef CORE_RANKING_MATRIX_MQH
 #define CORE_RANKING_MATRIX_MQH
 
 #include "Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| Ranking Matrix Configuration                                     |
-//+------------------------------------------------------------------+
+// Ranking Matrix Configuration
 class CRankingMatrix
 {
 public:

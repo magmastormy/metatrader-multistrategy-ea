@@ -1,10 +1,7 @@
-//+------------------------------------------------------------------+
-//| DashBridgeHealth.mqh                                             |
-//| Heartbeat counter state + heartbeat JSON section for the         |
-//| dashboard bridge. Owns the scan/signal/trade/spike counters and  |
-//| the "counters have been supplied" flag.                          |
-//| Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)|
-//+------------------------------------------------------------------+
+// Heartbeat counter state + heartbeat JSON section for the
+// dashboard bridge. Owns the scan/signal/trade/spike counters and
+// the "counters have been supplied" flag.
+// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -13,9 +10,7 @@
 #ifndef CORE_DASHBRIDGE_HEALTH_MQH
 #define CORE_DASHBRIDGE_HEALTH_MQH
 
-//+------------------------------------------------------------------+
-//| Dashboard Bridge Heartbeat / Health Counters                     |
-//+------------------------------------------------------------------+
+// Dashboard Bridge Heartbeat / Health Counters
 class CDashBridgeHealth
 {
 private:
@@ -29,7 +24,6 @@ private:
 public:
                      CDashBridgeHealth();
 
-   // Heartbeat counters
    void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
                                           int tradesOpened, int spikeEvents);
 
@@ -37,9 +31,7 @@ public:
    string            BuildHeartbeatJson() const;
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CDashBridgeHealth::CDashBridgeHealth()
 {
    m_pScansCount = 0;
@@ -50,9 +42,7 @@ CDashBridgeHealth::CDashBridgeHealth()
    m_heartbeatCountersSet = false;
 }
 
-//+------------------------------------------------------------------+
-//| Set heartbeat counter references                                 |
-//+------------------------------------------------------------------+
+// Set heartbeat counter references
 void CDashBridgeHealth::SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
                                              int tradesOpened, int spikeEvents)
 {
@@ -64,9 +54,7 @@ void CDashBridgeHealth::SetHeartbeatCounters(int scans, int signalsGen, int sign
    m_heartbeatCountersSet = true;
 }
 
-//+------------------------------------------------------------------+
-//| Build heartbeat JSON from counters                               |
-//+------------------------------------------------------------------+
+// Build heartbeat JSON from counters
 string CDashBridgeHealth::BuildHeartbeatJson() const
 {
    string json = "\"heartbeat\":{";

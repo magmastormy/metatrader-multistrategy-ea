@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| SymbolContext.mqh                                                |
-//| Symbol execution context for multi-strategy orchestration        |
-//+------------------------------------------------------------------+
+// Symbol execution context for multi-strategy orchestration
 #ifndef SYMBOL_CONTEXT_MQH
 #define SYMBOL_CONTEXT_MQH
 
@@ -10,9 +7,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Engines/MarketAnalysis.mqh"
 
-//+------------------------------------------------------------------+
-//| Symbol execution context                                         |
-//+------------------------------------------------------------------+
+// Symbol execution context
 class CSymbolContext : public CObject
 {
 public:

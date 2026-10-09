@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SRTradingStrategies.mqh                                          |
-//| S/R Bounce, Breakout, and Trendline Trading Logic                |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// S/R Bounce, Breakout, and Trendline Trading Logic
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -15,9 +12,6 @@
 #include "SRSignalScorer.mqh"
 #include "../../IndicatorManager.mqh"
 
-//+------------------------------------------------------------------+
-//| S/R Signal Result Structure                                      |
-//+------------------------------------------------------------------+
 struct SSRSignalResult
 {
     ENUM_TRADE_SIGNAL signal;
@@ -35,9 +29,6 @@ struct SSRSignalResult
                        hasTrendlineConfluence(false), hasMultipleTouches(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| S/R Bounce Strategy                                              |
-//+------------------------------------------------------------------+
 class CSRBounceStrategy
 {
 private:
@@ -74,9 +65,7 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSRBounceStrategy::CSRBounceStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -91,9 +80,7 @@ CSRBounceStrategy::CSRBounceStrategy() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSRBounceStrategy::~CSRBounceStrategy()
 {
     // Handles managed by CIndicatorManager — no IndicatorRelease needed
@@ -102,9 +89,6 @@ CSRBounceStrategy::~CSRBounceStrategy()
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   CSupportResistanceDetector* srDetector,
                                   CTrendlineDetector* trendDetector)
@@ -126,9 +110,7 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
 }
 
-//+------------------------------------------------------------------+
-//| Get Bounce Signal (Batch 103: Soft confluence scoring)           |
-//+------------------------------------------------------------------+
+// Get Bounce Signal (Batch 103: Soft confluence scoring)
 SSRSignalResult CSRBounceStrategy::GetSignal()
 {
     SSRSignalResult result;
@@ -139,7 +121,6 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
 
-    // Find nearest S/R level
     int nearestIdx = m_srDetector.FindNearestLevel(price, 15);
 
     if(nearestIdx < 0)
@@ -228,9 +209,7 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Check for Bullish Rejection                                      |
-//+------------------------------------------------------------------+
+// Check for Bullish Rejection
 bool CSRBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
@@ -259,9 +238,7 @@ bool CSRBounceStrategy::HasBullishRejection()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check for Bearish Rejection                                      |
-//+------------------------------------------------------------------+
+// Check for Bearish Rejection
 bool CSRBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
@@ -288,9 +265,7 @@ bool CSRBounceStrategy::HasBearishRejection()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check Trend Aligned Bullish                                      |
-//+------------------------------------------------------------------+
+// Check Trend Aligned Bullish
 bool CSRBounceStrategy::IsTrendAlignedBullish()
 {
     double ema50 = GetEMA(m_emaFastHandle);
@@ -299,9 +274,7 @@ bool CSRBounceStrategy::IsTrendAlignedBullish()
     return (ema50 > ema200);
 }
 
-//+------------------------------------------------------------------+
-//| Check Trend Aligned Bearish                                      |
-//+------------------------------------------------------------------+
+// Check Trend Aligned Bearish
 bool CSRBounceStrategy::IsTrendAlignedBearish()
 {
     double ema50 = GetEMA(m_emaFastHandle);
@@ -310,9 +283,7 @@ bool CSRBounceStrategy::IsTrendAlignedBearish()
     return (ema50 < ema200);
 }
 
-//+------------------------------------------------------------------+
-//| Get EMA Value                                                    |
-//+------------------------------------------------------------------+
+// Get EMA Value
 double CSRBounceStrategy::GetEMA(int handle)
 {
     if(handle == INVALID_HANDLE) return 0;
@@ -326,9 +297,7 @@ double CSRBounceStrategy::GetEMA(int handle)
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Value                                                    |
-//+------------------------------------------------------------------+
+// Get ATR Value
 double CSRBounceStrategy::GetATR(int period)
 {
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
@@ -341,9 +310,6 @@ double CSRBounceStrategy::GetATR(int period)
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| S/R Breakout Strategy                                            |
-//+------------------------------------------------------------------+
 class CSRBreakoutStrategy
 {
 private:
@@ -370,9 +336,7 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CSRBreakoutStrategy::CSRBreakoutStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -382,18 +346,13 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CSRBreakoutStrategy::~CSRBreakoutStrategy()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                     CSupportResistanceDetector* srDetector)
 {
@@ -407,9 +366,7 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     return (m_srDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
-//+------------------------------------------------------------------+
-//| Get Breakout Signal (Batch 103: False breakout detection added)  |
-//+------------------------------------------------------------------+
+// Get Breakout Signal (Batch 103: False breakout detection added)
 SSRSignalResult CSRBreakoutStrategy::GetSignal()
 {
     SSRSignalResult result;
@@ -537,9 +494,7 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Check Volume Confirmation                                        |
-//+------------------------------------------------------------------+
+// Check Volume Confirmation
 bool CSRBreakoutStrategy::HasVolumeConfirmation()
 {
     long vol0 = iVolume(m_symbol, m_timeframe, 0);
@@ -553,9 +508,7 @@ bool CSRBreakoutStrategy::HasVolumeConfirmation()
     return (vol0 > avgVol * 1.5 || vol1 > avgVol * 1.5);
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Value                                                    |
-//+------------------------------------------------------------------+
+// Get ATR Value
 double CSRBreakoutStrategy::GetATR(int period)
 {
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
@@ -568,10 +521,8 @@ double CSRBreakoutStrategy::GetATR(int period)
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Detect False Breakout (Batch 103)                                |
-//| Level broken within last 3 bars then reclaimed = counter signal  |
-//+------------------------------------------------------------------+
+// Detect False Breakout (Batch 103)
+// Level broken within last 3 bars then reclaimed = counter signal
 bool CSRBreakoutStrategy::FalseBreakoutDetected(int &outDirection)
 {
     outDirection = 0;
@@ -631,9 +582,6 @@ bool CSRBreakoutStrategy::FalseBreakoutDetected(int &outDirection)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Trendline Bounce Strategy                                        |
-//+------------------------------------------------------------------+
 class CTrendlineBounceStrategy
 {
 private:
@@ -662,9 +610,7 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -675,18 +621,13 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CTrendlineBounceStrategy::~CTrendlineBounceStrategy()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                          CTrendlineDetector* trendDetector,
                                          CSupportResistanceDetector* srDetector)
@@ -702,9 +643,6 @@ bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES t
     return (m_trendDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
-//+------------------------------------------------------------------+
-//| Get Signal                                                       |
-//+------------------------------------------------------------------+
 SSRSignalResult CTrendlineBounceStrategy::GetSignal()
 {
     SSRSignalResult result;
@@ -802,9 +740,7 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Check for Bullish Rejection                                      |
-//+------------------------------------------------------------------+
+// Check for Bullish Rejection
 bool CTrendlineBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
@@ -828,9 +764,7 @@ bool CTrendlineBounceStrategy::HasBullishRejection()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Check for Bearish Rejection                                      |
-//+------------------------------------------------------------------+
+// Check for Bearish Rejection
 bool CTrendlineBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
@@ -854,9 +788,7 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR Value                                                    |
-//+------------------------------------------------------------------+
+// Get ATR Value
 double CTrendlineBounceStrategy::GetATR(int period)
 {
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);

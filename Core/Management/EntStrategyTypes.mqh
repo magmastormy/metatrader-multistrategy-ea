@@ -1,34 +1,26 @@
-//+------------------------------------------------------------------+
-//| Enterprise Strategy Types (Phase G - G1)                          |
-//| Shared value types and free helpers extracted verbatim from       |
-//| EnterpriseStrategyManager.mqh:                                    |
-//|   - struct StrategyEntry      (the 40-field registration record)  |
-//|   - StrategyRoleToString / StrategyClusterToString /              |
-//|     StrategyClusterShortCode / IntrabarPolicyToString /           |
-//|     TradeSignalToString      (enum -> text helpers)               |
-//|   - IsInfrastructureNoSignalReasonTag (reason-tag classifier)     |
-//|   - ClampUnitValue            (inline [0,1] clamp)                |
-//|                                                                   |
-//| These are file-scope (non-member) declarations. They are consumed |
-//| by the Phase C slice modules (CStrategyStateReporter,             |
-//| CStrategyRegistryState, CIntrabarPolicy, CConsensusEngine) which  |
-//| rely on them being visible BEFORE their own definitions, so this  |
-//| header must stay included at the exact position the originals     |
-//| occupied in EnterpriseStrategyManager.mqh: after the strategy     |
-//| registry include, before the slice-module includes.               |
-//|                                                                   |
-//| NOTHING IN THIS FILE WAS CHANGED - every body is a byte-for-byte  |
-//| relocation of the original.                                       |
-//+------------------------------------------------------------------+
+// Enterprise Strategy Types (Phase G - G1)
+// Shared value types and free helpers extracted verbatim from
+// - struct StrategyEntry      (the 40-field registration record)
+// StrategyClusterShortCode / IntrabarPolicyToString /
+// TradeSignalToString      (enum -> text helpers)
+// - IsInfrastructureNoSignalReasonTag (reason-tag classifier)
+// - ClampUnitValue            (inline [0,1] clamp)
+// These are file-scope (non-member) declarations. They are consumed
+// by the Phase C slice modules (CStrategyStateReporter,
+// CStrategyRegistryState, CIntrabarPolicy, CConsensusEngine) which
+// rely on them being visible BEFORE their own definitions, so this
+// header must stay included at the exact position the originals
+// occupied in EnterpriseStrategyManager.mqh: after the strategy
+// registry include, before the slice-module includes.
+// NOTHING IN THIS FILE WAS CHANGED - every body is a byte-for-byte
+// relocation of the original.
 #ifndef ENT_STRATEGY_TYPES_MQH
 #define ENT_STRATEGY_TYPES_MQH
 
 #include "../Utils/Enums.mqh"              // ENUM_STRATEGY_TIER / ROLE / CLUSTER / INTRABAR_POLICY / TRADE_SIGNAL
 #include "../../Interfaces/IStrategy.mqh"  // IStrategy* member of StrategyEntry
 
-//+------------------------------------------------------------------+
-//| Strategy Registration Entry                                     |
-//+------------------------------------------------------------------+
+// Strategy Registration Entry
 struct StrategyEntry
 {
     IStrategy* strategy;

@@ -1,20 +1,16 @@
-//+------------------------------------------------------------------+
-//| DiagnosticsManager.mqh                                            |
-//| Encapsulates heartbeat/diagnostics logging extracted from          |
-//| MultiStrategyAutonomousEA.mq5 OnTick heartbeat block              |
-//| Blueprint Section 10.1 — Monolith Decomposition (R6b)            |
-//| Consolidated: Includes consensus diagnostics from DiagnosticsCollector (Phase 2 debloating)
-//|                                                                   |
-//| DECOMPOSED: cohesive responsibilities now live in DiagMgr* modules|
-//|   DiagMgrCounters.mqh        — consensus counter bank + snapshots |
-//|   DiagMgrAggregator.mqh      — manager fan-in + dominant cause    |
-//|   DiagMgrAIVote.mqh          — AI vote activity tracking [L11-004]|
-//|   DiagMgrHeartbeat.mqh       — heartbeat emitters + window math   |
-//|   DiagMgrConsensusReport.mqh — consensus report log lines         |
-//| This class remains the coordinator and preserves its public API   |
-//| one-to-one via thin forwarders. No log string or field semantics  |
-//| were altered, so regression logs stay directly comparable.        |
-//+------------------------------------------------------------------+
+// Encapsulates heartbeat/diagnostics logging extracted from
+// MultiStrategyAutonomousEA.mq5 OnTick heartbeat block
+// Blueprint Section 10.1 — Monolith Decomposition (R6b)
+// Consolidated: Includes consensus diagnostics from DiagnosticsCollector (Phase 2 debloating)
+// DECOMPOSED: cohesive responsibilities now live in DiagMgr* modules
+// DiagMgrCounters.mqh        — consensus counter bank + snapshots
+// DiagMgrAggregator.mqh      — manager fan-in + dominant cause
+// DiagMgrAIVote.mqh          — AI vote activity tracking [L11-004]
+// DiagMgrHeartbeat.mqh       — heartbeat emitters + window math
+// DiagMgrConsensusReport.mqh — consensus report log lines
+// This class remains the coordinator and preserves its public API
+// one-to-one via thin forwarders. No log string or field semantics
+// were altered, so regression logs stay directly comparable.
 #ifndef DIAGNOSTICS_MANAGER_MQH
 #define DIAGNOSTICS_MANAGER_MQH
 
@@ -49,14 +45,11 @@
 // Forward declarations for AI modules
 class CNeuralNetworkStrategy;
 
-//+------------------------------------------------------------------+
-//| DiagnosticsManager — replaces the inline heartbeat block in       |
-//| MultiStrategyAutonomousEA.mq5.                                    |
-//|                                                                   |
-//| Counter values are passed in via UpdateCounters() each heartbeat  |
-//| cycle. MQL5 does not support pointers to primitives (ulong*), so  |
-//| the main EA pushes snapshot values before calling EmitHeartbeat().|
-//+------------------------------------------------------------------+
+// DiagnosticsManager — replaces the inline heartbeat block in
+// MultiStrategyAutonomousEA.mq5.
+// Counter values are passed in via UpdateCounters() each heartbeat
+// cycle. MQL5 does not support pointers to primitives (ulong*), so
+// the main EA pushes snapshot values before calling EmitHeartbeat().
 class CDiagnosticsManager
 {
 private:
@@ -137,9 +130,7 @@ private:
         // AI vote heartbeat tracking [L11-004] (extracted → DiagMgrAIVote.mqh)
         CDiagMgrAIVoteTracker m_aiVoteTracker;
 
-    //+------------------------------------------------------------------+
-    //| Collect aggregated consensus diagnostics from all managers        |
-    //+------------------------------------------------------------------+
+// Collect aggregated consensus diagnostics from all managers
     void GetAggregatedConsensusDiagnostics(ulong &rawNone,
                                            ulong &filteredOut,
                                            ulong &quorumFailed,
@@ -166,9 +157,7 @@ private:
                                                               uictNone, uictNeutralBias, uictOtherFilters, reasonTotal);
     }
 
-    //+------------------------------------------------------------------+
-    //| Collect aggregated role/cluster diagnostics from all managers     |
-    //+------------------------------------------------------------------+
+// Collect aggregated role/cluster diagnostics from all managers
     void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
                                              ulong &featureSignals,
                                              ulong &voteSuppressed,
@@ -183,9 +172,7 @@ private:
                                                                 structureClusterSignals, noneClusterSignals);
     }
 
-    //+------------------------------------------------------------------+
-    //| Determine which consensus cause is dominant                       |
-    //+------------------------------------------------------------------+
+// Determine which consensus cause is dominant
     string GetDominantConsensusCause(const ulong rawNone,
                                      const ulong filteredOut,
                                      const ulong quorumFailed,
@@ -249,9 +236,7 @@ public:
 
     ~CDiagnosticsManager() {}
 
-    //+------------------------------------------------------------------+
-        //| Initialize — must be called before EmitHeartbeat()               |
-        //+------------------------------------------------------------------+
+// Initialize — must be called before EmitHeartbeat()
         bool Initialize(CUnifiedRiskManager* rm, CRiskTierManager* rtm,
                         CCompoundingTierManager* compoundingTierManager, int heartbeatInterval,
                         ENUM_LOG_VERBOSITY verbosity = VERBOSITY_NORMAL)
@@ -267,10 +252,8 @@ public:
             return true;
         }
 
-    //+------------------------------------------------------------------+
-    //| Push current counter values from main EA globals                  |
-    //| Call this before EmitHeartbeat() each heartbeat cycle             |
-    //+------------------------------------------------------------------+
+// Push current counter values from main EA globals
+// Call this before EmitHeartbeat() each heartbeat cycle
 void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                         ulong validatorReject, ulong riskReject,
                         ulong tradesOpened, ulong spikeEvents,
@@ -299,9 +282,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         m_hbQuietMissingManager  = quietMissingManager;
     }
 
-    //+------------------------------------------------------------------+
-    //| Dependency setters                                                |
-    //+------------------------------------------------------------------+
+// Dependency setters
     void SetScalpEngine(CFastScalpEngine* engine)  { m_scalpEngine = engine; }
     void SetFullMarginMode(CFullMarginMode* mode)  { m_fullMarginMode = mode; }
     void SetSafeMode(CSafeMode* mode)              { m_safeMode = mode; }
@@ -340,19 +321,15 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     m_aiVoteTracker.ConfigureSymbols(m_symbolCount);
                 }
 
-                //+------------------------------------------------------------------+
-                //| Update AI vote activity timestamp [L11-004]                      |
-                //| Call this when an AI adapter logs an [AI-VOTE] heartbeat         |
-                //+------------------------------------------------------------------+
+// Update AI vote activity timestamp [L11-004]
+// Call this when an AI adapter logs an [AI-VOTE] heartbeat
                 void UpdateAIVoteActivity(const string symbol, const string aiType)
                 {
                     m_aiVoteTracker.UpdateActivity(m_symbols, m_symbolCount, symbol, aiType);
                 }
 
-    //+------------------------------------------------------------------+
-    //| Windowed-value getters — use the correctly-maintained m_prev*     |
-    //| snapshots instead of stale EA globals                             |
-    //+------------------------------------------------------------------+
+// Windowed-value getters — use the correctly-maintained m_prev*
+// snapshots instead of stale EA globals
     ulong GetWindowScans() const
     {
         // Batch 118: underflow guard for unsigned subtraction
@@ -374,16 +351,12 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
 
     bool IsInitialized() const { return m_initialized; }
 
-        //+------------------------------------------------------------------+
-        //| Verbosity gating helpers                                        |
-        //+------------------------------------------------------------------+
+// Verbosity gating helpers
         bool ShouldLogNormal() const { return m_verbosity >= VERBOSITY_NORMAL; }
         bool ShouldLogVerbose() const { return m_verbosity >= VERBOSITY_VERBOSE; }
         bool ShouldLogDebug() const { return m_verbosity >= VERBOSITY_DEBUG; }
 
-        //+------------------------------------------------------------------+
-        //| Main entry point — replaces the inline heartbeat block            |
-        //+------------------------------------------------------------------+
+// Main entry point — replaces the inline heartbeat block
         void EmitHeartbeat()
     {
         if(!m_initialized)
@@ -516,9 +489,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| NN health sub-check                                               |
-    //+------------------------------------------------------------------+
+// NN health sub-check
     void EmitNNHealthCheck(CNeuralNetworkStrategy* &strategies[])
     {
         if(!m_aiEnabled || !m_nnEnabled || !m_nnOnlineTraining)
@@ -543,16 +514,12 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         m_lastNNHealthLogTime = hbNow;
     }
 
-    //+------------------------------------------------------------------+
-    //| Update trading paused state (called from main EA each tick)       |
-    //+------------------------------------------------------------------+
+// Update trading paused state (called from main EA each tick)
     void UpdateTradingPaused(bool paused) { m_tradingPaused = paused; }
 
-    //+------------------------------------------------------------------+
-    //| Emit consensus diagnostics — replaces inline block in main EA     |
-    //| Parameters: quiet-reason counters and windowed scan/no-signal     |
-    //| values passed from the main EA's globals.                         |
-    //+------------------------------------------------------------------+
+// Emit consensus diagnostics — replaces inline block in main EA
+// Parameters: quiet-reason counters and windowed scan/no-signal
+// values passed from the main EA's globals.
     void EmitConsensusDiagnostics(ulong quietNoNewBar,
                                   ulong quietCadenceHold,
                                   ulong quietMissingManager,
@@ -679,9 +646,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Consensus Diagnostics — forwarded to CDiagMgrCounters            |
-    //+------------------------------------------------------------------+
+// Consensus Diagnostics — forwarded to CDiagMgrCounters
     // Configuration
     void SetLogIntervalSeconds(const int seconds) { m_counters.SetLogIntervalSeconds(seconds); }
 
@@ -795,7 +760,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     void IncrementUICTNeutralBias() { m_counters.IncrementUICTNeutralBias(); }
     void IncrementUICTOtherFilters() { m_counters.IncrementUICTOtherFilters(); }
 
-    // Root baseline increments
     void IncrementRootBaselineRawNone() { m_counters.IncrementRootBaselineRawNone(); }
     void IncrementRootBaselineFilteredOut() { m_counters.IncrementRootBaselineFilteredOut(); }
     void IncrementRootBaselineQuorumFailed() { m_counters.IncrementRootBaselineQuorumFailed(); }
@@ -821,7 +785,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
     void IncrementRootBaselineUICTNeutralBias() { m_counters.IncrementRootBaselineUICTNeutralBias(); }
     void IncrementRootBaselineUICTOtherFilters() { m_counters.IncrementRootBaselineUICTOtherFilters(); }
 
-    // Snapshot baseline increments
     void IncrementSnapshotBaselineRawNone() { m_counters.IncrementSnapshotBaselineRawNone(); }
     void IncrementSnapshotBaselineFilteredOut() { m_counters.IncrementSnapshotBaselineFilteredOut(); }
     void IncrementSnapshotBaselineQuorumFailed() { m_counters.IncrementSnapshotBaselineQuorumFailed(); }
@@ -883,7 +846,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         m_counters.GetFullDiagnosticsSnapshot(snapshot);
     }
 
-    // Logging
     void MaybeLogDiagnostics(const string symbol) { m_counters.MaybeLogDiagnostics(symbol); }
     void LogDiagnostics(const string symbol) { m_counters.LogDiagnostics(symbol); }
 

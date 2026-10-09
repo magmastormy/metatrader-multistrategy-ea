@@ -6,9 +6,27 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-08
+## [Unreleased] - 2026-10-09
 
-### Batch 170: Execution governance for the engine paths, min-lot risk ceiling, real-volume honesty, single exit authority per book
+### Batch 171: Comment hygiene — 7,100 comment lines removed, no code touched
+
+#### Context
+Whole-line comments had grown to 19,496 across 340 MQL files - roughly one comment line for every six code lines. Most of it was decoration and restatement rather than information: MetaEditor's `//+---+ / //| Name | / //+---+` banners around declarations that name themselves, and long multi-line "why this fix exists" narratives that bury one constraint under a paragraph of history.
+
+#### Changed
+- **Mechanical pass (325 files).** Banner rule lines removed; `//| Label |` blocks unpadded to plain comments; labels that only restate the declaration below them (or the file's own name) removed; standalone one-line echoes of the next declaration removed. Echo detection requires the comment phrase to be contained in a single identifier, or every content word of the comment to be covered by that identifier's camel-case parts - so `// Calculate Accuracy Metrics` over `CalculateAccuracyMetrics()` goes, while `// Track per-regime performance` over an unrelated line stays. Legal/copyright lines and unterminated banner fragments were left alone.
+- **Prose collapse (10 blocks, the loudest ones).** Multi-line fix-narratives in `TradeMgrPricing`, `TradeMgrPreflight`, `TradeManager`, `UnifiedRiskManager`, `ConsensusEngine`, `EAOrchestrator`, `MagicRange`, `StatisticalArbitrageStrategy` cut to the constraint alone: the unit bug keeps "SYMBOL_SPREAD is already points", loses the four-line post-mortem; the tier envelope keeps "tiers may lower authorised risk, never raise it"; the voter floor keeps why one lone voter was 100% consensus, in two lines.
+- **Not swept:** 13 files carrying the operator's uncommitted work-in-progress (`AIModules/*`, `Core/AI/*`, `Core/Registry/*`, `Core/Strategy/*Adapter`, `TradeExecutor.mqh`, `MQHModelVisualizer.mq5`, `TrainingDataExporter.mq5`, `WalkForwardTesterEA.mq5`) and the Dashboard tree. The remaining ~12,000 comment lines are mostly file-level architecture notes and constraint comments that the rules say to keep; the `/* */` blocks and trailing comments were out of scope for the mechanical pass.
+
+#### Verification
+- **Executable content proven unchanged:** for every file in the diff, the sequence of non-comment lines was compared against `HEAD` and must match exactly - 335 MQL files compared, and the only 11 with any executable-line difference are the excluded WIP files, which differ for the operator's own reasons.
+- Whole-line comments 19,496 → 12,384 (-36%).
+- All 8 root programs recompiled **0 errors / 0 warnings** after the pass.
+
+#### Risk Flag
+No behavior change by construction (comment-only). The risk is informational: a fix-narrative that was cut may still have been carrying a "don't do this again" note for someone reading the file cold. The full reasoning for every batch remains in this file and in the batch-numbered commit messages.
+
+### Batch 170: Engine send governance, min-lot risk ceiling, real-volume honesty, one exit authority per book
 
 #### Context
 Batches 168–169 closed the reachability defects (magic ownership, live exits, continuous breakers) and the execution defects inside `CTradeManager`. This batch handles what that work exposed: four send paths and one position-management rule that sit *outside* `CTradeManager`, a configured risk allowance that could multiply the approved risk by 15, volume-derived filters running on data that is not volume, and two exit authorities acting on the same ticket.

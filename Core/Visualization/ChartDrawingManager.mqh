@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| ChartDrawingManager.mqh - Enterprise Chart Visualization         |
-//| Professional, institutional-grade chart markup system            |
-//+------------------------------------------------------------------+
+// ChartDrawingManager.mqh - Enterprise Chart Visualization
+// Professional, institutional-grade chart markup system
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
 #property strict
@@ -14,9 +12,7 @@
 #include <ChartObjects\ChartObjectsArrows.mqh>
 #include <ChartObjects\ChartObjectsTxtControls.mqh>
 
-//+------------------------------------------------------------------+
-//| Color Palette - Professional & Consistent                        |
-//+------------------------------------------------------------------+
+// Color Palette - Professional & Consistent
 enum ENUM_CHART_COLOR_SCHEME
 {
     COLOR_SCHEME_BULLISH_PRIMARY = clrLightSkyBlue,
@@ -39,9 +35,6 @@ enum ENUM_CHART_COLOR_SCHEME
     COLOR_SCHEME_TEXT_DARK = clrBlack
 };
 
-//+------------------------------------------------------------------+
-//| Drawing Configuration                                            |
-//+------------------------------------------------------------------+
 struct SDrawingConfig
 {
     bool enableDrawing;           // Master switch
@@ -76,10 +69,8 @@ struct SDrawingConfig
     }
 };
 
-//+------------------------------------------------------------------+
-//| Object Naming Convention                                         |
-//| Format: STRATEGY_OBJECTTYPE_UNIQUEID                            |
-//+------------------------------------------------------------------+
+// Object Naming Convention
+// Format: STRATEGY_OBJECTTYPE_UNIQUEID
 class CChartDrawingManager
 {
 private:
@@ -143,11 +134,9 @@ public:
     bool DrawHorizontalLevel(double price, color levelColor, const string label = "",
                              ENUM_LINE_STYLE style = STYLE_DOT, int width = 1, bool rayRight = true);
     
-    // FVG Drawing
     bool DrawFVG(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                  bool isBullish, bool isFilled = false, const string uniqueId = "");
     
-    // Liquidity Drawing
     bool DrawLiquidityLevel(datetime time1, datetime time2, double price, 
                            const string label, bool isSwept = false);
     bool DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price);
@@ -161,15 +150,12 @@ public:
     bool DrawStopLoss(datetime time, double price, bool isForBuy);
     bool DrawTakeProfit(datetime time, double price, bool isForBuy, int level = 1);
     
-    // Trend Lines
     bool DrawTrendLine(datetime time1, double price1, datetime time2, double price2,
                       color lineColor = clrWhite, int width = 1, ENUM_LINE_STYLE style = STYLE_SOLID);
     
-    // Text Labels
     bool DrawTextLabel(datetime time, double price, const string text,
                       color textColor = clrWhite, int fontSize = 10, ENUM_ANCHOR_POINT anchor = ANCHOR_CENTER);
     
-    // Pattern Drawing
     bool DrawPattern(const string patternName, datetime &time[], double &price[], int pointCount, color patternColor, int width = 1);
     
     // Cleanup & Maintenance
@@ -193,7 +179,6 @@ public:
     bool IsDirty() const { return m_isDirty; }
     bool ShouldRedraw();
     
-    // Statistics logging
     void LogStatistics();
     
     // Object limit checking
@@ -201,9 +186,7 @@ public:
     bool IsObjectLimitReached();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CChartDrawingManager::CChartDrawingManager() :
     m_chartID(0),
     m_symbol(""),
@@ -219,9 +202,7 @@ CChartDrawingManager::CChartDrawingManager() :
 {
 }
 
-//+------------------------------------------------------------------+
-//| Draw Horizontal Support/Resistance Level                         |
-//+------------------------------------------------------------------+
+// Draw Horizontal Support/Resistance Level
 bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, const string label,
                                               ENUM_LINE_STYLE style, int width, bool rayRight)
 {
@@ -269,18 +250,13 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CChartDrawingManager::~CChartDrawingManager()
 {
     if(m_config.cleanupOldObjects)
         CleanupAll();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::Initialize(const string symbol, ENUM_TIMEFRAMES tf, const string prefix)
 {
     m_symbol = symbol;
@@ -293,9 +269,7 @@ bool CChartDrawingManager::Initialize(const string symbol, ENUM_TIMEFRAMES tf, c
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Debounced ChartRedraw — at most once per second                  |
-//+------------------------------------------------------------------+
+// Debounced ChartRedraw — at most once per second
 void CChartDrawingManager::DebouncedRedraw()
 {
     static datetime lastRedraw = 0;
@@ -307,9 +281,7 @@ void CChartDrawingManager::DebouncedRedraw()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Build scoped drawing prefix (symbol + timeframe isolated)        |
-//+------------------------------------------------------------------+
+// Build scoped drawing prefix (symbol + timeframe isolated)
 string CChartDrawingManager::BuildScopedPrefix(const string basePrefix,
                                                const string symbol,
                                                ENUM_TIMEFRAMES tf)
@@ -326,9 +298,6 @@ string CChartDrawingManager::BuildScopedPrefix(const string basePrefix,
     return StringFormat("%s_%s_%d_", root, safeSymbol, (int)tf);
 }
 
-//+------------------------------------------------------------------+
-//| Generate Object Name                                            |
-//+------------------------------------------------------------------+
 string CChartDrawingManager::GenerateObjectName(const string objectType, const string uniqueId)
 {
     string objName = m_prefix + objectType;
@@ -340,20 +309,16 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
     return objName;
 }
 
-//+------------------------------------------------------------------+
-//| Enforce per-bar immutable snapshot lifecycle by prefix           |
-//|                                                                   |
-//| LIFECYCLE DOCUMENTATION:                                         |
-//| 1. Called at start of every drawing operation                     |
-//| 2. Checks per-strategy object limits (maxObjectsPerStrategy)     |
-//| 3. Enforces global MT5 1000-object limit via CheckObjectLimit    |
-//|                                                                   |
-//| IMPORTANT: This method MUST be called before ANY drawing.         |
-//| Failure to call will bypass object limit enforcement.             |
-//| - This is INTENTIONALLY destructive - it's a per-bar snapshot    |
-//| - Ensures no stale objects from previous bars remain              |
-//| - Safe to call multiple times (deduplicates by bar time)          |
-//+------------------------------------------------------------------+
+// Enforce per-bar immutable snapshot lifecycle by prefix
+// LIFECYCLE DOCUMENTATION:
+// 1. Called at start of every drawing operation
+// 2. Checks per-strategy object limits (maxObjectsPerStrategy)
+// 3. Enforces global MT5 1000-object limit via CheckObjectLimit
+// IMPORTANT: This method MUST be called before ANY drawing.
+// Failure to call will bypass object limit enforcement.
+// - This is INTENTIONALLY destructive - it's a per-bar snapshot
+// - Ensures no stale objects from previous bars remain
+// - Safe to call multiple times (deduplicates by bar time)
 bool CChartDrawingManager::PrepareSnapshotDraw()
 {
     // Check per-strategy object limit before drawing
@@ -370,9 +335,6 @@ bool CChartDrawingManager::PrepareSnapshotDraw()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Swing High                                                 |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const string label)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
@@ -401,9 +363,6 @@ bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const stri
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Swing Low                                                  |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const string label)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
@@ -432,9 +391,7 @@ bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const strin
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Break of Structure (BOS)                                   |
-//+------------------------------------------------------------------+
+// Draw Break of Structure (BOS)
 bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2, double price2, bool isBullish)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
@@ -467,9 +424,7 @@ bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Change of Character (CHOCH)                                |
-//+------------------------------------------------------------------+
+// Draw Change of Character (CHOCH)
 bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime time2, double price2, bool isBullish)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
@@ -502,10 +457,8 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw ICT Change of Character (CHOCH) - Enhanced Version         |
-//| Single-point CHOCH marker with HTF context label                |
-//+------------------------------------------------------------------+
+// Draw ICT Change of Character (CHOCH) - Enhanced Version
+// Single-point CHOCH marker with HTF context label
 bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBullish, const string htfLabel)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
@@ -541,17 +494,14 @@ bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBul
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw ICT Supply Zone - Bearish Rejection Area                   |
-//| Visual: Salmon-colored rectangle with transparency              |
-//+------------------------------------------------------------------+
+// Draw ICT Supply Zone - Bearish Rejection Area
+// Visual: Salmon-colored rectangle with transparency
 bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeEnd, double top, double bottom,
                                              const string label, int transparency)
 {
     if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
         return false;
     
-    // Validate coordinates
     if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
         return false;
     
@@ -585,17 +535,14 @@ bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeE
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw ICT Demand Zone - Bullish Support Area                     |
-//| Visual: Pale green-colored rectangle with transparency          |
-//+------------------------------------------------------------------+
+// Draw ICT Demand Zone - Bullish Support Area
+// Visual: Pale green-colored rectangle with transparency
 bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeEnd, double top, double bottom,
                                              const string label, int transparency)
 {
     if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
         return false;
     
-    // Validate coordinates
     if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
         return false;
     
@@ -629,9 +576,7 @@ bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeE
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Zone (Supply/Demand/Order Block base)                      |
-//+------------------------------------------------------------------+
+// Draw Zone (Supply/Demand/Order Block base)
 bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                                    const string label, color zoneColor, bool isFilled, int transparency)
 {
@@ -642,7 +587,6 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
         return false;
     }
 
-    // Validate coordinates
     if(!ValidateCoordinates(timeStart, timeEnd, priceLow, priceHigh))
     {
         if(m_config.enableDebugMode)
@@ -675,9 +619,6 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Order Block                                                |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawOrderBlock(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                                          bool isBullish, double strength, const string uniqueId)
 {
@@ -692,9 +633,7 @@ bool CChartDrawingManager::DrawOrderBlock(datetime timeStart, datetime timeEnd, 
     return DrawZone(timeStart, timeEnd, priceHigh, priceLow, label, obColor, true, 85);
 }
 
-//+------------------------------------------------------------------+
-//| Draw Fair Value Gap                                             |
-//+------------------------------------------------------------------+
+// Draw Fair Value Gap
 bool CChartDrawingManager::DrawFVG(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                                   bool isBullish, bool isFilled, const string uniqueId)
 {
@@ -712,9 +651,6 @@ bool CChartDrawingManager::DrawFVG(datetime timeStart, datetime timeEnd, double 
     return DrawZone(timeStart, timeEnd, priceHigh, priceLow, label, fvgColor, true, transparency);
 }
 
-//+------------------------------------------------------------------+
-//| Draw Liquidity Level                                            |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, double price,
                                               const string label, bool isSwept)
 {
@@ -745,9 +681,6 @@ bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, do
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Entry Signal                                               |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isBuy, double confidence,
                                           const string strategyName, const string reason)
 {
@@ -783,20 +716,15 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup Old Objects                                             |
-//|                                                                   |
-//| WHEN TO CALL:                                                    |
-//| - In OnNewBar() for regular incremental cleanup                  |
-//| - In OnTick() for time-based cleanup (e.g., every 5 minutes)     |
-//| - In Deinit() for complete cleanup                               |
-//|                                                                   |
-//| BEHAVIOR:                                                        |
-//| - Only runs if cleanupOldObjects config is enabled                |
-//| - Rate-limited to once per minute (prevents excessive calls)      |
-//| - Deletes objects older than maxObjectAge bars                    |
-//| - Uses prefix to scope cleanup to this manager's objects          |
-//+------------------------------------------------------------------+
+// WHEN TO CALL:
+// - In OnNewBar() for regular incremental cleanup
+// - In OnTick() for time-based cleanup (e.g., every 5 minutes)
+// - In Deinit() for complete cleanup
+// BEHAVIOR:
+// - Only runs if cleanupOldObjects config is enabled
+// - Rate-limited to once per minute (prevents excessive calls)
+// - Deletes objects older than maxObjectAge bars
+// - Uses prefix to scope cleanup to this manager's objects
 void CChartDrawingManager::CleanupOldObjects()
 {
     if(!m_config.cleanupOldObjects)
@@ -810,9 +738,6 @@ void CChartDrawingManager::CleanupOldObjects()
     m_lastCleanup = cleanupTime;
 }
 
-//+------------------------------------------------------------------+
-//| Delete Old Objects by Prefix                                    |
-//+------------------------------------------------------------------+
 void CChartDrawingManager::DeleteOldObjects(const string prefix, int maxAge)
 {
     int totalObjects = ObjectsTotal(m_chartID);
@@ -836,9 +761,7 @@ void CChartDrawingManager::DeleteOldObjects(const string prefix, int maxAge)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Check if Object is Old                                          |
-//+------------------------------------------------------------------+
+// Check if Object is Old
 bool CChartDrawingManager::IsObjectOld(const string objName, int maxAge)
 {
     datetime objTime = (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME);
@@ -849,17 +772,12 @@ bool CChartDrawingManager::IsObjectOld(const string objName, int maxAge)
     return (objBar > maxAge);
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup All Objects                                             |
-//+------------------------------------------------------------------+
+// Cleanup All Objects
 void CChartDrawingManager::CleanupAll()
 {
     CleanupByPrefix(m_prefix);
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup by Prefix                                               |
-//+------------------------------------------------------------------+
 void CChartDrawingManager::CleanupByPrefix(const string prefix)
 {
     int totalObjects = ObjectsTotal(m_chartID);
@@ -874,9 +792,7 @@ void CChartDrawingManager::CleanupByPrefix(const string prefix)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Delete Object                                                    |
-//+------------------------------------------------------------------+
+// Delete Object
 bool CChartDrawingManager::CheckObjectLimitAndCleanup()
 {
     int totalObjects = ObjectsTotal(m_chartID);
@@ -945,9 +861,6 @@ void CChartDrawingManager::DeleteObject(const string objName)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Draw Equal Highs                                                |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price)
 {
     PrepareSnapshotDraw();
@@ -973,9 +886,6 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Equal Lows                                                 |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetime time3, double price)
 {
     PrepareSnapshotDraw();
@@ -1001,9 +911,6 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Exit Signal                                                |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasProfit, const string reason)
 {
     if(!m_config.enableDrawing || !m_config.enableSignalMarkers)
@@ -1033,25 +940,17 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Stop Loss Level                                            |
-//+------------------------------------------------------------------+
+// Draw Stop Loss Level
 bool CChartDrawingManager::DrawStopLoss(datetime time, double price, bool isForBuy)
 {
     return DrawHorizontalLevel(price, clrRed, "SL", STYLE_SOLID, 1, true);
 }
 
-//+------------------------------------------------------------------+
-//| Draw Take Profit Level                                          |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawTakeProfit(datetime time, double price, bool isForBuy, int level)
 {
     return DrawHorizontalLevel(price, clrGreen, "TP" + IntegerToString(level), STYLE_DASH, 1, true);
 }
 
-//+------------------------------------------------------------------+
-//| Draw Trend Line                                                 |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime time2, double price2,
                       color lineColor, int width, ENUM_LINE_STYLE style)
 {
@@ -1073,9 +972,6 @@ bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Text Label                                                 |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const string text,
                       color textColor, int fontSize, ENUM_ANCHOR_POINT anchor)
 {
@@ -1097,9 +993,7 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Draw Pattern (Generic polyline for sketches/diagrams)           |
-//+------------------------------------------------------------------+
+// Draw Pattern (Generic polyline for sketches/diagrams)
 bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[], double &price[], int pointCount, color patternColor, int width)
 {
     if(!m_config.enableDrawing || pointCount < 2)
@@ -1128,17 +1022,13 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
     return success;
 }
 
-//+------------------------------------------------------------------+
-//| Validate time value                                              |
-//+------------------------------------------------------------------+
+// Validate time value
 bool CChartDrawingManager::ValidateTime(datetime time)
 {
     return (time > 0 && time <= TimeCurrent() + 86400); // Valid time range
 }
 
-//+------------------------------------------------------------------+
-//| Validate price value                                             |
-//+------------------------------------------------------------------+
+// Validate price value
 bool CChartDrawingManager::ValidatePrice(double price)
 {
     if(price <= 0)
@@ -1152,9 +1042,6 @@ bool CChartDrawingManager::ValidatePrice(double price)
     return (price >= 0.00001 && price <= 1000000.0);
 }
 
-//+------------------------------------------------------------------+
-//| Validate coordinates for drawing                                 |
-//+------------------------------------------------------------------+
 bool CChartDrawingManager::ValidateCoordinates(datetime time1, datetime time2, double price1, double price2)
 {
     if(!ValidateTime(time1))
@@ -1188,9 +1075,7 @@ bool CChartDrawingManager::ValidateCoordinates(datetime time1, datetime time2, d
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Check if redraw is needed (dirty flag optimization)              |
-//+------------------------------------------------------------------+
+// Check if redraw is needed (dirty flag optimization)
 bool CChartDrawingManager::ShouldRedraw()
 {
     if(!m_config.enableDrawing)
@@ -1216,9 +1101,6 @@ bool CChartDrawingManager::ShouldRedraw()
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Log drawing statistics                                           |
-//+------------------------------------------------------------------+
 void CChartDrawingManager::LogStatistics()
 {
     int currentObjects = ObjectsTotal(m_chartID);
@@ -1242,9 +1124,7 @@ void CChartDrawingManager::LogStatistics()
                 m_config.maxObjectAge, m_isDirty ? "Yes" : "No", TimeToString(m_lastCleanup));
 }
 
-//+------------------------------------------------------------------+
-//| Get current count of objects managed by this manager             |
-//+------------------------------------------------------------------+
+// Get current count of objects managed by this manager
 int CChartDrawingManager::GetCurrentObjectCount()
 {
     int count = 0;
@@ -1260,9 +1140,7 @@ int CChartDrawingManager::GetCurrentObjectCount()
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Check if per-strategy object limit is reached                    |
-//+------------------------------------------------------------------+
+// Check if per-strategy object limit is reached
 bool CChartDrawingManager::IsObjectLimitReached()
 {
     int currentCount = GetCurrentObjectCount();

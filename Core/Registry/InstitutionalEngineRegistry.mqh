@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| InstitutionalEngineRegistry.mqh                                  |
-//| Consolidates VWAP, Volume Profile, CVD engines                   |
-//+------------------------------------------------------------------+
+// Consolidates VWAP, Volume Profile, CVD engines
 #property strict
 
 #ifndef CORE_REGISTRY_INSTITUTIONAL_ENGINE_REGISTRY_MQH

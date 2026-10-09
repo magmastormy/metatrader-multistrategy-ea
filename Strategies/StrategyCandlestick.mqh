@@ -23,9 +23,7 @@
 #include "CandlestickFiles/PiercingDetector.mqh"
 #include "CandlestickFiles/CandleConfluenceScorer.mqh"
 
-//+------------------------------------------------------------------+
-//| Candle Pattern Types (v2.0 - 15 patterns)                       |
-//+------------------------------------------------------------------+
+// Candle Pattern Types (v2.0 - 15 patterns)
 enum ENUM_CANDLE_PATTERN
 {
     PATTERN_NONE = 0,
@@ -375,7 +373,6 @@ protected:
             }
         }
 
-        // Harami
         SHaramiPattern harami;
         if(m_harami.DetectHarami(barIndex, harami))
         {

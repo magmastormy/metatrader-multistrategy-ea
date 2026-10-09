@@ -1,35 +1,30 @@
-//+------------------------------------------------------------------+
-//| RiskValidationPipeline.mqh                                       |
-//| Phase E4 extraction from CUnifiedRiskManager (behaviour-preserving)|
-//|                                                                  |
-//| Owns the EA's trade-approval hot path:                           |
-//|   CUnifiedRiskManager::ValidateTradeRequest -> CRiskValidationPipeline::Run |
-//|   CUnifiedRiskManager::ValidateBasicParameters   -> moved here    |
-//|   CUnifiedRiskManager::ValidateRiskLimits        -> moved here    |
-//|   CUnifiedRiskManager::ValidatePortfolioRisk     -> moved here    |
-//|   CUnifiedRiskManager::ValidateClusterGovernance -> moved here    |
-//|   CUnifiedRiskManager::ValidateCorrelationLimits -> moved here    |
-//|   CUnifiedRiskManager::ValidateMarginRequirements-> moved here    |
-//|   CUnifiedRiskManager::ValidateAccountHealth     -> moved here    |
-//|                                                                  |
-//| DESIGN NOTES (MQL5 constraints)                                  |
-//| 1. MQL5 has no pointers to structures, so the pipeline cannot     |
-//|    hold "&m_config". Instead the owner exposes CopyRiskConfig()   |
-//|    through IRiskPipelineHost and the pipeline refreshes its local |
-//|    SUnifiedRiskConfig copy at every public entry point. Nothing   |
-//|    inside the moved code mutates the config, so a single refresh  |
-//|    per entry is exactly equivalent to reading the live struct.    |
-//| 2. Everything that is an OWNED CLASS value member of the owner is |
-//|    handed over as a non-owning pointer in Initialize(). Those     |
-//|    addresses are stable for the owner's lifetime.                 |
-//| 3. Everything that depends on owner-private scalars/dynamic       |
-//|    arrays (daily risk usage, per-symbol budgets, per-symbol risk  |
-//|    overrides, trading-day key) is reached through the             |
-//|    IRiskPipelineHost interface so that the ORIGINAL implementation|
-//|    keeps running - no logic is duplicated and no state is cloned. |
-//| 4. Lazy evaluation and short-circuit order of the original method |
-//|    bodies are preserved verbatim.                                 |
-//+------------------------------------------------------------------+
+// Phase E4 extraction from CUnifiedRiskManager (behaviour-preserving)
+// Owns the EA's trade-approval hot path:
+// CUnifiedRiskManager::ValidateTradeRequest -> CRiskValidationPipeline::Run
+// CUnifiedRiskManager::ValidateBasicParameters   -> moved here
+// CUnifiedRiskManager::ValidateRiskLimits        -> moved here
+// CUnifiedRiskManager::ValidatePortfolioRisk     -> moved here
+// CUnifiedRiskManager::ValidateClusterGovernance -> moved here
+// CUnifiedRiskManager::ValidateCorrelationLimits -> moved here
+// CUnifiedRiskManager::ValidateMarginRequirements-> moved here
+// CUnifiedRiskManager::ValidateAccountHealth     -> moved here
+// DESIGN NOTES (MQL5 constraints)
+// 1. MQL5 has no pointers to structures, so the pipeline cannot
+// hold "&m_config". Instead the owner exposes CopyRiskConfig()
+// through IRiskPipelineHost and the pipeline refreshes its local
+// SUnifiedRiskConfig copy at every public entry point. Nothing
+// inside the moved code mutates the config, so a single refresh
+// per entry is exactly equivalent to reading the live struct.
+// 2. Everything that is an OWNED CLASS value member of the owner is
+// handed over as a non-owning pointer in Initialize(). Those
+// addresses are stable for the owner's lifetime.
+// 3. Everything that depends on owner-private scalars/dynamic
+// arrays (daily risk usage, per-symbol budgets, per-symbol risk
+// overrides, trading-day key) is reached through the
+// IRiskPipelineHost interface so that the ORIGINAL implementation
+// keeps running - no logic is duplicated and no state is cloned.
+// 4. Lazy evaluation and short-circuit order of the original method
+// bodies are preserved verbatim.
 #ifndef CORE_RISK_RISK_VALIDATION_PIPELINE_MQH
 #define CORE_RISK_RISK_VALIDATION_PIPELINE_MQH
 
@@ -49,13 +44,10 @@
 #include "RiskTieredCorrelation.mqh"
 #include "RiskAdaptiveTuner.mqh"
 
-//+------------------------------------------------------------------+
-//| Unified risk configuration                                       |
-//| Blueprint 10.4: All percent fields use 0-100 scale               |
-//| Phase E4: relocated verbatim from UnifiedRiskManager.mqh because  |
-//| both CUnifiedRiskManager and CRiskValidationPipeline need it and  |
-//| this header is included first.                                    |
-//+------------------------------------------------------------------+
+// Blueprint 10.4: All percent fields use 0-100 scale
+// Phase E4: relocated verbatim from UnifiedRiskManager.mqh because
+// both CUnifiedRiskManager and CRiskValidationPipeline need it and
+// this header is included first.
 struct SUnifiedRiskConfig
 {
     double baseRiskPerTradePercent;     // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
@@ -77,10 +69,7 @@ struct SUnifiedRiskConfig
     string auditLogFile;
 };
 
-//+------------------------------------------------------------------+
-//| Trade Request Validation Structure                             |
-//| Phase E4: relocated verbatim from UnifiedRiskManager.mqh.         |
-//+------------------------------------------------------------------+
+// Phase E4: relocated verbatim from UnifiedRiskManager.mqh.
 struct STradeValidationRequest
 {
     string symbol;                    // Trading symbol
@@ -115,19 +104,14 @@ struct STradeValidationRequest
     {}
 };
 
-//+------------------------------------------------------------------+
-//| IRiskPipelineHost                                                |
-//|                                                                  |
-//| Narrow call-back surface the validation pipeline needs from its   |
-//| owner (CUnifiedRiskManager). Every entry below is an EXISTING     |
-//| CUnifiedRiskManager method - the pipeline never re-implements     |
-//| owner logic, it only calls back into it. The single exception is  |
-//| CopyRiskConfig(), added because MQL5 forbids struct pointers.     |
-//|                                                                  |
-//| NOTE (MQL5): pure-virtual (= 0) makes any signature drift a LOUD  |
-//| compile error ("cannot instantiate abstract class") instead of a  |
-//| silent behaviour regression.                                      |
-//+------------------------------------------------------------------+
+// Narrow call-back surface the validation pipeline needs from its
+// owner (CUnifiedRiskManager). Every entry below is an EXISTING
+// CUnifiedRiskManager method - the pipeline never re-implements
+// owner logic, it only calls back into it. The single exception is
+// CopyRiskConfig(), added because MQL5 forbids struct pointers.
+// NOTE (MQL5): pure-virtual (= 0) makes any signature drift a LOUD
+// compile error ("cannot instantiate abstract class") instead of a
+// silent behaviour regression.
 class IRiskPipelineHost
 {
 public:
@@ -173,11 +157,8 @@ public:
     virtual void   UpdatePerformanceMetrics(const ulong startTime) = 0;
 };
 
-//+------------------------------------------------------------------+
-//| CRiskValidationPipeline                                          |
-//| The 7-step trade validation pipeline extracted from               |
-//| CUnifiedRiskManager::ValidateTradeRequest.                        |
-//+------------------------------------------------------------------+
+// The 7-step trade validation pipeline extracted from
+// CUnifiedRiskManager::ValidateTradeRequest.
 class CRiskValidationPipeline
 {
 private:
@@ -234,11 +215,9 @@ private:
     }
 
 public:
-    //+--------------------------------------------------------------+
-    //| Constructor - zero init only. All wiring happens in           |
-    //| Initialize(), which the owner calls from its constructor body  |
-    //| and again from CUnifiedRiskManager::Initialize().              |
-    //+--------------------------------------------------------------+
+// Constructor - zero init only. All wiring happens in
+// Initialize(), which the owner calls from its constructor body
+// and again from CUnifiedRiskManager::Initialize().
     CRiskValidationPipeline() :
         m_host(NULL),
         m_circuitBreaker(NULL),
@@ -266,10 +245,8 @@ public:
         // All stored pointers are NON-OWNING (owner value members). Nothing to free.
     }
 
-    //+--------------------------------------------------------------+
-    //| Wire the pipeline to its owner's collaborators and state.      |
-    //| All pointers are non-owning and stable for the owner lifetime. |
-    //+--------------------------------------------------------------+
+// Wire the pipeline to its owner's collaborators and state.
+// All pointers are non-owning and stable for the owner lifetime.
     void Initialize(IRiskPipelineHost*          host,
                     CRiskCircuitBreaker*        circuitBreaker,
                     CVirtualPositionBook*       virtualPositionBook,
@@ -323,10 +300,8 @@ public:
         m_maxClusterRiskPercent    = maxClusterRiskPercent;
     }
 
-    //+--------------------------------------------------------------+
-    //| Run - the trade validation pipeline.                          |
-    //| Relocated verbatim from CUnifiedRiskManager::ValidateTradeRequest. |
-    //+--------------------------------------------------------------+
+// Run - the trade validation pipeline.
+// Relocated verbatim from CUnifiedRiskManager::ValidateTradeRequest.
     SValidationResult Run(const STradeValidationRequest &request,
                           const string phaseTag = "runtime",
                           const string corrId = "");
@@ -346,27 +321,23 @@ public:
     bool ValidateAccountHealth(const STradeValidationRequest &request, string &message);
 };
 
-//+------------------------------------------------------------------+
-//| Run - relocated body of CUnifiedRiskManager::ValidateTradeRequest |
-//|                                                                  |
-//| Mechanical substitutions only (no logic change):                  |
-//|   m_initialized                        -> m_host.IsInitialized()  |
-//|   CheckDailyLossLimit()                -> m_host.CheckDailyLossLimit() |
-//|   CheckDrawdownCircuitBreaker()        -> m_host.CheckDrawdownCircuitBreaker() |
-//|   GetEffectiveMaxDrawdown()            -> m_host.GetEffectiveMaxDrawdown() |
-//|   CheckAndResetDailyLimits()           -> m_host.CheckAndResetDailyLimits() |
-//|   GetReservedVirtualRiskPercent()      -> m_virtualPositionBook.GetReservedRiskPercent() |
-//|   GetCurrentOpenExposureRiskPercent()  -> m_portfolioRiskManager.GetPortfolioRisk() |
-//|   GetEffectiveDailyRiskUsedPercent()   -> m_host.GetEffectiveDailyRiskUsedPercent() |
-//|   Reserve/ReleaseVirtualPosition()     -> m_host.Reserve/ReleaseVirtualPosition() |
-//|   LogValidationResult()                -> m_host.LogValidationResult() |
-//|   CalculatePortfolioRiskAfterTrade()   -> m_host.CalculatePortfolioRiskAfterTrade() |
-//|   UpdatePerformanceMetrics()           -> m_host.UpdatePerformanceMetrics() |
-//|   IsSymbolBudgetAvailable/GetSymbolRiskAllocation/GetSymbolUsedRisk -> m_host.* |
-//|   GetVirtualReservationCount()         -> m_virtualPositionBook.GetReservationCount() |
-//|   GetEffectiveRiskPerTrade()           -> m_host.GetEffectiveRiskPerTrade() |
-//|   GetSymbolCorrelation()               -> m_tieredCorrelation.GetSymbolCorrelation() |
-//+------------------------------------------------------------------+
+// Run - relocated body of CUnifiedRiskManager::ValidateTradeRequest
+// Mechanical substitutions only (no logic change):
+// m_initialized                        -> m_host.IsInitialized()
+// CheckDailyLossLimit()                -> m_host.CheckDailyLossLimit()
+// CheckDrawdownCircuitBreaker()        -> m_host.CheckDrawdownCircuitBreaker()
+// GetEffectiveMaxDrawdown()            -> m_host.GetEffectiveMaxDrawdown()
+// CheckAndResetDailyLimits()           -> m_host.CheckAndResetDailyLimits()
+// GetReservedVirtualRiskPercent()      -> m_virtualPositionBook.GetReservedRiskPercent()
+// GetEffectiveDailyRiskUsedPercent()   -> m_host.GetEffectiveDailyRiskUsedPercent()
+// Reserve/ReleaseVirtualPosition()     -> m_host.Reserve/ReleaseVirtualPosition()
+// LogValidationResult()                -> m_host.LogValidationResult()
+// CalculatePortfolioRiskAfterTrade()   -> m_host.CalculatePortfolioRiskAfterTrade()
+// UpdatePerformanceMetrics()           -> m_host.UpdatePerformanceMetrics()
+// IsSymbolBudgetAvailable/GetSymbolRiskAllocation/GetSymbolUsedRisk -> m_host.*
+// GetVirtualReservationCount()         -> m_virtualPositionBook.GetReservationCount()
+// GetEffectiveRiskPerTrade()           -> m_host.GetEffectiveRiskPerTrade()
+// GetSymbolCorrelation()               -> m_tieredCorrelation.GetSymbolCorrelation()
     // Batch 152: Run() is now a timing/counting wrapper; the validation body lives
     // in RunInternal(). This fixes two telemetry defects: metrics received END-time
     // as START (elapsed ~0) and rejected validations were never counted.
@@ -542,7 +513,6 @@ public:
     }
     result.riskPercent = tradeRisk;
     
-    // 3. Validate portfolio risk
     if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage, virtualReserved ? provisionalRiskPct : 0.0))
     {
         result.message = "Portfolio risk validation failed: " + validationMessage;
@@ -584,7 +554,6 @@ public:
     }
     result.correlationRisk = correlationRisk;
     
-    // 6. Validate margin requirements
     if(!ValidateMarginRequirements(request, validationMessage))
     {
         result.message = "Margin validation failed: " + validationMessage;
@@ -597,7 +566,6 @@ public:
         return result;
     }
     
-    // 7. Validate account health
     if(!ValidateAccountHealth(request, validationMessage))
     {
         result.message = "Account health validation failed: " + validationMessage;
@@ -909,10 +877,8 @@ public:
     return result;
 }
 
-//+------------------------------------------------------------------+
-//| Step 1 - Basic parameter validation                               |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateBasicParameters |
-//+------------------------------------------------------------------+
+// Step 1 - Basic parameter validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateBasicParameters
 bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequest &request, string &message)
 {
     if(!IsWired())
@@ -965,7 +931,6 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         return false;
     }
     
-    // Check trading permissions
     if(!m_host.CheckAccountTradingPermissions())
     {
         message = "Trading not allowed";
@@ -975,10 +940,8 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Step 2 - Risk limit validation                                    |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateRiskLimits    |
-//+------------------------------------------------------------------+
+// Step 2 - Risk limit validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateRiskLimits
 bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent)
 {
     if(!IsWired())
@@ -988,7 +951,6 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
     }
     SyncConfig();
 
-    // Calculate trade risk
     double tradeRisk = m_host.CalculateTradeRisk(request.symbol, request.lotSize, request.stopLossPips);
     
     if(tradeRisk <= 0)
@@ -1025,10 +987,8 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Step 3 - Portfolio risk validation                                |
-//| Relocated verbatim from CUnifiedRiskManager::ValidatePortfolioRisk |
-//+------------------------------------------------------------------+
+// Step 3 - Portfolio risk validation
+// Relocated verbatim from CUnifiedRiskManager::ValidatePortfolioRisk
 bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent)
 {
     if(!IsWired())
@@ -1076,10 +1036,8 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Step 4 - Cluster governance validation                            |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateClusterGovernance |
-//+------------------------------------------------------------------+
+// Step 4 - Cluster governance validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateClusterGovernance
 bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRequest &request,
                                                         const double tradeRiskPercent,
                                                         string &message)
@@ -1190,11 +1148,9 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Step 5 - Correlation limit validation                             |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateCorrelationLimits |
-//| (still a thin Phase E3 forwarder into CRiskTieredCorrelation)      |
-//+------------------------------------------------------------------+
+// Step 5 - Correlation limit validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateCorrelationLimits
+// (still a thin Phase E3 forwarder into CRiskTieredCorrelation)
 bool CRiskValidationPipeline::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
 {
     if(!IsWired())
@@ -1208,10 +1164,8 @@ bool CRiskValidationPipeline::ValidateCorrelationLimits(const STradeValidationRe
                                                          m_config.maxPositionsSameBase, m_eaMagicNumber);
 }
 
-//+------------------------------------------------------------------+
-//| Step 6 - Margin requirement validation                            |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateMarginRequirements |
-//+------------------------------------------------------------------+
+// Step 6 - Margin requirement validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateMarginRequirements
 bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationRequest &request, string &message)
 {
     if(!IsWired())
@@ -1288,10 +1242,8 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
     return m_marginHealth.CheckFreeMarginAndLevel(marginRequired, isHedging, message);
 }
 
-//+------------------------------------------------------------------+
-//| Step 7 - Account health validation                                |
-//| Relocated verbatim from CUnifiedRiskManager::ValidateAccountHealth |
-//+------------------------------------------------------------------+
+// Step 7 - Account health validation
+// Relocated verbatim from CUnifiedRiskManager::ValidateAccountHealth
 bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
 {
     if(!IsWired())

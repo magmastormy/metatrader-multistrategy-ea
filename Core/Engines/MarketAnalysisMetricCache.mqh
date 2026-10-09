@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MarketAnalysisMetricCache.mqh - Last-valid metric reuse cache    |
-//| Extracted verbatim from MarketAnalysis.mqh (no behavior change)  |
-//+------------------------------------------------------------------+
+// MarketAnalysisMetricCache.mqh - Last-valid metric reuse cache
+// Extracted verbatim from MarketAnalysis.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -9,11 +7,9 @@
 #ifndef MARKET_ANALYSIS_METRIC_CACHE_MQH
 #define MARKET_ANALYSIS_METRIC_CACHE_MQH
 
-//+------------------------------------------------------------------+
-//| Owns the "last valid" metric snapshots used to survive transient |
-//| history-sync failures (errors 4806 / 4807) plus the throttled    |
-//| reuse logging state.                                             |
-//+------------------------------------------------------------------+
+// Owns the "last valid" metric snapshots used to survive transient
+// history-sync failures (errors 4806 / 4807) plus the throttled
+// reuse logging state.
 class CMarketAnalysisMetricCache
 {
 private:
@@ -94,9 +90,7 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| Drop every cached metric                                         |
-//+------------------------------------------------------------------+
+// Drop every cached metric
 void CMarketAnalysisMetricCache::ResetMetricCaches()
 {
     m_lastValidTrendStrength = 0.0;
@@ -110,9 +104,7 @@ void CMarketAnalysisMetricCache::ResetMetricCaches()
     m_lastMetricReuseLogTime = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Reuse window derived from the active timeframe                   |
-//+------------------------------------------------------------------+
+// Reuse window derived from the active timeframe
 int CMarketAnalysisMetricCache::GetMetricReuseWindowSeconds(const ENUM_TIMEFRAMES period) const
 {
     int barSeconds = PeriodSeconds(period);
@@ -122,17 +114,13 @@ int CMarketAnalysisMetricCache::GetMetricReuseWindowSeconds(const ENUM_TIMEFRAME
     return MathMax(60, MathMin(3600, barSeconds * 3));
 }
 
-//+------------------------------------------------------------------+
-//| True while a cached metric is still young enough to be reused    |
-//+------------------------------------------------------------------+
+// True while a cached metric is still young enough to be reused
 bool CMarketAnalysisMetricCache::CanReuseMetric(const datetime metricTime, const ENUM_TIMEFRAMES period) const
 {
     return (metricTime > 0 && (TimeCurrent() - metricTime) <= GetMetricReuseWindowSeconds(period));
 }
 
-//+------------------------------------------------------------------+
-//| Throttled diagnostic emitted when a cached metric is reused      |
-//+------------------------------------------------------------------+
+// Throttled diagnostic emitted when a cached metric is reused
 void CMarketAnalysisMetricCache::MaybeLogMetricReuse(const string symbol,
                                                      const ENUM_TIMEFRAMES period,
                                                      const string metricName,

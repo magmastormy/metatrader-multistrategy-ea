@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| MQHHyperparameterTuner.mq5                                       |
-//| Hyperparameter tuning script for MQH models                       |
-//+------------------------------------------------------------------+
+// Hyperparameter tuning script for MQH models
 #property copyright "MQH Model Training System"
 #property link      "https://github.com/metatrader-multistrategy-ea"
 #property version   "1.00"
@@ -21,9 +18,7 @@ input bool useDefaultCandidates = true;
 #include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Core/HyperparameterOptimizer.mqh"
 
-//+------------------------------------------------------------------+
-//| Script program start function                                    |
-//+------------------------------------------------------------------+
+// Script program start function
 void OnStart()
 {
     Print("=== MQH Hyperparameter Tuner ===");

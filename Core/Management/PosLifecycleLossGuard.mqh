@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| PosLifecycleLossGuard.mqh                                         |
-//| Loss-minimisation guard (adverse-momentum exit, per-position loss |
-//| limit, consecutive-loss cooldown, daily-loss circuit breaker)     |
-//| extracted from PositionLifecycleManager.mqh                       |
-//| (Phase H — God Object decomposition)                              |
-//|                                                                   |
-//| Owns: loss-minimisation configuration + loss tracking counters.   |
-//| Behaviour preserved 1:1 — no logic changes.                       |
-//+------------------------------------------------------------------+
+// Loss-minimisation guard (adverse-momentum exit, per-position loss
+// limit, consecutive-loss cooldown, daily-loss circuit breaker)
+// extracted from PositionLifecycleManager.mqh
+// (Phase H — God Object decomposition)
+// Owns: loss-minimisation configuration + loss tracking counters.
+// Behaviour preserved 1:1 — no logic changes.
 #ifndef POS_LIFECYCLE_LOSS_GUARD_MQH
 #define POS_LIFECYCLE_LOSS_GUARD_MQH
 
@@ -15,10 +11,7 @@
 #include "PosLifecycleMagicFilter.mqh"
 #include "PosLifecycleVolatility.mqh"   // CPosLifecycleVolatility::GetATR()
 
-//+------------------------------------------------------------------+
-//| CPosLifecycleLossGuard                                            |
-//| Stateful module — held BY VALUE by CPositionLifecycleManager.     |
-//+------------------------------------------------------------------+
+// Stateful module — held BY VALUE by CPositionLifecycleManager.
 class CPosLifecycleLossGuard
 {
 private:
@@ -150,7 +143,6 @@ public:
             double slPrice = PositionGetDouble(POSITION_SL);
             double currentProfit = PositionGetDouble(POSITION_PROFIT);
 
-            // Adverse momentum exit
             if(m_adverseMomentumExitEnabled)
             {
                 double atr = CPosLifecycleVolatility::GetATR(symbol, 14);
@@ -177,7 +169,6 @@ public:
                 }
             }
 
-            // Position loss limit
             if(m_positionLossLimitPercent > 0 && slPrice > 0)
             {
                 double slDistance = MathAbs(openPrice - slPrice);

@@ -1,29 +1,21 @@
-//+------------------------------------------------------------------+
-//| OrchestratorMathEngineHub.mqh                                    |
-//| Phase F extraction from CEAOrchestrator (behaviour preserving).  |
-//|                                                                  |
-//| Owns the three per-symbol engine fleets that used to be sixteen  |
-//| loose dynamic-array members on CEAOrchestrator:                  |
-//|                                                                  |
-//|   Batch 100 : Hurst, Ornstein-Uhlenbeck, OFI proxy, VPIN         |
-//|   Batch 114 : Kalman MR, Changepoint, Four-State regime,         |
-//|               Volatility targeting, Exit optimizer,              |
-//|               Liquidity sweep, Range compression                 |
-//|   Batch 107 : VWAP, Volume Profile, CVD (forex only)             |
-//|                                                                  |
-//| plus the parallel symbol/bridge-log bookkeeping arrays and the   |
-//| m_mathEngineCount cursor.                                        |
-//|                                                                  |
-//| Every body below was moved verbatim; collaborators the original  |
-//| code reached for through members (m_config, the registries, the  |
-//| enterprise-manager arrays, m_gridRecovery, m_signalDiagnostics)  |
-//| are now explicit parameters. CEAOrchestrator holds one hub by    |
-//| value and keeps thin forwarders with the original signatures.    |
-//|                                                                  |
-//| Ownership: the hub OWNS every engine pointer it allocates and    |
-//| releases them in ReleaseAll() with the original Deinit()+delete  |
-//| ordering. The registries hold non-owning references.             |
-//+------------------------------------------------------------------+
+// Phase F extraction from CEAOrchestrator (behaviour preserving).
+// Owns the three per-symbol engine fleets that used to be sixteen
+// loose dynamic-array members on CEAOrchestrator:
+// Batch 100 : Hurst, Ornstein-Uhlenbeck, OFI proxy, VPIN
+// Batch 114 : Kalman MR, Changepoint, Four-State regime,
+// Volatility targeting, Exit optimizer,
+// Liquidity sweep, Range compression
+// Batch 107 : VWAP, Volume Profile, CVD (forex only)
+// plus the parallel symbol/bridge-log bookkeeping arrays and the
+// m_mathEngineCount cursor.
+// Every body below was moved verbatim; collaborators the original
+// code reached for through members (m_config, the registries, the
+// enterprise-manager arrays, m_gridRecovery, m_signalDiagnostics)
+// are now explicit parameters. CEAOrchestrator holds one hub by
+// value and keeps thin forwarders with the original signatures.
+// Ownership: the hub OWNS every engine pointer it allocates and
+// releases them in ReleaseAll() with the original Deinit()+delete
+// ordering. The registries hold non-owning references.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_MATH_ENGINE_HUB_MQH
@@ -36,9 +28,6 @@
 #include "../../Core/Management/EnterpriseStrategyManager.mqh"
 #include "../../Core/Scalp/GridRecoveryEngine.mqh"
 
-//+------------------------------------------------------------------+
-//| COrchestratorMathEngineHub                                       |
-//+------------------------------------------------------------------+
 class COrchestratorMathEngineHub
 {
 private:
@@ -165,14 +154,12 @@ public:
     // Was the "Batch 100: Initialize per-symbol mathematical engines using
     // pre-allocated arrays" block inside
     // CEAOrchestrator::InitializeEnterpriseManagerForSymbol().
-    //+--------------------------------------------------------------+
-    //| True when this broker publishes no traded volume for the     |
-    //| symbol, so anything volume-derived is running on tick counts.|
-    //| MqlRates.real_volume is zero on every symbol without exchange|
-    //| volume (spot FX, CFD and synthetic indices), which is the    |
-    //| only in-terminal way to know before an engine consumes the   |
-    //| difference.                                                  |
-    //+--------------------------------------------------------------+
+// True when this broker publishes no traded volume for the
+// symbol, so anything volume-derived is running on tick counts.
+// MqlRates.real_volume is zero on every symbol without exchange
+// volume (spot FX, CFD and synthetic indices), which is the
+// only in-terminal way to know before an engine consumes the
+// difference.
     static bool HasOnlyTickVolume(const string symbol)
     {
         MqlRates rates[];
@@ -195,7 +182,6 @@ public:
         m_mathEngineSymbols[idx] = symbol;
         m_gridHurstBridgeLogged[idx] = false;
 
-        // Hurst Engine
         m_hurstEngines[idx] = NULL;
         if(config.enableHurstEngine)
         {
@@ -237,7 +223,6 @@ public:
             }
         }
 
-        // VPIN Filter
         m_vpinFilters[idx] = NULL;
         if(config.enableVPINFilter && volumeEnginesAllowed)
         {
@@ -316,7 +301,6 @@ public:
             PrintFormat("[ENGINE] Four-State Regime engine initialized for %s", symbol);
         }
 
-        // Volatility Targeting
         m_volTargetEngines[idx] = NULL;
         if(config.enableVolTargeting)
         {
@@ -330,7 +314,6 @@ public:
             }
         }
 
-        // Exit Optimizer
         m_exitOptimizers[idx] = NULL;
         if(config.enableExitOptimizer)
         {
@@ -375,7 +358,6 @@ public:
         int count = managerCount;
         if(count <= 0) return;
 
-        // Resize all engine arrays
         ArrayResize(m_hurstEngines, count);
         ArrayResize(m_ouEngines, count);
         ArrayResize(m_ofiEngines, count);

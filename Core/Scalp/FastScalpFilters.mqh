@@ -1,20 +1,14 @@
-//+------------------------------------------------------------------+
-//| FastScalpFilters.mqh                                             |
-//| Decomposition extraction from CFastScalpEngine (behaviour        |
-//| preserving).                                                     |
-//|                                                                  |
-//| Pure stateless entry gates / market-quality filters that used to |
-//| live as private methods on CFastScalpEngine:                     |
-//|   RefreshScalpPrice(), IsMomentumBurst(), IsSpreadAcceptable(),  |
-//|   IsSyntheticSymbol(), IsScalpCostViable()                       |
-//|                                                                  |
-//| All methods are `static`. The two ATR-dependent gates now take   |
-//| the ATR as an argument; the engine forwarder resolves it through |
-//| GetATRCached(symbol) exactly as before, so the call sequence and |
-//| the resulting behaviour are unchanged.                           |
-//|                                                                  |
-//| All log tags and thresholds are reproduced verbatim.             |
-//+------------------------------------------------------------------+
+// Decomposition extraction from CFastScalpEngine (behaviour
+// preserving).
+// Pure stateless entry gates / market-quality filters that used to
+// live as private methods on CFastScalpEngine:
+// RefreshScalpPrice(), IsMomentumBurst(), IsSpreadAcceptable(),
+// IsSyntheticSymbol(), IsScalpCostViable()
+// All methods are `static`. The two ATR-dependent gates now take
+// the ATR as an argument; the engine forwarder resolves it through
+// GetATRCached(symbol) exactly as before, so the call sequence and
+// the resulting behaviour are unchanged.
+// All log tags and thresholds are reproduced verbatim.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_FILTERS_MQH
@@ -27,17 +21,13 @@
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-//+------------------------------------------------------------------+
-//| CFastScalpFilters — stateless scalp gates                         |
-//+------------------------------------------------------------------+
+// CFastScalpFilters — stateless scalp gates
 class CFastScalpFilters
 {
 public:
-   //+------------------------------------------------------------------+
-   //| Refresh market price with tick-level freshness check              |
-   //| Returns true if valid prices obtained, false otherwise            |
-   //| Prevents retcode=10015 (Invalid price) by ensuring latest tick   |
-   //+------------------------------------------------------------------+
+// Refresh market price with tick-level freshness check
+// Returns true if valid prices obtained, false otherwise
+// Prevents retcode=10015 (Invalid price) by ensuring latest tick
    static bool RefreshScalpPrice(const string symbol, double &ask, double &bid)
    {
       ask = 0.0;
@@ -67,10 +57,8 @@ public:
       return true;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check momentum burst: current bar body > threshold * ATR         |
-   //| `atr` is supplied by the caller via GetATRCached(symbol).        |
-   //+------------------------------------------------------------------+
+// Check momentum burst: current bar body > threshold * ATR
+// `atr` is supplied by the caller via GetATRCached(symbol).
    static bool IsMomentumBurst(const string symbol, double atr, double momentumBurstATRRatio)
    {
       if(atr <= 0.0)
@@ -85,10 +73,8 @@ public:
       return (bodySize > momentumBurstATRRatio * atr);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check spread gate: reject if spread > maxSpreadATRRatio * ATR    |
-   //| `atr` is supplied by the caller via GetATRCached(symbol).        |
-   //+------------------------------------------------------------------+
+// Check spread gate: reject if spread > maxSpreadATRRatio * ATR
+// `atr` is supplied by the caller via GetATRCached(symbol).
    static bool IsSpreadAcceptable(const string symbol, double atr, double maxSpreadATRRatio)
    {
       if(atr <= 0.0)
@@ -103,9 +89,7 @@ public:
       return (spreadPrice <= maxSpreadATRRatio * atr);
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if Symbol is Synthetic Index                              |
-   //+------------------------------------------------------------------+
+// Check if Symbol is Synthetic Index
    static bool IsSyntheticSymbol(const string symbol)
    {
       if(symbol == "") return false;
@@ -139,12 +123,10 @@ public:
       return false;
    }
 
-   //+------------------------------------------------------------------+
-   //| Check if scalp is cost-viable given spread + commission           |
-   //| Rejects if breakeven WR > 70% or total cost > 25% of TP          |
-   //| Returns true if commission data is unavailable (pass-through)    |
-   //| SYNTHETIC SYMBOLS: More permissive thresholds (wider spreads)    |
-   //+------------------------------------------------------------------+
+// Check if scalp is cost-viable given spread + commission
+// Rejects if breakeven WR > 70% or total cost > 25% of TP
+// Returns true if commission data is unavailable (pass-through)
+// SYNTHETIC SYMBOLS: More permissive thresholds (wider spreads)
    static bool IsScalpCostViable(const string symbol, double slPoints, double tpPoints)
    {
       // Get total transaction cost

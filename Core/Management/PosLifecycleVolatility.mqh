@@ -1,12 +1,8 @@
-//+------------------------------------------------------------------+
-//| PosLifecycleVolatility.mqh                                        |
-//| Volatility-regime tracking + dynamic SL/TP recalculation and the  |
-//| shared ATR accessor, extracted from PositionLifecycleManager.mqh  |
-//| (Phase H — God Object decomposition)                              |
-//|                                                                   |
-//| Owns: CVolatilityRegime registry + dynamic SL/TP configuration.   |
-//| Behaviour preserved 1:1 — no logic changes.                       |
-//+------------------------------------------------------------------+
+// Volatility-regime tracking + dynamic SL/TP recalculation and the
+// shared ATR accessor, extracted from PositionLifecycleManager.mqh
+// (Phase H — God Object decomposition)
+// Owns: CVolatilityRegime registry + dynamic SL/TP configuration.
+// Behaviour preserved 1:1 — no logic changes.
 #ifndef POS_LIFECYCLE_VOLATILITY_MQH
 #define POS_LIFECYCLE_VOLATILITY_MQH
 
@@ -36,13 +32,10 @@ public:
     }
 };
 
-//+------------------------------------------------------------------+
-//| CPosLifecycleVolatility                                           |
-//| Stateful module — held BY VALUE by CPositionLifecycleManager.     |
-//| GetATR() is stateless and therefore exposed as a static helper so |
-//| that the loss-guard and exit-rule modules can reuse it without    |
-//| duplicating the IndicatorManager plumbing.                        |
-//+------------------------------------------------------------------+
+// Stateful module — held BY VALUE by CPositionLifecycleManager.
+// GetATR() is stateless and therefore exposed as a static helper so
+// that the loss-guard and exit-rule modules can reuse it without
+// duplicating the IndicatorManager plumbing.
 class CPosLifecycleVolatility
 {
 private:
@@ -94,7 +87,6 @@ public:
         if(!m_dynamicSLEnabled)
             return;
 
-        // Update volatility regimes for all symbols
         UpdateVolatilityRegimes(symbols, symbolCount);
 
         for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -111,7 +103,6 @@ public:
             double currentSL = PositionGetDouble(POSITION_SL);
             double currentTP = PositionGetDouble(POSITION_TP);
 
-            // Get volatility regime for this symbol
             CVolatilityRegime* regime = GetVolatilityRegime(symbol);
             if(regime == NULL) continue;
 

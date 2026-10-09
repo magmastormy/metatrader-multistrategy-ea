@@ -1,11 +1,8 @@
-//+------------------------------------------------------------------+
-//| DashBridgeProtocol.mqh                                           |
-//| Injected snapshot state (risk / performance / python bridge /    |
-//| AI adapters) plus the JSON sections serialized from it.          |
-//| Owns every field previously fed by the CDashboardBridge Set*Data |
-//| injectors.                                                       |
-//| Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)|
-//+------------------------------------------------------------------+
+// Injected snapshot state (risk / performance / python bridge /
+// AI adapters) plus the JSON sections serialized from it.
+// Owns every field previously fed by the CDashboardBridge Set*Data
+// injectors.
+// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -16,9 +13,7 @@
 
 #include "DashBridgeTypes.mqh"
 
-//+------------------------------------------------------------------+
-//| Dashboard Bridge Snapshot Data + Section Serialization           |
-//+------------------------------------------------------------------+
+// Dashboard Bridge Snapshot Data + Section Serialization
 class CDashBridgeProtocol
 {
 private:
@@ -121,17 +116,13 @@ public:
    static string     BuildConsensusJson();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CDashBridgeProtocol::CDashBridgeProtocol()
 {
    Reset();
 }
 
-//+------------------------------------------------------------------+
-//| Reset every injected snapshot field to its default               |
-//+------------------------------------------------------------------+
+// Reset every injected snapshot field to its default
 void CDashBridgeProtocol::Reset()
 {
    // Risk data defaults
@@ -192,9 +183,7 @@ void CDashBridgeProtocol::Reset()
    m_aiMetaSamplesSince = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Set AI adapter snapshot data                                     |
-//+------------------------------------------------------------------+
+// Set AI adapter snapshot data
 void CDashBridgeProtocol::SetAIData(bool nnActive, const string &nnSignal, double nnConf,
                                     int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
                                     int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
@@ -229,9 +218,7 @@ void CDashBridgeProtocol::SetAIData(bool nnActive, const string &nnSignal, doubl
    m_aiMetaSamplesSince = metaSamplesSince;
 }
 
-//+------------------------------------------------------------------+
-//| Set risk snapshot data                                           |
-//+------------------------------------------------------------------+
+// Set risk snapshot data
 void CDashBridgeProtocol::SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
                                       double dailyEntryRisk, double dailyMtmLoss,
                                       double openExposure, double maxDailyRisk,
@@ -253,9 +240,7 @@ void CDashBridgeProtocol::SetRiskData(double activeRiskPerTrade, double dailyRis
    m_riskGateRejected = gateRejected;
 }
 
-//+------------------------------------------------------------------+
-//| Set performance analytics data                                   |
-//+------------------------------------------------------------------+
+// Set performance analytics data
 void CDashBridgeProtocol::SetPerformanceData(int totalTrades, double winRate, double profitFactor,
                                              double sharpeRatio, double maxDrawdown, double recoveryFactor,
                                              double netProfit, double avgWin, double avgLoss)
@@ -271,9 +256,6 @@ void CDashBridgeProtocol::SetPerformanceData(int totalTrades, double winRate, do
    m_perfAvgLoss = avgLoss;
 }
 
-//+------------------------------------------------------------------+
-//| Set python bridge data                                           |
-//+------------------------------------------------------------------+
 void CDashBridgeProtocol::SetPythonBridgeData(bool connected, const string &version,
                                               int requests, int ok, int errors)
 {
@@ -284,9 +266,6 @@ void CDashBridgeProtocol::SetPythonBridgeData(bool connected, const string &vers
    m_pyErrors = errors;
 }
 
-//+------------------------------------------------------------------+
-//| Build risk JSON from UnifiedRiskManager                          |
-//+------------------------------------------------------------------+
 string CDashBridgeProtocol::BuildRiskJson() const
 {
    string json = "\"risk\":{";
@@ -306,9 +285,6 @@ string CDashBridgeProtocol::BuildRiskJson() const
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build performance JSON from PerformanceAnalytics                 |
-//+------------------------------------------------------------------+
 string CDashBridgeProtocol::BuildPerformanceJson() const
 {
    string json = "\"performance\":{";
@@ -325,9 +301,7 @@ string CDashBridgeProtocol::BuildPerformanceJson() const
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build AI adapters JSON                                           |
-//+------------------------------------------------------------------+
+// Build AI adapters JSON
 string CDashBridgeProtocol::BuildAIJson() const
 {
    string json = "\"ai\":{";
@@ -380,9 +354,6 @@ string CDashBridgeProtocol::BuildAIJson() const
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build Python bridge JSON                                         |
-//+------------------------------------------------------------------+
 string CDashBridgeProtocol::BuildPythonBridgeJson() const
 {
    string json = "\"python_bridge\":{";
@@ -395,17 +366,11 @@ string CDashBridgeProtocol::BuildPythonBridgeJson() const
    return json;
 }
 
-//+------------------------------------------------------------------+
-//| Build strategies JSON                                            |
-//+------------------------------------------------------------------+
 string CDashBridgeProtocol::BuildStrategiesJson()
 {
    return "\"strategies\":[]";
 }
 
-//+------------------------------------------------------------------+
-//| Build consensus JSON                                             |
-//+------------------------------------------------------------------+
 string CDashBridgeProtocol::BuildConsensusJson()
 {
    return "\"consensus\":{\"symbols\":{}}";

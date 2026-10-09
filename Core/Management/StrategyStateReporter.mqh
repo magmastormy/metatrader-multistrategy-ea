@@ -1,18 +1,13 @@
-//+------------------------------------------------------------------+
-//| Strategy State Reporter (Phase C, Slice 1 - C1)                  |
-//| Read-only telemetry / JSON serialization extracted from          |
-//| CEnterpriseStrategyManager.                                      |
-//|                                                                  |
-//| Holds a const back-pointer to the owning manager and reads its    |
-//| state exclusively through the manager's minimal const accessor    |
-//| surface, so every emitted string is byte-for-byte identical to    |
-//| the original implementation.                                      |
-//|                                                                  |
-//| NOTE: this header is an implementation detail of                  |
-//| EnterpriseStrategyManager.mqh and is included from there (after   |
-//| the shared free helpers, before the manager class). It is not     |
-//| intended to be included standalone.                               |
-//+------------------------------------------------------------------+
+// Strategy State Reporter (Phase C, Slice 1 - C1)
+// Read-only telemetry / JSON serialization extracted from
+// Holds a const back-pointer to the owning manager and reads its
+// state exclusively through the manager's minimal const accessor
+// surface, so every emitted string is byte-for-byte identical to
+// the original implementation.
+// NOTE: this header is an implementation detail of
+// EnterpriseStrategyManager.mqh and is included from there (after
+// the shared free helpers, before the manager class). It is not
+// intended to be included standalone.
 #ifndef STRATEGY_STATE_REPORTER_MQH
 #define STRATEGY_STATE_REPORTER_MQH
 
@@ -22,9 +17,7 @@
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
 
-//+------------------------------------------------------------------+
-//| Read-only reporting facade over CEnterpriseStrategyManager        |
-//+------------------------------------------------------------------+
+// Read-only reporting facade over CEnterpriseStrategyManager
 class CStrategyStateReporter
 {
 private:
@@ -77,9 +70,6 @@ public:
     double GetEnsembleConfidence() const;
 };
 
-//+------------------------------------------------------------------+
-//| Get Active Strategy Count                                        |
-//+------------------------------------------------------------------+
 int CStrategyStateReporter::GetActiveStrategyCount() const
 {
     if(m_src == NULL)
@@ -94,9 +84,6 @@ int CStrategyStateReporter::GetActiveStrategyCount() const
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Get Active Brain Strategy Count                                  |
-//+------------------------------------------------------------------+
 int CStrategyStateReporter::GetActiveBrainStrategyCount() const
 {
     if(m_src == NULL)
@@ -116,9 +103,6 @@ int CStrategyStateReporter::GetActiveBrainStrategyCount() const
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy Report                                              |
-//+------------------------------------------------------------------+
 string CStrategyStateReporter::GetStrategyReport() const
 {
     if(m_src == NULL)
@@ -158,9 +142,6 @@ string CStrategyStateReporter::GetStrategyReport() const
     return report;
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy Weights JSON                                        |
-//+------------------------------------------------------------------+
 string CStrategyStateReporter::GetStrategyWeightsJSON() const
 {
     if(m_src == NULL)
@@ -180,9 +161,6 @@ string CStrategyStateReporter::GetStrategyWeightsJSON() const
     return json;
 }
 
-//+------------------------------------------------------------------+
-//| Get Strategy List JSON                                           |
-//+------------------------------------------------------------------+
 string CStrategyStateReporter::GetStrategyListJSON() const
 {
     if(m_src == NULL)
@@ -211,9 +189,6 @@ string CStrategyStateReporter::GetStrategyListJSON() const
     return json;
 }
 
-//+------------------------------------------------------------------+
-//| Get Consensus Context JSON                                       |
-//+------------------------------------------------------------------+
 string CStrategyStateReporter::GetConsensusContextJSON() const
 {
     if(m_src == NULL)
@@ -239,9 +214,7 @@ string CStrategyStateReporter::GetConsensusContextJSON() const
     return json;
 }
 
-//+------------------------------------------------------------------+
-//| Consensus Decision Class to String Conversion                    |
-//+------------------------------------------------------------------+
+// Consensus Decision Class to String Conversion
 string CStrategyStateReporter::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
 {
     switch(decisionClass)
@@ -263,9 +236,7 @@ string CStrategyStateReporter::ConsensusDecisionClassToString(ENUM_CONSENSUS_DEC
     }
 }
 
-//+------------------------------------------------------------------+
-//| Registered strategy field readers                                |
-//+------------------------------------------------------------------+
+// Registered strategy field readers
 string CStrategyStateReporter::GetRegisteredStrategyName(const int index) const
 {
     if(m_src == NULL)
@@ -311,9 +282,6 @@ bool CStrategyStateReporter::IsRegisteredStrategyLiveVotingEnabled(const int ind
     return m_src.IsStrategyLiveVotingEnabled(index);
 }
 
-//+------------------------------------------------------------------+
-//| Last decision context                                            |
-//+------------------------------------------------------------------+
 bool CStrategyStateReporter::GetLastDecisionContext(SConsensusDecisionContext &context) const
 {
     if(m_src == NULL)
@@ -322,9 +290,6 @@ bool CStrategyStateReporter::GetLastDecisionContext(SConsensusDecisionContext &c
     return (context.signal != TRADE_SIGNAL_NONE);
 }
 
-//+------------------------------------------------------------------+
-//| Role / cluster diagnostics totals                                |
-//+------------------------------------------------------------------+
 void CStrategyStateReporter::GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                                              ulong &featureSignals,
                                                              ulong &voteSuppressed,
@@ -351,9 +316,6 @@ void CStrategyStateReporter::GetRoleClusterDiagnosticsTotals(ulong &primarySigna
     }
 }
 
-//+------------------------------------------------------------------+
-//| Last cycle funnel                                                |
-//+------------------------------------------------------------------+
 void CStrategyStateReporter::GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const
 {
     if(m_src == NULL)
@@ -368,9 +330,7 @@ void CStrategyStateReporter::GetLastCycleFunnel(int &signalsGenerated, int &sign
     signalAfterQuorum = m_src.GetLastCycleSignalAfterQuorumValue();
 }
 
-//+------------------------------------------------------------------+
-//| Consensus diagnostics snapshot (interval deltas)                 |
-//+------------------------------------------------------------------+
+// Consensus diagnostics snapshot (interval deltas)
 void CStrategyStateReporter::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
                                                              ulong &filteredOut,
                                                              ulong &quorumFailed,
@@ -425,9 +385,6 @@ void CStrategyStateReporter::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
     intervalReasonTotal = rawNone + filteredOut + quorumFailed + intrabarNotEligible;
 }
 
-//+------------------------------------------------------------------+
-//| Get Registered Strategy Count                                    |
-//+------------------------------------------------------------------+
 int CStrategyStateReporter::GetRegisteredStrategyCount() const
 {
     if(m_src == NULL)
@@ -435,9 +392,6 @@ int CStrategyStateReporter::GetRegisteredStrategyCount() const
     return m_src.GetStrategyCount();
 }
 
-//+------------------------------------------------------------------+
-//| Get Ensemble Confidence                                          |
-//+------------------------------------------------------------------+
 double CStrategyStateReporter::GetEnsembleConfidence() const
 {
     if(m_src == NULL)

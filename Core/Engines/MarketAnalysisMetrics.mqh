@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MarketAnalysisMetrics.mqh - Trend / volatility / momentum / ATR  |
-//| Extracted verbatim from MarketAnalysis.mqh (no behavior change)  |
-//+------------------------------------------------------------------+
+// MarketAnalysisMetrics.mqh - Trend / volatility / momentum / ATR
+// Extracted verbatim from MarketAnalysis.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -14,11 +12,9 @@
 #include "MarketAnalysisMetricCache.mqh"
 #include "MarketAnalysisIndicators.mqh"
 
-//+------------------------------------------------------------------+
-//| Computes the market metrics from the indicator context and keeps |
-//| the most recently published values. Owns the indicator context   |
-//| and the last-valid metric cache by value.                        |
-//+------------------------------------------------------------------+
+// Computes the market metrics from the indicator context and keeps
+// the most recently published values. Owns the indicator context
+// and the last-valid metric cache by value.
 class CMarketAnalysisMetrics
 {
 private:
@@ -86,9 +82,7 @@ public:
     double GetATRValue();
 };
 
-//+------------------------------------------------------------------+
-//| Calculate trend strength using multiple indicators               |
-//+------------------------------------------------------------------+
+// Calculate trend strength using multiple indicators
 double CMarketAnalysisMetrics::CalculateTrendStrength()
 {
     double trendStrength = 0.0;
@@ -227,9 +221,7 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     return trendStrength;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate market volatility using multiple metrics               |
-//+------------------------------------------------------------------+
+// Calculate market volatility using multiple metrics
 double CMarketAnalysisMetrics::CalculateVolatility()
 {
     double volatility = 0.0;
@@ -350,9 +342,6 @@ double CMarketAnalysisMetrics::CalculateVolatility()
     return volatility;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate market momentum                                        |
-//+------------------------------------------------------------------+
 double CMarketAnalysisMetrics::CalculateMomentum()
 {
     double momentum = 0.0;
@@ -459,9 +448,7 @@ double CMarketAnalysisMetrics::CalculateMomentum()
     return momentum;
 }
 
-//+------------------------------------------------------------------+
-//| Pre-flight validation for regime detection                       |
-//+------------------------------------------------------------------+
+// Pre-flight validation for regime detection
 bool CMarketAnalysisMetrics::IsRegimeInputReady() const
 {
     // Ensure indicators are initialized for the analysed symbol/period
@@ -480,9 +467,7 @@ bool CMarketAnalysisMetrics::IsRegimeInputReady() const
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Recompute and publish the three tracked metrics, in order        |
-//+------------------------------------------------------------------+
+// Recompute and publish the three tracked metrics, in order
 void CMarketAnalysisMetrics::RefreshCurrentMetrics()
 {
     // Calculate current market metrics
@@ -491,9 +476,6 @@ void CMarketAnalysisMetrics::RefreshCurrentMetrics()
     m_momentum = CalculateMomentum();
 }
 
-//+------------------------------------------------------------------+
-//| Get current market volatility                                    |
-//+------------------------------------------------------------------+
 double CMarketAnalysisMetrics::GetCurrentVolatility() const
 {
     if (m_indicators.Symbol() == "" || m_indicators.AtrHandle() == INVALID_HANDLE) { // Check if indicators were initialized
@@ -503,9 +485,6 @@ double CMarketAnalysisMetrics::GetCurrentVolatility() const
     return m_volatility; // m_volatility is updated by DetectMarketRegime via CalculateVolatility
 }
 
-//+------------------------------------------------------------------+
-//| Get current market trend strength                                |
-//+------------------------------------------------------------------+
 double CMarketAnalysisMetrics::GetCurrentTrendStrength() const
 {
     if (m_indicators.Symbol() == "") {
@@ -515,9 +494,7 @@ double CMarketAnalysisMetrics::GetCurrentTrendStrength() const
     return m_trendStrength; // m_trendStrength is updated by DetectMarketRegime via CalculateTrendStrength
 }
 
-//+------------------------------------------------------------------+
-//| Get current ATR value                                            |
-//+------------------------------------------------------------------+
+// Get current ATR value
 double CMarketAnalysisMetrics::GetATRValue()
 {
     if(m_indicators.AtrHandle() == INVALID_HANDLE) return 0.0;

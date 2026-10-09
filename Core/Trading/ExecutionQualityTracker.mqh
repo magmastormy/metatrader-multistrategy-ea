@@ -1,33 +1,26 @@
-//+------------------------------------------------------------------+
-//| ExecutionQualityTracker.mqh                                      |
-//| Execution-quality telemetry extracted from CTradeManager         |
-//|                                                                  |
-//| Phase D, batch T2a. This module OWNS the execution-quality       |
-//| counters that used to live in CTradeManager::m_execMetrics:      |
-//|   - UpdateExecutionMetrics   (the single ingest point; all 10    |
-//|     writes to the metrics block happen here and nowhere else)    |
-//|   - GetExecutionQualityMetrics / GetExecutionQualitySummary      |
-//|   - GenerateExecutionQualityReport                               |
-//|   - ResetExecutionMetrics                                        |
-//|   - narrow field getters for the one reader that stays behind    |
-//|     in CTradeManager (AnalyzeAndRecommendOrderParams, which is   |
-//|     entangled with the out-of-scope slippage/fill-mode config).  |
-//|                                                                  |
-//| STATE OWNERSHIP: CTradeManager holds this class BY VALUE and     |
-//| keeps thin forwarders with the original public signatures, so    |
-//| every existing call site is unchanged.                           |
-//|                                                                  |
-//| NO BACK-POINTER: the two log-emitting bodies need a handful of   |
-//| CTradeManager configuration values (log level and the dynamic-   |
-//| slippage display block). Those are passed in as parameters       |
-//| rather than read through a back-pointer, keeping this module     |
-//| free of any dependency on CTradeManager.                         |
-//|                                                                  |
-//| NOTE: the metrics struct is the pre-existing top-level           |
-//| ExecutionQualityMetrics from TradeTypes.mqh (field-for-field     |
-//| identical to the old nested CTradeManager::ExecutionQualityMetrics|
-//| that this batch deletes) - see the report for details.           |
-//+------------------------------------------------------------------+
+// Execution-quality telemetry extracted from CTradeManager
+// Phase D, batch T2a. This module OWNS the execution-quality
+// counters that used to live in CTradeManager::m_execMetrics:
+// - UpdateExecutionMetrics   (the single ingest point; all 10
+// writes to the metrics block happen here and nowhere else)
+// - GetExecutionQualityMetrics / GetExecutionQualitySummary
+// - GenerateExecutionQualityReport
+// - ResetExecutionMetrics
+// - narrow field getters for the one reader that stays behind
+// in CTradeManager (AnalyzeAndRecommendOrderParams, which is
+// entangled with the out-of-scope slippage/fill-mode config).
+// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
+// keeps thin forwarders with the original public signatures, so
+// every existing call site is unchanged.
+// NO BACK-POINTER: the two log-emitting bodies need a handful of
+// CTradeManager configuration values (log level and the dynamic-
+// slippage display block). Those are passed in as parameters
+// rather than read through a back-pointer, keeping this module
+// free of any dependency on CTradeManager.
+// NOTE: the metrics struct is the pre-existing top-level
+// ExecutionQualityMetrics from TradeTypes.mqh (field-for-field
+// identical to the old nested CTradeManager::ExecutionQualityMetrics
+// that this batch deletes) - see the report for details.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -38,10 +31,7 @@
 #include "TradeTypes.mqh"            // ExecutionQualityMetrics, STradeExecutionReceipt
 #include "TradeSpreadCostModel.mqh"  // Phase D T1: CTradeSpreadCostModel::CalculateSpreadCost
 
-//+------------------------------------------------------------------+
-//| Execution Quality Tracker                                        |
-//| Owns the execution-quality counters and every reader of them.    |
-//+------------------------------------------------------------------+
+// Owns the execution-quality counters and every reader of them.
 class CExecutionQualityTracker
 {
 private:
@@ -180,7 +170,6 @@ public:
             Print("No latency data available.");
         }
 
-        // Spread cost analysis
         Print("--- Spread Cost Analysis ---");
         PrintFormat("Total Spread Cost: %.2f %s", m_execMetrics.totalSpreadCost,
                     AccountInfoString(ACCOUNT_CURRENCY));
@@ -191,7 +180,6 @@ public:
                         AccountInfoString(ACCOUNT_CURRENCY));
         }
 
-        // Dynamic slippage status
         Print("--- Dynamic Slippage Status ---");
         PrintFormat("Enabled:           %s", enableDynamicSlippage ? "Yes" : "No");
         PrintFormat("ATR Percentage:    %.0f%%", dynamicSlippageAtrPercent * 100);

@@ -1,17 +1,12 @@
-//+------------------------------------------------------------------+
-//| ErrorHandlingReport.mqh                                          |
-//| Error reporting: logging sinks, verbosity control and error      |
-//| aggregation. Extracted verbatim from ErrorHandling.mqh.          |
-//+------------------------------------------------------------------+
+// Error reporting: logging sinks, verbosity control and error
+// aggregation. Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_REPORT_MQH
 #define CORE_ERROR_HANDLING_REPORT_MQH
 
 #include "ErrorHandlingTypes.mqh"
 #include "ErrorHandlingCore.mqh"
 
-//+------------------------------------------------------------------+
-//| Log an error with context and enhanced validation              |
-//+------------------------------------------------------------------+
+// Log an error with context and enhanced validation
 void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context)
 {
     if(severity < ERROR_INFO || severity > ERROR_FATAL) {
@@ -23,7 +18,6 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const S
         return;
     }
     
-    // Error aggregation
     if(m_aggregationEnabled && severity >= ERROR_WARNING)
     {
         bool found = false;
@@ -109,9 +103,7 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const s
     LogError(severity, ctx);
 }
 
-//+------------------------------------------------------------------+
-//| Verbose and Debug Logging                                       |
-//+------------------------------------------------------------------+
+// Verbose and Debug Logging
 void CEnhancedErrorHandler::LogVerbose(const ENUM_LOG_VERBOSITY level, const string message)
 {
     if(level > m_verbosityLevel)
@@ -142,9 +134,7 @@ void CEnhancedErrorHandler::LogDebug(const string component, const string messag
     PrintFormat("[%s] [DEBUG] [%s] %s", timestamp, component, message);
 }
 
-//+------------------------------------------------------------------+
-//| Aggregation Methods                                             |
-//+------------------------------------------------------------------+
+// Aggregation Methods
 void CEnhancedErrorHandler::SetVerbosityLevel(ENUM_LOG_VERBOSITY level)
 {
     m_verbosityLevel = level;

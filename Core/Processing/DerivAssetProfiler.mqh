@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| DerivAssetProfiler.mqh                                           |
-//| Deriv synthetic index asset profiler                              |
-//| Maps symbols to family-specific trading profiles                  |
-//+------------------------------------------------------------------+
+// Deriv synthetic index asset profiler
+// Maps symbols to family-specific trading profiles
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -13,9 +10,7 @@
 
 #include "../Utils/Instruments.mqh"
 
-//+------------------------------------------------------------------+
-//| Deriv synthetic index family enumeration                          |
-//+------------------------------------------------------------------+
+// Deriv synthetic index family enumeration
 enum ENUM_DERIV_FAMILY
 {
    DERIV_CRASH_BOOM,       // Crash/Boom indices
@@ -39,9 +34,7 @@ enum ENUM_DERIV_FAMILY
    DERIV_UNKNOWN           // Unknown / unclassified
 };
 
-//+------------------------------------------------------------------+
-//| Per-family Deriv trading profile                                  |
-//+------------------------------------------------------------------+
+// Per-family Deriv trading profile
 struct SDerivProfile
 {
    ENUM_DERIV_FAMILY family;           // Family enum value
@@ -97,18 +90,14 @@ struct SDerivProfile
    }
 };
 
-//+------------------------------------------------------------------+
-//| CDerivAssetProfiler — Deriv synthetic index asset profiler        |
-//+------------------------------------------------------------------+
+// CDerivAssetProfiler — Deriv synthetic index asset profiler
 class CDerivAssetProfiler
 {
 private:
    SDerivProfile  m_profiles[19];  // 18 families + unknown
    bool           m_logFamilyDetection;  // L7-013: Enable logging for family detection
 
-   //+------------------------------------------------------------------+
-   //| Initialize all family profiles with production defaults          |
-   //+------------------------------------------------------------------+
+// Initialize all family profiles with production defaults
    void InitializeProfiles()
    {
       // DERIV_CRASH_BOOM (index 0)
@@ -534,9 +523,7 @@ private:
    }
 
 public:
-   //+------------------------------------------------------------------+
-   //| Constructor                                                       |
-   //+------------------------------------------------------------------+
+// Constructor
    CDerivAssetProfiler() : m_logFamilyDetection(true)
    {
       InitializeProfiles();
@@ -545,10 +532,8 @@ public:
    // L7-013: Setter for family detection logging
    void SetLogFamilyDetection(bool enabled) { m_logFamilyDetection = enabled; }
 
-   //+------------------------------------------------------------------+
-   //| Detect the Deriv family for a symbol using priority-ordered      |
-   //| detection functions from Instruments.mqh                         |
-   //+------------------------------------------------------------------+
+// Detect the Deriv family for a symbol using priority-ordered
+// detection functions from Instruments.mqh
    ENUM_DERIV_FAMILY DetectFamily(const string symbol)
    {
       // Priority 1: Crash/Boom — most specific spike family
@@ -634,36 +619,27 @@ public:
             return result;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the full profile for a symbol                                 |
-   //+------------------------------------------------------------------+
+// Get the full profile for a symbol
    SDerivProfile GetProfile(const string symbol)
    {
       ENUM_DERIV_FAMILY family = DetectFamily(symbol);
       return m_profiles[family];
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the magic offset for a symbol's family                        |
-   //+------------------------------------------------------------------+
+// Get the magic offset for a symbol's family
    int GetMagicOffset(const string symbol)
    {
       ENUM_DERIV_FAMILY family = DetectFamily(symbol);
       return m_profiles[family].magicOffset;
    }
 
-   //+------------------------------------------------------------------+
-   //| Get the family name string for a symbol                           |
-   //+------------------------------------------------------------------+
    string GetFamilyName(const string symbol)
    {
       ENUM_DERIV_FAMILY family = DetectFamily(symbol);
       return m_profiles[family].familyName;
    }
 
-   //+------------------------------------------------------------------+
-   //| Print the full profile for a symbol                               |
-   //+------------------------------------------------------------------+
+// Print the full profile for a symbol
    void PrintProfile(const string symbol)
    {
       SDerivProfile prof = GetProfile(symbol);

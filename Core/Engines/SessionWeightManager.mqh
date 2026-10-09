@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| SessionWeightManager.mqh                                          |
-//| Session-aware weight adjustments for synthetics and forex         |
-//| Implements I3 from problems.md                                    |
-//+------------------------------------------------------------------+
+// Session-aware weight adjustments for synthetics and forex
+// Implements I3 from problems.md
 #ifndef CORE_ENGINES_SESSION_WEIGHT_MANAGER_MQH
 #define CORE_ENGINES_SESSION_WEIGHT_MANAGER_MQH
 

@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| LiquidityDetector.mqh                                            |
-//| Liquidity Pool and Sweep Detection for Unified ICT               |
-//| Copyright 2025, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Liquidity Pool and Sweep Detection for Unified ICT
+// Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -10,9 +7,6 @@
 #ifndef UICT_LIQUIDITY_DETECTOR_MQH
 #define UICT_LIQUIDITY_DETECTOR_MQH
 
-//+------------------------------------------------------------------+
-//| Liquidity Type Enum                                              |
-//+------------------------------------------------------------------+
 enum ENUM_UICT_LIQUIDITY_TYPE
 {
     UICT_LIQ_NONE = 0,
@@ -34,9 +28,6 @@ enum ENUM_UICT_LIQUIDITY_TYPE
     UICT_LIQ_QUARTERLY_LOW
 };
 
-//+------------------------------------------------------------------+
-//| Liquidity Pool Structure                                         |
-//+------------------------------------------------------------------+
 struct SLiquidityPool
 {
     ENUM_UICT_LIQUIDITY_TYPE type;
@@ -69,9 +60,6 @@ struct STurtleSoupSignal
                           sweepPrice(0.0), reclaimClose(0.0), eventTime(0), confidence(0.0) {}
 };
 
-//+------------------------------------------------------------------+
-//| Liquidity Detector Class                                         |
-//+------------------------------------------------------------------+
 class CLiquidityDetector
 {
 private:
@@ -113,18 +101,15 @@ public:
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, double equalTolerancePips = 5);
     void                Update();
     
-    // Detection
     void                DetectEqualHighsLows(int lookback = 50);
     void                DetectSwingLiquidity(int lookback = 50);
     void                DetectSessionLiquidity();
     void                DetectTimeframeLiquidity();
     
-    // Sweep Detection
     bool                DetectLiquiditySweep(SLiquidityPool &pool);
     bool                HasRecentSweep(bool &isBuyside);
     bool                DetectTurtleSoup(STurtleSoupSignal &signal, const int maxBarsAgo = 3);
     
-    // Getters
     int                 GetPoolCount() const { return m_poolCount; }
     bool                GetPool(int index, SLiquidityPool &pool);
     int                 FindNearestLiquidity(double price, bool above);
@@ -150,9 +135,7 @@ public:
     int                 DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CLiquidityDetector::CLiquidityDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -163,17 +146,12 @@ CLiquidityDetector::CLiquidityDetector() :
     ArrayResize(m_liquidityPools, 0);
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CLiquidityDetector::~CLiquidityDetector()
 {
     ArrayFree(m_liquidityPools);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, double equalTolerancePips)
 {
     m_symbol = symbol;
@@ -184,9 +162,6 @@ bool CLiquidityDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Update                                                           |
-//+------------------------------------------------------------------+
 void CLiquidityDetector::Update()
 {
     m_poolCount = 0;
@@ -204,9 +179,6 @@ void CLiquidityDetector::Update()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Equal Highs/Lows                                          |
-//+------------------------------------------------------------------+
 void CLiquidityDetector::DetectEqualHighsLows(int lookback)
 {
     // Batch 157: the "pips" tolerance was multiplied by raw POINT (half a tick on
@@ -279,9 +251,6 @@ void CLiquidityDetector::DetectEqualHighsLows(int lookback)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Swing Liquidity                                           |
-//+------------------------------------------------------------------+
 void CLiquidityDetector::DetectSwingLiquidity(int lookback)
 {
     double high[], low[];
@@ -331,9 +300,6 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Detect Timeframe Liquidity                                       |
-//+------------------------------------------------------------------+
 void CLiquidityDetector::DetectTimeframeLiquidity()
 {
     double dailyHigh = iHigh(m_symbol, PERIOD_D1, 1);
@@ -523,9 +489,6 @@ void CLiquidityDetector::DetectInstitutionalLevels()
     AddLiquidityLevel(UICT_LIQ_QUARTERLY_LOW,  prevQuarterStartGmt, quarterLow,  0.95, PERIOD_D1, true);
 }
 
-//+------------------------------------------------------------------+
-//| Detect Liquidity Sweep                                           |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
 {
     if(pool.isSwept) return false;
@@ -580,9 +543,6 @@ bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Has Recent Sweep                                                 |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
 {
     for(int i = 0; i < m_poolCount; i++)
@@ -678,9 +638,6 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate Liquidity Strength                                     |
-//+------------------------------------------------------------------+
 double CLiquidityDetector::CalculateLiquidityStrength(int bar1, int bar2)
 {
     double strength = 0.60;
@@ -706,9 +663,6 @@ double CLiquidityDetector::CalculateLiquidityStrength(int bar1, int bar2)
     return MathMin(1.0, strength);
 }
 
-//+------------------------------------------------------------------+
-//| Is At Psychological Level                                        |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::IsAtPsychologicalLevel(double price)
 {
     if(price <= 0) return false;
@@ -737,9 +691,6 @@ bool CLiquidityDetector::IsAtPsychologicalLevel(double price)
     return MathAbs(price - nearest) < grid * 0.002;
 }
 
-//+------------------------------------------------------------------+
-//| Get Average Volume                                               |
-//+------------------------------------------------------------------+
 long CLiquidityDetector::GetAverageVolume(int bars)
 {
     long avgVol = 0;
@@ -750,9 +701,6 @@ long CLiquidityDetector::GetAverageVolume(int bars)
     return (bars > 0) ? avgVol / bars : 0;
 }
 
-//+------------------------------------------------------------------+
-//| Get Pool                                                         |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::GetPool(int index, SLiquidityPool &pool)
 {
     if(index < 0 || index >= m_poolCount) return false;
@@ -760,9 +708,6 @@ bool CLiquidityDetector::GetPool(int index, SLiquidityPool &pool)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Find Nearest Liquidity                                           |
-//+------------------------------------------------------------------+
 int CLiquidityDetector::FindNearestLiquidity(double price, bool above)
 {
     int nearestIndex = -1;
@@ -801,9 +746,6 @@ int CLiquidityDetector::FindNearestLiquidity(double price, bool above)
     return nearestIndex;
 }
 
-//+------------------------------------------------------------------+
-//| Find Swept Liquidity                                             |
-//+------------------------------------------------------------------+
 int CLiquidityDetector::FindSweptLiquidity()
 {
     for(int i = 0; i < m_poolCount; i++)
@@ -817,9 +759,6 @@ int CLiquidityDetector::FindSweptLiquidity()
     return -1;
 }
 
-//+------------------------------------------------------------------+
-//| Is Near Liquidity                                                |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::IsNearLiquidity(double price, double tolerancePips)
 {
     double tolerance = tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -833,27 +772,19 @@ bool CLiquidityDetector::IsNearLiquidity(double price, double tolerancePips)
     return false;
 }
 
-//+------------------------------------------------------------------+
-//| Has Buyside Liquidity                                            |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::HasBuysideLiquidity(double price)
 {
     return (FindNearestLiquidity(price, true) >= 0);
 }
 
-//+------------------------------------------------------------------+
-//| Has Sellside Liquidity                                           |
-//+------------------------------------------------------------------+
 bool CLiquidityDetector::HasSellsideLiquidity(double price)
 {
     return (FindNearestLiquidity(price, false) >= 0);
 }
 
-//+------------------------------------------------------------------+
-//| Detect External Swing Liquidity — Batch 103                      |
-//| Scans for swing highs/lows that align with daily/weekly levels   |
-//| Returns count of pools found, fills the pools array              |
-//+------------------------------------------------------------------+
+// Detect External Swing Liquidity — Batch 103
+// Scans for swing highs/lows that align with daily/weekly levels
+// Returns count of pools found, fills the pools array
 int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100)
 {
     ArrayResize(pools, 0);

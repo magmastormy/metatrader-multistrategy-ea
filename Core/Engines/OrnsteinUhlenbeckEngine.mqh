@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| OrnsteinUhlenbeckEngine.mqh                                      |
-//| OU process engine for mean-reversion z-score estimation          |
-//+------------------------------------------------------------------+
+// OU process engine for mean-reversion z-score estimation
 #property copyright "Enterprise Trading Solutions"
 #property version   "1.0"
 #property strict
@@ -11,9 +8,7 @@
 
 #include "../Utils/Enums.mqh"
 
-//+------------------------------------------------------------------+
-//| OU Snapshot — full state capture for downstream consumers        |
-//+------------------------------------------------------------------+
+// OU Snapshot — full state capture for downstream consumers
 struct SOUSnapshot
 {
     double theta;            // Mean-reversion speed
@@ -42,11 +37,8 @@ struct SOUSnapshot
     }
 };
 
-//+------------------------------------------------------------------+
-//| COrnsteinUhlenbeckEngine                                         |
-//| Estimates OU process parameters from price/spread series via     |
-//| OLS regression and computes mean-reversion-adjusted z-scores.   |
-//+------------------------------------------------------------------+
+// Estimates OU process parameters from price/spread series via
+// OLS regression and computes mean-reversion-adjusted z-scores.
 class COrnsteinUhlenbeckEngine
 {
 private:
@@ -121,9 +113,7 @@ public:
         void Deinit();
     };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
     const string symbol,
     const ENUM_TIMEFRAMES timeframe,
@@ -151,16 +141,12 @@ COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
         ResolveTimeframe();
     }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 COrnsteinUhlenbeckEngine::~COrnsteinUhlenbeckEngine()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Deinit — explicit cleanup for shutdown                           |
-//+------------------------------------------------------------------+
+// Deinit — explicit cleanup for shutdown
 void COrnsteinUhlenbeckEngine::Deinit()
 {
     // COrnsteinUhlenbeckEngine holds no indicator handles or external resources.
@@ -180,9 +166,7 @@ void COrnsteinUhlenbeckEngine::Deinit()
     m_barCount = 0;
 }
 
-//+------------------------------------------------------------------+
-//| Update — called each bar, estimates OU parameters from closes    |
-//+------------------------------------------------------------------+
+// Update — called each bar, estimates OU parameters from closes
 bool COrnsteinUhlenbeckEngine::Update()
 {
     // Resolve PERIOD_CURRENT on first call
@@ -231,7 +215,6 @@ bool COrnsteinUhlenbeckEngine::Update()
         return false;
     }
 
-    // Estimate OU parameters
     if(!EstimateParameters(closes, copied))
     {
         datetime now = TimeCurrent();
@@ -281,11 +264,9 @@ bool COrnsteinUhlenbeckEngine::Update()
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| EstimateParameters — OLS regression on X(t)-X(t-1)=a+b*X(t-1)  |
-//| theta = -b, mu = -a/b, sigma from residual std dev with         |
-//| continuous-time correction                                       |
-//+------------------------------------------------------------------+
+// EstimateParameters — OLS regression on X(t)-X(t-1)=a+b*X(t-1)
+// theta = -b, mu = -a/b, sigma from residual std dev with
+// continuous-time correction
 bool COrnsteinUhlenbeckEngine::EstimateParameters(const double &series[], int count)
 {
     // We need at least 2 observations for regression
@@ -402,7 +383,6 @@ bool COrnsteinUhlenbeckEngine::EstimateParameters(const double &series[], int co
     double currentPrice = series[0];
     double ouZScore = (sigmaOUEq > 1e-15) ? (currentPrice - mu) / sigmaOUEq : 0.0;
 
-    // Signal quality
     double quality = ComputeSignalQuality(tStat, halfLife, residuals, n);
 
     // Determine mean-reverting: theta > 0 and t-stat exceeds critical value
@@ -423,12 +403,10 @@ bool COrnsteinUhlenbeckEngine::EstimateParameters(const double &series[], int co
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| ComputeSignalQuality — composite quality from three dimensions   |
-//| 1. theta significance (t-stat > 2.0 = good)                     |
-//| 2. half-life reasonableness (5-100 bars = good)                 |
-//| 3. residual normality (Jarque-Bera approximation)               |
-//+------------------------------------------------------------------+
+// ComputeSignalQuality — composite quality from three dimensions
+// 1. theta significance (t-stat > 2.0 = good)
+// 2. half-life reasonableness (5-100 bars = good)
+// 3. residual normality (Jarque-Bera approximation)
 double COrnsteinUhlenbeckEngine::ComputeSignalQuality(double thetaTStat,
                                                        double halfLife,
                                                        const double &residuals[],
@@ -478,10 +456,8 @@ double COrnsteinUhlenbeckEngine::ComputeSignalQuality(double thetaTStat,
     return MathMax(0.0, MathMin(1.0, quality));
 }
 
-//+------------------------------------------------------------------+
-//| JarqueBeraStatistic — test for normality of residuals            |
-//| JB = (n/6) * (S^2 + (K-3)^2/4) where S=skewness, K=kurtosis    |
-//+------------------------------------------------------------------+
+// JarqueBeraStatistic — test for normality of residuals
+// JB = (n/6) * (S^2 + (K-3)^2/4) where S=skewness, K=kurtosis
 double COrnsteinUhlenbeckEngine::JarqueBeraStatistic(const double &residuals[], int count)
 {
     if(count < 10)

@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| AIEngine.mqh - AI Hooks and Integration Module                   |
-//| Provides AI-ready interfaces for external ML model integration   |
-//+------------------------------------------------------------------+
+// AIEngine.mqh - AI Hooks and Integration Module
+// Provides AI-ready interfaces for external ML model integration
 #ifndef AI_ENGINE_MQH
 #define AI_ENGINE_MQH
 
@@ -21,9 +19,6 @@ class CTradeManager;
 class CPerformanceAnalytics;
 // class CEnterpriseStrategyManager;  // Now included via header
 
-//+------------------------------------------------------------------+
-//| AI Query Request Structure                                       |
-//+------------------------------------------------------------------+
 struct SAIQueryRequest {
     string queryType;           // Type of query (prediction, explanation, weights)
     string symbol;              // Symbol for context
@@ -44,9 +39,6 @@ struct SAIQueryRequest {
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Query Response Structure                                      |
-//+------------------------------------------------------------------+
 struct SAIQueryResponse {
     bool success;               // Query successful
     double prediction;          // Prediction value (0-1)
@@ -67,9 +59,7 @@ struct SAIQueryResponse {
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Weight Modification Request                                   |
-//+------------------------------------------------------------------+
+// AI Weight Modification Request
 struct SAIWeightModification {
     string strategyName;        // Strategy to modify
     double newWeight;           // New weight value
@@ -88,9 +78,6 @@ struct SAIWeightModification {
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Decision Explanation Structure                                |
-//+------------------------------------------------------------------+
 struct SAIDecisionExplanation {
     ENUM_TRADE_SIGNAL signal;         // The signal being explained
     string primaryReason;             // Main reason for decision
@@ -112,9 +99,7 @@ struct SAIDecisionExplanation {
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Adaptive Mode Configuration                                   |
-//+------------------------------------------------------------------+
+// AI Adaptive Mode Configuration
 struct SAIAdaptiveConfig {
     bool enabled;                     // Adaptive mode enabled
     double learningRate;              // Learning rate (0-1)
@@ -139,9 +124,6 @@ struct SAIAdaptiveConfig {
     }
 };
 
-//+------------------------------------------------------------------+
-//| AI Engine Class                                                  |
-//+------------------------------------------------------------------+
 class CAIEngine {
 private:
     // Support for multiple managers (one per symbol)
@@ -220,7 +202,6 @@ private:
         return escaped;
     }
     
-    // Build qualified strategy name: symbol::strategy
     string BuildQualifiedName(const string symbol, const string strategyName) const {
         return symbol + "::" + strategyName;
     }
@@ -343,10 +324,8 @@ public:
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| OnAIQuery - External AI Query Interface                          |
-    //| Main entry point for ML models to query the trading system       |
-    //+------------------------------------------------------------------+
+// OnAIQuery - External AI Query Interface
+// Main entry point for ML models to query the trading system
     SAIQueryResponse OnAIQuery(const SAIQueryRequest &request) {
         SAIQueryResponse response;
         datetime queryStartTime = GetTickCount();
@@ -386,10 +365,8 @@ public:
         return response;
     }
     
-    //+------------------------------------------------------------------+
-    //| AI_ModifyWeights - Dynamic Strategy Weight Modification          |
-    //| Allows AI to adjust strategy weights based on predictions        |
-    //+------------------------------------------------------------------+
+// AI_ModifyWeights - Dynamic Strategy Weight Modification
+// Allows AI to adjust strategy weights based on predictions
     bool AI_ModifyWeights(const SAIWeightModification &modifications[], int modCount) {
         if(!m_initialized || m_managerCount <= 0) {
             LogAI(ERROR_LEVEL_WARNING, "Cannot modify weights - not initialized");
@@ -440,10 +417,7 @@ public:
         return (successCount > 0);
     }
     
-    //+------------------------------------------------------------------+
-    //| AI_ExplainDecision - Decision Explainability                     |
-    //| Provides human-readable explanations for trading decisions       |
-    //+------------------------------------------------------------------+
+// Provides human-readable explanations for trading decisions
     SAIDecisionExplanation AI_ExplainDecision(const string &symbol, ENUM_TRADE_SIGNAL signal) {
         SAIDecisionExplanation explanation;
         explanation.signal = signal;
@@ -471,7 +445,6 @@ public:
             return explanation;
         }
         
-        // Get current market regime
         ENUM_MARKET_REGIME regime = manager.GetCurrentMarketRegime();
         
         // Build explanation based on signal type
@@ -516,10 +489,8 @@ public:
         return explanation;
     }
     
-    //+------------------------------------------------------------------+
-    //| AI_AdaptiveMode - Adaptive Trading Mode Control                  |
-    //| Enables real-time adaptation based on market conditions          |
-    //+------------------------------------------------------------------+
+// AI_AdaptiveMode - Adaptive Trading Mode Control
+// Enables real-time adaptation based on market conditions
     bool AI_AdaptiveMode(bool enable, const SAIAdaptiveConfig &config) {
         m_adaptiveConfig = config;
         m_adaptiveModeActive = enable && config.enabled;
@@ -535,9 +506,7 @@ public:
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| ProcessAdaptation - Called on each bar to adapt                  |
-    //+------------------------------------------------------------------+
+// ProcessAdaptation - Called on each bar to adapt
     void ProcessAdaptation() {
         if(!m_adaptiveModeActive || !m_initialized) return;
         
@@ -573,9 +542,6 @@ public:
         ProcessExpiredModifications();
     }
     
-    //+------------------------------------------------------------------+
-    //| Set External AI Endpoint                                         |
-    //+------------------------------------------------------------------+
     void SetExternalAIEndpoint(const string &endpoint) {
         m_externalAIEndpoint = endpoint;
         m_externalAIConnected = (endpoint != "");
@@ -584,9 +550,7 @@ public:
                        true);
     }
     
-    //+------------------------------------------------------------------+
-    //| Configure External LLM based on config flag                       |
-    //+------------------------------------------------------------------+
+// Configure External LLM based on config flag
     void ConfigureExternalLLM() {
         if(m_adaptiveConfig.useExternalLLM) {
             if(m_externalAIEndpoint == "")
@@ -598,24 +562,17 @@ public:
         }
     }
     
-    //+------------------------------------------------------------------+
-    //| Enable/Disable External LLM                                       |
-    //+------------------------------------------------------------------+
+// Enable/Disable External LLM
     void SetExternalLLMEnabled(bool enabled) {
         m_adaptiveConfig.useExternalLLM = enabled;
         ConfigureExternalLLM();
     }
     
-    //+------------------------------------------------------------------+
-    //| Check if External LLM is enabled                                  |
-    //+------------------------------------------------------------------+
+// Check if External LLM is enabled
     bool IsExternalLLMEnabled() const {
         return m_adaptiveConfig.useExternalLLM;
     }
     
-    //+------------------------------------------------------------------+
-    //| Query External LLM                                               |
-    //+------------------------------------------------------------------+
     bool QueryExternalLLM(const string &prompt, string &llmResponse) {
         if(!m_externalAIConnected || m_externalAIEndpoint == "") {
             m_externalLLMFailureCount++;
@@ -676,9 +633,7 @@ public:
         }
     }
     
-    //+------------------------------------------------------------------+
-    //| Provide Performance Feedback                                     |
-    //+------------------------------------------------------------------+
+// Provide Performance Feedback
     void ProvideFeedback(ENUM_TRADE_SIGNAL predictedSignal, bool wasCorrect, double profit) {
         UpdatePredictionAccuracy(wasCorrect);
         
@@ -697,9 +652,7 @@ public:
         }
     }
     
-    //+------------------------------------------------------------------+
-    //| Synthesize Signals using External LLM                            |
-    //+------------------------------------------------------------------+
+// Synthesize Signals using External LLM
     bool SynthesizeSignals(const string &signals, const string &regime, string &recommendation, double &confidence) {
         if(!m_externalAIConnected) {
             return false;
@@ -742,9 +695,7 @@ public:
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| Generate Trade Explanation using External LLM                     |
-    //+------------------------------------------------------------------+
+// Generate Trade Explanation using External LLM
     bool GenerateTradeExplanation(const string &signals, const string &decision, string &explanation) {
         if(!m_externalAIConnected) {
             explanation = "External LLM not connected";
@@ -763,9 +714,7 @@ public:
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| Assess Risk using External LLM                                   |
-    //+------------------------------------------------------------------+
+// Assess Risk using External LLM
     bool AssessRisk(const string &symbol, double entryPrice, double stopLoss, double takeProfit, string &riskReport) {
         if(!m_externalAIConnected) {
             riskReport = "External LLM not connected";
@@ -787,9 +736,7 @@ public:
         return true;
     }
     
-    //+------------------------------------------------------------------+
-    //| Reason Strategy Weights using External LLM                        |
-    //+------------------------------------------------------------------+
+// Reason Strategy Weights using External LLM
     bool ReasonStrategyWeights(const string &regime, const string &currentWeights, string &reasoning) {
         if(!m_externalAIConnected) {
             reasoning = "External LLM not connected";
@@ -818,7 +765,6 @@ public:
     SAIAdaptiveConfig GetAdaptiveConfig() const { return m_adaptiveConfig; }
     
 private:
-    // Query processors
     SAIQueryResponse ProcessPredictionQuery(const SAIQueryRequest &request) {
         SAIQueryResponse response;
         response.success = true;
@@ -1030,7 +976,6 @@ private:
         }
     }
 
-    // Apply LLM reasoning to strategy weights
     void ApplyLLMReasoningToWeights(CEnterpriseStrategyManager* manager, const string &reasoning) {
         if(manager == NULL || reasoning == "")
             return;

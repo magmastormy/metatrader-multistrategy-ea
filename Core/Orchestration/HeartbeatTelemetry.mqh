@@ -1,15 +1,10 @@
-//+------------------------------------------------------------------+
-//| HeartbeatTelemetry.mqh                                           |
-//| Runtime heartbeat / signal-funnel counters for the orchestrator  |
-//|                                                                  |
-//| Phase B-2: extracted from CEAOrchestrator, which previously held |
-//| 18 loose `ulong m_hbXxx` members. These are WRITE-ONLY telemetry: |
-//| no control flow anywhere in the EA branches on their values, so   |
-//| relocating them cannot alter trading behaviour.                   |
-//|                                                                  |
-//| Responsibility: accumulate per-cycle funnel counts and hand them  |
-//| to CDiagnosticsManager on each heartbeat tick.                    |
-//+------------------------------------------------------------------+
+// Runtime heartbeat / signal-funnel counters for the orchestrator
+// Phase B-2: extracted from CEAOrchestrator, which previously held
+// 18 loose `ulong m_hbXxx` members. These are WRITE-ONLY telemetry:
+// no control flow anywhere in the EA branches on their values, so
+// relocating them cannot alter trading behaviour.
+// Responsibility: accumulate per-cycle funnel counts and hand them
+// to CDiagnosticsManager on each heartbeat tick.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_HEARTBEAT_TELEMETRY_MQH
@@ -17,19 +12,15 @@
 
 #include "../Management/DiagnosticsManager.mqh"
 
-//+------------------------------------------------------------------+
-//| CHeartbeatTelemetry                                              |
-//|                                                                  |
-//| Counter semantics (mirrors CDiagnosticsManager::UpdateCounters):  |
-//|   scan cadence : scansAttempted, intrabarScansExecuted           |
-//|   funnel       : signalsGenerated -> AfterPipeline -> AfterQuorum |
-//|                  -> Validated -> RiskApproved -> Sent            |
-//|   rejections   : noSignal, validatorRejects, riskRejects,        |
-//|                  entryBlocked, sizingRejects                     |
-//|   quiet paths  : quietNoNewBar, quietCadenceHold,                |
-//|                  quietMissingManager                             |
-//|   outcomes     : tradesOpened, syntheticSpikeEvents              |
-//+------------------------------------------------------------------+
+// Counter semantics (mirrors CDiagnosticsManager::UpdateCounters):
+// scan cadence : scansAttempted, intrabarScansExecuted
+// funnel       : signalsGenerated -> AfterPipeline -> AfterQuorum
+// -> Validated -> RiskApproved -> Sent
+// rejections   : noSignal, validatorRejects, riskRejects,
+// entryBlocked, sizingRejects
+// quiet paths  : quietNoNewBar, quietCadenceHold,
+// quietMissingManager
+// outcomes     : tradesOpened, syntheticSpikeEvents
 class CHeartbeatTelemetry
 {
 private:
@@ -62,9 +53,7 @@ private:
     ulong m_syntheticSpikeEvents;
 
 public:
-    //+--------------------------------------------------------------+
-    //| Constructor - all counters start at zero                      |
-    //+--------------------------------------------------------------+
+// Constructor - all counters start at zero
     CHeartbeatTelemetry()
     {
         Reset();
@@ -72,9 +61,7 @@ public:
 
     ~CHeartbeatTelemetry() {}
 
-    //+--------------------------------------------------------------+
-    //| Reset every counter to zero                                   |
-    //+--------------------------------------------------------------+
+// Reset every counter to zero
     void Reset()
     {
         m_scansAttempted        = 0;
@@ -97,9 +84,7 @@ public:
         m_syntheticSpikeEvents  = 0;
     }
 
-    //+--------------------------------------------------------------+
-    //| Increment operations (one per counter)                        |
-    //+--------------------------------------------------------------+
+// Increment operations (one per counter)
     void IncScansAttempted()        { m_scansAttempted++; }
     void IncIntrabarScansExecuted() { m_intrabarScansExecuted++; }
     void IncNoSignalCount()         { m_noSignalCount++; }
@@ -119,9 +104,7 @@ public:
     void IncTradesOpened()          { m_tradesOpened++; }
     void IncSyntheticSpikeEvents()  { m_syntheticSpikeEvents++; }
 
-    //+--------------------------------------------------------------+
-    //| Accessors (read-only)                                         |
-    //+--------------------------------------------------------------+
+// Accessors (read-only)
     ulong GetScansAttempted()        const { return m_scansAttempted; }
     ulong GetIntrabarScansExecuted() const { return m_intrabarScansExecuted; }
     ulong GetNoSignalCount()         const { return m_noSignalCount; }
@@ -141,16 +124,12 @@ public:
     ulong GetTradesOpened()          const { return m_tradesOpened; }
     ulong GetSyntheticSpikeEvents()  const { return m_syntheticSpikeEvents; }
 
-    //+--------------------------------------------------------------+
-    //| Emit                                                          |
-    //|                                                               |
-    //| Pushes the current counter snapshot into the diagnostics       |
-    //| manager and triggers a heartbeat emission. Argument order is   |
-    //| identical to the previous inline 18-argument call site, so the |
-    //| emitted heartbeat is byte-for-byte unchanged.                  |
-    //|                                                                |
-    //| diag - diagnostics manager; NULL is tolerated (no-op).         |
-    //+--------------------------------------------------------------+
+// Emit
+// Pushes the current counter snapshot into the diagnostics
+// manager and triggers a heartbeat emission. Argument order is
+// identical to the previous inline 18-argument call site, so the
+// emitted heartbeat is byte-for-byte unchanged.
+// diag - diagnostics manager; NULL is tolerated (no-op).
     void Emit(CDiagnosticsManager* diag) const
     {
         if(diag == NULL)

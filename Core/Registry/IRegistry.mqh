@@ -1,13 +1,9 @@
-//+------------------------------------------------------------------+
-//| Unified Registry Interface - Enterprise Grade                    |
-//| Common interface and base class for all registries               |
-//+------------------------------------------------------------------+
+// Unified Registry Interface - Enterprise Grade
+// Common interface and base class for all registries
 #ifndef I_REGISTRY_MQH
 #define I_REGISTRY_MQH
 
-//+------------------------------------------------------------------+
-//| IRegistry Interface                                              |
-//+------------------------------------------------------------------+
+// IRegistry Interface
 template<typename T>
 class IRegistry
 {
@@ -36,9 +32,7 @@ public:
     virtual void Clear() = 0;
 };
 
-//+------------------------------------------------------------------+
-//| Registry Base Class                                              |
-//+------------------------------------------------------------------+
+// Registry Base Class
 template<typename T>
 class CRegistryBase : public IRegistry<T>
 {
@@ -82,7 +76,6 @@ public:
         return NULL;
     }
     
-    // Register instance for symbol
     virtual bool Register(const string symbol, T* instance) override
     {
         if(instance == NULL || symbol == "")

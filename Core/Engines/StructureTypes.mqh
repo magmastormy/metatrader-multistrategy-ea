@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| StructureTypes.mqh - Shared market structure value types         |
-//| Extracted verbatim from StructureEngine.mqh (no behavior change) |
-//+------------------------------------------------------------------+
+// StructureTypes.mqh - Shared market structure value types
+// Extracted verbatim from StructureEngine.mqh (no behavior change)
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -9,9 +7,6 @@
 #ifndef STRUCTURE_TYPES_MQH
 #define STRUCTURE_TYPES_MQH
 
-//+------------------------------------------------------------------+
-//| Structure Types                                                  |
-//+------------------------------------------------------------------+
 enum ENUM_STRUCTURE_TYPE
 {
     STRUCT_TYPE_NONE = 0,
@@ -27,9 +22,6 @@ enum ENUM_STRUCTURE_TYPE
     STRUCT_TYPE_RAID         // Stop Hunt/Raid
 };
 
-//+------------------------------------------------------------------+
-//| Swing Point Structure                                           |
-//+------------------------------------------------------------------+
 struct SwingPoint
 {
     double price;
@@ -44,9 +36,6 @@ struct SwingPoint
                    strength(0), isValid(false), isMitigated(false) {}
 };
 
-//+------------------------------------------------------------------+
-//| Market Structure State                                          |
-//+------------------------------------------------------------------+
 struct MarketStructureState
 {
     ENUM_STRUCTURE_TYPE currentStructure;

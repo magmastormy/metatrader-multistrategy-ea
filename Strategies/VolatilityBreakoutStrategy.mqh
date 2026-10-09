@@ -1,9 +1,6 @@
-//+------------------------------------------------------------------+
-//| VolatilityBreakoutStrategy.mqh                                   |
-//| Institutional Volatility Breakout Strategy                       |
-//| Bollinger Band Squeeze + Volume Surge + ATR Stops                |
-//| Copyright 2026, Multi-Strategy EA                                |
-//+------------------------------------------------------------------+
+// Institutional Volatility Breakout Strategy
+// Bollinger Band Squeeze + Volume Surge + ATR Stops
+// Copyright 2026, Multi-Strategy EA
 #ifndef VOLATILITY_BREAKOUT_STRATEGY_MQH
 #define VOLATILITY_BREAKOUT_STRATEGY_MQH
 
@@ -12,9 +9,7 @@
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
-//+------------------------------------------------------------------+
-//| Volatility Breakout Entry Types                                  |
-//+------------------------------------------------------------------+
+// Volatility Breakout Entry Types
 enum ENUM_VB_ENTRY_TYPE
 {
     VB_ENTRY_NONE = 0,
@@ -26,9 +21,6 @@ enum ENUM_VB_ENTRY_TYPE
     VB_ENTRY_FAILURE_REVERSAL      // Breakout failure reversal
 };
 
-//+------------------------------------------------------------------+
-//| Volatility Breakout Signal Structure                             |
-//+------------------------------------------------------------------+
 struct SVolatilityBreakoutSignal
 {
     ENUM_VB_ENTRY_TYPE entryType;
@@ -49,10 +41,7 @@ struct SVolatilityBreakoutSignal
         reason("") {}
 };
 
-//+------------------------------------------------------------------+
-//| Volatility Breakout Strategy Class                               |
-//| Institutional approach: Trade explosive moves from contraction   |
-//+------------------------------------------------------------------+
+// Institutional approach: Trade explosive moves from contraction
 class CVolatilityBreakoutStrategy : public CStrategyBase
 {
 private:
@@ -149,7 +138,6 @@ private:
     }
 
 public:
-    // Constructor
     CVolatilityBreakoutStrategy(const string name = "Volatility Breakout v2.0", int magic = 0) :
         CStrategyBase(name, magic),
         m_bbHandle(INVALID_HANDLE),
@@ -199,7 +187,6 @@ public:
         m_riskManager = NULL;
     }
     
-    // Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
@@ -232,7 +219,6 @@ public:
         return true;
     }
     
-    // Deinitialization
     virtual void Deinit() override
     {
         Cleanup();
@@ -345,7 +331,6 @@ public:
         double bbWidth = bbUpper[1] - bbLower[1];
         double bbWidthPercent = (bbMiddle[1] > 0) ? (bbWidth / bbMiddle[1]) : 0;
         
-        // Detect squeeze state
         bool isInSqueeze = DetectSqueezeState(bbWidthPercent);
         
         // --- SIGNAL DETECTION ---
@@ -416,7 +401,6 @@ public:
         return signal.direction;
     }
     
-    // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_VOLATILITY_BREAKOUT; }
     
 private:
@@ -465,7 +449,6 @@ private:
         return inSqueeze;
     }
     
-    // Detect breakout signal
     SVolatilityBreakoutSignal DetectBreakoutSignal(
         double price, double prevPrice,
         double bbUpper, double bbMiddle, double bbLower,
@@ -653,7 +636,6 @@ private:
             }
         }
         
-        // No signal
         return signal;
     }
 

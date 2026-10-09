@@ -1,8 +1,5 @@
-//+------------------------------------------------------------------+
-//| KillZones.mqh                                                    |
-//| ICT Kill Zone Time Filter for Unified ICT Strategy               |
-//| Implements session-based trading windows                         |
-//+------------------------------------------------------------------+
+// ICT Kill Zone Time Filter for Unified ICT Strategy
+// Implements session-based trading windows
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -10,9 +7,7 @@
 #ifndef SMC_KILL_ZONES_MQH
 #define SMC_KILL_ZONES_MQH
 
-//+------------------------------------------------------------------+
-//| Kill Zone Types                                                  |
-//+------------------------------------------------------------------+
+// Kill Zone Types
 enum ENUM_KILL_ZONE
 {
     KZ_NONE,
@@ -28,9 +23,6 @@ enum ENUM_KILL_ZONE
     KZ_SILVER_BULLET_NY_PM      // 14:00 - 15:00 EST — NY PM Silver Bullet
 };
 
-//+------------------------------------------------------------------+
-//| Session Info Structure                                           |
-//+------------------------------------------------------------------+
 struct SSessionInfo
 {
     ENUM_KILL_ZONE  zone;
@@ -45,9 +37,6 @@ struct SSessionInfo
                      endHour(0), endMinute(0), probabilityWeight(0), name("") {}
 };
 
-//+------------------------------------------------------------------+
-//| ICT Kill Zones Class                                             |
-//+------------------------------------------------------------------+
 class CICTKillZones
 {
 private:
@@ -99,7 +88,6 @@ public:
     bool            IsNYPMSession();
     bool            IsLondonNYOverlap();
 
-    // P2-C: Silver Bullet
     bool            IsSilverBullet();
     string          GetSilverBulletName();
     bool            IsLondonSilverBullet();
@@ -111,9 +99,7 @@ public:
     double          GetSessionVolatilityMultiplier();
 };
 
-//+------------------------------------------------------------------+
-//| Constructor                                                      |
-//+------------------------------------------------------------------+
+// Constructor
 CICTKillZones::CICTKillZones() :
     m_brokerGMTOffset(2),
     m_estOffset(-5),
@@ -129,16 +115,11 @@ CICTKillZones::CICTKillZones() :
     InitializeSessions();
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
+// Destructor
 CICTKillZones::~CICTKillZones()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Initialize Sessions                                              |
-//+------------------------------------------------------------------+
 void CICTKillZones::InitializeSessions()
 {
     // Asian Session (20:00 - 00:00 EST)
@@ -214,9 +195,6 @@ void CICTKillZones::InitializeSessions()
     m_sessions[7].name = "Silver Bullet (NY PM)";
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CICTKillZones::Initialize(int brokerGMTOffset, bool useDST)
 {
     m_brokerGMTOffset = brokerGMTOffset;
@@ -241,9 +219,7 @@ bool CICTKillZones::Initialize(int brokerGMTOffset, bool useDST)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Enable/Disable Session                                           |
-//+------------------------------------------------------------------+
+// Enable/Disable Session
 void CICTKillZones::EnableSession(ENUM_KILL_ZONE zone, bool enable)
 {
     switch(zone)
@@ -260,9 +236,6 @@ void CICTKillZones::EnableSession(ENUM_KILL_ZONE zone, bool enable)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Get Current EST Hour                                             |
-//+------------------------------------------------------------------+
 int CICTKillZones::GetCurrentESTHour()
 {
     MqlDateTime dt;
@@ -278,9 +251,6 @@ int CICTKillZones::GetCurrentESTHour()
     return estHour;
 }
 
-//+------------------------------------------------------------------+
-//| Get Current EST Minute                                           |
-//+------------------------------------------------------------------+
 int CICTKillZones::GetCurrentESTMinute()
 {
     MqlDateTime dt;
@@ -288,9 +258,6 @@ int CICTKillZones::GetCurrentESTMinute()
     return dt.min;
 }
 
-//+------------------------------------------------------------------+
-//| Is In Session                                                    |
-//+------------------------------------------------------------------+
 bool CICTKillZones::IsInSession(const SSessionInfo &session)
 {
     int currentHour = GetCurrentESTHour();
@@ -312,17 +279,11 @@ bool CICTKillZones::IsInSession(const SSessionInfo &session)
     }
 }
 
-//+------------------------------------------------------------------+
-//| Is In Kill Zone                                                  |
-//+------------------------------------------------------------------+
 bool CICTKillZones::IsInKillZone()
 {
     return GetCurrentKillZone() != KZ_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| Get Current Kill Zone                                            |
-//+------------------------------------------------------------------+
 ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
 {
     // Silver Bullet windows take highest priority (narrower, more specific)
@@ -356,9 +317,6 @@ ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
     return KZ_NONE;
 }
 
-//+------------------------------------------------------------------+
-//| Get Kill Zone Weight                                             |
-//+------------------------------------------------------------------+
 double CICTKillZones::GetKillZoneWeight()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
@@ -372,9 +330,6 @@ double CICTKillZones::GetKillZoneWeight()
     return 0.0;
 }
 
-//+------------------------------------------------------------------+
-//| Get Kill Zone Name                                               |
-//+------------------------------------------------------------------+
 string CICTKillZones::GetKillZoneName()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
@@ -388,9 +343,7 @@ string CICTKillZones::GetKillZoneName()
     return "No Session";
 }
 
-//+------------------------------------------------------------------+
-//| Session Checks                                                   |
-//+------------------------------------------------------------------+
+// Session Checks
 bool CICTKillZones::IsAsianSession()
 {
     return IsInSession(m_sessions[0]);
@@ -416,9 +369,6 @@ bool CICTKillZones::IsLondonNYOverlap()
     return IsInSession(m_sessions[4]);
 }
 
-//+------------------------------------------------------------------+
-//| Is High Probability Window                                       |
-//+------------------------------------------------------------------+
 bool CICTKillZones::IsHighProbabilityWindow()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
@@ -432,9 +382,7 @@ bool CICTKillZones::IsHighProbabilityWindow()
             zone == KZ_SILVER_BULLET_NY_PM);
 }
 
-//+------------------------------------------------------------------+
-//| P2-C: Silver Bullet Methods                                     |
-//+------------------------------------------------------------------+
+// P2-C: Silver Bullet Methods
 bool CICTKillZones::IsSilverBullet()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
@@ -447,11 +395,9 @@ bool CICTKillZones::IsLondonSilverBullet() { return IsInSession(m_sessions[5]); 
 bool CICTKillZones::IsNYAMSilverBullet()   { return IsInSession(m_sessions[6]); }
 bool CICTKillZones::IsNYPMSilverBullet()   { return IsInSession(m_sessions[7]); }
 
-//+------------------------------------------------------------------+
-//| Check if DST is currently active using US DST rules                  |
-//| DST starts on second Sunday in March at 2:00 AM EST                |
-//| DST ends on first Sunday in November at 2:00 AM EST                |
-//+------------------------------------------------------------------+
+// Check if DST is currently active using US DST rules
+// DST starts on second Sunday in March at 2:00 AM EST
+// DST ends on first Sunday in November at 2:00 AM EST
 bool CICTKillZones::IsDSTActive()
 {
     MqlDateTime dt;
@@ -549,9 +495,6 @@ string CICTKillZones::GetSilverBulletName()
     return "No Silver Bullet";
 }
 
-//+------------------------------------------------------------------+
-//| Get Session Volatility Multiplier                                |
-//+------------------------------------------------------------------+
 double CICTKillZones::GetSessionVolatilityMultiplier()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();

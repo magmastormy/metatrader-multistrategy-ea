@@ -1,7 +1,4 @@
-//+------------------------------------------------------------------+
-//| CNeuralCore.mqh                                                   |
-//| Core neural network operations (activations, loss, etc.)          |
-//+------------------------------------------------------------------+
+// Core neural network operations (activations, loss, etc.)
 #ifndef NEURAL_CORE_MQH
 #define NEURAL_CORE_MQH
 
