@@ -1,5 +1,4 @@
-// Unified Signal Pipeline - Enterprise Grade
-// Central hub for all strategy signals with filtering
+// Filters strategy signals and MTF consensus; places no orders (CTradeManager owns execution)
 #ifndef UNIFIED_SIGNAL_PIPELINE_MQH
 #define UNIFIED_SIGNAL_PIPELINE_MQH
 
@@ -9,11 +8,9 @@
 #include "../../Core/Engines/SessionWeightManager.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
 
-// Forward declaration for global profiler access (initialized in EAOrchestrator)
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-// Decomposed modules (extracted God-Object groups — coordinator retains public API)
 #include "SignalPipelineTypes.mqh"
 #include "SignalPipelineNormalizer.mqh"
 #include "SignalPipelineWeighter.mqh"
@@ -24,18 +21,15 @@ extern CMultiAssetProfiler* g_multiAssetProfiler;
 class CUnifiedSignalPipeline
 {
 private:
-    // Registry references (engines obtained from registry)
     CMathematicalEngineRegistry* m_mathRegistry;
     
-    // Protection / consistency
     CTimeframeConsistency* m_tfConsistency;
 
-    // I3: Session weight manager (injected from EA)
+    // Injected from the EA: not allocated or freed by this class
     CSessionWeightManager* m_sessionWeightManager;
     
     SignalFilterSettings m_filters;
     
-    // Statistics
     int m_signalsProcessed;
     int m_signalsFiltered;
     int m_signalsPassed;
@@ -56,23 +50,18 @@ private:
         bool m_cachedContextPrepared;
         bool m_cachedContextIntrabar;
     
-        // Engine health tracking - now checked on-demand via registry
     datetime m_lastHealthCheckTime;
     int m_healthCheckIntervalBars;
     
-    // Issue 14: Budget exhaustion skip
     bool m_budgetExhausted;
     datetime m_budgetExhaustedTime;
     datetime m_budgetExhaustedResetTime; // Daily reset time (midnight)
     
-    // Filter order tracking
     int m_filterOrderMap[7]; // Maps filter index to execution order
     
-    // Regime gate log throttling
     int m_regimeGateLogCounter;
     int m_regimeGateLogInterval;
     
-    // Internal methods
     void ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe);
     void RefreshEvidenceFromEngines(const string symbol);
@@ -96,13 +85,10 @@ private:
                                 string &vetoReasonTag);
     void LogFilterResult(const string filter, bool passed, const string reason);
     
-    // Filter order management
     void BuildFilterOrderMap();
     
-    // Budget exhaustion auto-clear
     void CheckBudgetExhaustedAutoClear();
     
-    // Health monitoring
     void CheckEngineHealth(const string symbol);
     bool IsEngineHealthy();
     
@@ -112,30 +98,25 @@ public:
     
     bool Initialize(SignalFilterSettings &settings);
     
-    // Main processing
     ENUM_TRADE_SIGNAL ProcessSignal(IStrategy* strategy, const string symbol, 
                                    ENUM_TIMEFRAMES timeframe, double &confidence);
     
-    // Multi-timeframe processing
     ENUM_TRADE_SIGNAL ProcessMTFSignals(IStrategy* &strategies[], int count,
                                        const string symbol, ENUM_TIMEFRAMES &timeframes[],
                                        double &finalConfidence);
     
-    // Configuration
     void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
     void SetIntrabarContext(const bool intrabarContext) { m_intrabarContext = intrabarContext; }
     void SetSessionWeightManager(CSessionWeightManager* mgr) { m_sessionWeightManager = mgr; }
     void ApplyFilterPreset(ENUM_FILTER_PRESET preset);
     
-    // Statistics
     int GetSignalsProcessed() const { return m_signalsProcessed; }
     int GetSignalsFiltered() const { return m_signalsFiltered; }
     int GetSignalsPassed() const { return m_signalsPassed; }
     bool WasLastSignalRawNone() const { return m_lastRawSignalNone; }
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
     
-    // Health monitoring
     void PerformHealthCheck(const string symbol);
     bool IsPipelineHealthy();
     string GetEngineHealthStatus();
@@ -144,7 +125,7 @@ public:
     string GetLastFilterName() const { return m_lastFilterName; }
     string GetLastFilterReason() const { return m_lastFilterReason; }
 
-    // Spread filter (public for EA access)
+    // Spread cutoff called by CPostConsensusValidator; the ratio gate itself is in CSignalPipelineFilter
         bool ApplySpreadFilter(const string symbol, double &spreadScore, double overrideThreshold = -1.0, double atrValue = -1.0);
         void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
     double GetFilterRate() const 
@@ -153,7 +134,6 @@ public:
                (double)m_signalsFiltered / m_signalsProcessed : 0; 
     }
     
-    // Engine access via registry
         CTrendEngine* GetTrendEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL; }
         CStructureEngine* GetStructureEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL; }
         CLiquidityEngine* GetLiquidityEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL; }
@@ -162,7 +142,6 @@ public:
 
         void SetMathRegistry(CMathematicalEngineRegistry* registry) { m_mathRegistry = registry; }
 
-        // Issue 14: Budget exhaustion API
                 void SetBudgetExhausted(const bool exhausted) { m_budgetExhausted = exhausted; m_budgetExhaustedTime = TimeCurrent(); m_budgetExhaustedResetTime = TimeCurrent() + 86400 - (TimeCurrent() % 86400); }
                 void ResetBudgetExhausted() { m_budgetExhausted = false; m_budgetExhaustedTime = 0; m_budgetExhaustedResetTime = 0; }
                 bool IsBudgetExhausted() const { return m_budgetExhausted; }
@@ -197,7 +176,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
         m_regimeGateLogCounter(0),
         m_regimeGateLogInterval(10)
 {
-    // Initialize filter order map
     for(int i = 0; i < 7; i++)
         m_filterOrderMap[i] = -1;
 }
@@ -220,7 +198,6 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     BuildFilterOrderMap();
     bool initializationOk = true;
     
-    // Initialize consistency checker
     m_tfConsistency = new CTimeframeConsistency();
     if(m_tfConsistency == NULL)
     {
@@ -260,7 +237,7 @@ void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
     
     m_filters = settings;
     BuildFilterOrderMap();
-    // Configure regime engine via registry for the current symbol if available
+    // Sole call site of ConfigureCostLimits: it reconfigures m_lastEvaluatedSymbol's regime engine only
     if(m_mathRegistry != NULL && m_lastEvaluatedSymbol != "")
     {
         CRegimeEngine* regimeEngine = m_mathRegistry.GetRegime(m_lastEvaluatedSymbol);
@@ -273,14 +250,11 @@ void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
     }
 }
 
-// Build filter order map from settings
 void CUnifiedSignalPipeline::BuildFilterOrderMap()
 {
-    // Reset map
     for(int i = 0; i < 7; i++)
         m_filterOrderMap[i] = -1;
     
-    // Build map: m_filterOrderMap[filterIndex] = executionOrder
     // where filterIndex: 0=RegimeCostGate, 1=Trend, 2=Volatility, 3=Liquidity, 4=Structure, 5=Time, 6=Session
     for(int i = 0; i < m_filters.filterOrder.filterOrderCount && i < 7; i++)
     {
@@ -290,13 +264,12 @@ void CUnifiedSignalPipeline::BuildFilterOrderMap()
     }
 }
 
-// Check and auto-clear budget exhaustion (L4-007)
 void CUnifiedSignalPipeline::CheckBudgetExhaustedAutoClear()
 {
     if(!m_budgetExhausted)
         return;
     
-    // Auto-clear at daily reset (midnight server time)
+    // Auto-clear boundary is the server-time day start (TimeCurrent() % 86400)
     datetime currentTime = TimeCurrent();
     datetime currentDate = currentTime - TimeCurrent() % 86400; // Start of current day
     
@@ -314,8 +287,6 @@ void CUnifiedSignalPipeline::CheckBudgetExhaustedAutoClear()
     }
 }
 
-// Evidence + scoring forwarders (extracted to SignalPipeline*)
-// Thin delegators — original signatures preserved 1:1.
 void CUnifiedSignalPipeline::ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     CSignalPipelineCollector::ResetEvidenceSnapshot(m_filters, m_lastEvidence, symbol, timeframe);
@@ -345,7 +316,6 @@ double CUnifiedSignalPipeline::ComputeContextScore(const ENUM_TRADE_SIGNAL signa
     return CSignalPipelineWeighter::ComputeContextScore(m_lastEvidence, signal);
 }
 
-// Process Single Strategy Signal
 ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy, 
                                                        const string symbol,
                                                        ENUM_TIMEFRAMES timeframe, 
@@ -368,11 +338,9 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         return TRADE_SIGNAL_NONE;
     }
     
-    // Check budget exhaustion with auto-clear (L4-007)
     CheckBudgetExhaustedAutoClear();
     
-    // Issue 14: Skip pipeline evaluation entirely when daily budget is exhausted
-    // Saves CPU during budget halt periods — results would be discarded anyway
+    // Budget exhausted: returns before strategy.GetSignal() runs, so no filter executes
     if(m_budgetExhausted)
     {
         m_signalsProcessed++;
@@ -385,7 +353,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     m_signalsProcessed++;
     
-    // Get raw signal from strategy
     ENUM_TRADE_SIGNAL signal = strategy.GetSignal(confidence);
     
     if(signal == TRADE_SIGNAL_NONE)
@@ -397,14 +364,11 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     RefreshStructuralContext(symbol, timeframe);
     
-    // Apply filters in configured order with early exit on failure (L4-001)
+    // Gate order is m_filters.filterOrder's sequence; the first veto short-circuits every later gate
     bool passed = true;
     
-    // Filter index mapping: 0=RegimeCostGate, 1=Trend, 2=Volatility, 3=Liquidity, 4=Structure, 5=Time, 6=Session
-    // Only run filters that are enabled and have a valid order position
     for(int order = 0; order < m_filters.filterOrder.filterOrderCount && order < 7 && passed; order++)
     {
-        // Find which filter has this execution order
         int filterIdx = -1;
         for(int i = 0; i < 7; i++)
         {
@@ -418,7 +382,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(filterIdx == -1)
             continue;
         
-        // Skip disabled filters
         bool filterEnabled = false;
         switch(filterIdx)
         {
@@ -434,7 +397,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(!filterEnabled)
             continue;
         
-        // Execute the filter
         bool filterPassed = false;
         string vetoReason = "";
         
@@ -468,7 +430,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(!filterPassed)
         {
             passed = false;
-            // Early exit - stop processing remaining filters
             break;
         }
     }
@@ -476,7 +437,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastEvidence.contextScore = ComputeContextScore(signal);
     m_lastEvidence.readinessScore = ComputeReadinessScore();
 
-    // I7: Apply session-aware readiness boost (weekend = +0.05, Asian = +0.02, etc.)
+    // Additive session readinessBoost on the readiness score (0.02 Asian, 0.05 London/NY overlap and synthetic weekend), clamped to [0,1]
     if(m_sessionWeightManager != NULL && m_sessionWeightManager.IsInitialized())
     {
        double sessionBoost = m_sessionWeightManager.GetReadinessBoost();
@@ -486,7 +447,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
        }
     }
 
-    // Dynamic confidence threshold with bounded intrabar uplift in weak regimes.
     double baseMinConfidence = m_filters.confidence.minConfidence;
     double effectiveMinConfidence = baseMinConfidence;
     double appliedCap = 0.0;
@@ -500,7 +460,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
             double regimeAdjustedThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.03);
             if(m_intrabarContext)
             {
-                // Batch 116: cap is always applied in intrabar mode — take the lower of cap and regime threshold
+                // Intrabar: effective = min(base + intrabarConfidenceCap, regime threshold), so the cap binds in RANGE too
                 appliedCap = MathMax(0.0, m_filters.confidence.intrabarConfidenceCap);
                 double cappedThreshold = baseMinConfidence + appliedCap;
                 effectiveMinConfidence = MathMin(1.0, MathMin(cappedThreshold, regimeAdjustedThreshold));
@@ -557,7 +517,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         }
     }
 
-    // I3: Apply session-aware threshold adjustment
     if(m_sessionWeightManager != NULL && m_sessionWeightManager.IsInitialized())
     {
        SSessionWeights sessionWeights = m_sessionWeightManager.GetCurrentSessionWeights();
@@ -575,7 +534,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, effectiveMinConfidence));
     m_lastEvidence.effectiveMinConfidence = m_lastEffectiveMinConfidence;
     
-    // Check confidence threshold
+    // Soft band: within 0.06 of the threshold, context >= 0.62 and readiness >= 0.65 attenuate confidence instead of vetoing
     if(confidence < effectiveMinConfidence)
     {
         double thresholdGap = effectiveMinConfidence - confidence;
@@ -607,9 +566,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
 
-    // Profitability audit fix: context/readiness/staleness must be allowed to
-    // reduce confidence. Preserving the pre-adjusted score lets weak evidence
-    // pass downstream as fake certainty.
+    // Downstream callers must see this blended-down value; keeping the pre-adjustment score would present weak evidence as certain
     if(passed)
     {
         double contextBlend = 0.80 + (0.20 * m_lastEvidence.contextScore);
@@ -634,7 +591,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     return signal;
 }
 
-// Process Multiple Timeframe Signals
 ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategies[], 
                                                            int count,
                                                            const string symbol, 
@@ -647,11 +603,9 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
         return TRADE_SIGNAL_NONE;
     }
     
-    // Reset TF consistency checker
     if(m_tfConsistency != NULL)
         m_tfConsistency.Reset();
     
-    // Process each timeframe
     ENUM_TRADE_SIGNAL signals[];
     double confidences[];
     ArrayResize(signals, count);
@@ -663,7 +617,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
         signals[i] = ProcessSignal(strategies[i], symbol, timeframes[i], conf);
         confidences[i] = conf;
         
-        // Add to TF consistency checker
         if(m_tfConsistency != NULL && signals[i] != TRADE_SIGNAL_NONE)
         {
             m_tfConsistency.AddTimeframeSignal(timeframes[i], signals[i], conf, 
@@ -673,7 +626,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
     
     if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
     {
-        // Resolve conflicts based on settings
         double resolvedConf = 0.0;
         string reasoning = "";
         ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConf, reasoning);
@@ -682,12 +634,10 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
         return resolvedSignal;
     }
     
-    // Calculate consensus if no conflicts (extracted to SignalPipelineAggregator)
     finalConfidence = 0;
     return CSignalPipelineAggregator::TallyConsensus(signals, confidences, count, finalConfidence);
 }
-// Filter + quality + logging forwarders (extracted)
-// Thin delegators — original signatures preserved 1:1.
+// Every gate below forwards into CSignalPipelineFilter/Weighter/Normalizer: no veto logic lives in this file
 bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
                                                     ENUM_TIMEFRAMES timeframe,
                                                     ENUM_TRADE_SIGNAL &signal,
@@ -762,21 +712,17 @@ void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, c
     CSignalPipelineFilter::LogResult(m_lastFilterName, m_lastFilterReason, filter, passed, reason);
 }
 
-// Check Engine Health (private)
 void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
 {
-    // Health is now checked on-demand via registry
-    // This method just updates the last check time
+    // Only stamps m_lastHealthCheckTime, which no code reads; callers query the registry for health
     m_lastHealthCheckTime = TimeCurrent();
 }
 
-// Is Engine Healthy (private)
 bool CUnifiedSignalPipeline::IsEngineHealthy()
 {
     if(m_mathRegistry == NULL || m_lastEvaluatedSymbol == "")
         return false;
     
-    // Check if all required engines are available AND healthy for the last evaluated symbol
     CTrendEngine* trendEngine = m_mathRegistry.GetTrend(m_lastEvaluatedSymbol);
     CStructureEngine* structureEngine = m_mathRegistry.GetStructure(m_lastEvaluatedSymbol);
     CLiquidityEngine* liquidityEngine = m_mathRegistry.GetLiquidity(m_lastEvaluatedSymbol);
@@ -787,7 +733,7 @@ bool CUnifiedSignalPipeline::IsEngineHealthy()
        volatilityEngine == NULL || regimeEngine == NULL)
         return false;
     
-    // Check engine readiness states (not just pointer validity)
+    // Trend is the only engine exposing a readiness snapshot; the other four are pointer-checked
     STrendReadinessSnapshot trendReadiness = trendEngine.GetReadinessSnapshot();
     if(trendReadiness.state != TREND_READINESS_HEALTHY && trendReadiness.state != TREND_READINESS_REUSED_SNAPSHOT)
         return false;
@@ -795,12 +741,10 @@ bool CUnifiedSignalPipeline::IsEngineHealthy()
     return true;
 }
 
-// Perform Health Check (public)
 void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
 {
     CheckEngineHealth(symbol);
     
-    // Check engine availability AND readiness for this symbol
     CTrendEngine* trendEngine = m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL;
     CStructureEngine* structureEngine = m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL;
     CLiquidityEngine* liquidityEngine = m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL;
@@ -813,7 +757,6 @@ void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
     bool volatilityOk = (volatilityEngine != NULL);
     bool regimeOk = (regimeEngine != NULL);
     
-    // Check readiness states if engines exist
     if(trendOk)
     {
         STrendReadinessSnapshot trendReadiness = trendEngine.GetReadinessSnapshot();
@@ -833,13 +776,11 @@ void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
                 regimeOk ? "OK" : "FAIL");
 }
 
-// Is Pipeline Healthy (public)
 bool CUnifiedSignalPipeline::IsPipelineHealthy()
 {
     return IsEngineHealthy();
 }
 
-// Get Engine Health Status (public)
 string CUnifiedSignalPipeline::GetEngineHealthStatus()
 {
     if(IsEngineHealthy())
@@ -867,7 +808,6 @@ string CUnifiedSignalPipeline::GetEngineHealthStatus()
     return status;
 }
 
-// Apply Filter Preset (public)
 void CUnifiedSignalPipeline::ApplyFilterPreset(ENUM_FILTER_PRESET preset)
 {
     m_filters.ApplyPreset(preset);

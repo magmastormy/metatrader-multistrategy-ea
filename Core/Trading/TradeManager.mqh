@@ -45,17 +45,12 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-// Phase D T4: SPendingConfirmation + MAX_PENDING_CONFIRMATIONS moved to
-// CTradeMgrConfirmationQueue (Core/Trading/TradeMgrConfirmationQueue.mqh).
 
-// Trade execution settings
 #define MAX_TRADE_RETRIES 4
 #define TRADE_RETRY_DELAY 150 // ms
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
 
-// Phase D T4: SSymbolMagicOffset moved to CTradeMgrSymbolTradeRegistry
-// (Core/Trading/TradeMgrSymbolTradeRegistry.mqh).
 
 class CTradeManager
 {
@@ -66,8 +61,8 @@ private:
     CHistoryOrderInfo m_historyOrderInfo;
     CSessionManager m_sessionManager;        // Session manager object
 
-    // Per-symbol CTrade instances avoid race conditions in multi-symbol trading (L10-013); the registry
-    // also owns the magic-offset table and the EA-owned position ticket cache.
+    // Per-symbol CTrade instances avoid multi-symbol send races: one pooled CTrade is used per symbol.
+    // The registry also owns the magic-offset table and the EA-owned position ticket cache.
     CTradeMgrSymbolTradeRegistry m_symbolRegistry;
 
     // Dependencies (owned externally)
@@ -101,7 +96,6 @@ private:
     // Trade tracking and statistics — state owned by CTradeStatsTracker
     CTradeStatsTracker m_tradeStats;
 
-    // Additional statistics variables for backward compatibility
     int m_totalTrades;
     int m_successfulTrades;
     uint m_failedTrades;
@@ -127,7 +121,6 @@ private:
     double m_lastRequestedTakeProfit;        // Last TP sent to broker
     STradeExecutionReceipt m_lastExecutionReceipt;
 
-    // EA-owned position ticket cache for O(1) position management (L12-008)
 
     struct PendingOrder {
         ulong ticket;
@@ -145,9 +138,8 @@ private:
     // State tracking to prevent redundant modifications — owned by CPositionStateTracker
     CPositionStateTracker m_positionStateTracker;
 
-    // Per-symbol magic offset for family-specific magic number differentiation
 
-        // L10-005: Account margin mode caching (hedging/netting compliance)
+        // Account margin mode cached once at Initialize() for hedging/netting compliance.
         ENUM_ACCOUNT_MARGIN_MODE m_accountMarginMode;
         bool m_marginModeInitialized;
 
@@ -161,29 +153,25 @@ private:
            }
         }
 
-// Check if hedging is allowed for symbol (netting mode compliance)
+// Hedging gate is a no-op today: both branches return true, netting resolution is left to the broker.
         bool IsHedgingAllowed(const string symbol) const
         {
            if(m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
               return true;
        
-           // In netting mode, check if there's already an opposite position
-           // This is a simplified check - full compliance would need position scanning
            return true; // Allow for now, netting handled by broker
         }
 
-// Get net position volume for netting mode compliance
             double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
 
 // Position state registry — thin forwarders onto CPositionStateTracker.
-// FindPositionState / RemovePositionState are internal to the module now (no callers elsewhere in the repo).
     void UpdatePositionState(ulong ticket, double sl, double tp) { m_positionStateTracker.UpdatePositionState(ticket, sl, tp); }
 
     void CleanupPositionStates() { m_positionStateTracker.CleanupPositionStates(); }
 
     bool IsModificationNeeded(ulong ticket, double newSL, double newTP) { return m_positionStateTracker.IsModificationNeeded(ticket, newSL, newTP, m_minModifyIntervalSec); }
 
-// EA-owned position ticket cache helpers (L12-008) — forwarders onto CTradeMgrSymbolTradeRegistry.
+// EA-owned position ticket cache helpers - forwarders onto CTradeMgrSymbolTradeRegistry.
     void AddEAOwnedPosition(ulong ticket) { m_symbolRegistry.AddEAOwnedPosition(ticket); }
 
     void RemoveEAOwnedPosition(ulong ticket) { m_symbolRegistry.RemoveEAOwnedPosition(ticket); }
@@ -217,7 +205,6 @@ private:
         }
     }
 
-    // Overloads for direct context/severity logging
     void LogError(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context)
     {
         CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
@@ -251,12 +238,10 @@ private:
 
     bool IsSuccessfulFillRetcode(const uint retcode) const { return CTradeRetcodeClassifier::IsSuccessfulFillRetcode(retcode); }
 
-    // Takes the CTrade that will actually send: configuring only m_trade meant the broker
-    // fill-mode decision never reached the pooled per-symbol instance that sends.
+    // Takes the CTrade that will actually send; configuring only m_trade never reached the pooled instance.
     void ApplyFillingModeForSymbol(const string symbolParam, CTrade* targetTrade = NULL)
     {
-        // MQL5 cannot bind a reference from a conditional expression (error 229),
-        // so the two cases are dispatched separately.
+        // MQL5 cannot bind a reference from a conditional expression (error 229): dispatch both cases separately.
         if(targetTrade != NULL)
             CTradeMgrPreflight::ApplyFillingModeForSymbol(symbolParam, *targetTrade, m_marketAnalysis, m_orderFillMode);
         else
@@ -349,7 +334,6 @@ public:
 
         bool Initialize(const long magicNumber = 12345, const string expertName = "MultiStrategyEA");
     
-        // Deinitialization - explicit cleanup for orchestrated shutdown
         void Deinit();
     
     CPositionSizer* GetPositionSizer() const { return m_positionSizer; }
@@ -357,9 +341,8 @@ public:
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); UpdatePerSymbolSlippage(m_slippage); }
     void SetMagicNumber(const long magicNumber) { m_magicNumber = magicNumber; m_trade.SetExpertMagicNumber(m_magicNumber); UpdatePerSymbolMagicNumber(m_magicNumber); }
     void SetMagicRangeMax(const long magicRangeMax) { m_magicRangeMax = magicRangeMax; }
-    //--- Ownership window comes from CMagicRange, the single authority: the old inline range test
-    //--- excluded every asset-class-offset position (base+7000..9400). Until SetMagicRangeMax has run,
-    //--- fall back to a minimum-width window rather than exact-base match.
+    //--- Ownership window comes from CMagicRange, the single authority; its span must cover asset-class
+    //--- offsets (0..9999). Before SetMagicRangeMax runs, ComputeMax(base, 1) is a minimum-width fallback.
     bool IsEAOwnedMagic(const long magic) const
     {
         long upper = (m_magicRangeMax >= m_magicNumber)
@@ -368,19 +351,14 @@ public:
         return CMagicRange::IsOwned(magic, m_magicNumber, upper);
     }
 
-    // L10-013: Update all per-symbol CTrade instances with new slippage
     void UpdatePerSymbolSlippage(const uint slippage) { m_symbolRegistry.UpdatePerSymbolSlippage(slippage); }
 
-    // L10-013: Update all per-symbol CTrade instances with new magic number
     void UpdatePerSymbolMagicNumber(const long magicNumber) { m_symbolRegistry.UpdatePerSymbolMagicNumber(magicNumber); }
 
-    // L10-013: Update all per-symbol CTrade instances with new fill mode
     void UpdatePerSymbolFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_symbolRegistry.UpdatePerSymbolFillMode(mode); }
 
-    // L10-013: Update all per-symbol CTrade instances with new async mode
     void UpdatePerSymbolAsyncMode(const bool enabled) { m_symbolRegistry.UpdatePerSymbolAsyncMode(enabled); }
 
-    //--- Per-symbol magic offset for family-specific magic number differentiation
     void SetMagicOffsetForSymbol(const string symbol, int offset) { m_symbolRegistry.SetMagicOffsetForSymbol(symbol, offset); }
 
     int GetMagicOffsetForSymbol(const string symbol) const { return m_symbolRegistry.GetMagicOffsetForSymbol(symbol); }
@@ -404,7 +382,6 @@ public:
         m_maxEntryDriftPoints = MathMax(0.0, maxEntryDriftPoints);
     }
 
-    //--- Async trade execution interface (OrderSendAsync + OnTradeTransaction)
     void SetAsyncMode(bool enabled) { m_asyncExecutor.SetAsyncModeEnabled(enabled); m_trade.SetAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); UpdatePerSymbolAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); }
 
     bool SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
@@ -423,10 +400,8 @@ public:
 
     ulong GetPendingAsyncTicket(int index) const;
 
-    // Persist async trade request to CSV for replay on restart
     void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade);
 
-    // Replay async trade requests from CSV on EA restart
     void ReplayAsyncTradeRequests();
 
     bool IsDuplicateIdempotencyKey(const string key) const;
@@ -460,7 +435,6 @@ public:
             return m_baseSlippage;
         }
 
-        // Convert ATR to points
         double pointValue = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(pointValue <= 0.0)
         {
@@ -473,7 +447,6 @@ public:
 
         double atrPoints = atrValue / pointValue;
 
-        // Calculate dynamic slippage as percentage of ATR
         uint dynamicSlippage = (uint)MathRound(atrPoints * m_dynamicSlippageAtrPercent);
 
         uint minSlippage = MathMax(m_dynamicSlippageMinPoints, m_baseSlippage);
@@ -513,8 +486,7 @@ public:
 
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
     bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
-    //--- Batch 168: EA-scoped by default. flattenAllAccountPositions is the only
-    //--- way to close positions this EA did not open, and it is opt-in.
+    //--- EA-scoped by default: flattenAllAccountPositions is the only way to close positions this EA did not open.
     bool CloseAllPositions(const string symbol = "", const string reason = "Close all",
                            const bool flattenAllAccountPositions = false);
 
@@ -543,7 +515,6 @@ public:
     // Check and resolve pending execution confirmations (call from main tick loop)
     void CheckPendingConfirmations() { m_confirmationQueue.CheckPendingConfirmations(); }
 
-    // Statistics — Phase D T2b: forwarders onto CTradeStatsTracker
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate)
     {
         m_tradeStats.GetTradeStatistics(total, successful, failed, successRate);
@@ -558,7 +529,6 @@ public:
         m_lastTradeTime = 0;
     }
 
-    // Execution quality metrics — Phase D T2a: forwarders onto CExecutionQualityTracker
     void GetExecutionQualityMetrics(int &totalOrders, int &filledOrders, int &partialFills, int &rejectedOrders,
                                      double &avgSlippagePoints, double &avgLatencyMs, double &fillRate)
     {
@@ -576,7 +546,6 @@ public:
         m_execQuality.ResetExecutionMetrics();
     }
 
-    // Generate detailed execution quality report
     void GenerateExecutionQualityReport()
     {
         m_execQuality.GenerateExecutionQualityReport(m_logLevel,
@@ -587,7 +556,6 @@ public:
                                                      m_slippage);
     }
 
-    // Smart order routing - analyze execution history and recommend optimal parameters
     struct SSmartOrderParams {
         uint recommendedSlippage;
         ENUM_ORDER_TYPE_FILLING recommendedFillMode;
@@ -626,7 +594,6 @@ public:
         long currentSpread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
 
 
-        // If fill rate is low, recommend more conservative parameters
         if(fillRate < 0.8)
         {
             params.recommendedSlippage = (uint)MathMax(m_baseSlippage * 2, avgSlippage * 1.5);
@@ -634,27 +601,23 @@ public:
             params.reason = StringFormat("Low fill rate (%.1f%%), increasing slippage to %d",
                                         fillRate * 100, params.recommendedSlippage);
         }
-        // If slippage is high, increase tolerance
         else if(avgSlippage > m_baseSlippage * 2)
         {
             params.recommendedSlippage = (uint)(avgSlippage * 1.2);
             params.reason = StringFormat("High avg slippage (%.1f pts), increasing tolerance to %d",
                                         avgSlippage, params.recommendedSlippage);
         }
-        // If latency is high, use IOC to avoid stale orders
         else if(avgLatency > 500)
         {
             params.recommendedFillMode = ORDER_FILLING_IOC;
             params.reason = StringFormat("High latency (%.0f ms), using IOC fill mode", avgLatency);
         }
-        // If spread is very high, consider not trading
         else if(currentSpread > m_maxEntrySpreadPoints)
         {
             params.shouldTrade = false;
             params.reason = StringFormat("Spread too high (%d pts > %.0f limit)",
                                         currentSpread, m_maxEntrySpreadPoints);
         }
-        // If partial fills are common, use FOK
         else if(m_execQuality.FilledOrders() > 0 &&
                 (double)m_execQuality.PartialFills() / m_execQuality.FilledOrders() > 0.2)
         {
@@ -721,7 +684,6 @@ bool CTradeManager::Initialize(const long magicNumber,
 
     m_symbolRegistry.ResetSymbolTrades();
 
-    // L10-005: Initialize account margin mode cache for hedging/netting compliance
     InitializeMarginMode();
 
     return true;
@@ -741,11 +703,9 @@ bool CTradeManager::Initialize(const long magicNumber,
         Print("[TRADE-MANAGER] Deinit complete - async trades cleaned up");
             }
 
-// Get or create per-symbol CTrade instance (L10-013)
         CTrade* CTradeManager::GetSymbolTrade(const string symbol)
         {
-            // Pool owned by CTradeMgrSymbolTradeRegistry; the four configuration values it needs are
-            // passed in explicitly so the registry keeps no back-pointer to CTradeManager.
+            // Pool owned by CTradeMgrSymbolTradeRegistry; config is passed in so it holds no back-pointer to CTradeManager.
             return m_symbolRegistry.GetSymbolTrade(symbol, m_magicNumber, m_slippage, m_orderFillMode, m_useAsyncMode);
         }
 
@@ -813,13 +773,12 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 
     string localSymbol = m_positionInfo.Symbol();
 
-    // Capture TP/SL before close for calibration warning
+    // Read TP/SL/open price before the close: the position is gone once PositionClose succeeds.
     double posTP = m_positionInfo.TakeProfit();
     double posSL = m_positionInfo.StopLoss();
     double posOpenPrice = m_positionInfo.PriceOpen();
 
-    // SYMBOL_TRADE_MODE_CLOSEONLY allows closing positions, so we allow it
-    // SYMBOL_TRADE_MODE_DISABLED means no trading at all
+    // Only DISABLED blocks a close - CLOSEONLY still allows closing positions.
     ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(localSymbol, SYMBOL_TRADE_MODE);
     if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
     {
@@ -832,13 +791,11 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     double volume = m_positionInfo.Volume();
     double profit = m_positionInfo.Profit();
 
-    // L10-013: Use per-symbol CTrade instance to avoid race conditions
     CTrade* symbolTrade = GetSymbolTrade(localSymbol);
     bool result = symbolTrade.PositionClose(ticket);
 
     if(result)
     {
-        // L12-008: Remove from EA-owned position cache
         RemoveEAOwnedPosition(ticket);
 
         long journalMagic = (long)PositionGetInteger(POSITION_MAGIC);
@@ -910,7 +867,6 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
         return false;
     }
 
-    // L10-013: Use per-symbol CTrade instance to avoid race conditions
     CTrade* symbolTrade = GetSymbolTrade(symbol);
     bool result = symbolTrade.PositionClosePartial(ticket, normalizedVolume);
 
@@ -923,8 +879,7 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
     }
     else
     {
-        // Batch 152 (T-06): report the per-symbol instance's retcode - m_trade is
-        // the unused default and its last retcode belongs to some other operation.
+        // Report the sending instance retcode: m_trade is unused here, so its last retcode is another operation's.
         uint retcode = symbolTrade.ResultRetcode();
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, false,
                           StringFormat("Partial close failed - retcode=%u (%s) | err=%d",
@@ -955,10 +910,8 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0)
         {
-            // Batch 168: magic ownership gate. This is the emergency flatten path,
-            // and it previously closed EVERY position on the account - including
-            // the user's manual trades and other EAs' books - on any circuit
-            // breaker trip. Account-wide flatten now requires an explicit opt-in.
+            // Emergency flatten path: closes only EA-owned magics unless flattenAllAccountPositions is opted in,
+            // otherwise a circuit-breaker trip would also close the user's manual trades and other EAs' books.
             if(!flattenAllAccountPositions &&
                !IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
             {
@@ -982,7 +935,6 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
         PrintFormat("[TRADE-MANAGER] CloseAllPositions skipped %d foreign position(s) (not EA-owned magic) | flatten_all=%s",
                     skippedForeign, flattenAllAccountPositions ? "true" : "false");
 
-    // L12-008: Clear EA-owned position cache after closing all
     ClearEAOwnedPositions();
 
     return allSuccess;
@@ -997,8 +949,7 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
 
     string symbol = PositionGetString(POSITION_SYMBOL);
 
-    // SYMBOL_TRADE_MODE_CLOSEONLY allows modifying existing positions, so we allow it
-    // SYMBOL_TRADE_MODE_DISABLED means no trading at all
+    // Only DISABLED blocks a modify - CLOSEONLY still allows changing stops.
     ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
     if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
     {
@@ -1012,7 +963,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
     int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
 
-    // Validate stop levels against broker minimum distance
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double minDistance = GetMinimumStopDistance(symbol);
     if(minDistance < point * 10) minDistance = point * 10; // Minimum 10 points fallback
@@ -1050,7 +1000,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
         }
     }
 
-    // Auto-normalize TP distance to broker constraints instead of repeatedly skipping.
     if(adjustedTP > 0)
     {
         double tpDistance = MathAbs(referencePrice - adjustedTP);
@@ -1072,7 +1021,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     if(adjustedTP > 0)
         adjustedTP = NormalizeDouble(adjustedTP, digits);
 
-    // Validate SL is on correct side of current price
     if(adjustedSL > 0)
     {
         if(posType == POSITION_TYPE_BUY && adjustedSL >= referencePrice)
@@ -1087,7 +1035,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
         }
     }
 
-    // Validate TP is on correct side of current price
     if(adjustedTP > 0)
     {
         if(posType == POSITION_TYPE_BUY && adjustedTP <= referencePrice)
@@ -1123,7 +1070,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
                     symbol, adjustedSL, adjustedTP, requiredDistance);
     }
 
-    // L10-013: Use per-symbol CTrade instance to avoid race conditions
     CTrade* symbolTrade = GetSymbolTrade(symbol);
     if(symbolTrade.PositionModify(ticket, adjustedSL, adjustedTP))
     {
@@ -1138,7 +1084,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
     {
         UpdatePositionState(ticket, adjustedSL, adjustedTP);
-        // Log no-changes as noop (not a real modification)
         LogTradeOperation("MODIFY_NOOP", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
                          StringFormat("Already at SL=%.5f TP=%.5f", adjustedSL, adjustedTP));
         return true;
@@ -1191,7 +1136,6 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
             if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
             {
                 UpdatePositionState(ticket, retrySL, retryTP);
-                // Log no-changes after widening as noop
                 LogTradeOperation("MODIFY_NOOP", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
                                  StringFormat("Already at widened SL=%.5f TP=%.5f", retrySL, retryTP));
                 return true;
@@ -1219,7 +1163,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         return false;
     }
 
-    // MANDATORY STOP-LOSS GATE: Defense-in-depth �?execution layer enforces SL invariant
+    // Mandatory stop-loss gate: the execution layer rejects any send without an SL.
     if(stopLossPips <= 0.0)
     {
         LogError("EXECUTION BLOCKED: Stop-loss is mandatory. Trade rejected", symbolName);
@@ -1301,7 +1245,6 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.requestedPrice = executionPrice;
         m_lastExecutionReceipt.submitTime = TimeCurrent();
 
-        // L10-013: Use per-symbol CTrade instance to avoid race conditions
         CTrade* symbolTrade = GetSymbolTrade(symbolName);
         if(symbolTrade == NULL)
         {
@@ -1311,12 +1254,10 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             break;
         }
 
-        // Batch 169: configure the fill mode on the instance that will send.
         ApplyFillingModeForSymbol(symbolName, symbolTrade);
 
-        // Set deviation on this symbol's pooled instance: one shared m_slippage meant
-        // a send carried whichever symbol was evaluated last, and points differ in
-        // value across symbols.
+        // Set deviation on this symbol's pooled instance: one shared m_slippage meant a send carried whichever
+        // symbol was evaluated last, and a point's value differs between symbols.
         uint sendDeviation = m_enableDynamicSlippage ? GetDynamicSlippage(symbolName) : m_baseSlippage;
         symbolTrade.SetDeviationInPoints(sendDeviation);
 
@@ -1348,7 +1289,6 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.orderTicket = tradeResult.order;
         m_lastExecutionReceipt.dealTicket = tradeResult.deal;
         m_lastExecutionReceipt.retryCount = retryCount;
-        // FIX: Fallback to requestedPrice if both tradeResult.price and executionPrice are 0
         m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price
                                      : (executionPrice > 0.0) ? executionPrice
                                      : m_lastExecutionReceipt.requestedPrice;
@@ -1363,8 +1303,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         if(pointSize > 0.0 && m_lastExecutionReceipt.requestedPrice > 0.0 && m_lastExecutionReceipt.averagePrice > 0.0)
             m_lastExecutionReceipt.slippagePoints = MathAbs(m_lastExecutionReceipt.averagePrice - m_lastExecutionReceipt.requestedPrice) / pointSize;
 
-        // Realized slippage must be compared to the deviation the order was sent with: a fill that ran
-        // past the accepted deviation is a real cost the strategy edge must absorb.
+        // Realized slippage is compared against the deviation the order was sent with: exceeding it is a real cost.
         if(m_lastExecutionReceipt.slippagePoints > (double)sendDeviation && m_lastExecutionReceipt.slippagePoints > 0.0)
         {
             PrintFormat("[EXECUTION-SLIPPAGE-EXCESS] %s | filled=%.5f vs requested=%.5f | slippage=%.1f pts > deviation=%.1f pts",
@@ -1475,7 +1414,6 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                         m_lastExecutionReceipt.roundTripMs,
                         TimeToString(m_lastExecutionReceipt.submitTime, TIME_DATE | TIME_SECONDS));
 
-            // Log successful trade operation for audit trail (fixes missing trade logs in EA logs)
             string orderTypeStr = EnumToString(orderType);
             string tradeDetails = StringFormat("price=%.5f sl=%.5f tp=%.5f slippage=%.1fpts latency=%I64ums retcode=%u",
                                               m_lastExecutionReceipt.averagePrice,
@@ -1485,7 +1423,6 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                                               m_lastExecutionReceipt.retcode);
             LogTradeOperation("OPEN", symbolName, orderType, m_lastExecutionReceipt.filledVolume, true, tradeDetails);
 
-            // TP/SL calibration diagnostic: log distance to TP and SL at entry
             if(stopLoss > 0.0 || takeProfit > 0.0)
             {
                 double entryPrice = m_lastExecutionReceipt.averagePrice;
@@ -1551,17 +1488,14 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
 }
 
 
-// Check whether symbol trade mode supports requested order type
 bool CTradeManager::IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason)
 {
     return CTradeMgrPricing::IsOrderTypeAllowedForSymbol(symbolName, orderType, reason);
 }
 
-// Current execution price for a market order
 double CTradeManager::GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType)
 {
-    // Phase D T4: moved to CTradeMgrPricing; m_symbolInfo is passed by
-    // reference because the fallback path refreshes it in place.
+    // m_symbolInfo is passed by reference because CTradeMgrPricing's fallback refreshes it in place.
     return CTradeMgrPricing::GetCurrentExecutionPrice(symbolName, orderType, m_symbolInfo);
 }
 
@@ -1645,14 +1579,12 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
 }
 
 
-// Get Round-Trip Commission Cost (entry + exit)
 double CTradeManager::GetRoundTripCommissionCost(const string symbol, const double volume)
 {
     return CTradeMgrPricing::GetRoundTripCommissionCost(symbol, volume);
 }
 
 
-// Get Estimated Swap Cost for holding position overnight
 double CTradeManager::GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                           const double volume, const int estimatedHoldDays)
 {
@@ -1682,7 +1614,6 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
         }
     }
     
-    // Calculate net profit after commission and swap
     double netProfit = profit - commission - swap;
     
     m_tradeStats.RecordTrade(isWin, netProfit);
@@ -1724,7 +1655,7 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                                        const bool useATRTrailing,
                                        const double atrMultiplier)
 {
-    //--- Scan live positions through the ownership authority: the L12-008 ticket cache only ever reaches positions this
+    //--- Scan live positions through the ownership authority: the ticket cache only ever reaches positions this
     //--- process opened synchronously, so after a restart or an async fill surviving positions got no breakeven or trailing stop.
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
@@ -1746,8 +1677,6 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
 
         if(breakevenBuffer > 0)
         {
-            // MoveToBreakeven() replaces the old inline logic, which required BOTH profitPoints >= buffer AND
-            // profitPercent >= 0.3 - nearly impossible on forex (0.3% = 300+ pips on EURUSD).
             MoveToBreakeven(ticket, breakevenBuffer);
         }
 
@@ -1784,10 +1713,8 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         return true;
 
     double newStopLoss = 0;
-// Trailing activation threshold.
-    // activationPoints = distance (the trailing distance itself is the minimum profit needed for the
-    // trailing stop to sit above entry for BUY positions).
-    // Cap activation at 100 points (10 pips) to allow earlier trailing; 300 points was too aggressive for forex.
+    // activationPoints = distance: the minimum profit that keeps the trailing stop above entry for a BUY.
+    // Capped at 100 points (10 pips) so trailing activates on smaller forex moves.
     double activationPoints = MathMin(distance, 100.0);
 
     if(useATR)
@@ -1897,7 +1824,6 @@ bool CTradeManager::OpenPosition(const string symbol,
         return false;
     }
 
-    // L10-005: Check hedging/netting mode compliance
     if(!IsHedgingAllowed(symbol))
     {
         PrintFormat("[TRADE-MGR] OpenPosition blocked: hedging not allowed for %s in netting mode", symbol);
@@ -1912,7 +1838,6 @@ bool CTradeManager::OpenPosition(const string symbol,
     if(validationPrice <= 0.0)
         validationPrice = GetCurrentExecutionPrice(symbol, orderType);
 
-    // Execute the order using the freshest price available at send time.
     bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
 
     if(executed)
@@ -1939,7 +1864,7 @@ bool CTradeManager::OpenPosition(const string symbol,
                         symbol, normalizedVolume, journalVolume);
         }
 
-        // Fall back to the retcode of the instance that actually sent: m_trade.ResultOrder() is the unused
+        // Fall back to the order ticket from the instance that actually sent: m_trade.ResultOrder() is the unused
         // default, so it returned another symbol's last order ticket and poisoned the cache with a foreign ticket.
         ulong journalTicket = (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
                              : (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
@@ -1947,7 +1872,6 @@ bool CTradeManager::OpenPosition(const string symbol,
         JournalTradeOpen(journalTicket, symbol, orderType, journalVolume,
                          journalPrice, journalSL, journalTP, journalMagic, "entry");
         
-        // L12-008: Add to EA-owned position cache
         if(journalTicket > 0)
             AddEAOwnedPosition(journalTicket);
     }
@@ -1955,7 +1879,6 @@ bool CTradeManager::OpenPosition(const string symbol,
     return executed;
 }
 
-// GetTradeStatistics / ResetStatistics are inline forwarders onto CTradeStatsTracker (declared in the class body).
 
 bool CTradeManager::NormalizeAndValidateStops(const string symbol,
                                              const ENUM_ORDER_TYPE orderType,
@@ -1969,7 +1892,7 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
 }
 
 // Split across CTradeMgrAsyncExecutor: guards over async state live in CheckSendGuards(); volume/price/preflight stay
-// here because they need CTradeManager-owned pricing, ATR cache and slippage config. Order of operations is byte-for-byte unchanged.
+// here because they need CTradeManager-owned pricing, ATR cache and slippage config.
 bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
                                    double lot, double price, double sl, double tp,
                                    ulong magic, int timeoutMs)
@@ -1977,8 +1900,7 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     if(!m_asyncExecutor.CheckSendGuards(symbol, lot))
         return false;
 
-    // Batch 152 (T-04): defense-in-depth parity with the sync path - the async
-    // submission bypassed the mandatory-SL gate and could ship a naked position.
+    // Parity with the sync path: without this gate an async submission could ship a naked position.
     if(sl <= 0.0)
     {
         PrintFormat("[EXECUTION-BLOCKED] %s | reason=MandatoryStopLoss | path=async", symbol);
@@ -2012,12 +1934,10 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     ApplyFillingModeForSymbol(symbol);
     UpdateDynamicSlippage(symbol);
 
-    // Build the request, submit via OrderSendAsync and record it as pending
     return m_asyncExecutor.SubmitAsync(orderType, symbol, normalizedLot, executionPrice, sl, tp,
                                        magic, timeoutMs, m_slippage, m_orderFillMode);
 }
 
-// Process trade transaction event (call from OnTradeTransaction)
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
                                             const MqlTradeRequest &request,
                                             const MqlTradeResult &result)
@@ -2025,7 +1945,6 @@ void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
     m_asyncExecutor.ProcessTradeTransaction(trans, request, result, m_execQuality);
 }
 
-// Check for timed-out async trades (call from OnTimer)
 void CTradeManager::CheckAsyncTimeouts()
 {
     m_asyncExecutor.CheckAsyncTimeouts(m_execQuality);
@@ -2041,13 +1960,11 @@ ulong CTradeManager::GetPendingAsyncTicket(int index) const
     return m_asyncExecutor.GetPendingAsyncTicket(index);
 }
 
-// Persist async trade request to CSV for replay on restart
 void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
 {
     CTradeMgrAsyncExecutor::PersistAsyncTradeRequest(asyncTrade);
 }
 
-// Replay async trade requests from CSV on EA restart
 void CTradeManager::ReplayAsyncTradeRequests()
 {
     m_asyncExecutor.ReplayAsyncTradeRequests();
@@ -2058,7 +1975,6 @@ bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
     return m_asyncExecutor.IsDuplicateIdempotencyKey(key);
 }
 
-// Clean up confirmed/expired persisted async trades
 void CTradeManager::CleanupPersistedAsyncTrades()
 {
     CTradeMgrAsyncExecutor::CleanupPersistedAsyncTrades();

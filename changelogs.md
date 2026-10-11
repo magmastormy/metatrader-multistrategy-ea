@@ -8,6 +8,38 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 185: Comment reduction in the three densest files — and a spread gate called with transposed arguments
+
+#### Context
+Fourth round of the comment workstream, aimed at the three files carrying the most whole-line comments in the repository: the execution authority, the pre-trade pipeline, and the chart layer.
+
+#### Changed (whole-line comments, before -> after)
+| File | Before | After |
+|---|---|---|
+| `Core/Trading/TradeManager.mqh` | 153 | 69 |
+| `Core/Pipeline/UnifiedSignalPipeline.mqh` | 76 | 16 |
+| `Core/Visualization/ChartDrawingManager.mqh` | 94 | 22 |
+
+Repo-wide **7,645 -> 7,429 (-216)**, measured at the commit before and after (Batch 182's "repo at 7,643" was correct then; 183 and 184 each added two constraint lines). Non-comment lines byte-identical to `HEAD` in all three files; no code, blank line, trailing comment or block comment touched.
+
+#### Kept because losing it would cost money
+- `TradeManager`: a transient retcode (`REQUOTE` / `PRICE_CHANGED` / `CONNECTION_LOSS`) can follow a fill the server already executed, so resending opened a **second full-risk position** — if this send's position exists, accept it. The position cache must hold position tickets, not deal tickets, or `PositionSelectByTicket` always fails and breakeven/trailing go dead. Deviation is set on the symbol's pooled `CTrade` instance because one shared `m_slippage` meant a send carried whichever symbol was evaluated last, and a point's value differs between symbols. `LOCKED`/`FROZEN` allows exactly one bounded retry to avoid a stall loop.
+- `UnifiedSignalPipeline`: gate order *is* the semantics — the first veto short-circuits every later gate; the intrabar effective confidence is `min(base + intrabarConfidenceCap, regime threshold)`, so the cap binds in `RANGE` too; engines are owned by the registry, not the pipeline.
+- `ChartDrawingManager`: the object cap compares **every** object on the chart (`ObjectsTotal`) while cleanup deletes only this manager's prefixed ones; every draw method ignores `PrepareSnapshotDraw()`'s return, so hitting the limit triggers cleanup but never blocks the draw; redraw is debounced to once per second.
+
+#### Nine pre-existing comments described code that does not exist
+Deleted after verification rather than softened: a netting "check if there's already an opposite position" that returns `true` unconditionally; *"the freshest price available at send time"* above a `validationPrice` that is computed and then never passed; "all required engines are available AND healthy" and "availability AND readiness" when only the trend engine has any state check; "weekend = +0.05" for a weight boost that is `0.0` on FX and `0.05` only on synthetic weekends; an "immutable snapshot lifecycle that deduplicates by bar time and removes stale objects" with no such logic in the function; "Enforces global MT5 1000-object limit" for a comparison against `m_maxObjects`, which is 450; `// Delete Object` above `CheckObjectLimitAndCleanup`. One was corrected in place instead of deleted: the ticket fallback comment said "retcode" where the code falls back to the sending instance's **order ticket**.
+
+#### Two live defects found by checking, queued as their own batches
+A risk change never rides in a hygiene commit, so neither is fixed here:
+1. **`PostConsensusValidator.mqh:292` calls `ApplySpreadFilter` with transposed arguments.** Signature (`UnifiedSignalPipeline.mqh:129`): `(symbol, double &spreadScore, overrideThreshold, atrValue)`. Call site passes `(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)`. So `atrValue` is bound to the by-reference out-param and is **overwritten with the computed ratio**; `spreadScore` (0.0 there) lands in `overrideThreshold`, failing the `> 0.0` test so the symbol-appropriate 0.30/0.50 ratio configured in Batch 175 is discarded for the generic default; and `effectiveSpreadATRRatio` is used *as* the ATR, making `ratio = spread / 0.3` dimensionally wrong. Net: the exogenous spread gate vetoes wide-price synthetic entries, is inert on tight-spread FX, reports `result.spreadScore = 0`, and prints a fabricated ATR in its own reason string. This is the only call site. -> Batch 187.
+2. **`TradeManager.mqh:157-163` `IsHedgingAllowed` returns `true` on both branches**, so the pre-send gate at `:1827` can never block and its `[TRADE-MGR] OpenPosition blocked: hedging not allowed` line is unreachable. The design assumes independent per-strategy positions; on a netting account a second signal nets against the first and breaks SL/TP ownership, risk accounting and attribution. The operator's account is hedging — the 2026-09-23 journal shows a BUY and a SELL on XAUUSD seconds apart with distinct position tickets, which netting would not produce — so this is latent. `validationPrice` (`:1837-1839`) is dead in the same function. -> Batch 186.
+
+#### Verification
+- Assertions written by this round were each grep-checked: `ApplySpreadFilter` has exactly one caller; `ConfigureCostLimits` has one definition (`RegimeEngine.mqh:129`) and one call site; `m_lastHealthCheckTime` is declared, initialized and stamped but read nowhere; the object cap and prefix filter were read directly at `:732`/`:754`; no `OrderSend`/`CTrade`/`PositionOpen` exists in the pipeline file.
+- Non-comment lines byte-identical to `HEAD`: 3 files, **0 differences**.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
 ### Batch 184: The AI retrain effectiveness check could never pass
 
 #### Context
