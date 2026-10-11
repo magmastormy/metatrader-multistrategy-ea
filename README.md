@@ -314,6 +314,14 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **README no longer lists `InpCorrelationBlockThreshold`** — that input does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate, and the sizer's correlation path is switched off in code.
 - **Two known gaps are stated rather than implied:** the margin gate's 80% free-margin / 200% margin-level ceiling has no knob (a rejection prints the threshold in force), and grid level tickets are in-memory only, so a terminal restart leaves open grid positions untracked by the engine until their own SL/TP. Both are in the changelog's open list.
 
+### Batch 178: three trading engines are enabled by their inputs and wired to nothing
+
+`InpGridRecoveryEnabled`, `InpATRScalpingEnabled` and `InpSpikeHunterEnabled` all default to `true`. Each of those engines initializes, registers its symbols per Deriv profile, prints a line saying it is enabled, and is deinitialized on shutdown — and nothing ever calls its tick routine, so it opens zero trades. The init lines do say `PARKED`, and `[ENGINE-STATUS]` now prints the whole set once at startup, naming each parked engine and the input that claims it is on.
+
+If your logs show no grid, spike or ATR-scalp entries, that is the reason: they were never connected to the loop, not a signal problem. **Wiring them in is deliberately not done here.** It would start real orders from three strategies that have never traded on this account, at lots from sizing paths that have never run — every other fix in this audit reduces risk, and this one would create exposure. Treat it as a strategy-activation decision: choose the engines and symbols you actually want trading, then wire the tick loop behind that choice, on a small book first.
+
+Two items are therefore latent rather than live, and sit behind the same decision: grid level state is in-memory only (nothing to reconcile while the grid never trades), and the ATR-scalp magic band (`base + 7000 + symbolIndex`) overlaps the `ASSET_FOREX` asset offset — positions are separated today by send comments, not by magic.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

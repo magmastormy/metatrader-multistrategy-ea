@@ -1364,6 +1364,21 @@ Print("[ATR-SCALP] Initialization FAILED");
 }
 }
 
+// Batch 178: three engines take an enable input that defaults ON, initialize, register their
+// symbols and deinit -- and have no tick-loop caller, so they open nothing. Each prints its own
+// PARKED line above, but the "[INIT] ... enabled" lines around them read as live trading, so name
+// the whole set once with the input responsible for each.
+string parkedEngines = "";
+if(m_config.spikeHunterEnabled)
+parkedEngines += (parkedEngines == "" ? "" : ", ") + "SPIKE-HUNT (InpSpikeHunterEnabled)";
+if(m_config.gridRecoveryEnabled)
+parkedEngines += (parkedEngines == "" ? "" : ", ") + "GRID-RECOVERY (InpGridRecoveryEnabled)";
+if(m_config.atrScalpingEnabled)
+parkedEngines += (parkedEngines == "" ? "" : ", ") + "ATR-SCALP (InpATRScalpingEnabled)";
+PrintFormat("[ENGINE-STATUS] tick-loop driver: %s | initialized but parked, no ProcessTick caller, opens zero trades: %s",
+            m_config.enableScalpEngine ? "FAST-SCALP" : "none",
+            parkedEngines == "" ? "none" : parkedEngines);
+
 m_diagnosticsManager.SetDerivProfiler(m_multiAssetProfiler.GetDerivProfiler());
 m_diagnosticsManager.SetMultiAssetProfiler(&m_multiAssetProfiler);
 string profilerSymbols[];

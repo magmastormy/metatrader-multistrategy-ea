@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 177 - the four engine send paths now confirm fills from the position book (a `DONE_PARTIAL` or a lost response no longer reads as "no trade", which had them re-firing into duplicate exposure), and grid levels store the position ticket their own close path requires. Batch 176 removed dead configuration surface and corrected three logs that described controls which never ran. Batch 175 plugged the post-consensus validator into its own configuration (OFI and VPIN screening had never run despite both inputs defaulting ON). Batch 174 armed the VPIN veto; Batch 173 applied the live-authority ladder to the shipped lot.
+- Latest Batch: Batch 178 - `[ENGINE-STATUS]` reports at startup which scalp-class engines their inputs claim are ON but nothing ever ticks: spike-hunter, grid-recovery and ATR-scalp initialize, register symbols and deinit with no `ProcessTick` caller, so they open zero trades. Batch 177 gave the engine send paths fill confirmation and fixed the grid's order-vs-position ticket. Batch 176 removed dead configuration surface. Batch 175 plugged the post-consensus validator into its own configuration (OFI and VPIN screening had never run despite both inputs defaulting ON).
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
@@ -74,6 +74,7 @@ After any strategy/risk/execution change, verify:
 - `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or live trade result logs
 - `[POST-CONSENSUS-FILTER] filter=vpin_extreme | VETO` (if VPIN enabled; since Batch 174 the EXTREME regime vetoes entries at `InpVPINExtremeThreshold` instead of only shrinking the lot, and since Batch 175 the arm is actually switched on by its input)
 - `[VALIDATOR-CONFIG]` once per symbol at init (Batch 175: the validator's only configuration call site; if it is absent from a session log, no symbol has OFI/VPIN screening)
+- `[ENGINE-STATUS]` once at init (Batch 178: names the engines whose inputs say ON but that have no tick-loop caller, so they open no trades)
 - `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` (only where a trade cannot be sized inside the per-trade cap at the broker minimum)
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
