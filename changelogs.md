@@ -8,6 +8,24 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 176: Dead configuration surface found by diffing declarations against call sites
+
+#### Context
+Batch 175's defect class — a method declared, defined and forwarded, with no caller — was searched for across `Core/Risk`, `Core/Management`, `Core/Orchestration`, `Core/Trading`, `Core/Position`, `Core/Scalp`, `Core/Engines` and `Core/Pipeline` by collecting every `Set*`/`Configure*` declaration and counting its references repo-wide, including the root `.mq5` programs. Every surviving name was then re-checked by hand against its own file, which mattered: one reported disagreement between the risk gate's and the sizer's correlation thresholds turned out to be wrong (both default to 0.4 reduce / 0.7 block).
+
+#### Changed
+- **`CVPINFilter`'s shadow classification field deleted** (`m_classificationMode`, `SetClassificationMode`). `ClassifyTick` reads `m_classifyMode`, which the constructor sets; the twin was written only by a setter nobody called, yet the `[VPIN] Constructed | ... mode=%d` line printed *the twin*. The init log therefore reported a classification mode that had never influenced a classification, and Batch 174/175 had just made VPIN a live veto. The log now prints the field that is actually used.
+- **`CRiskMarginHealth`'s false comment corrected**: `// Use configurable max free margin usage` on a value that is fixed at construction. `SetMaxFreeMarginUsage` / `SetMinMarginLevel` have no caller and no operator input feeds either knob, so the pre-trade margin gate runs at 80% free-margin usage and 200% margin level permanently. Left as-is: the rejection message prints the threshold in force, so a trader who hits the ceiling can read it. Recorded in SYSTEM_STRUCTURE.md.
+- **`README.md` no longer advertises `InpCorrelationBlockThreshold`.** That input exists in no `.mq5` file — it was documentation of a knob that was never added. The row now states what is true: correlation is enforced once, in the pre-trade gate (`EAOrchestrator.mqh:853-854`), and the sizer's correlation path is explicitly switched off at `:886`, so `CPositionSizer::SetCorrelationThresholds` is dead API rather than a missing control.
+- **`[ENTERPRISE-CONFIG]`'s validator description made accurate.** It printed `validator_mode=EXOGENOUS_ONLY` (stale before Batch 175, wrong after it) and listed the confidence and confluence floors among "validator_profile_inputs" as if they gated anything. The line now names the arms that actually run (`spread_cutoff+exogenous_atr+quality+ofi+vpin`) and marks the two floors that are printed but enforce nothing.
+
+#### Deliberately not touched
+- `CUnifiedRiskManager::SetTradingDayStartHour` (no caller; the daily risk window rolls at server midnight), `CPositionLifecycleManager::ConfigurePyramiding` / `ConfigureDynamicSL` / `ConfigureLossMinimization` and their `CPositionManager` twins (pyramiding and adverse-momentum exit stay off; the loss guard's *daily budget* was separately wired in Batch 170), and `SetRegimeEngine` (stays NULL, so the regime branch it guards is unreachable). None has an input behind it, so wiring any of them would be inventing policy or adding a feature, not repairing a broken promise — each is listed with its live consequence in SYSTEM_STRUCTURE.md's register instead.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**. `grep` confirms zero remaining references to the deleted field or setter.
+- No behavior change intended in this batch except the corrected `[VPIN]` mode value. Everything else is comment, log and documentation truthfulness.
+
 ### Batch 175: The post-consensus validator had no configuration call site, so two operator-enabled filters never ran
 
 #### Context

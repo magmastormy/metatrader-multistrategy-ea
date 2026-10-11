@@ -51,7 +51,7 @@ public:
         // Check available margin
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
 
-        if(marginRequired > freeMargin * m_maxFreeMarginUsage) // Use configurable max free margin usage
+        if(marginRequired > freeMargin * m_maxFreeMarginUsage) // Fixed at construction: SetMaxFreeMarginUsage has no caller and no input feeds it
         {
             message = StringFormat("Insufficient margin: required %.2f, available %.2f (threshold: %.0f%%) [mode: %s]",
                                  marginRequired, freeMargin, m_maxFreeMarginUsage * 100.0,

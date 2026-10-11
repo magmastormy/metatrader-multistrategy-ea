@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| `InpCorrelationBlockThreshold` | 0.7 | Correlation block threshold |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`EAOrchestrator.mqh:853-854`); the `CPositionSizer` correlation path is explicitly disabled at `:886`. |
 
 ### AI Integration
 | Parameter | Default | Description |

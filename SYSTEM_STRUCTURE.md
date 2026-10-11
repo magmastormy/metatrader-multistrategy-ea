@@ -1263,6 +1263,13 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 | Volume-data capability | `COrchestratorMathEngineHub::HasOnlyTickVolume` | `MqlRates.real_volume` probe; synthetic-index symbols get no OFI/VPIN engines and tick-volume-only symbols are labelled with `[VOLUME-PROXY]`. |
 
 - `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` remains stored but unread (`IsSparseIntrabarSingleVoterAllowed` has no caller); it is not a bypass of the voter floor.
+- Configuration entry points with no caller anywhere, found by diffing every `Set*/Configure*` in `Core/` against its call sites (Batch 176). None has an operator input behind it, so these are unsettable features rather than misreported inputs — the distinction matters, and each is listed with what actually runs:
+  - `CRiskMarginHealth::SetMaxFreeMarginUsage` / `SetMinMarginLevel` (`Core/Risk/RiskMarginHealth.mqh:199/209`) — **this one gates live money**: the pre-trade margin check runs on the construction defaults 80% free-margin usage and 200% margin level, and its rejection message prints those numbers, so an operator reading a rejection can see the ceiling in force.
+  - `CUnifiedRiskManager::SetTradingDayStartHour` (`UnifiedRiskManager.mqh:225`) — the daily risk window rolls at server midnight.
+  - `CPositionSizer::SetCorrelationThresholds` (`PositionSizer.mqh:805`) — dead API, not a missing control: the sizer's correlation path is switched off at `EAOrchestrator.mqh:886` and the pre-trade gate owns the one enforced pair.
+  - `CPositionLifecycleManager::ConfigurePyramiding` / `ConfigureDynamicSL` / `ConfigureLossMinimization` (`PositionLifecycleManager.mqh:158/163/168`) and their `CPositionManager` twins — pyramiding and adverse-momentum exit stay off; `CPosLifecycleLossGuard`'s *daily budget* is separately wired (Batch 170), so only these three arms are unsettable.
+  - `CPositionLifecycleManager::SetRegimeEngine` (`:189`) — stays NULL, so the regime branch it guards is unreachable.
+  - `CVPINFilter::SetClassificationMode` and its `m_classificationMode` shadow field — **deleted in Batch 176**: `ClassifyTick` reads `m_classifyMode` (set by the constructor), while the init log printed the decorative twin, so the line reported a mode that never affected classification.
 - `CStatisticalArbitrageStrategy` abstains (`[STATARB-UNHEDGED]`) because only one leg of a pair signal is executable; `ExecutePairTrade` has no callers.
 
 ## 5. Data and Control Boundaries

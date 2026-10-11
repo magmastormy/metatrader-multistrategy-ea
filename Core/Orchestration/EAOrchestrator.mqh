@@ -1887,7 +1887,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 VALIDATOR_BASE_SPREAD_ATR_RATIO,
                 VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO,
                 m_config.spikeHunterEnabled ? "set(no-op branch)" : "OFF");
-    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_single_voter=%s | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_single_voter=%s | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) — only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
     symbol,
     symbolClass,
     symbolProfile,

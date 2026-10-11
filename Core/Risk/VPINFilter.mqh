@@ -65,9 +65,6 @@ private:
     bool               m_bucketSizeAuto;       // Set when bucketVolumeSize arrived as 0
     bool               m_bucketSizeResolved;   // Cleared again by Reset() while auto
 
-    // Mode written by SetClassificationMode
-    ENUM_VPIN_CLASSIFICATION m_classificationMode;
-
     double             m_prevTickPrice;        // Previous tick price for tick rule
     bool               m_prevTickIsBuy;        // Previous tick classification (true=buy, false=sell)
     bool               m_firstTick;            // True until first tick is processed
@@ -309,13 +306,7 @@ public:
             PrintFormat("[VPIN] Constructed | symbol=%s | bucketVol=%.0f (%s) | numBuckets=%d | extremeThreshold=%.2f | mode=%d",
                         m_symbol, m_bucketVolumeSize,
                         m_bucketSizeAuto ? "auto" : "manual",
-                        m_numBuckets, m_extremeThreshold, m_classificationMode);
-        }
-
-        void SetClassificationMode(ENUM_VPIN_CLASSIFICATION mode)
-        {
-            m_classificationMode = mode;
-            PrintFormat("[VPIN] Classification mode set to %d", mode);
+                        m_numBuckets, m_extremeThreshold, m_classifyMode);
         }
 
     ~CVPINFilter()
