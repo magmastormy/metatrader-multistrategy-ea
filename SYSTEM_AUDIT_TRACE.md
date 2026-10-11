@@ -1578,6 +1578,17 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged. §3.1 is moot for engines that never send; §3.2 remains unmet for the fast-scalp pending path by the same reasoning as Batch 177; §3.5 deinit untouched.
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
 
+## Batch 187 Hedging Gate Made Able to Refuse (2026-10-12)
+
+- **Guard before:** `IsHedgingAllowed` returned `true` on both branches, so `OpenPosition`'s check at `:1826` was structurally incapable of firing and its blocked-log line was unreachable. The trailing comment claimed netting was "handled by broker", which no code in the EA relies on or reconciles.
+- **Guard after:** returns `m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`. One caller, so no path that expected unconditional acceptance was changed by accident.
+- **Why fail closed is correct here:** the EA's book is per strategy — per-symbol position caps, magic-scoped accounting, `RegisterExecutedTradeRisk` per trade, per-position SL/TP through the position state registry. On netting a second signal nets against the first: the merged position keeps whichever stop was written last, the daily budget is charged twice for one position, and attribution names a position no strategy opened alone. Nothing recovers from that, so an account that cannot host the model should not trade.
+- **Refusal is loud:** `[TRADE-MGR] OpenPosition blocked: <symbol> needs a hedging account, this one is <mode> | entries are refused because per-strategy books cannot be kept on a netted position`. Margin mode is also printed once at init (`:152`).
+- **Current account:** unaffected. The 2026-09-23 journal shows a BUY and a SELL on XAUUSD seconds apart with distinct position tickets, which netting would not produce.
+- **Dead code removed:** `validationPrice` in `OpenPosition` was assigned, refreshed from `GetCurrentExecutionPrice` when non-positive, and never read; the send ships `price`. Its companion comment ("freshest price available at send time") was deleted in Batch 185.
+- **§3 invariants:** §3.1 unchanged (the gate runs before any send, not instead of risk gating); §3.2 unchanged; §3.3 unchanged.
+- **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 186 Exogenous Spread Gate Arguments and the Last Silent Veto (2026-10-12)
 
 - **Edge before:** `ValidateSignal -> CheckExogenousFilters -> ApplySpreadFilter(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)` against a signature of `(symbol, double &spreadScore, overrideThreshold, atrValue)`. `atrValue` was bound to the by-reference out-param and overwritten with the computed ratio; `spreadScore` (0.0) landed in `overrideThreshold`, so the `> 0.0` test failed and the gate used `maxSpreadToAtrRatio` (0.25) instead of the 0.30/0.50 per-class ratios; and 0.30/0.50 was used *as* the ATR, making `spread / constant` the veto quantity.

@@ -8,6 +8,34 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 187: The hedging gate could not refuse, and the send path computed a price it never used
+
+#### Context
+The second defect Batch 185's verification queued. `CTradeManager::IsHedgingAllowed` read:
+
+```
+if(m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
+    return true;
+return true; // Allow for now, netting handled by broker
+```
+
+Both branches returned `true`, so the guard at the top of `OpenPosition` could never fire and its `[TRADE-MGR] OpenPosition blocked` line was unreachable. The comment asserted a broker-side resolution that nothing in the EA accounts for.
+
+#### Why this is a real hazard and not decoration
+The EA keeps a separate book per strategy: per-symbol position caps, magic-scoped accounting, `RegisterExecutedTradeRisk` per trade, and per-position SL/TP written through the position state registry. On a netting account a second signal on the same symbol does not open a second position — it **nets against the first**, so the merged position carries whichever stop the last writer set, the daily budget is charged for two trades while the broker holds one, and attribution describes a position no single strategy opened. There is no code path that reconciles that; the assumption is hedging.
+
+#### Changed
+- `Core/Trading/TradeManager.mqh:157-161`: `IsHedgingAllowed` returns `m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`. Refusal now reaches its log, which names the symbol, the actual margin mode, and the reason: *entries are refused because per-strategy books cannot be kept on a netted position*. `ACCOUNT_MARGIN_MODE` is already printed once at init (`:152`), so the mode is visible before the first refusal too.
+- `:1836-1838` deleted: `validationPrice` was assigned from `price`, refreshed from `GetCurrentExecutionPrice` when non-positive, and then **never read** — the send ships `price`. A comment claiming the order executed "using the freshest price available at send time" was describing this dead value; Batch 185 removed that comment, this removes the value.
+
+#### Consequence for the operator
+On the current account, nothing changes: the September journals show a BUY and a SELL on XAUUSD seconds apart receiving distinct position tickets, which netting would not produce, so the account is retail hedging. If the EA is ever attached to a netting or exchange-netting account, **every entry is refused** with the message above. That is deliberate — a loud refusal is recoverable, an unexplained netted book is not.
+
+#### Verification
+- `IsHedgingAllowed` has exactly one caller (`:1826`), so the change cannot affect a path that expected `true`.
+- `validationPrice` had no read site anywhere in the repository before deletion.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
 ### Batch 186: The exogenous spread gate was reading the wrong values, and refusing trades with no log
 
 #### Context

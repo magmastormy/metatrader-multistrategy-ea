@@ -153,13 +153,12 @@ private:
            }
         }
 
-// Hedging gate is a no-op today: both branches return true, netting resolution is left to the broker.
+// Refuses a non-hedging account: the EA keeps per-strategy books, and on netting a second
+// signal nets against the first, so SL/TP, risk accounting and attribution all describe a
+// position that is no longer the one any single strategy opened.
         bool IsHedgingAllowed(const string symbol) const
         {
-           if(m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
-              return true;
-       
-           return true; // Allow for now, netting handled by broker
+           return m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING;
         }
 
             double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
@@ -1826,17 +1825,14 @@ bool CTradeManager::OpenPosition(const string symbol,
 
     if(!IsHedgingAllowed(symbol))
     {
-        PrintFormat("[TRADE-MGR] OpenPosition blocked: hedging not allowed for %s in netting mode", symbol);
+        PrintFormat("[TRADE-MGR] OpenPosition blocked: %s needs a hedging account, this one is %s | entries are refused because per-strategy books cannot be kept on a netted position",
+                    symbol, EnumToString(m_accountMarginMode));
         return false;
     }
 
     // Forward the caller's magic decision to the send site: writing base+offset into the unused default m_trade
     // left the real send on the pool stamped with the bare base magic, so every strategy shipped an identical magic.
     m_pendingExplicitMagic = (ulong)magicNumber;
-
-    double validationPrice = price;
-    if(validationPrice <= 0.0)
-        validationPrice = GetCurrentExecutionPrice(symbol, orderType);
 
     bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
 
