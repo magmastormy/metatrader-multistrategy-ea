@@ -8,6 +8,22 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 183: The async trade journal could index past a short record and stop the EA at load
+
+#### Context
+Found while verifying a comment Batch 182 deleted. `TradeMgrAsyncExecutor` persists its pending async trade requests to a CSV-like common file and, on load, compacts that file: it rewrites only the records that are neither confirmed nor expired. The compaction reader guarded the field count at `if(count < 11) continue;` and then read `fields[11]` — so any record with exactly 11 comma-separated fields passed the guard and indexed one element past the array.
+
+#### Why it matters
+The journal is 17 columns (`ticket,symbol,orderType,lot,price,sl,tp,magic,submitTime,timeoutMs,confirmed,expired,idempotencyKey,retryCount,persisted,persistedTime,comment`, header written at `:284` and `:451`), so `confirmed` is index 10 and `expired` is index 11. A short line is exactly what a crash mid-write leaves behind: the last record is truncated, not absent. MQL5 raises a runtime error on out-of-range array access, so the failure mode was **the EA stopping during initialization**, in the routine that decides which unconfirmed async requests to re-adopt — the one moment where losing track of an in-flight order costs real money. The main loader at `:338` guards `count < 17` and was never at risk; only the compaction path was.
+
+#### Changed
+- `Core/Trading/TradeMgrAsyncExecutor.mqh:431-442`: the guard is now `count < 12`, and a record that fails it is **kept** rather than skipped, with `[ASYNC-TRADE-JOURNAL] Malformed record kept for inspection | fields=%d | line=%s`. Dropping it would have been the quieter wrong answer: the loader would ignore that line anyway, so deletion only destroys the evidence an operator would need to explain a missing re-adoption. Keeping it preserves the record and makes the anomaly visible, which is the same rule Batch 173 applied to refusals.
+
+#### Verification
+- Confirmed no other site reads past the guard: `fields[11]` appears twice, at `:351` (under `count < 17`, indices used up to 16) and at the fixed site.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- Behavior for well-formed 17-column files is unchanged; only short lines take the new branch.
+
 ### Batch 182: Comment reduction, Core/Strategy, Core/Trading and Core/AI — 280 lines and two live defects found
 
 #### Context

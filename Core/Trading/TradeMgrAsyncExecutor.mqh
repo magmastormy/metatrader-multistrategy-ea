@@ -430,7 +430,16 @@ public:
 
             string fields[];
             int count = StringSplit(line, ',', fields);
-            if(count < 11) continue;
+            // fields[10]/fields[11] are confirmed/expired; a short line (a record truncated by a
+            // crash mid-write) must not be indexed past its size, and must not be dropped either.
+            if(count < 12)
+            {
+                PrintFormat("[ASYNC-TRADE-JOURNAL] Malformed record kept for inspection | fields=%d | line=%s", count, line);
+                int keepSize = ArraySize(lines) + 1;
+                ArrayResize(lines, keepSize);
+                lines[keepSize - 1] = line;
+                continue;
+            }
 
             bool confirmed = StringToInteger(fields[10]) == 1;
             bool expired = StringToInteger(fields[11]) == 1;

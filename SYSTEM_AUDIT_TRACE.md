@@ -1578,6 +1578,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged. §3.1 is moot for engines that never send; §3.2 remains unmet for the fast-scalp pending path by the same reasoning as Batch 177; §3.5 deinit untouched.
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
 
+## Batch 183 Async Trade Journal Compaction, Out-of-Range Read (2026-10-12)
+
+- **Load path before:** `FileOpen(...FILE_READ)` -> per line `StringSplit(',')` -> `if(count < 11) continue;` -> `fields[10]`/`fields[11]` -> survivors rewritten from scratch. The journal is 17 columns, so index 11 requires `count >= 12`; a truncated last record (a crash during the previous `FILE_WRITE`) passed the guard and read past the array.
+- **Failure mode:** MQL5 raises a runtime error on out-of-range array access, so initialization aborted inside the routine that decides which unconfirmed async requests to re-adopt. The main loader (`:338`, guards `count < 17`) was never exposed.
+- **Lifecycle after:** a short record takes a new branch — it is appended to the survivors unchanged and reported with `[ASYNC-TRADE-JOURNAL] Malformed record kept for inspection | fields=%d | line=%s`. Deletion would have been the quieter wrong outcome: the 17-column loader ignores the line either way, so dropping it only removes the evidence.
+- **State added:** none. No new fields, files, or counters.
+- **§3 invariants:** unchanged. Execution ownership and the EA-loop lifecycle are untouched; this is the persistence reader, not the send path.
+- **Found by:** verifying a comment Batch 182 had deleted, rather than by testing. `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 warnings. Well-formed files behave exactly as before.
+
 ## Batch 179 Runtime Evidence Harvest, and the Scalp Budget That Refunded Itself (2026-10-12)
 
 - **Evidence source, and its limit:** the terminal's EA journals in `MQL5/Logs/` (20260917 / 18 / 19 / 23) are UTF-16LE and must be converted before grepping. The newest closes 23 September 19:01 — this EA has not been attached to a chart during the October batches, so `[AUTHORITY-REDUCED]`, `[VALIDATOR-CONFIG]`, `[ENGINE-STATUS]`, `[RISK-GATE-REJECT]` and the VPIN veto have **no** runtime evidence and will not until the operator attaches it. What the journals can settle is whether the pre-October claims about the *old* behavior were right.
