@@ -1578,6 +1578,17 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged. §3.1 is moot for engines that never send; §3.2 remains unmet for the fast-scalp pending path by the same reasoning as Batch 177; §3.5 deinit untouched.
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
 
+## Batch 186 Exogenous Spread Gate Arguments and the Last Silent Veto (2026-10-12)
+
+- **Edge before:** `ValidateSignal -> CheckExogenousFilters -> ApplySpreadFilter(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)` against a signature of `(symbol, double &spreadScore, overrideThreshold, atrValue)`. `atrValue` was bound to the by-reference out-param and overwritten with the computed ratio; `spreadScore` (0.0) landed in `overrideThreshold`, so the `> 0.0` test failed and the gate used `maxSpreadToAtrRatio` (0.25) instead of the 0.30/0.50 per-class ratios; and 0.30/0.50 was used *as* the ATR, making `spread / constant` the veto quantity.
+- **Edge after:** arguments in declared order. Same five-arm sequence, same short-circuit order.
+- **Effect on decisions:** inert on FX, rejecting on wide-price instruments (`XAUUSD` 25 pts -> 0.83 vs a 0.25 threshold; a 1,727-pt synthetic spread -> 34.5). Gold and synthetic candidates now reach candidate building from this gate; FX effectively unchanged.
+- **Lifecycle change (visibility):** `EAOrchestrator.mqh:3467-3471` turns `!validation.passed` into `IncValidatorRejects(); continue;` with no print. Every other arm printed its own line; this one did not, so its refusals were unobservable and the journal reading of "no spread vetoes ever happened" was not evidence. Both branches now print `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr`.
+- **No knob:** `m_baseSpreadATRRatio` / `m_syntheticSpreadATRRatio` are constructor constants (`VALIDATOR_BASE_SPREAD_ATR_RATIO` / `VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO`), settable only through `SetValidatorConfig`, which the orchestrator calls with those constants. A future session wanting to loosen this gate cannot do it from an input.
+- **§3 invariants:** unchanged. Still one authority per veto, still pre-`CUnifiedRiskManager` admission, and the veto only ever refuses — it cannot enlarge a position.
+- **Evidence owed:** `filter=spread_vs_atr` counts and gold/synthetic candidate volume from the first attached session. Newest journal remains 23 September.
+- **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 184 AI Retrain Effectiveness Decision (2026-10-12)
 
 - **Decision path before:** `TriggerRetraining(reason)` -> pause guard -> **overwrite** `m_preRetrain{Accuracy,Profitability,Sharpe}` from `m_currentMetrics` -> effectiveness check comparing `m_currentMetrics` against those same values plus an epsilon -> `m_consecutiveFailedRetrains++` -> third failure sets `m_retrainPauseUntil = now + 3600`. The baseline and the measurement were the same read, so the branch could only ever take the "ineffective" path.

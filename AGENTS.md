@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 185 - comment-only reduction in the three densest files (`TradeManager` 153->69, `UnifiedSignalPipeline` 76->16, `ChartDrawingManager` 94->22; repo at 7,429). Nine pre-existing comments described code that does not exist and were deleted. Verifying them queued two live defects: `PostConsensusValidator.mqh:292` calls `ApplySpreadFilter` with transposed arguments, so the exogenous spread gate runs with a ratio as the ATR, discards its configured threshold, and clobbers `atrValue` through a by-reference out-param (Batch 187); and `IsHedgingAllowed` returns true on both branches, making its pre-send block unreachable (Batch 186). Batch 184 fixed a retrain check that could never pass; Batch 183 fixed a journal read that could stop the EA during load.
+- Latest Batch: Batch 186 - `PostConsensusValidator.mqh:292` called `ApplySpreadFilter` with three arguments in the wrong slots: the ATR was bound to the by-reference out-param and overwritten, the ratio override arrived as 0 so the configured 0.30/0.50 was discarded for the 0.25 default, and the ratio was used as the ATR - inert on FX, rejecting on gold and synthetics. That arm was also the only veto with no log line, so its refusals were unobservable. Batch 185 reduced comments in the three densest files (repo at 7,429) and its verification queued this plus the unreachable hedging gate (Batch 187); Batch 184 fixed a retrain check that could never pass; Batch 183 fixed a journal read that could stop the EA during load.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

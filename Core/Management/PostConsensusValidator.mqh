@@ -289,11 +289,13 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
         CUnifiedSignalPipeline* pipeline = (m_src != NULL) ? m_src.GetPipelineConst() : NULL;
         if(pipeline != NULL)
         {
-            if(!pipeline.ApplySpreadFilter(symbol, atrValue, spreadScore, effectiveSpreadATRRatio))
+            if(!pipeline.ApplySpreadFilter(symbol, spreadScore, effectiveSpreadATRRatio, atrValue))
             {
                 exogenousPass = false;
-                exogenousReason = StringFormat("Spread too wide: ratio=%.4f >= %.4f (ATR %.5f)",
+                exogenousReason = StringFormat("Spread too wide: spread/ATR=%.4f >= %.4f (ATR %.5f)",
                                                 spreadScore, effectiveSpreadATRRatio, atrValue);
+                PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=spread_vs_atr | signal=%s conf=%.2f | %s",
+                            symbol, EnumToString(signal), confidence, exogenousReason);
             }
         }
         else
@@ -308,6 +310,8 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
             {
                 exogenousPass = false;
                 exogenousReason = StringFormat("Spread too wide: %.5f > %.5f (ATR %.5f)", spread, maxSpread, atrValue);
+                PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=spread_vs_atr | signal=%s conf=%.2f | %s",
+                            symbol, EnumToString(signal), confidence, exogenousReason);
             }
         }
 

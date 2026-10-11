@@ -8,6 +8,36 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 186: The exogenous spread gate was reading the wrong values, and refusing trades with no log
+
+#### Context
+Batch 185 deleted a comment at `TradeManager.mqh` that described a netting check which does not exist; checking the *other* files that round surfaced `PostConsensusValidator.mqh:292`. One call, four arguments, three of them in the wrong slots.
+
+#### Found, with the arithmetic
+`CUnifiedSignalPipeline::ApplySpreadFilter` is declared `(const string symbol, double &spreadScore, double overrideThreshold = -1.0, double atrValue = -1.0)`. The only call site passed `(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)`:
+
+- **`atrValue` was bound to the by-reference `spreadScore` out-param.** The callee writes its result there (`SignalPipelineFilter.mqh:460`), so the ATR the rest of the function still uses was overwritten with a ratio.
+- **`spreadScore` (initialized `0.0` nine lines earlier) arrived as `overrideThreshold`.** The callee's `(overrideThreshold > 0.0)` test therefore failed and it fell back to `m_filters.regimeCostGate.maxSpreadToAtrRatio`, whose default is **0.25** (`RegimeTypes.mqh:122`). The per-class ratios Batch 175 introduced for this gate — 0.30 base, 0.50 synthetic — were never used.
+- **`effectiveSpreadATRRatio` arrived as `atrValue`.** So the filter computed `ratio = spread / 0.30` (or `0.50`) — a price-denominated spread divided by a dimensionless constant.
+
+On FX that quotient is tiny (`EURUSD` at a 15-point spread: `0.00015 / 0.30 = 0.0005`) so the gate never fired. On the rest of the book it is enormous: `XAUUSD` at a 25-point spread gives `0.25 / 0.30 = 0.83` against a 0.25 threshold, and a Volatility-25 spread of 1,727 points gives `17.27 / 0.50 = 34.5`. In other words the gate was **inert on FX and rejecting essentially every gold and synthetic consensus entry** — and `result.spreadScore` was recorded as 0 for all of them.
+
+#### Also fixed: this was the last silent veto
+`EAOrchestrator.mqh:3467-3471` handles a failed validation with `m_heartbeat.IncValidatorRejects(); continue;` and prints nothing. Every other arm prints its own `[POST-CONSENSUS-FILTER]` line, so the spread veto was invisible — that is why the September journals show 71 `atr_ratio` lines and not one spread line, which reads as "the spread gate never triggered" rather than "it triggered and said nothing". Both branches of the gate now print `filter=spread_vs_atr` with the ratio, the threshold in force and the ATR, and the reason string says `spread/ATR=` instead of `ratio=`.
+
+#### Changed
+- `Core/Management/PostConsensusValidator.mqh:292`: arguments passed in the declared order — `(symbol, spreadScore, effectiveSpreadATRRatio, atrValue)`.
+- `:295-300` and `:312-315`: veto is logged in both the pipeline branch and the no-pipeline fallback.
+
+#### What the operator will see
+Gold and synthetic candidates reach the candidate builder for the first time from this gate, so entry counts on those symbols should rise; FX behavior is unchanged in practice (the gate was not firing there either way, and now fires only when a spread genuinely exceeds 30% of ATR). Expect a new `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr` line wherever it does refuse — if that appears often, the lever is `m_baseSpreadATRRatio` / `m_syntheticSpreadATRRatio`, which are constructor constants with no input, not a misbehaving strategy.
+
+#### Verification
+- Traced every parameter through `SignalPipelineFilter::ApplySpreadFilter` (`:429-472`) rather than trusting the declaration, and confirmed the default threshold value and the out-param write.
+- Confirmed this is the only silent veto arm by checking each `result.passed = false` path in `ValidateSignal` for a print: `hard_spread_cutoff` (`:224`), quality (`:164`), OFI (`:349`), VPIN (`:383`) all print; only the exogenous spread arm did not.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- **Owed:** the count of `filter=spread_vs_atr` lines in the first attached session, and whether gold/synthetic candidate volume rises as expected. Newest journal is still 23 September.
+
 ### Batch 185: Comment reduction in the three densest files — and a spread gate called with transposed arguments
 
 #### Context
