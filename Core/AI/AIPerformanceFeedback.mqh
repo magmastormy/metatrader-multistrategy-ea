@@ -515,13 +515,6 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
         return;
     }
 
-    // Snapshot the metrics that the effectiveness comparison below reads
-    // UpdateMetrics() is throttled, so calling it here would often return early
-    m_preRetrainAccuracy = m_currentMetrics.accuracy;
-    m_preRetrainProfitability = m_currentMetrics.profitability;
-    m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
-    m_preRetrainTimestamp = TimeCurrent();  // Batch 120: track when pre-retrain snapshot was taken
-
     // Effectiveness check: runs only after a previous retrain and two metrics-update intervals
     if(m_retrainingCount > 0 && m_currentMetrics.totalPredictions > m_minPredictionsForRetraining)
     {
@@ -551,6 +544,13 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     m_lastRetrainingTime = TimeCurrent();
     m_retrainingCount++;
     m_lastRetrainingReason = reason;
+
+    // Baseline for the next call's effectiveness check: taken here, after the check above has
+    // read the previous one. UpdateMetrics() is throttled, so these are the last values computed.
+    m_preRetrainAccuracy = m_currentMetrics.accuracy;
+    m_preRetrainProfitability = m_currentMetrics.profitability;
+    m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
+    m_preRetrainTimestamp = TimeCurrent();
 
     PersistRetrainingRequest(reason);
     ExportLabeledDataset("AI_Retraining_Dataset.csv", 500);

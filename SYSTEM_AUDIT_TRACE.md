@@ -1578,6 +1578,17 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged. §3.1 is moot for engines that never send; §3.2 remains unmet for the fast-scalp pending path by the same reasoning as Batch 177; §3.5 deinit untouched.
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
 
+## Batch 184 AI Retrain Effectiveness Decision (2026-10-12)
+
+- **Decision path before:** `TriggerRetraining(reason)` -> pause guard -> **overwrite** `m_preRetrain{Accuracy,Profitability,Sharpe}` from `m_currentMetrics` -> effectiveness check comparing `m_currentMetrics` against those same values plus an epsilon -> `m_consecutiveFailedRetrains++` -> third failure sets `m_retrainPauseUntil = now + 3600`. The baseline and the measurement were the same read, so the branch could only ever take the "ineffective" path.
+- **After:** the snapshot moved below the check, to the retrain commit point. A judgement now compares this cycle's metrics against the baseline captured when the previous retrain was committed.
+- **Both early exits leave the baseline alone**, which is the point of the placement: while the pause is active (`:511`) no retrain happens, and when the third failure arms the pause (`:537`) the function returns before `m_retrainingCount++`, so refreshing there would credit an aborted retrain with a new baseline.
+- **Observable change:** `[AI-RETRAIN-PAUSED]` after "3 consecutive ineffective retrain attempts" becomes conditional on real ineffectiveness. First judgement happens on the second qualifying retrain, since `m_retrainingCount > 0` skips the check on the first.
+- **State added:** none. `m_preRetrainTimestamp` remains written-and-never-read; recorded rather than deleted because nothing prints it.
+- **§3 invariants:** unchanged. No send path, no risk gate, no lifecycle loop touched. AGENTS.md §4.1 items (adapter registration, `[AI-VOTE]` call sites, qualified-name orchestrator registration, weight-adaptation sync, AI-disabled fallback) are untouched by a reorder inside the feedback class.
+- **Evidence owed:** `[AI-RETRAIN] Triggered #N` cycles from an attached live session showing an improved cycle that does **not** pause; newest journal is 23 September.
+- **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 183 Async Trade Journal Compaction, Out-of-Range Read (2026-10-12)
 
 - **Load path before:** `FileOpen(...FILE_READ)` -> per line `StringSplit(',')` -> `if(count < 11) continue;` -> `fields[10]`/`fields[11]` -> survivors rewritten from scratch. The journal is 17 columns, so index 11 requires `count >= 12`; a truncated last record (a crash during the previous `FILE_WRITE`) passed the guard and read past the array.

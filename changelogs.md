@@ -8,6 +8,37 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 184: The AI retrain effectiveness check could never pass
+
+#### Context
+Also found while verifying a comment Batch 182 deleted. `AIPerformanceFeedback::TriggerRetraining` judges whether the *previous* retrain improved anything, and pauses retraining for an hour after three consecutive failures. It could not have found an improvement:
+
+```
+m_preRetrainAccuracy = m_currentMetrics.accuracy;      // top of every call
+...
+metricsImproved = (m_currentMetrics.accuracy > m_preRetrainAccuracy + 0.001 || ...)   // same call
+```
+
+The baseline was overwritten from `m_currentMetrics` a few lines before the comparison read it, so every test was `x > x + epsilon` — always false. Once the `timeSinceLastRetrain > m_metricsUpdateInterval * 2` gate was satisfied, `m_consecutiveFailedRetrains` incremented unconditionally and the **third** retrain armed `[AI-RETRAIN-PAUSED]` for one hour, whether or not retraining had helped at all.
+
+#### Changed
+- `Core/AI/AIPerformanceFeedback.mqh`: the four `m_preRetrain*` assignments moved from the top of the function to its commit point (`m_lastRetrainingTime` / `m_retrainingCount++`), after the effectiveness check has read the previous baseline. Placed after the pause branch's early `return` deliberately: when a retrain is aborted, no retrain happened, so the baseline must not be refreshed.
+- First qualifying call still skips the comparison (`m_retrainingCount > 0`), so the first judgement is made on the second qualifying retrain against a baseline that now genuinely predates it.
+
+#### What the operator will see
+Retraining can now be recorded as effective, so the hourly pause fires only after three genuinely ineffective retrains instead of after any three. Retraining places no orders — it persists a request and exports a labelled CSV — but the ONNX/ensemble voters feed weighted consensus, so vote behavior can shift as retraining cadence changes. That is the designed behavior returning, not a new risk path.
+
+#### AGENTS.md 4.1/4.2 evidence
+Adapter registration, `[AI-VOTE]` call sites, orchestrator qualified-name registration, weight-adaptation sync, and the AI-disabled path are all untouched: the change reorders bookkeeping inside the feedback class and moves no call across a boundary. Compile is the mechanical evidence; runtime evidence is `[AI-RETRAIN] Triggered #N` followed by the absence of `[AI-RETRAIN-PAUSED]` after an improved cycle, which cannot be produced from this machine — the newest EA journal is 23 September (Batch 179).
+
+#### Recorded, not changed
+- `m_preRetrainTimestamp` is written here and read nowhere — the dead-state shape Batch 176 removed for VPIN's classification field. Left in place because nothing prints it, so unlike that one it misleads no reader; removing it is a separate cleanup.
+- `m_consecutiveFailedRetrains` is not reset when the pause lapses, so a fourth consecutive ineffective retrain re-arms the hour immediately. That reads as intended ("three consecutive"), so it was not touched.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- Re-read of the reordered function confirms: comparison reads the previous baseline, both early returns (`:511` pause-active, `:537` third-failure) leave the baseline unrefreshed, and no other site writes `m_preRetrain*`.
+
 ### Batch 183: The async trade journal could index past a short record and stop the EA at load
 
 #### Context
