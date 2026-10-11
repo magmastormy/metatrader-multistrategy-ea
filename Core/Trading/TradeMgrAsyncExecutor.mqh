@@ -1,16 +1,9 @@
 // OrderSendAsync submission, confirmation, timeout and persistence
-// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
-// OWNS: m_pendingAsyncTrades[] / m_maxPendingAsync /
-// m_asyncModeEnabled, plus every async code path.
-// CTradeManager holds this class BY VALUE and keeps thin
-// forwarders with the original public signatures.
-// SPLIT POINT - SendTradeAsync: guards that only need async state
-// live here (CheckSendGuards); the volume/price/preflight steps
-// that need CTradeManager collaborators stay in the forwarder and
-// hand resolved values to SubmitAsync(). Order of checks, prints
-// and side effects is identical to the original function.
-// NO BACK-POINTER: execution-quality accounting is done by passing
-// the caller's CExecutionQualityTracker in by reference.
+// CTradeManager holds this class BY VALUE and forwards the original public signatures;
+// it owns m_pendingAsyncTrades[], m_maxPendingAsync and m_asyncModeEnabled.
+// The split sits at SendTradeAsync: guards needing only async state live here, while
+// CTradeManager resolves volume/price/preflight and hands the values to SubmitAsync().
+// Execution-quality accounting runs on the caller's CExecutionQualityTracker, passed in by reference.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -40,13 +33,11 @@ public:
     void SetAsyncModeEnabled(const bool enabled) { m_asyncModeEnabled = enabled; }
     void FreePending() { ArrayFree(m_pendingAsyncTrades); }
 
-// Get pending async trade count
     int GetPendingAsyncCount() const
     {
         return ArraySize(m_pendingAsyncTrades);
     }
 
-// Get pending async trade ticket by index
     ulong GetPendingAsyncTicket(int index) const
     {
         if(index < 0 || index >= ArraySize(m_pendingAsyncTrades))
@@ -64,17 +55,14 @@ public:
         return false;
     }
 
-// SendTradeAsync guards that only depend on async state
     bool CheckSendGuards(const string symbol, const double lot)
     {
-        // Guard: async mode must be enabled
         if(!m_asyncModeEnabled)
         {
             PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=AsyncModeDisabled", symbol);
             return false;
         }
 
-        // Validate inputs
         if(symbol == "")
         {
             Print("[ASYNC-TRADE-REJECTED] reason=EmptySymbol");
@@ -86,7 +74,6 @@ public:
             return false;
         }
 
-        // Enforce maximum pending limit
         int pendingCount = ArraySize(m_pendingAsyncTrades);
         if(pendingCount >= m_maxPendingAsync)
         {
@@ -110,7 +97,6 @@ public:
                      const uint slippage,
                      const ENUM_ORDER_TYPE_FILLING orderFillMode)
     {
-        // Build the trade request
         MqlTradeRequest request = {};
         request.action    = TRADE_ACTION_DEAL;
         request.symbol    = symbol;
@@ -124,11 +110,10 @@ public:
         request.deviation = slippage;
         request.type_filling = orderFillMode;
 
-        // FIX: Generate idempotency key for deduplication
+        // Key is symbol/type/lot/price/sl/tp/magic plus the submit second; replay dedups on it.
         string idempotencyKey = StringFormat("ASYNC_%s_%s_%.2f_%.5f_%.5f_%.5f_%I64u_%d",
                                              symbol, EnumToString(orderType), normalizedLot, executionPrice, sl, tp, magic, (int)TimeCurrent());
 
-        // Submit via OrderSendAsync
         MqlTradeResult result = {};
         bool sent = OrderSendAsync(request, result);
 
@@ -139,7 +124,6 @@ public:
             return false;
         }
 
-        // Store in pending array for later confirmation via OnTradeTransaction
         int newSize = ArraySize(m_pendingAsyncTrades) + 1;
         ArrayResize(m_pendingAsyncTrades, newSize);
         int idx = newSize - 1;
@@ -164,7 +148,6 @@ public:
         PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u Key=%s",
                     symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order, idempotencyKey);
 
-        // FIX: Persist async trade request to CSV for replay on restart
         PersistAsyncTradeRequest(m_pendingAsyncTrades[idx]);
 
         return true;
@@ -176,7 +159,6 @@ public:
                                  const MqlTradeResult &result,
                                  CExecutionQualityTracker &execQuality)
     {
-        // Only process deal-add transactions (completed fills)
         if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
             return;
 
@@ -186,17 +168,15 @@ public:
 
         ulong dealOrder = (ulong)trans.order;
 
-        // Search for matching pending request by order ticket
+        // Matched by ORDER ticket: SubmitAsync stored result.order, trans.order carries it.
         for(int i = pendingCount - 1; i >= 0; i--)
         {
             if(m_pendingAsyncTrades[i].ticket == dealOrder && !m_pendingAsyncTrades[i].confirmed)
             {
-                // Mark as confirmed
                 m_pendingAsyncTrades[i].confirmed = true;
 
-                // Calculate slippage
                 double pointSize = SymbolInfoDouble(m_pendingAsyncTrades[i].symbol, SYMBOL_POINT);
-                // Guard against denormalized/zero point size to prevent NaN slippage
+                // Point size is the slippage divisor: clamp it so bad symbol data cannot give NaN.
                 if(pointSize <= 1e-15) pointSize = 1e-15;
                 double slippage = 0.0;
                 if(pointSize > 0.0 && trans.price > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
@@ -208,7 +188,6 @@ public:
                             m_pendingAsyncTrades[i].price,
                             slippage);
 
-                // Update execution quality metrics
                 STradeExecutionReceipt receipt;
                 receipt.accepted        = true;
                 receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
@@ -229,7 +208,6 @@ public:
                 }
                 execQuality.UpdateExecutionMetrics(receipt);
 
-                // Remove confirmed entry by shifting remaining elements
                 for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
                     m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
                 ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
@@ -253,7 +231,6 @@ public:
             if(m_pendingAsyncTrades[i].confirmed || m_pendingAsyncTrades[i].expired)
                 continue;
 
-            // Calculate elapsed time in milliseconds
             long elapsedMs = (long)(checkTime - m_pendingAsyncTrades[i].submitTime) * 1000;
 
             if(elapsedMs > m_pendingAsyncTrades[i].timeoutMs)
@@ -265,7 +242,6 @@ public:
                             elapsedMs,
                             m_pendingAsyncTrades[i].timeoutMs);
 
-                // Update execution metrics for the timeout
                 STradeExecutionReceipt receipt;
                 receipt.accepted        = false;
                 receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
@@ -280,7 +256,6 @@ public:
                     receipt.roundTripMs = (ulong)elapsedMs;
                 execQuality.UpdateExecutionMetrics(receipt);
 
-                // Remove expired entry by shifting remaining elements
                 for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
                     m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
                 ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
@@ -292,8 +267,8 @@ public:
     static void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
     {
         string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
-        // Batch 150: FILE_WRITE alone truncates - every persist erased the whole
-        // crash-recovery ledger. Open read+write and append at end instead.
+        // FILE_READ|FILE_WRITE + FileSeek(SEEK_END), not FILE_WRITE alone: FILE_WRITE truncates,
+        // which would erase the persisted rows a restart replays.
         int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
         if(handle == INVALID_HANDLE)
         {
@@ -302,7 +277,6 @@ public:
         }
         FileSeek(handle, 0, SEEK_END);
 
-        // Check if file is empty (needs header)
         bool writeHeader = (FileSize(handle) == 0);
 
         if(writeHeader)
@@ -363,7 +337,6 @@ public:
             int count = StringSplit(line, ',', fields);
             if(count < 17) continue;  // Need all fields
 
-// Parse fields
             ulong ticket = (ulong)StringToInteger(fields[0]);
             string symbol = fields[1];
             ENUM_ORDER_TYPE orderType = CTradeDescriptor::OrderTypeFromString(fields[2]);
@@ -382,11 +355,10 @@ public:
             datetime persistedTime = (datetime)StringToInteger(fields[15]);
             string comment = fields[16];
 
-            // Skip already confirmed/expired trades
             if(confirmed || expired)
                 continue;
 
-            // Check if we already have this idempotency key in pending array (deduplication)
+            // Dedup against the live pending array so one send is not tracked twice.
             bool duplicate = false;
             for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
             {
@@ -403,7 +375,7 @@ public:
                 continue;
             }
 
-            // Add to pending array for confirmation on next OnTradeTransaction
+            // Replayed entries are re-adopted for confirmation tracking only; nothing is re-sent.
             int newSize = ArraySize(m_pendingAsyncTrades) + 1;
             ArrayResize(m_pendingAsyncTrades, newSize);
             int idx = newSize - 1;
@@ -447,7 +419,6 @@ public:
         if(handle == INVALID_HANDLE)
             return;
 
-        // Read all lines
         string lines[];
         string line;
         bool skipHeader = true;
@@ -464,7 +435,6 @@ public:
             bool confirmed = StringToInteger(fields[10]) == 1;
             bool expired = StringToInteger(fields[11]) == 1;
 
-            // Keep only unconfirmed, unexpired trades
             if(!confirmed && !expired)
             {
                 int newSize = ArraySize(lines) + 1;
@@ -474,7 +444,7 @@ public:
         }
         FileClose(handle);
 
-        // Rewrite file with only active trades
+        // FILE_WRITE truncates here on purpose: the survivors are rewritten from scratch.
         handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
         if(handle == INVALID_HANDLE) return;
 

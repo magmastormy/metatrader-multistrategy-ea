@@ -1,4 +1,3 @@
-// AI Performance Feedback System
 // Tracks AI prediction accuracy and manages model retraining
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
@@ -12,7 +11,6 @@
 #include "../Utils/ErrorHandling.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CMarketAnalysis;
@@ -32,13 +30,11 @@ struct SAIPredictionRecord
     double uncertainty;           // AI uncertainty level
     ENUM_MARKET_REGIME regime;    // Market regime at prediction
     
-    // Actual outcome
     datetime outcomeTime;         // When outcome was determined
     ENUM_TRADE_SIGNAL actualOutcome; // Actual market movement
     double actualReturn;          // Actual return achieved
     bool predictionCorrect;       // Was prediction correct
     
-    // Performance metrics
     double accuracyScore;         // Accuracy score for this prediction
     double calibrationScore;
     double profitabilityScore;
@@ -61,7 +57,6 @@ struct SAIPredictionRecord
     }
 };
 
-// AI Model Performance Metrics
 struct SAIModelMetrics
 {
     int totalPredictions;         // Total predictions made
@@ -75,7 +70,6 @@ struct SAIModelMetrics
     double profitability;         // Average profitability
     double sharpeRatio;           // Sharpe ratio of AI predictions
     
-    // Performance by regime
     double trendingAccuracy;      // Accuracy in trending markets
     double rangingAccuracy;       // Accuracy in ranging markets
     double volatileAccuracy;      // Accuracy in volatile markets
@@ -112,10 +106,8 @@ private:
     int m_currentIndex;
     bool m_bufferFull;
     
-    // Performance metrics
     SAIModelMetrics m_currentMetrics;
     
-    // Retraining triggers
     double m_minAccuracyThreshold;
     double m_minProfitabilityThreshold;
     double m_calibrationErrorThreshold;
@@ -125,7 +117,7 @@ private:
     int m_retrainingCount;
     string m_lastRetrainingReason;
 
-    // Retrain effectiveness tracking (Issue 12.2)
+    // Retrain effectiveness tracking: pause triggering after consecutive ineffective retrain attempts
     int m_consecutiveFailedRetrains;
     datetime m_retrainPauseUntil;
     double m_preRetrainAccuracy;
@@ -133,51 +125,41 @@ private:
     double m_preRetrainSharpe;
     datetime m_preRetrainTimestamp;  // Batch 120: when pre-retrain snapshot was taken
 
-    // Performance tracking
+    // Metrics update throttle: UpdateMetrics() returns early until m_metricsUpdateInterval has elapsed
     datetime m_lastMetricsUpdate;
     int m_metricsUpdateInterval;
     
     bool m_initialized;
     
 public:
-    // Constructor
     CAIPerformanceFeedback(void);
     
-    // Destructor
     ~CAIPerformanceFeedback(void);
     
-    // Initialize feedback system
     bool Initialize(int maxRecords = 1000);
     
     void RecordPrediction(const string &predictionSymbol, const ENUM_TRADE_SIGNAL prediction,
                          const double confidence, const double uncertainty,
                          const ENUM_MARKET_REGIME regime, const datetime predictionTimeOverride = 0);
     
-    // Record actual outcome
     void RecordOutcome(const string &outcomeSymbol, const datetime predictionTime,
                       const ENUM_TRADE_SIGNAL actualOutcome, const double actualReturn);
     
-    // Update performance metrics
     void UpdateMetrics(void);
     
-    // Check if retraining is needed
     bool ShouldRetrain(void);
     
     void TriggerRetraining(const string reason);
     
-    // Get current AI performance metrics
     SAIModelMetrics GetCurrentMetrics(void) const { return m_currentMetrics; }
     
     double GetAccuracyByRegime(const ENUM_MARKET_REGIME regime);
     
-    // Get recent performance trend
     bool IsPerformanceImproving(void);
     bool IsPerformanceDegrading(void);
     
-    // Performance comparison
     bool CompareWithBenchmark(const double benchmarkAccuracy, const double benchmarkProfitability);
     
-    // Enhanced retraining triggers (Task 5.3)
     void CheckAutomaticRetraining(void);
     bool ShouldRetrainBasedOnAccuracy(void);
     bool ShouldRetrainBasedOnProfitability(void);
@@ -186,18 +168,15 @@ public:
         void PrintPerformanceReport(void);
         string GetPerformanceSummary(void);
     
-        // Persistence (L11-012)
         void PersistMetrics(void);
         void PersistMetricsToCSV(const string filename);
     
     private:
-    // Internal calculation methods
     void CalculateAccuracyMetrics(void);
     void CalculateProfitabilityMetrics(void);
     void CalculateCalibrationMetrics(void);
     void CalculateRecentMetrics(void);
     
-    // Helper methods
     int FindPredictionIndex(const string &searchSymbol, const datetime predictionTime);
     double CalculateCalibrationError(void);
     double CalculateSharpeRatio(void);
@@ -233,7 +212,6 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_metricsUpdateInterval(300), // 5 minutes
     m_initialized(false)
 {
-    // Initialize metrics
     m_currentMetrics = SAIModelMetrics();
 }
 
@@ -243,18 +221,17 @@ CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
     {
         if(m_currentMetrics.totalPredictions > 0)
             PrintPerformanceReport();
-        // Persist final metrics on shutdown (L11-012)
+        // Final metrics are written to the dashboard CSV here; the in-memory buffer itself does not survive a restart
         PersistMetrics();
         LogFeedback("AI Performance Feedback system destroyed");
     }
 }
 
-// Initialize Feedback System
 bool CAIPerformanceFeedback::Initialize(int maxRecords = 1000)
 {
     m_maxRecords = maxRecords;
     
-    // Resize and initialize prediction array
+    // A failed allocation leaves m_initialized false, so the other entry points return without doing work
     if(ArrayResize(m_predictions, m_maxRecords) != m_maxRecords)
     {
         SErrorContext context;
@@ -267,7 +244,6 @@ bool CAIPerformanceFeedback::Initialize(int maxRecords = 1000)
         return false;
     }
     
-    // Initialize all prediction records
     for(int i = 0; i < m_maxRecords; i++) {
         m_predictions[i] = SAIPredictionRecord();
     }
@@ -284,7 +260,6 @@ void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, co
 {
     if(!m_initialized) return;
     
-    // Create prediction record
     SAIPredictionRecord record;
     datetime predictionTime = (predictionTimeOverride > 0) ? predictionTimeOverride : TimeCurrent();
     record.predictionTime = predictionTime;
@@ -294,7 +269,7 @@ void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, co
     record.uncertainty = uncertainty;
     record.regime = regime;
     
-    // Store in circular buffer
+    // Circular buffer: the write index wraps and overwrites the oldest slot once m_bufferFull is set
     m_predictions[m_currentIndex] = record;
     m_currentIndex = (m_currentIndex + 1) % m_maxRecords;
     
@@ -305,29 +280,26 @@ void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, co
                             predictionSymbol, EnumToString(prediction), confidence, uncertainty));
 }
 
-// Record Actual Outcome
 void CAIPerformanceFeedback::RecordOutcome(const string &outcomeSymbol, const datetime predictionTime,
                                           const ENUM_TRADE_SIGNAL actualOutcome, const double actualReturn)
 {
     if(!m_initialized) return;
     
-    // Find matching prediction
+    // Attribution match: same symbol with predictionTime within 5 seconds; no match drops the outcome
     int index = FindPredictionIndex(outcomeSymbol, predictionTime);
     if(index < 0) return; // Prediction not found
     
-    // Update prediction record with outcome
     m_predictions[index].outcomeTime = TimeCurrent();
     m_predictions[index].actualOutcome = actualOutcome;
     m_predictions[index].actualReturn = actualReturn;
     
-    // Determine if prediction was correct
     m_predictions[index].predictionCorrect = (m_predictions[index].prediction == actualOutcome);
     
-    // Calculate performance scores
+    // accuracyScore is 1/0 from that equality, so a NONE call against a NONE outcome counts as correct
     m_predictions[index].accuracyScore = m_predictions[index].predictionCorrect ? 1.0 : 0.0;
     m_predictions[index].profitabilityScore = actualReturn;
     
-    // Calculate calibration score (how well confidence matched actual outcome)
+    // Calibration: expected = confidence * max(0.01,|actual|); score = 1 - |actual-expected|/max(0.01,|actual|), clamped to [0,1]
     double maxExpectedReturn = MathMax(0.01, MathAbs(actualReturn));
     double expectedReturn = m_predictions[index].confidence * maxExpectedReturn;
     m_predictions[index].calibrationScore = 1.0 - MathAbs(actualReturn - expectedReturn) / MathMax(0.01, maxExpectedReturn);
@@ -355,7 +327,6 @@ void CAIPerformanceFeedback::UpdateMetrics(void)
     CalculateCalibrationMetrics();
     CalculateRecentMetrics();
     
-    // Persist metrics periodically (L11-012)
     PersistMetrics();
 }
 
@@ -367,7 +338,6 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
     int falsePositives = 0;
     int falseNegatives = 0;
     
-    // Count by regime
     int trendingTotal = 0, trendingCorrect = 0;
     int rangingTotal = 0, rangingCorrect = 0;
     int volatileTotal = 0, volatileCorrect = 0;
@@ -386,7 +356,7 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
             if(m_predictions[i].predictionCorrect)
                 correctPredictions++;
             
-            // Calculate precision/recall metrics
+            // Confusion counts only cover non-NONE predictions: NONE against a real outcome is a false negative
             if(m_predictions[i].prediction != TRADE_SIGNAL_NONE)
             {
                 if(m_predictions[i].actualOutcome == m_predictions[i].prediction)
@@ -399,7 +369,6 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
                 falseNegatives++;
             }
             
-            // Count by regime
             switch(m_predictions[i].regime)
             {
                 case MARKET_REGIME_TRENDING:
@@ -418,7 +387,6 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
         }
     }
     
-    // Update metrics
     m_currentMetrics.totalPredictions = totalPredictions;
     m_currentMetrics.correctPredictions = correctPredictions;
     
@@ -438,7 +406,7 @@ void CAIPerformanceFeedback::CalculateAccuracyMetrics(void)
         m_currentMetrics.f1Score = 2.0 * (m_currentMetrics.precision * m_currentMetrics.recall) / 
                                   (m_currentMetrics.precision + m_currentMetrics.recall);
     
-    // Regime-specific accuracy
+    // Regime buckets with no samples keep their previous accuracy value
     if(trendingTotal > 0) m_currentMetrics.trendingAccuracy = (double)trendingCorrect / trendingTotal;
     if(rangingTotal > 0) m_currentMetrics.rangingAccuracy = (double)rangingCorrect / rangingTotal;
     if(volatileTotal > 0) m_currentMetrics.volatileAccuracy = (double)volatileCorrect / volatileTotal;
@@ -501,19 +469,16 @@ void CAIPerformanceFeedback::CalculateRecentMetrics(void)
     m_currentMetrics.recentProfitability = recentReturn / labeledCount;
 }
 
-// Should Retrain AI Models
 bool CAIPerformanceFeedback::ShouldRetrain(void)
 {
     if(!m_initialized) return false;
     
-    // Check if enough time has passed since last retraining
     datetime currentTimeLocal = TimeCurrent();
     if(currentTimeLocal - m_lastRetrainingTime < m_retrainingInterval) return false;
     
-    // Check if we have enough predictions
+    // Retraining stays silent below m_minPredictionsForRetraining scored predictions (default 50)
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
     
-    // Check accuracy threshold (Requirement 6.6)
     if(m_currentMetrics.recentAccuracy < m_minAccuracyThreshold)
     {
         LogFeedback(StringFormat("Retraining triggered: Recent accuracy %.2f%% below threshold %.2f%%", 
@@ -528,7 +493,6 @@ bool CAIPerformanceFeedback::ShouldRetrain(void)
         return true;
     }
     
-    // Check if performance is significantly degrading
     if(IsPerformanceDegrading())
     {
         LogFeedback("Retraining triggered: Performance degradation detected");
@@ -543,7 +507,7 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     if(!m_initialized)
         return;
 
-    // Check retrain pause (Issue 12.2): skip if paused due to consecutive failures
+    // Skipped entirely while the retrain pause is active
     if(TimeCurrent() < m_retrainPauseUntil)
     {
         PrintFormat("[AI-RETRAIN-PAUSED] Retraining paused until %s - last %d attempts produced no improvement",
@@ -551,19 +515,16 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
         return;
     }
 
-    // Save pre-retrain metrics for effectiveness comparison (Issue 12.2)
-    // Batch 120: Don't call UpdateMetrics() here — it's throttled and will no-op
-    // Instead, save current metrics and compare after the next metrics update cycle
+    // Snapshot the metrics that the effectiveness comparison below reads
+    // UpdateMetrics() is throttled, so calling it here would often return early
     m_preRetrainAccuracy = m_currentMetrics.accuracy;
     m_preRetrainProfitability = m_currentMetrics.profitability;
     m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
     m_preRetrainTimestamp = TimeCurrent();  // Batch 120: track when pre-retrain snapshot was taken
 
-    // Check if metrics improved since last retrain (Issue 12.2)
-    // Batch 120: Compare against metrics from BEFORE the previous retrain, not current
+    // Effectiveness check: runs only after a previous retrain and two metrics-update intervals
     if(m_retrainingCount > 0 && m_currentMetrics.totalPredictions > m_minPredictionsForRetraining)
     {
-        // Only check if enough time has passed since last retrain for metrics to update
         double timeSinceLastRetrain = (double)(TimeCurrent() - m_lastRetrainingTime);
         if(timeSinceLastRetrain > m_metricsUpdateInterval * 2)  // Wait for at least 2 metric update cycles
         {
@@ -606,11 +567,10 @@ bool CAIPerformanceFeedback::IsPerformanceDegrading(void)
 {
     if(m_currentMetrics.totalPredictions < 100) return false; // Need enough data
     
-    // Compare recent performance with overall performance
     double accuracyDegradation = m_currentMetrics.accuracy - m_currentMetrics.recentAccuracy;
     double profitabilityDegradation = m_currentMetrics.profitability - m_currentMetrics.recentProfitability;
     
-    // Consider degradation significant if recent performance is 10% worse
+    // Degradation counts as significant when recent accuracy is 0.10 or recent profitability 0.01 below overall
     return (accuracyDegradation > 0.10 || profitabilityDegradation > 0.01);
 }
 
@@ -652,7 +612,7 @@ double CAIPerformanceFeedback::CalculateSharpeRatio(void)
 {
     if(m_currentMetrics.totalPredictions < 10) return 0.0;
     
-    // Calculate standard deviation of returns
+    // Sharpe = mean return / sample stddev (count-1); 0.0 below 10 predictions or 2 labelled returns
     double meanReturn = m_currentMetrics.profitability;
     double variance = 0.0;
     int count = 0;
@@ -720,15 +680,14 @@ string CAIPerformanceFeedback::GetPerformanceSummary(void)
                        ShouldRetrain() ? "YES" : "NO");
 }
 
-// Check Automatic Retraining (Task 5.3)
 void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
 {
     if(!m_initialized) return;
 
-    // Update metrics first
+    // Refreshes metrics first, though the throttle can make that call a no-op
     UpdateMetrics();
 
-    // Check retrain pause (Issue 12.2): skip if paused due to consecutive failures
+    // Skipped while the retrain pause is active, same as TriggerRetraining()
     if(TimeCurrent() < m_retrainPauseUntil)
     {
         PrintFormat("[AI-RETRAIN-PAUSED] Retraining paused until %s - last %d attempts produced no improvement",
@@ -736,7 +695,6 @@ void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
         return;
     }
 
-    // Check multiple retraining conditions
     bool needsRetraining = false;
     string retrainingReason = "";
     
@@ -758,7 +716,7 @@ void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
         retrainingReason += "Performance degradation; ";
     }
     
-    // Check calibration issues
+    // Calibration error above m_calibrationErrorThreshold (0.3, never reassigned) is a fourth trigger
     if(m_currentMetrics.calibrationError > m_calibrationErrorThreshold)
     {
         needsRetraining = true;
@@ -771,14 +729,13 @@ void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
     }
 }
 
-// Should Retrain Based on Accuracy (Task 5.3)
 bool CAIPerformanceFeedback::ShouldRetrainBasedOnAccuracy(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
     
     if(m_currentMetrics.recentAccuracy < m_minAccuracyThreshold) return true;
     
-    // Check if accuracy has dropped significantly from overall performance
+    // With more than 100 scored predictions, recent accuracy 0.15 below overall also triggers
     if(m_currentMetrics.totalPredictions > 100)
     {
         double accuracyDrop = m_currentMetrics.accuracy - m_currentMetrics.recentAccuracy;
@@ -788,20 +745,19 @@ bool CAIPerformanceFeedback::ShouldRetrainBasedOnAccuracy(void)
     return false;
 }
 
-// Should Retrain Based on Profitability (Task 5.3)
 bool CAIPerformanceFeedback::ShouldRetrainBasedOnProfitability(void)
 {
     if(m_currentMetrics.totalPredictions < m_minPredictionsForRetraining) return false;
     
     if(m_currentMetrics.recentProfitability < m_minProfitabilityThreshold) return true;
     
-    // Check Sharpe ratio degradation
+    // Sharpe below 0.3 triggers on its own, independent of the profitability check
     if(m_currentMetrics.sharpeRatio < 0.3) return true;
     
     return false;
 }
 
-// Set Retraining Thresholds (Task 5.3)
+// Clamped on assignment: accuracy into [0.3,0.9], profitability into [-0.1,0.5]
 void CAIPerformanceFeedback::SetRetrainingThresholds(double minAccuracy, double minProfitability)
 {
     m_minAccuracyThreshold = MathMax(0.3, MathMin(0.9, minAccuracy));
@@ -853,7 +809,7 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
     FileClose(handle);
 }
 
-// Export labeled dataset snapshot
+// Writes the newest maxRows labelled records; FILE_WRITE truncates the previous export
 void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const int maxRows)
 {
     int limit = MathMax(1, maxRows);
@@ -914,7 +870,7 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
     FileClose(handle);
 }
 
-// Persist AI Health Dashboard Metrics to CSV (L11-012)
+// Appends one metrics row per call to AI_Health_Dashboard.csv (FILE_READ|FILE_WRITE + seek to end)
 void CAIPerformanceFeedback::PersistMetrics(void)
 {
     PersistMetricsToCSV("AI_Health_Dashboard.csv");

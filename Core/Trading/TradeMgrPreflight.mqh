@@ -1,17 +1,7 @@
 // Pre-send gating + post-send receipt confirmation for CTradeManager
-// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
-// All members are static pure functions - this module holds NO
-// instance state. Bodies are verbatim copies of the original
-// CTradeManager methods:
-// - ApplyFillingModeForSymbol   (IOC/FOK selection by spread/ATR)
-// - ValidateExecutionPreflight  (session/tick/spread/drift gates)
-// - ConfirmExecutionReceipt     (history-deal confirmation)
-// NO BACK-POINTER: every piece of CTradeManager state these three
-// need is passed in explicitly - the CTrade / CSessionManager /
-// CATRCache / CMarketAnalysis objects by reference (or pointer,
-// for the optional market-analysis dependency), the tunables as
-// plain values, and the execution receipt as an in/out reference.
-// Same pattern already used by CPositionStateTracker.
+// Static members, no instance state: every CTradeManager dependency arrives as a parameter -
+// CTrade/CSessionManager/CATRCache by reference, CMarketAnalysis by pointer (optional),
+// tunables by value, the receipt in/out.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -41,7 +31,6 @@ public:
         if(symbolParam == "")
             return;
 
-        // Analyze market conditions to choose appropriate fill mode
         bool useIOC = true;
 
         double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
@@ -51,7 +40,6 @@ public:
         if(point <= 0.0)
             point = 0.00001; // Fallback for invalid symbol data
 
-        // Get ATR volatility to assess market conditions
         double volatilityMultiplier = 1.0;
         if(marketAnalysis != NULL)
         {
@@ -67,7 +55,6 @@ public:
             }
         }
 
-        // Choose fill mode based on analysis
         if(useIOC)
         {
             trade.SetTypeFilling(ORDER_FILLING_IOC);
@@ -77,14 +64,10 @@ public:
             trade.SetTypeFilling(ORDER_FILLING_FOK);
         }
 
-        // Batch 151: keep the IOC/FOK decision unless the symbol does not
-        // support it.
-        // Batch 169: the fallback used to be `orderFillMode`, which the trade
-        // manager initialises to ORDER_FILLING_IOC - so on a broker that allows
-        // neither FOK nor IOC the sender still shipped IOC and the order was
-        // rejected with INVALID_FILL (10030). ORDER_FILLING_RETURN imposes no fill
-        // constraint and is accepted universally; SL/TP travel in the same request,
-        // so RETURN does not expose an unprotected-fill window.
+        // The caller's orderFillMode is not consulted: the fallback comes from SYMBOL_FILLING_MODE,
+        // because sending an IOC/FOK the symbol disallows is rejected with INVALID_FILL (10030).
+        // ORDER_FILLING_RETURN imposes no fill constraint and is accepted by every broker; SL/TP
+        // travel in the same request, so RETURN leaves no unprotected-fill window.
         const int fillingFlags = (int)SymbolInfoInteger(symbolParam, SYMBOL_FILLING_MODE);
         const bool iocAllowed = ((fillingFlags & SYMBOL_FILLING_IOC) != 0);
         const bool fokAllowed = ((fillingFlags & SYMBOL_FILLING_FOK) != 0);
@@ -162,7 +145,7 @@ public:
                 }
             }
 
-            // Fix #12-13: Symbol-class-aware drift limits for synthetic indices
+            // Synthetics quote four-figure spreads, so both multipliers below are looser for them.
             bool isSynthetic = IsSyntheticIndexSymbolName(symbolName);
             double atrMultiplier = isSynthetic ? 0.50 : 0.30;
             double spreadFloorMultiplier = isSynthetic ? 3.0 : 2.0;
@@ -185,10 +168,8 @@ public:
             }
         }
 
-        // Batch 169: the anomaly floor must come from the broker's declared stop
-        // level, not from GetMinimumStopDistance(). That helper now folds a 1.5x
-        // spread term into its result, so `minStopDistance * 2` was always at
-        // least 3x the spread and this gate could never fire.
+        // The floor must be the broker's declared stop level: GetMinimumStopDistance() already folds
+        // in 1.5x the spread, so a multiple of it is circular and this gate could never fire.
         double brokerStopDistance = CTradeMgrPricing::GetBrokerStopLevelDistance(symbolName);
         double spreadHardLimit = MathMax(brokerStopDistance * 2.0, executionPrice * 0.0015);
         if(spread > spreadHardLimit)
@@ -197,12 +178,9 @@ public:
             return false;
         }
 
-        // Batch 169: the absolute maxEntrySpreadPoints gate is a catastrophic-quote
-        // backstop only - it is deliberately loose (15000 points) so synthetic
-        // indices, whose normal spreads run into four figures, are not filtered
-        // wholesale. The relative gate above (0.15% of price) is what protects
-        // FX and metals; the expectancy gate in NormalizeAndValidateStops is what
-        // stops a wide spread swallowing a narrow target.
+        // The absolute gate is a loose catastrophic-quote backstop (15000 points) so four-figure
+        // synthetic spreads are not filtered wholesale; the 0.15%-of-price gate above protects FX and metals.
+        // A wide spread swallowing a narrow target is rejected by the TP-cost gate in NormalizeAndValidateStops.
 
         if(orderType == ORDER_TYPE_BUY && executionPrice < bid)
         {
@@ -296,7 +274,6 @@ public:
         return true;
     }
 
-// Find a position that just appeared for this send
 // Used to confirm a fill whose deal is not in history yet, and
 // to stop a retry duplicating an order the server already dealt.
     static bool FindFreshPositionForSend(const string symbolName,
@@ -308,9 +285,8 @@ public:
         ticketOut = 0;
         volumeOut = 0.0;
 
-        // Only positions opened in the last 30 s count, so pre-existing positions on
-        // the same symbol (other strategies, earlier layers) cannot be mistaken for
-        // this send.
+        // Only positions opened within the last 30 s count, so pre-existing positions on the
+        // same symbol (other strategies, earlier layers) cannot be mistaken for this send.
         datetime cutoff = TimeCurrent() - 30;
         ENUM_POSITION_TYPE wantType = (orderType == ORDER_TYPE_BUY)
                                       ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;

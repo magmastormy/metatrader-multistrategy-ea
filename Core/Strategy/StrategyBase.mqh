@@ -15,7 +15,6 @@
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Utils/ErrorHandling.mqh"
 
-// Forward declarations
 class CEnhancedErrorHandler;
 class CPositionSizer;
 class CTradeManager;
@@ -67,8 +66,7 @@ public:
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence);
 
-    // FINDING 0: return the strategy-designed SL/TP (pips) stashed via
-    // SetProposedStops(), or false if none were stashed this signal cycle.
+    // Returns the strategy-designed SL/TP (pips) stashed by SetProposedStops(), false when none were stashed.
     virtual bool GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const override;
 
     virtual string GetName(void) const;
@@ -94,7 +92,6 @@ public:
     void OverrideMinConfidence(const double value);
     double GetMinConfidence(void) const;
 
-    // Feature 1: Regime-Aware Strategy Weighting - setters
     void SetRegimeContext(int detailedRegime);
     void SetStrategyCluster(int cluster);
 
@@ -105,40 +102,31 @@ protected:
     void RecordSignalOutcome(const bool successful);
     void SetDecisionReasonTag(const string tag);
 
-    // FINDING 0: stash the strategy's designed SL/TP (pips) so GetProposedStops()
-    // can return them to the consensus execution path. Call from ExecuteSignal
-    // right before returning a real signal (typically from the local
-    // STradeValidationRequest the strategy already builds for its risk gate).
+    // Stash the strategy-designed SL/TP (pips); consensus execution takes the first contributor's real proposal.
+    // Call from ExecuteSignal just before returning a real signal.
     void SetProposedStops(double slPips, double tpPips);
 
-    // Reject signal helpers (shared by all derived strategies)
     virtual void LogRejectEvent(const string reasonTag);
     virtual ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag);
 
-    // New-bar refresh: common boilerplate (bar count guard) + virtual hook for strategy-specific component updates
+    // New-bar detection by iBars() count change; OnRefreshComponents() is the strategy-specific hook.
     bool RefreshForNewBar();
     virtual void OnRefreshComponents() {}
 
-    // Risk validation helper - validates a trade request through CUnifiedRiskManager
-    // Returns true if approved (and applies confidence multiplier)
-    // Returns false if rejected (and sets decision reason tag + logs rejection)
-    // If no risk manager is injected, returns true (matches existing null-skip behavior)
+    // Pre-trade risk gate: validates the request through CUnifiedRiskManager; approval applies its confidence multiplier.
+    // Fail-open: returns true when no risk manager was injected, so a missing link does not block entries.
     bool ValidateWithRiskManager(const STradeValidationRequest &request,
                                  const string tagPrefix,
                                  double &confidence);
 
-    // Consensus diagnostic logging helper - standardizes the [CONSENSUS-DIAG] wrapper
-    // Each strategy passes its indicator-specific context as a pre-formatted string
+    // Wraps the [CONSENSUS-DIAG] print; callers pass pre-formatted indicator context.
     void LogConsensusDiag(ENUM_TRADE_SIGNAL signal, const string context, double confidence, const string reasonSuffix = "");
 
-    // Feature 1: Regime-Aware Strategy Weighting
     double GetRegimeConfidenceMultiplier();
 
-    // Feature 2: Volatility Direction Awareness
     ENUM_VOLATILITY_DIRECTION GetVolatilityDirection();
     double GetVolatilityDirectionMultiplier();
 
-    // Feature 3: Multi-Timeframe Confluence
     bool IsAlignedWithHigherTF(int signalDirection);
     ENUM_TIMEFRAMES GetNextHigherTF(ENUM_TIMEFRAMES tf);
 
@@ -198,11 +186,10 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     if(m_errorHandler == NULL)
     {
         PrintFormat("[STRATEGY-BASE] CRITICAL: Failed to allocate CEnhancedErrorHandler for %s", m_name);
-        // Strategy will still function without error handler; methods must guard against NULL
+        // Non-fatal: Init() sets m_is_initialized from the trade manager and sizer only.
     }
 }
 
-// Static confidence configuration
 void CStrategyBase::SetDefaultMinConfidence(const double value)
 {
     double bounded = MathMax(0.0, MathMin(1.0, value));
@@ -256,7 +243,7 @@ bool CStrategyBase::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, v
         return false;
     m_positionSizer = (CPositionSizer*)positionSizerPtr;
 
-    // Unified risk manager is optional (backward compatibility)
+    // Optional dependency: a NULL here leaves the strategy with no pre-trade risk gate.
     if(CheckPointer(unifiedRiskManagerPtr) != POINTER_INVALID)
         m_unifiedRiskManager = (CUnifiedRiskManager*)unifiedRiskManagerPtr;
 
@@ -282,8 +269,7 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
 {
     confidence = 0.0;
     m_lastDecisionReasonTag = "";
-    // FINDING 0: reset stashed stops each call so a proposal can never leak
-    // from a previous (non-firing) cycle into a later consensus decision.
+    // Reset stashed stops each call so a proposal cannot leak into a later consensus decision.
     m_proposedSLpips = 0.0;
     m_proposedTPpips = 0.0;
     if(!m_is_enabled || !m_is_initialized)
@@ -294,13 +280,10 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
     ENUM_TRADE_SIGNAL signal = ExecuteSignal(confidence);
     if(signal != TRADE_SIGNAL_NONE)
     {
-        // Feature 1: Regime-aware confidence adjustment
         confidence *= GetRegimeConfidenceMultiplier();
 
-        // Feature 2: Volatility direction confidence adjustment
         confidence *= GetVolatilityDirectionMultiplier();
 
-        // Feature 3: HTF alignment filter - halve confidence for counter-HTF signals
         if(!IsAlignedWithHigherTF((int)signal))
         {
             confidence *= 0.5;
@@ -413,14 +396,12 @@ void CStrategyBase::SetDecisionReasonTag(const string tag)
     m_lastDecisionReasonTag = tag;
 }
 
-// SetProposedStops - stash designed SL/TP (pips) for FINDING 0
 void CStrategyBase::SetProposedStops(double slPips, double tpPips)
 {
     m_proposedSLpips = slPips;
     m_proposedTPpips = tpPips;
 }
 
-// GetProposedStops - return stashed SL/TP if a real proposal exists
 bool CStrategyBase::GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
 {
     if(m_proposedSLpips > 0.0 && m_proposedTPpips > 0.0)
@@ -432,8 +413,7 @@ bool CStrategyBase::GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, d
     return false;
 }
 
-// LogRejectEvent - throttled reject logging with dedup
-// Uses m_strategyPrefix for strategy-specific log identification
+// Dedup throttle: same reason tag suppressed for 15s, any reject suppressed for 5s.
 void CStrategyBase::LogRejectEvent(const string reasonTag)
 {
     datetime nowTime = TimeCurrent();
@@ -448,7 +428,6 @@ void CStrategyBase::LogRejectEvent(const string reasonTag)
     m_lastRejectLogTime = nowTime;
 }
 
-// RejectSignal - set reason tag, log, and return NONE
 ENUM_TRADE_SIGNAL CStrategyBase::RejectSignal(const string reasonTag)
 {
     SetDecisionReasonTag(reasonTag);
@@ -456,8 +435,6 @@ ENUM_TRADE_SIGNAL CStrategyBase::RejectSignal(const string reasonTag)
     return TRADE_SIGNAL_NONE;
 }
 
-// RefreshForNewBar - common new-bar detection + component refresh
-// Returns true if a new bar was detected and components refreshed
 bool CStrategyBase::RefreshForNewBar()
 {
     int barCount = iBars(m_symbol, m_timeframe);
@@ -469,8 +446,6 @@ bool CStrategyBase::RefreshForNewBar()
     return true;
 }
 
-// ValidateWithRiskManager - unified risk validation gate helper
-// Consolidates ~150 lines of duplicated boilerplate across strategies
 bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &request,
                                              const string tagPrefix,
                                              double &confidence)
@@ -491,16 +466,13 @@ bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &reque
         return false;
     }
 
-    // BUGFIX (consensus-conf): guard against a non-positive multiplier silently
-    // zeroing an approved signal's confidence. A valid adjustment is > 0; anything
-    // <= 0 (e.g. an uninitialized/ZeroMemory'd field) is treated as 1.0 = no change.
+    // A non-positive confidenceMultiplier would silently zero an approved signal's confidence.
+    // Anything <= 0 (e.g. a ZeroMemory'd field) is treated as 1.0 = no change.
     double confMult = (result.confidenceMultiplier > 0.0) ? result.confidenceMultiplier : 1.0;
     confidence *= confMult;
     return true;
 }
 
-// LogConsensusDiag - standardized [CONSENSUS-DIAG] logging wrapper
-// Output: [CONSENSUS-DIAG] symbol | BUY/SELL | context | Conf | Wt
 void CStrategyBase::LogConsensusDiag(ENUM_TRADE_SIGNAL signal, const string context, double confidence, const string reasonSuffix)
 {
     PrintFormat("[CONSENSUS-DIAG] %s | %s | %s | Conf: %.1f%% | Weight: %.2f | Reason: %s%s",
@@ -611,19 +583,16 @@ int CStrategyBase::GetMagicNumber(void) const
     return m_magic;
 }
 
-// Feature 1: Set regime context from RegimeEngine
 void CStrategyBase::SetRegimeContext(int detailedRegime)
 {
     m_regimeDetailedType = detailedRegime;
 }
 
-// Feature 1: Set strategy cluster type
 void CStrategyBase::SetStrategyCluster(int cluster)
 {
     m_strategyCluster = cluster;
 }
 
-// Feature 1: Regime-aware confidence multiplier
 double CStrategyBase::GetRegimeConfidenceMultiplier()
 {
     if(m_strategyCluster == STRATEGY_CLUSTER_NONE) return 1.0;
@@ -647,7 +616,7 @@ double CStrategyBase::GetRegimeConfidenceMultiplier()
     return 1.0;
 }
 
-// Feature 2: Detect volatility direction via ATR comparison
+// Falls back to VOL_STABLE when the indicator manager is NULL, the ATR handle is invalid, or <6 bars copied.
 ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
 {
     CIndicatorManager* indMgr = CIndicatorManager::Instance();
@@ -676,7 +645,6 @@ ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
     return VOL_STABLE;
 }
 
-// Feature 2: Volatility direction confidence multiplier
 double CStrategyBase::GetVolatilityDirectionMultiplier()
 {
     ENUM_VOLATILITY_DIRECTION volDir = GetVolatilityDirection();
@@ -688,7 +656,6 @@ double CStrategyBase::GetVolatilityDirectionMultiplier()
     }
 }
 
-// Feature 3: Check if signal aligns with higher TF trend
 bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
 {
     ENUM_TIMEFRAMES htf = GetNextHigherTF(m_timeframe);
@@ -712,7 +679,6 @@ bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
     return false;
 }
 
-// Feature 3: Get next higher timeframe
 ENUM_TIMEFRAMES CStrategyBase::GetNextHigherTF(ENUM_TIMEFRAMES tf)
 {
     switch(tf)

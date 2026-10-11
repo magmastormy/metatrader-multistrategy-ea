@@ -8,6 +8,45 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 182: Comment reduction, Core/Strategy, Core/Trading and Core/AI — 280 lines and two live defects found
+
+#### Context
+Third round of the comment workstream (Batches 180-181 covered `Core/Risk`, `Core/Management` and `Strategies`). Prose only; mechanical slop was exhausted in Batch 180.
+
+#### Changed (whole-line comments, before -> after)
+| File | Before | After |
+|---|---|---|
+| `Core/Strategy/StrategyCatalog.mqh` | 81 | 21 |
+| `Core/Strategy/StrategyBase.mqh` | 50 | 16 |
+| `Core/Trading/PositionStateTracker.mqh` | 59 | 11 |
+| `Core/Trading/TradeMgrPreflight.mqh` | 50 | 26 |
+| `Core/Trading/TradeMgrAsyncExecutor.mqh` | 50 | 20 |
+| `Core/AI/ONNXInitManager.mqh` | 56 | 16 |
+| `Core/AI/AIPerformanceFeedback.mqh` | 71 | 27 |
+
+Repo-wide **7,923 -> 7,643 (-280)**. Only whole-line `//` lines changed; non-comment lines byte-identical to `HEAD` across all 7 files.
+
+#### Kept because it is the constraint, not the prose
+The execution-domain notes are the reason this round was worth doing: the filling-mode fallback ignores the caller's `orderFillMode` because sending an IOC/FOK the symbol disallows is rejected with `INVALID_FILL (10030)`, and RETURN is preferred where no fill constraint applies because SL/TP travel in the same request, so RETURN leaves no unprotected-fill window; `FindFreshPositionForSend` is limited to positions opened in the last 30 s so another strategy's or an earlier grid layer's position cannot be mistaken for this send; async tickets are matched by **order** ticket because `SubmitAsync` stored `result.order` and `trans.order` carries it; the ONNX init behaviour contract gates the voter that feeds weighted consensus; AI outcome attribution matches on same symbol within 5 seconds and drops the outcome when nothing matches.
+
+#### Five pre-existing comments were asserting things the code does not do
+Deleted after verification rather than reworded:
+- `PositionStateTracker.mqh` header named the conflicting top-level `SPositionState` as living in `PositionManager.mqh:21`, reached via `TradeManager.mqh:11`. It is `Core/Position/PositionMgrStateStore.mqh:19`, included at `Core/Position/PositionManager.mqh:25`; the tracker's own struct is nested at `PositionStateTracker.mqh:18` inside the class at `:15`.
+- `StrategyCatalog.mqh` claimed "12 indicator strategies" and "17 rows: 12 indicator + 5 AI". The catalog registers **19** rows: 14 `CAT_KIND_INDICATOR` + 5 `CAT_KIND_AI` (counted on `CatalogAdd` call sites).
+- The same header claimed the catalog feeds `CStrategyRegistry` via `RegisterStrategy`. It feeds the manager roster; the registry is populated elsewhere. Replaced with the verified rule from `StrategyRegistryState.mqh:86-90`: a row whose name the registry does not know is forced `enabled = false`.
+- `ONNXInitManager.mqh` labelled `GetDisableThreshold` / `GetBackoffCapMinutes` as "diagnostics / tests". Both have zero callers repo-wide.
+- `AIPerformanceFeedback.mqh` described the pre-retrain snapshot as comparing against metrics "from BEFORE the previous retrain". The code does not do that — see below.
+
+#### Two live defects found by reading, deliberately NOT fixed here
+Both are behavior changes in execution and AI self-governance paths; per this project's rule a risk change never rides in a hygiene commit, so they are queued as their own batches.
+1. **`TradeMgrAsyncExecutor.mqh:433` reads out of bounds.** Guard is `if(count < 11) continue;`, then `fields[11]` is read at `:436`. The journal is 17 columns (`confirmed`=10, `expired`=11; header written at `:284`/`:451`), and the main loader correctly guards `count < 17` at `:338` — only the compaction path is wrong. A short line (a partially written final record after a crash) passes the guard, and MQL5 raises a runtime error on out-of-range array access, stopping the EA during load in the path that decides which async trade requests to re-adopt.
+2. **`AIPerformanceFeedback::TriggerRetraining` can never judge a retrain effective.** `:521-523` overwrite `m_preRetrainAccuracy/Profitability/Sharpe` from `m_currentMetrics` at the top of *every* call, then `:531-533` test `m_currentMetrics.accuracy > m_preRetrainAccuracy + 0.001` (and the two siblings). A value is compared against itself plus an epsilon, so once the 2-interval time gate at `:530` passes, `metricsImproved` is always false, `m_consecutiveFailedRetrains` always increments, and the **third** retrain arms a one-hour `[AI-RETRAIN-PAUSED]` regardless of whether retraining worked. The pre-retrain baseline needs to be captured at the end of the previous retrain, not at the start of this one.
+
+#### Verification
+- Every assertion written by this round was grep-checked before being kept, including: `orderFillMode` appears only in the signature; `GetMinimumStopDistance` folds in 1.5x spread (`TradeMgrPricing.mqh:17,213`); `ReplayAsyncTradeRequests` contains no `OrderSendAsync` (re-adopts, never re-sends); `RegisterAttempt` has exactly one caller (`ONNXInitManager.mqh:81`); `m_calibrationErrorThreshold` is set once in the constructor at `:199` and read once at `:720`; 19 catalog rows by kind.
+- Non-comment lines byte-identical to `HEAD` for all 7 files: **0 differences**.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
 ### Batch 181: Comment reduction, Core/Management and Strategies — 248 lines, three false notes deleted
 
 #### Context
