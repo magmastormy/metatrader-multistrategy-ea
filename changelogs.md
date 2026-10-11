@@ -8,6 +8,30 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 177: Engine send paths given fill confirmation, and the grid's ticket identity corrected
+
+#### Context
+AGENTS.md §3.2 says runtime execution is `CTradeManager`-owned. The four engine paths (ATR-scalp, grid recovery, spike hunter, fast-scalp pending) build their own `CTrade`/`MqlTradeRequest` and send directly, so they bypass the confirmation Batch 169 built for the main path. Batch 170 put stop validation on them; this batch gives them confirmation and duplicate protection, which is where the money was.
+
+#### Found, with the line that shows it
+- **The grid tracked the wrong kind of ticket.** `GridRecoveryExecution.ExecuteEntry` stored `m_trade.ResultOrder()` into `levels[level].ticket`, and that value is consumed by `PositionSelectByTicket(...)` and `CTrade::PositionClose(ticket)` — both of which take a **position** ticket. On a hedging account they are different numbers, so a grid level could never be selected or closed. Because Batch 170 excluded engine-tagged comments from lifecycle management, such a position has **no exit owner at all**: the exit loops skip it (`PositionSelectByTicket` fails), `ticket` is reset to 0 at `GridRecoveryEngine.mqh:503`, and the grid is free to place another layer on a symbol that already holds one.
+- **A partial fill read as a failure.** `CTrade::Buy/Sell` return false unless the retcode is DONE or PLACED, so `DONE_PARTIAL` — a real, smaller position — reaches the engine as "nothing happened". All three market paths then skip their cooldown/`lastTradeTime` bookkeeping and re-fire on the next scan: duplicate exposure from the fill they already had.
+- **A dropped response was a dropped order.** `FastScalpPendingOrders` returned false on any `OrderSend` failure. On `TIMEOUT` or `CONNECTION` the server may still have placed the order, which then triggers later as an untracked position while the engine places a second one.
+
+#### Changed
+- **Grid resolves a position ticket**: new `FindLevelPositionTicket(symbol, magic)` (the grid's magic is unique per symbol and level — `base + offset + symbolIndex*100 + level`, `GridRecoveryEngine.mqh:362`), used for `ticketOut`. If nothing matches yet, the order ticket is kept as a fallback and `[GRID-RECOVERY] TICKET UNRESOLVED` says plainly that the level cannot be closed until it resolves, rather than letting the level silently become untrackable. The opened log now prints the ticket it stored.
+- **Position-based confirmation on all three market paths** using the existing `CTradeMgrPreflight::FindFreshPositionForSend` (symbol + direction + opened within 30 s + EA-owned magic): `[ATR-SCALP] / [SPIKE-HUNT] / [GRID-RECOVERY] FILL CONFIRMED BY POSITION`, after which the send is treated as successful — the cooldown arms, the counters advance, and the engine does not re-fire. Grid confirmation additionally resolves the ticket.
+- **Pending placement recovery** in `FastScalpPendingOrders`: on `TIMEOUT` / `CONNECTION`, or whenever the broker returned a nonzero order, the tracker recovers the ticket (`FindRecentScalpEntry` scans live orders by symbol+magic, then positions) and tracks it instead of returning false. `[SCALP-PENDING] PLACEMENT RECOVERED` names the retcode it overrode.
+- Retcodes used are the ones this build is known to define (`TIMEOUT`, `CONNECTION`, verified against `TradeDescriptor.mqh`); the first draft of this fix named `TRADE_RETCODE_INVALID`, `..._ERROR` and `..._SERVER_CLOSE`, which are not in that set.
+
+#### Deliberately not touched
+- **The sends still originate in the engines.** Routing them through `CTradeManager`'s open path would recompute magic and comment composition, which is how positions are identified on a live account — a re-numbering orphans every position already open. These paths now have confirmation and duplicate protection at the engine, and §3.2 remains formally unmet for them; that is the recorded state, not a claim that it is fixed.
+- **Found and not fixed: the grid has no restart reconciliation.** `levels[].ticket` is in-memory only, so after a terminal restart the engine holds no tickets for positions it still owns, and lifecycle management excludes `GRID-RECOVERY` comments. The positions run naked until their own SL/TP. Needs a rescan-by-magic at init; that is a behavior change on a live book and is queued rather than folded into this batch.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- Runtime evidence owed: `[ATR-SCALP] FILL CONFIRMED BY POSITION` / `[GRID-RECOVERY] TICKET UNRESOLVED` only appear when the broker actually returns a partial or ambiguous response, so their absence is not evidence of breakage — but `[GRID-RECOVERY] Level opened: ... ticket=` now prints the stored ticket, and that line should show a position ticket on the first grid layer.
+
 ### Batch 176: Dead configuration surface found by diffing declarations against call sites
 
 #### Context

@@ -12,6 +12,7 @@
 
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
+#include "../Trading/TradeMgrPreflight.mqh"
 #include <Trade\Trade.mqh>
 
 #include "GridRecoveryTypes.mqh"
@@ -120,13 +121,43 @@ public:
       else
          result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp, comment);
 
+      uint sendRetcode = m_trade.ResultRetcode();
+
+      // Batch 177: a DONE_PARTIAL retcode comes back through CTrade as result == false while a
+      // position exists. The engine would then treat the level as never opened and the grid could
+      // place another layer on top of the fill it already has.
+      if(!result)
+      {
+         ulong confirmTicket = 0;
+         double confirmVolume = 0.0;
+         if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
+                (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                lotSize, confirmTicket, confirmVolume))
+         {
+            PrintFormat("[GRID-RECOVERY] FILL CONFIRMED BY POSITION | %s L%d | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | level tracked, not resent",
+                        symbol, level, confirmTicket, confirmVolume, lotSize, sendRetcode);
+            result = true;
+         }
+      }
+
       if(result)
       {
-         ticketOut = m_trade.ResultOrder();
+         // The stored ticket is used by PositionSelectByTicket and CTrade::PositionClose, both of
+         // which take a POSITION ticket. ResultOrder() is the ORDER ticket and differs from it on a
+         // hedging account, so a level tracked by order ticket can never be selected or closed -
+         // the position then has no exit owner at all, because engine-tagged comments are excluded
+         // from lifecycle management (Batch 170).
+         ticketOut = FindLevelPositionTicket(symbol, magic);
+         if(ticketOut == 0)
+         {
+            ticketOut = m_trade.ResultOrder();
+            PrintFormat("[GRID-RECOVERY] TICKET UNRESOLVED | %s L%d | no open position matched magic=%d yet, tracking order ticket %I64u - this level cannot be closed until it resolves",
+                        symbol, level, magic, ticketOut);
+         }
 
-         PrintFormat("[GRID-RECOVERY] Level opened: %s L%d %s lot=%.2f entry=%.5f SL=%.5f TP=%.5f magic=%d",
+         PrintFormat("[GRID-RECOVERY] Level opened: %s L%d %s lot=%.2f entry=%.5f SL=%.5f TP=%.5f magic=%d ticket=%I64u",
                      symbol, level, direction == 1 ? "BUY" : "SELL",
-                     lotSize, entryPrice, sl, tp, magic);
+                     lotSize, entryPrice, sl, tp, magic, ticketOut);
       }
       else
       {
@@ -165,6 +196,21 @@ public:
       }
 
       return result;
+   }
+
+// Resolve the open position this send just created: the grid's magic is unique per symbol and
+// level (base + offset + symbolIndex*100 + level), so a magic match identifies the exact position.
+   ulong FindLevelPositionTicket(const string symbol, const int magic)
+   {
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0) continue;
+         if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != magic) continue;
+         return ticket;
+      }
+      return 0;
    }
 
 // Close a single grid level position; logs the retcode on failure

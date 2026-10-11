@@ -17,6 +17,7 @@
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
+#include "../Trading/TradeMgrPreflight.mqh"
 #include <Trade\Trade.mqh>
 
 #include "SpikeHunterTypes.mqh"
@@ -308,6 +309,23 @@ public:
                          symbol, dirStr);
          }
 
+         // Batch 177: DONE_PARTIAL arrives as result == false with a position open, and the caller
+         // would hunt the same spike again. Confirm from the position before declaring failure.
+         uint sendRetcode = m_trade.ResultRetcode();
+         if(!result)
+         {
+            ulong confirmTicket = 0;
+            double confirmVolume = 0.0;
+            if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
+                   (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                   lotSize, confirmTicket, confirmVolume))
+            {
+               PrintFormat("[SPIKE-HUNT] FILL CONFIRMED BY POSITION | Symbol=%s | Direction=%s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | spike marked opened, not resent",
+                           symbol, dirStr, confirmTicket, confirmVolume, lotSize, sendRetcode);
+               result = true;
+            }
+         }
+
          if(result)
          {
             m_detector.MarkSpikeTradeOpened(idx);
@@ -319,9 +337,8 @@ public:
          }
          else
          {
-            uint retcode = m_trade.ResultRetcode();
             PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
-                        symbol, dirStr, lotSize, retcode);
+                        symbol, dirStr, lotSize, sendRetcode);
          }
 
          return result;

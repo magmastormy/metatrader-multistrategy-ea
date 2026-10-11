@@ -14,6 +14,7 @@
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
+#include "../Trading/TradeMgrPreflight.mqh"
 #include <Trade\Trade.mqh>
 
 #include "ATRScalpTypes.mqh"
@@ -184,6 +185,27 @@ public:
          result = trade.Sell(lotSize, symbol, entryPrice, sl, tp,
                      "ATR-SCALP|" + dirStr);
 
+      uint retcode = trade.ResultRetcode();
+
+      // Batch 177: this engine sends on its own CTrade, so it never reaches the
+      // confirmation queue CTradeManager runs sends through. A DONE_PARTIAL retcode
+      // arrives here as result == false while a position exists, and the caller would
+      // re-fire the same scalp on the next scan - duplicating exposure the engine
+      // believes it never opened. Confirm from the position before declaring failure.
+      if(!result)
+      {
+         ulong confirmTicket = 0;
+         double confirmVolume = 0.0;
+         if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
+                (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                lotSize, confirmTicket, confirmVolume))
+         {
+            PrintFormat("[ATR-SCALP] FILL CONFIRMED BY POSITION | Symbol=%s | Direction=%s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | not resent",
+                        symbol, dirStr, confirmTicket, confirmVolume, lotSize, retcode);
+            result = true;
+         }
+      }
+
       if(result)
       {
          state.lastTradeTime = TimeCurrent();
@@ -194,7 +216,6 @@ public:
       }
       else
       {
-         uint retcode = trade.ResultRetcode();
          PrintFormat("[ATR-SCALP-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
                      symbol, dirStr, lotSize, retcode);
       }

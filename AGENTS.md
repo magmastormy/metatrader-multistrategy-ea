@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 175 - `CPostConsensusValidator::SetValidatorConfig` had no call site, so the OFI and VPIN filter arms ran OFF despite their inputs defaulting ON and the quality floors ignored configuration; they are now wired, and conservative-tier safe mode tightens the gates it names. Batch 174 armed the VPIN veto and made the post-size risk clamp refuse instead of rounding up. Batch 173 applied the live-authority ladder to the shipped lot. Batch 172 wired the authority thresholds and profit factor.
+- Latest Batch: Batch 177 - the four engine send paths now confirm fills from the position book (a `DONE_PARTIAL` or a lost response no longer reads as "no trade", which had them re-firing into duplicate exposure), and grid levels store the position ticket their own close path requires. Batch 176 removed dead configuration surface and corrected three logs that described controls which never ran. Batch 175 plugged the post-consensus validator into its own configuration (OFI and VPIN screening had never run despite both inputs defaulting ON). Batch 174 armed the VPIN veto; Batch 173 applied the live-authority ladder to the shipped lot.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

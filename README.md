@@ -305,6 +305,15 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Two safe-mode fields are deliberately not enforced** and are printed as such: `tradeOnlyKillZones` (London 07-10 / NY 12-15 UTC is FX-session semantics over a roster of 24/7 synthetics that the session filter exempts on purpose) and `avoidNewsEvents` (no economic-calendar feed exists; the check is a stub).
 - **Still decoration, recorded:** the validator's spike-hunter branch is empty, and `InpValidator*MinConfidence` / `MinConfluence` are printed in `[ENTERPRISE-CONFIG]` but enforce nothing. Turning them into vetoes is next, after this wiring has been observed live.
 
+### What the operator will notice after Batch 176-177 (logs stop describing controls that were never running; engine fills get confirmed)
+
+- **`[VPIN] Constructed | ... mode=` now reports the classification the filter actually uses.** It used to print a second, decorative field that nothing ever wrote and nothing read, in the same sessions where VPIN became a live veto.
+- **`[GRID-RECOVERY] Level opened: ... ticket=` now shows a position ticket.** It previously stored the *order* ticket, and the grid's own close path selects and closes by position ticket — on a hedging account those are different numbers, so a level could never be selected, never be closed by the engine, and had no other exit owner because engine-tagged positions are excluded from lifecycle management. If the position cannot be matched yet, `[GRID-RECOVERY] TICKET UNRESOLVED` says so instead of quietly storing an unusable ticket.
+- **A partially filled scalp, spike or grid trade is no longer treated as "no trade".** `CTrade::Buy/Sell` report `DONE_PARTIAL` as a failure even though a position exists, and the engine would re-fire on the next scan — duplicate exposure. The paths now confirm from the position (`FILL CONFIRMED BY POSITION`), arm their cooldown, and skip the resend.
+- **A scalp pending order whose response was lost is recovered, not forgotten.** On `TIMEOUT` / `CONNECTION`, or whenever the broker returned an order number, the tracker finds the order by symbol and magic and tracks it (`[SCALP-PENDING] PLACEMENT RECOVERED`) instead of placing a second order behind the one the server already accepted.
+- **README no longer lists `InpCorrelationBlockThreshold`** — that input does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate, and the sizer's correlation path is switched off in code.
+- **Two known gaps are stated rather than implied:** the margin gate's 80% free-margin / 200% margin-level ceiling has no knob (a rejection prints the threshold in force), and grid level tickets are in-memory only, so a terminal restart leaves open grid positions untracked by the engine until their own SL/TP. Both are in the changelog's open list.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

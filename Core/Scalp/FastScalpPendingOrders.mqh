@@ -10,6 +10,7 @@
 #include <Trade\Trade.mqh>
 #include "../Utils/Enums.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
+#include "../Trading/TradeMgrPreflight.mqh"
 #include "FastScalpTypes.mqh"
 #include "FastScalpFilters.mqh"
 
@@ -42,6 +43,32 @@ public:
          }
       }
       m_pendingOrderCount = 0;
+   }
+
+// Recover a placement the broker accepted but OrderSend reported as failed: the magic is this
+// engine's own, so a match is unambiguous. Checks pending orders first, then positions, because an
+// immediate fill leaves no order behind.
+   ulong FindRecentScalpEntry(const string symbol, const long magic)
+   {
+      datetime cutoff = TimeCurrent() - 30;
+
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket == 0) continue;
+         if(OrderGetString(ORDER_SYMBOL) != symbol) continue;
+         if(OrderGetInteger(ORDER_MAGIC) != magic) continue;
+         if((datetime)OrderGetInteger(ORDER_TIME_SETUP) < cutoff) continue;
+         return ticket;
+      }
+
+      ulong posTicket = 0;
+      double posVolume = 0.0;
+      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_BUY, 0.0, posTicket, posVolume))
+         return posTicket;
+      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_SELL, 0.0, posTicket, posVolume))
+         return posTicket;
+      return 0;
    }
 
 // Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)
@@ -149,9 +176,23 @@ public:
 
       if(!OrderSend(request, result))
       {
-         PrintFormat("[SCALP-PENDING-FAILED] %s | retcode=%u | comment=%s",
-                     symbol, result.retcode, result.comment);
-         return false;
+         // Batch 177: a timeout, transport error or server close returns false while the server may
+         // have accepted the order anyway. An untracked pending order still fires later, and the
+         // next scan places a second one - double exposure from a response the engine dropped.
+         bool ambiguous = (result.retcode == TRADE_RETCODE_TIMEOUT ||
+                           result.retcode == TRADE_RETCODE_CONNECTION ||
+                           result.order > 0);
+         ulong recovered = (result.order > 0) ? (ulong)result.order
+                          : (ambiguous ? FindRecentScalpEntry(symbol, magicNumber) : 0);
+         if(recovered == 0)
+         {
+            PrintFormat("[SCALP-PENDING-FAILED] %s | retcode=%u | comment=%s",
+                        symbol, result.retcode, result.comment);
+            return false;
+         }
+         result.order = recovered;
+         PrintFormat("[SCALP-PENDING] PLACEMENT RECOVERED | %s | OrderSend said retcode=%u but order/position %I64u exists for magic=%d | tracked, not resent",
+                     symbol, result.retcode, recovered, magicNumber);
       }
 
       m_pendingOrders[m_pendingOrderCount].ticket     = result.order;
