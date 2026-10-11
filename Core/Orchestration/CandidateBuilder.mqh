@@ -211,6 +211,34 @@ private:
         }
     }
 
+    // Batch 173: a symbol that repeatedly lands under SYMBOL_VOLUME_MIN after a shrink looks merely
+    // quiet in the log. These counters carry it into the periodic status report as a refusal count.
+    string m_authorityBlockSymbols[];
+    int    m_authorityBlockCounts[];
+    int    m_authorityBlockedTotal;
+    // Kept separately because GetStatusReport() is const and ArraySize() binds its argument by
+    // reference, so the const path cannot ask the array how long it is.
+    int    m_authorityBlockSymbolsCount;
+
+    int NoteAuthorityBlock(const string symbol)
+    {
+        for(int i = 0; i < m_authorityBlockSymbolsCount; i++)
+        {
+            if(m_authorityBlockSymbols[i] == symbol)
+            {
+                m_authorityBlockCounts[i]++;
+                return m_authorityBlockCounts[i];
+            }
+        }
+        int n = m_authorityBlockSymbolsCount;
+        ArrayResize(m_authorityBlockSymbols, n + 1);
+        ArrayResize(m_authorityBlockCounts, n + 1);
+        m_authorityBlockSymbols[n] = symbol;
+        m_authorityBlockCounts[n] = 1;
+        m_authorityBlockSymbolsCount = n + 1;
+        return 1;
+    }
+
 public:
     CCandidateBuilder() : 
             m_riskManager(NULL), m_positionSizer(NULL), m_tradeManager(NULL),
@@ -224,7 +252,7 @@ public:
                 m_symbolHybridGateRelaxedCount(0),
                 m_riskTierManager(NULL), m_compoundingTierManager(NULL),
                 m_familyWeightMatrix(NULL), m_sessionWeightManager(NULL),
-                m_skewStepAnalyzer(NULL)
+                m_skewStepAnalyzer(NULL), m_authorityBlockedTotal(0), m_authorityBlockSymbolsCount(0)
             {
             ArrayResize(m_minRRByCluster, 10);
             ArrayInitialize(m_minRRByCluster, 2.0);
@@ -251,6 +279,79 @@ public:
         }
     
     
+    // Batch 173: the live-authority ladder now sets the shipped lot. It is shrink-only by
+    // construction - the score ladder tops out at 1.0 and both the bootstrap cap and the
+    // PROVEN_AI floor can only pull it down - so no candidate can be sized larger than the risk
+    // manager approved.
+    //
+    // Floor to SYMBOL_VOLUME_STEP by hand rather than calling CPositionSizer::NormalizeVolume:
+    // that helper clamps UP to SYMBOL_VOLUME_MIN, which would return the entire reduction and
+    // leave the gate logging a shrink that never happened. A lot that lands under the broker
+    // minimum is therefore refused, and the refusal is loud and counted.
+    //
+    // Returns false when the candidate must not be sent.
+    bool ScaleLotByLiveAuthority(STradeCandidate &candidate, const double riskMult, const string corrId)
+    {
+        string symbol = candidate.symbol;
+        double baseLot = candidate.lotSize;
+        if(baseLot <= 0.0)
+            return false;
+
+        if(riskMult >= 1.0)
+            return true;
+
+        if(riskMult <= 0.0)
+        {
+            NoteAuthorityBlock(symbol);
+            m_authorityBlockedTotal++;
+            PrintFormat("[AUTHORITY-REJECT] %s | live-authority multiplier arrived as %.4f, which is not a valid scale | trade refused rather than sent unscaled | reason=%s",
+                        symbol, riskMult, candidate.liveAuthorityReason);
+            CJsonLogger::LogRiskEvent("AuthorityReject", symbol, "AUTHORITY_MULT_INVALID",
+                                      "Live authority multiplier <= 0; candidate not sent", baseLot, riskMult, corrId);
+            return false;
+        }
+
+        double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double scaled = baseLot * riskMult;
+        if(step > 0.0)
+            scaled = NormalizeDouble((long)MathFloor(scaled / step + 1e-9) * step, 8);
+
+        if(scaled < minLot)
+        {
+            int symbolBlocks = NoteAuthorityBlock(symbol);
+            m_authorityBlockedTotal++;
+            PrintFormat("[AUTHORITY-REJECT] %s | authority mult=%.2f sizes the trade %.4f below broker min %.4f | REFUSED, not rounded up | reason=%s | symbol_refusals=%d session_total=%d",
+                        symbol, riskMult, scaled, minLot, candidate.liveAuthorityReason,
+                        symbolBlocks, m_authorityBlockedTotal);
+            PrintFormat("[AUTHORITY-REJECT] %s | this symbol is dark at the current authority level; it returns only when the stop widens, equity grows, or the AUTHORITY_MIN_* floors / ladder rungs are revisited",
+                        symbol);
+            CJsonLogger::LogRiskEvent("AuthorityReject", symbol, "AUTHORITY_LOT_BELOW_MIN",
+                                      StringFormat("scaled %.4f < broker min %.4f at mult %.2f", scaled, minLot, riskMult),
+                                      baseLot, scaled, corrId);
+            return false;
+        }
+
+        if(scaled < baseLot)
+        {
+            double newRiskPct = candidate.riskPercent * (scaled / baseLot);
+            PrintFormat("[AUTHORITY-REDUCED] %s | mult=%.2f | lot %.4f->%.4f | risk %.3f%%->%.3f%% | reason=%s",
+                        symbol, riskMult, baseLot, scaled, candidate.riskPercent, newRiskPct,
+                        candidate.liveAuthorityReason);
+            CJsonLogger::LogInfo("AuthorityDecision",
+                                 StringFormat("AUTHORITY_REDUCED symbol=%s mult=%.2f lot=%.4f->%.4f", symbol, riskMult, baseLot, scaled),
+                                 corrId);
+            // Booked risk has to follow the lot: EAOrchestrator feeds candidate.riskPercent into
+            // RegisterExecutedTradeRisk, so leaving it at the pre-shrink value would charge the
+            // daily entry budget for risk the position never took.
+            candidate.riskPercent = newRiskPct;
+            candidate.lotSize = scaled;
+        }
+        return true;
+    }
+
+    int GetAuthorityBlockedTotal() const { return m_authorityBlockedTotal; }
+
     void SetDependencies(CUnifiedRiskManager* risk, CPositionSizer* sizer, CTradeManager* trade,
                          CPerformanceAnalytics* perf, CDerivAssetProfiler* derivProf)
     {
@@ -475,12 +576,11 @@ public:
         
         lotSize = ApplyMomentumScaling(symbol, lotSize);
         
-        // Batch 170: removed the VPIN-toxicity and volatility-targeting scaling
-        // steps. Both were `return lotSize;` stubs ("Would use m_mathRegistry if
-        // available") sitting under comments claiming they resized the lot, while
-        // the validator status report printed a LastVPINMultiplier that no caller
-        // consumed. VPIN still vetoes signals; it never sized, and the code no
-        // longer implies otherwise.
+        // Batch 170: removed the VPIN-toxicity and volatility-targeting scaling steps. Both were
+        // `return lotSize;` stubs ("Would use m_mathRegistry if available") sitting under comments
+        // claiming they resized the lot. VPIN does act on size, but through CVPINLotModifier in the
+        // sizer modifier chain, not here; and it never vetoes anything, contrary to what this
+        // note claimed when it was written.
         lotSize = ApplySkewStepScaling(symbol, lotSize);
         
         lotSize = ApplyFullMarginStacking(symbol, signal, lotSize);
@@ -818,6 +918,22 @@ public:
                 }
                 report += "  " + symbol + ": cycles=" + IntegerToString(cycles) + " relaxed=" + (relaxed ? "YES" : "NO") + "\n";
             }
+            // Batch 173: symbols the live-authority ladder has sized out of existence. Without
+            // this the only trace is a per-candidate log line, and a permanently dark symbol
+            // looks the same as a symbol that simply has no signals.
+            report += "  authorityLotRefusals total=" + IntegerToString(m_authorityBlockedTotal);
+            if(m_authorityBlockedTotal > 0)
+            {
+                report += "\n";
+                for(int k = 0; k < m_authorityBlockSymbolsCount; k++)
+                {
+                    if(m_authorityBlockCounts[k] <= 0) continue;
+                    report += "    " + m_authorityBlockSymbols[k] + " refused=" + IntegerToString(m_authorityBlockCounts[k]) +
+                              " (authority lot < SYMBOL_VOLUME_MIN)\n";
+                }
+            }
+            else
+                report += "\n";
             return report;
         }
 };

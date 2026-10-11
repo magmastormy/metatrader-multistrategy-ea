@@ -3414,12 +3414,16 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         authority, cycleCorrId);
 
         candidate.liveAuthorityAllowed = authority.allowed;
-        // liveAuthorityRiskMult is recorded for the log only - no sizing path reads it, so the
-        // resolver's bootstrap cap and PROVEN_AI floor do not change the lot. Only `allowed` acts.
+        // Batch 173: this multiplier now sets the shipped lot (see ScaleLotByLiveAuthority). It is
+        // shrink-only, and a lot that drops under the broker minimum is refused loudly rather than
+        // rounded back up, so the gate cannot be silently undone by lot normalization.
         candidate.liveAuthorityRiskMult = authority.riskMultiplier;
         candidate.liveAuthorityReason = authority.reason;
 
         if(!authority.allowed) continue;
+
+        if(!m_candidateBuilder.ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId))
+            continue;
 
                 if(!canOpenNewTrades) continue;
 

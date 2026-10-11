@@ -6,7 +6,34 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-10
+## [Unreleased] - 2026-10-11
+
+### Batch 173: Live-authority ladder applied to position size, with refusals made loud
+
+#### Context
+Batch 172 left the resolved `riskMultiplier` unconsumed and put three options to the operator. The decision was "apply the full ladder, but don't make things fall silently" — so every gated candidate is now scaled by its authority multiplier, and every consequence of that scaling is required to announce itself.
+
+#### Changed
+- **`CCandidateBuilder::ScaleLotByLiveAuthority(candidate, riskMult, corrId)`** is called from `EAOrchestrator` immediately after `m_liveAuthority.Resolve(...)` and the `allowed` test, and before the send. It multiplies the shipped lot by the ladder value, floors it to `SYMBOL_VOLUME_STEP`, and rewrites `candidate.lotSize`.
+- **Shrink-only by construction, verified rather than assumed.** `Resolve()` assigns the multiplier from a ladder whose top rung is 1.0 (`LiveAuthorityResolver.mqh:229-239`), `MathMin(riskMult, m_aiBootstrapRiskMultiplier)` pulls unproven AI down (`:261, :269`), and `MathMax(0.10, riskMult)` floors it (`:277`). The one branch that *raises* is `PROVEN_AI`'s `MathMax(riskMult, m_aiPromotedRiskMultiplier)` (`:254`), and Batch 172 clamps that promoted floor to `AUTHORITY_PROMOTED_MULT_CAP = 0.75`, so no path can produce a multiplier above 1.0. Nothing is sized larger than what `CUnifiedRiskManager` approved, and the Batch 152 post-size re-gate (an upper bound) cannot be broken by this step.
+- **Broker-minimum refusals are loud and counted, never rounded up.** `CPositionSizer::NormalizeVolume` clamps UP to `SYMBOL_VOLUME_MIN` (`PositionSizer.mqh:659`), so using it here would hand the entire reduction straight back while logging that a shrink happened. The method floors by hand instead, and a lot landing under the minimum produces `[AUTHORITY-REJECT]` twice — the arithmetic, then a plain statement that the symbol is dark at this authority level until the stop widens, equity grows, or the floors/rungs are revisited — plus an `AuthorityReject` JSON event and a running per-symbol and session total.
+- **Booked risk follows the lot.** `candidate.riskPercent` is scaled by the same ratio, because `EAOrchestrator` feeds it to `RegisterExecutedTradeRisk`; leaving it at the pre-shrink value would charge the daily entry budget for risk the position never took.
+- **Aggregate visibility.** `[CandidateBuilder]` status now prints `authorityLotRefusals total=N` and a per-symbol breakdown, so a symbol the ladder has sized out of existence cannot be mistaken for a symbol that simply has no signals. A multiplier arriving `<= 0` is also refused rather than sent unscaled.
+- **AGENTS.md §6 signatures became real.** `FMT_AUTHORITY_REJECT` and `FMT_AUTHORITY_REDUCED` are defined in `Core/Utils/LogMacros.mqh:41-42` and were used by nothing — §6 had listed `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` as verification evidence for every batch since. Both tags are now emitted (as literal tags, matching how every other log in this file is written), so the section is checkable for the first time.
+- A stale Batch 170 comment in this file claiming "VPIN still vetoes signals; it never sized" was corrected; both halves were wrong (see Batch 172).
+
+#### Deliberately not touched
+`BuildCandidate` still ends its own scaling chain with "Floor at broker minimum" (`lotSize < brokerMinLot → brokerMinLot`), which silently rounds the *other* scalers (drawdown, momentum) back up to the minimum after shrinking them. That is the same over-risk shape this batch refuses to reproduce, but it is pre-existing behavior on paths the operator did not ask about, so it is recorded rather than changed here.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: all 8 root programs at **0 errors, 0 warnings** (`MultiStrategyAutonomousEA.mq5` 69,267 ms, `MultiStrategyTestingEA.mq5` 72,484 ms, the four MQH* tools, `TrainingDataExporter.mq5`, `WalkForwardTesterEA.mq5`). An earlier `-All` run failed with 18 errors because this method was first written against a type named `SCandidate`, which does not exist in this codebase — the candidate struct is `STradeCandidate`. Fixed, together with a `const` violation (`GetStatusReport()` cannot call `ArraySize()`, which binds by reference — the array length is now tracked in `m_authorityBlockSymbolsCount`).
+- Refusal math re-read at the cited lines: step floor uses `MathFloor(volume/step + 1e-9)` and 8-digit normalization, the same convention that Batch 16x established after `NormalizeDouble(...,2)` pushed a 0.001-step lot off-step and the broker rejected it as invalid volume.
+
+#### Risk Flag — this is a live-sizing change
+- **Every low-authority trade is now materially smaller.** Candidates below the 0.35 score rung take `bootstrapMult * 0.5` = 0.25× of approved risk; unproven AI-only candidates are capped at 0.5×; a fully-scored hybrid candidate is still 1.0×. Expect total exposure and per-symbol lot counts to drop, and expect the equity curve per trade to shrink accordingly. This is the intended effect of the ladder, not a side effect.
+- **Some symbols may stop trading entirely.** Where the approved lot times the multiplier lands under `SYMBOL_VOLUME_MIN`, the candidate is refused — most likely on coarse-tick synthetic indices and on small accounts. Each such loss is logged as `[AUTHORITY-REJECT]` with the arithmetic and counted in the status report; if one appears and is not wanted, the levers are the `AUTHORITY_MIN_*` floors, the ladder rungs, or a wider stop at the same risk.
+- **Do not read the first session as a strategy regression.** Fewer and smaller AI trades is this change working. Judge it against `[AUTHORITY-REDUCED]` counts and the per-symbol refusal breakdown, not against last month's trade count.
+- **Runtime evidence owed (AGENTS.md §6):** `[AUTHORITY-CONFIG] effective:` once at init, `[AUTHORITY-REDUCED]` on the first scaled candidate, `[AUTHORITY-REJECT]` only where a symbol is genuinely sized out, and `authorityLotRefusals` visible in the `[CandidateBuilder]` block.
 
 ### Batch 172: Live-authority thresholds wired, profit factor computed, and two dead outputs recorded
 

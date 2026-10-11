@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-10-10
+- Last Updated: 2026-10-11
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 172 - live-authority thresholds wired and profit factor computed; the resolved risk multiplier and VPIN's veto are recorded as computed-but-unconsumed outputs awaiting an operator decision. Batch 171 closed at 11,201 comment lines removed (19,496 -> 8,295), no code change.
+- Latest Batch: Batch 173 - the live-authority risk multiplier now sets the shipped lot (shrink-only, `EAOrchestrator.mqh:3425` -> `CCandidateBuilder::ScaleLotByLiveAuthority`); a lot that falls under `SYMBOL_VOLUME_MIN` is refused and counted, never rounded up; `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` are emitted for the first time. Batch 172 wired the authority thresholds and made profit factor real. Batch 171 closed at 11,201 comment lines removed (19,496 -> 8,295), no code change.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
