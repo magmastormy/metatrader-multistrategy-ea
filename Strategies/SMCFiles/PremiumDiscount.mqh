@@ -62,7 +62,6 @@ public:
                         CSMCPremiumDiscount();
                        ~CSMCPremiumDiscount();
     
-    // Initialization
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   int rangeLookback = 100);
 

@@ -283,12 +283,10 @@ public:
     // construction - the score ladder tops out at 1.0 and both the bootstrap cap and the
     // PROVEN_AI floor can only pull it down - so no candidate can be sized larger than the risk
     // manager approved.
-    //
     // Floor to SYMBOL_VOLUME_STEP by hand rather than calling CPositionSizer::NormalizeVolume:
     // that helper clamps UP to SYMBOL_VOLUME_MIN, which would return the entire reduction and
     // leave the gate logging a shrink that never happened. A lot that lands under the broker
     // minimum is therefore refused, and the refusal is loud and counted.
-    //
     // Returns false when the candidate must not be sent.
     bool ScaleLotByLiveAuthority(STradeCandidate &candidate, const double riskMult, const string corrId)
     {

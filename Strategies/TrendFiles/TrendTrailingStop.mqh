@@ -61,7 +61,6 @@ public:
                         CTrendTrailingStop();
                        ~CTrendTrailingStop();
     
-    // Initialization
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                   CMultiEMASystem* emaSystem = NULL);
     void                Deinit();

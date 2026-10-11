@@ -1,21 +1,13 @@
-// Stateless cluster-code normalisation / parsing helpers.
-// Extracted verbatim from CUnifiedRiskManager (Phase E1) so that
-// cluster-governance, audit formatting and position-sync code can
-// share one canonical implementation. Behaviour is byte-identical
-// to the original member functions; CUnifiedRiskManager keeps thin
-// forwarders with the original signatures.
-// NOTE (MQL5): static methods cannot be declared const, so the
-// trailing const of the original members is dropped here.
+// Stateless cluster-code normalisation / parsing shared by risk governance, audit
+// formatting and position sync. MQL5: static methods cannot be declared const.
 #ifndef CORE_RISK_RISK_CLUSTER_CODEC_MQH
 #define CORE_RISK_RISK_CLUSTER_CODEC_MQH
 
-// Cluster code codec (pure, stateless)
 class CRiskClusterCodec
 {
 public:
-    //--- Normalise an arbitrary cluster label to a compact code.
-    //--- Returns one of "T" (trend), "R" (reversion), "S" (structure),
-    //--- or "N" (none/unknown).
+    //--- Normalise an arbitrary cluster label to "T" (trend), "R" (reversion),
+    //--- "S" (structure) or "N" (none/unknown).
     static string NormalizeClusterCode(const string clusterCode)
     {
         string code = clusterCode;
@@ -40,9 +32,8 @@ public:
         return "N";
     }
 
-    //--- Extract the compact cluster code embedded in a position comment
-    //--- using the "K:<code>" marker. Always writes clusterCode (default "N").
-    //--- Returns true when a marker was found and decoded.
+    //--- Read the cluster code from the "K:<code>" marker in a position comment.
+    //--- `clusterCode` is always written (default "N"); true only when a marker decoded.
     static bool ParseClusterCodeFromComment(const string comment, string &clusterCode)
     {
         clusterCode = "N";

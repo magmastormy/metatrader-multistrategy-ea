@@ -1,15 +1,8 @@
-// Theme 3 (MQL5 article 23662): basket-level equity stop.
-// Tracks the account equity PEAK and current drawdown %. When DD
-// from peak exceeds a configurable threshold it:
-// (a) halts new entries (consumed by the EA's canOpenNewTrades
-// gate), and optionally
-// (b) sweeps ONLY this EA's basket (magic-filtered) so manual /
-// other-EA positions are never touched (unlike
-// CTradeManager::CloseAllPositions which is account-wide and
-// magic-unfiltered).
-// ADDITIVE: it does NOT touch consensus, candidate building, or
-// position sizing. The only influence on entry flow is the single
-// OR-term on canOpenNewTrades.
+// Basket-level equity stop: tracks the account equity peak and current drawdown %.
+// Past the threshold it halts new entries (the EA's canOpenNewTrades gate) and, when armed,
+// sweeps ONLY this EA's magic-filtered positions; manual / other-EA positions are never touched.
+// CTradeManager::CloseAllPositions is the account-wide, magic-unfiltered alternative.
+// No effect on consensus, candidate building, or position sizing.
 #property strict
 
 #ifndef CORE_RISK_BASKET_EQUITY_STOP_MQH
@@ -53,9 +46,8 @@ public:
       m_closeRequested = false;
    }
 
-   // Call once per timer tick. Seeds + updates the equity peak and sets the halt /
-   // close flags. No-op when disabled. Idempotent and side-effect free except for
-   // the (intended) flag transitions and a single informational Print on breach.
+   // Call once per timer tick: seeds/updates the equity peak and the halt + close flags.
+   // Disabled: clears both flags and returns, so it is idempotent with no other side effects.
    void Update(double equity)
    {
       if(!m_enabled) { m_haltActive = false; m_closeRequested = false; return; }
@@ -97,8 +89,7 @@ public:
       return true;
    }
 
-   // Magic-filtered sweep: closes ONLY this EA's basket positions. Never touches
-   // manual / other-EA positions. Returns the number of positions closed.
+   // Magic-filtered sweep of this EA's basket; returns the number of positions closed.
    int CloseBasket()
    {
       if(m_tradeManager == NULL) return 0;

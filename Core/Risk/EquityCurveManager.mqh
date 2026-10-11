@@ -1,13 +1,10 @@
-// Equity curve trading — reduces position size when equity drops
-// below its EMA. Research shows 15-30% max DD reduction.
+// Equity curve trading: reduces position size while equity sits below its EMA.
 #ifndef CORE_RISK_EQUITY_CURVE_MANAGER_MQH
 #define CORE_RISK_EQUITY_CURVE_MANAGER_MQH
 
 #include "../Utils/CommonTypes.mqh"
 
-// Tracks rolling equity via circular buffer, computes EMA, and
-// returns a position size multiplier based on whether equity is
-// above or below its moving average.
+// Rolling equity (circular buffer) -> EMA -> position size multiplier.
 class CEquityCurveManager
 {
 private:
@@ -22,7 +19,6 @@ private:
    bool   m_isEquityBelowEma;   // Current state
 
 public:
-// Constructor
    CEquityCurveManager(int emaPeriod = 20, double reductionFactor = 0.50, double recoveryFactor = 1.0) :
       m_historySize(emaPeriod),
       m_currentIndex(0),
@@ -40,26 +36,23 @@ public:
       ArrayInitialize(m_equityHistory, 0.0);
    }
 
-// Destructor
    ~CEquityCurveManager()
    {
       ArrayFree(m_equityHistory);
    }
 
 // Update — call every evaluation cycle with current equity
-// Adds equity to circular buffer, calculates EMA
    void Update(double equityValue)
    {
       if(equityValue <= 0.0)
          return;
 
-      // Store in circular buffer
       m_equityHistory[m_currentIndex] = equityValue;
       m_currentIndex = (m_currentIndex + 1) % m_historySize;
       if(m_filledCount < m_historySize)
          m_filledCount++;
 
-      // Not enough data for EMA — seed with SMA on first full window
+      // Data gap: below emaPeriod samples the EMA is undefined, so state stays "not below" (no size cut)
       if(m_filledCount < m_emaPeriod)
       {
          m_currentEma = 0.0;
@@ -77,16 +70,13 @@ public:
       }
       else
       {
-         // Standard EMA formula: EMA = price * k + prevEMA * (1 - k)
          double k = 2.0 / (m_emaPeriod + 1.0);
          m_currentEma = equityValue * k + m_currentEma * (1.0 - k);
       }
 
-      // Detect state transition
       bool wasBelow = m_isEquityBelowEma;
       m_isEquityBelowEma = (equityValue < m_currentEma);
 
-      // Log state transitions only
       if(m_isEquityBelowEma && !wasBelow)
       {
          PrintFormat("[EQUITY-CURVE-BELOW] Equity=%.2f below EMA=%.2f, position size reduced to %.0f%%",
@@ -99,9 +89,7 @@ public:
       }
    }
 
-// Get position size multiplier based on equity curve state
-// Below EMA → reductionFactor, above EMA → recoveryFactor
-// Insufficient data → 1.0 (no adjustment)
+// Position-size multiplier: below EMA → reductionFactor, at/above → recoveryFactor, insufficient history → 1.0
    double GetPositionSizeMultiplier() const
    {
       if(m_filledCount < m_emaPeriod)
@@ -110,13 +98,11 @@ public:
       return m_isEquityBelowEma ? m_reductionFactor : m_recoveryFactor;
    }
 
-// Get current state
    bool   IsEquityBelowEma() const { return m_isEquityBelowEma; }
    double GetCurrentEma()    const { return m_currentEma; }
    int    GetFilledCount()   const { return m_filledCount; }
    int    GetEmaPeriod()     const { return m_emaPeriod; }
 
-// Reset — clear all history and state
    void Reset()
    {
       ArrayInitialize(m_equityHistory, 0.0);

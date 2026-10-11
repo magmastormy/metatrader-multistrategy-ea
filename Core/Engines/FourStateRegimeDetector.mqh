@@ -53,7 +53,6 @@ struct SFourStateSnapshot
     {}
 };
 
-// Implementation:
 // Layer 1: Volatility regime via rolling percentile of realized vol
 // - Uses 50-bar realized vol (log returns)
 // - Compares to 252-bar rolling window

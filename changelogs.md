@@ -8,6 +8,30 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 180: Comment reduction, Core/Risk — and two false assertions a sweep introduced
+
+#### Context
+Resuming the antislop-code workstream. Repo-wide whole-line comments were **8,372** at the start of this batch (Batch 171 closed at 8,295; Batches 172-179 legitimately added 77 constraint notes). `Core/Risk` at 990 was the largest untouched tree — the earlier rounds covered Management, Engines, Scalp, Orchestration, Strategies and Utils.
+
+#### Two tiers of work
+- **Mechanical pass**, scripted rather than by hand, restricted to lines whose first non-space characters are `//`: **16 removals across 14 files repo-wide** — `// Constructor` above `CSubsystemLogger::CSubsystemLogger()`, `// Initialization` above `bool Initialize();`, `// Implementation:`, two blank `//` lines, two dash-run separators. The first draft of the detector also flagged `// --- Compute variance of lagged differences ---`, `// --- OLS linear regression: y = slope * x + intercept ---` and `// Closed/closing positions can still pass PositionSelectByTicket yet report zero volume`, because a "decorative separator" pattern matched any `// --- text ---` and an "end marker" pattern matched the *word* "Closed". Both rules were dropped, not tuned: numbered lists like `// 1. Spread gate (stricter: 20% ATR)` and `// 2. Margin level must be above 200%` carry the threshold values, so the narration rule went too. **The mechanical tier is now effectively exhausted in this repository** — 16 hits across ~330 files.
+- **Prose pass over ten `Core/Risk` files**: 115 whole-line comments removed (RiskClusterBudget 25->7, RiskClusterCodec 15->6, RiskOpposingConflictGuard 23->8, RiskAdaptiveTuner 36->9, RiskTieredCorrelation 38->15, RiskSymbolStats 31->11, RiskValidationStats 40->9, RiskMarginHealth 35->15, BasketEquityStop 20->11, EquityCurveManager 20->6). The target was the "extracted verbatim from `CUnifiedRiskManager` (Phase E1/E2/E3)" header genre: old member-name inventories, byte-identical claims, thin-forwarder descriptions, Batch 118/119/152 numbers. What survived is the constraint each file actually depends on — the ownership split (config is passed per call because it changes at runtime; only the state fields are owned here), the MQL5 rule that static methods cannot be `const`, units and scales (0-100 risk percent, 1.0 = no throttle pressure), the pinned 80%/200% margin ceiling with its no-caller setters, and the fail-open-on-data-gap notes.
+
+#### Verification that mattered more than the reduction
+Every comment an agent *rewrote into an assertion about code* was checked against the code, the same way a bug report is checked. **Two of them were wrong**, and both were fixed rather than shipped:
+- `RiskAdaptiveTuner.mqh:84` came back as *"analytics may only raise this flag, never lower it"*. The tuner lowers `m_conservativeMode` itself at `:125`, deliberately, when the circuit breaker is not holding it — the line below already said so. Now: *"this path may clear it only when the breaker is not holding it."*
+- `RiskTieredCorrelation.mqh:10` came back as *"reduce/block are enforced in `CRiskValidationPipeline`"*. They are not enforced anywhere: `RiskValidationPipeline.mqh:1052` forwards straight back into this same class, and `m_correlationReduceThreshold` / `m_correlationBlockThreshold` are written by the config setter and read by nothing (consistent with Batch 38, which left one enforced pair in the pre-trade gate). Now it says the fields are written and never read, which is the fact worth keeping.
+
+A wrong assertion is worse than the slop it replaced, because the next session reads it as documentation.
+
+#### Proofs run
+- Non-comment lines compared byte-for-byte against `HEAD` for all 24 modified files: **0 differences**. The harness reads and writes `latin-1` so CP1252/mojibake bytes and CRLF round-trip unchanged — a UTF-8 read of this tree raises `UnicodeDecodeError` on several files.
+- Zero unterminated block comments introduced (every edit was a whole-line `//`).
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**. The sync step copied exactly the 24 edited files (18 under `Core/`, 6 under `Strategies/`).
+
+#### Result
+**8,372 -> 8,171 whole-line comments (-201)**: 16 mechanical, 186 prose, +1 from the corrected correlation note. No code, blank line, trailing comment, or `/* */` block was touched anywhere in this batch.
+
 ### Batch 179: Runtime evidence from the last live session, and the two logs that were lying
 
 #### Context

@@ -68,7 +68,6 @@ public:
                     CICTKillZones();
                    ~CICTKillZones();
     
-    // Initialization
     bool            Initialize(int brokerGMTOffset = 2, bool useDST = true);
     
     // Configuration

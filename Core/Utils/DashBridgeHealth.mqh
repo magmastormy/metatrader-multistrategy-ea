@@ -31,7 +31,6 @@ public:
    string            BuildHeartbeatJson() const;
 };
 
-// Constructor
 CDashBridgeHealth::CDashBridgeHealth()
 {
    m_pScansCount = 0;

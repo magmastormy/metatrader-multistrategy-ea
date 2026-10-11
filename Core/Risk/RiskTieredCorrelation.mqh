@@ -1,22 +1,14 @@
-// Tiered correlation logic: threshold config, correlation risk
-// calculation, and portfolio correlation enforcement.
-// Extracted verbatim from CUnifiedRiskManager (Phase E3, A):
-// Behaviour is byte-identical to the original member functions;
-// CUnifiedRiskManager keeps thin forwarders with the original
-// signatures so that all call sites remain unchanged.
-// OWNERSHIP NOTE: maxPositionsSameBase and eaMagicNumber change at
-// runtime (ApplyTierOverrides / SetEAMagicNumber), so they are
-// passed as parameters from the forwarder rather than cached.
-// The CPortfolioRiskManager pointer is stable for URM's lifetime
-// (URM owns m_portfolioRiskManager by value) and is set once via
-// SetPortfolioRiskManager from URM's constructor body.
+// Tiered correlation state: threshold config, correlation risk calculation, portfolio enforcement.
+// OWNERSHIP: maxPositionsSameBase and eaMagicNumber are caller-supplied (they change at runtime via
+// ApplyTierOverrides / SetEAMagicNumber); the portfolio manager pointer is stable and set once.
 #ifndef CORE_RISK_RISK_TIERED_CORRELATION_MQH
 #define CORE_RISK_RISK_TIERED_CORRELATION_MQH
 
 #include "PortfolioRiskManager.mqh"
 #include "CorrelationEngine.mqh"
 
-// Tiered correlation monitor (stateful config holder, owned by value)
+// Only m_correlationThreshold governs a decision: CRiskValidationPipeline forwards here rather
+// than enforcing its own limits, and the reduce/block pair is written from config but never read.
 class CRiskTieredCorrelation
 {
 private:
@@ -26,8 +18,6 @@ private:
     CPortfolioRiskManager* m_portfolioRiskManager;  // Non-owning, set from URM
 
 public:
-    //--- Constructor performs the init that used to live in
-    //--- CUnifiedRiskManager's constructor body (identical defaults).
     CRiskTieredCorrelation() :
         m_correlationThreshold(0.7),
         m_correlationReduceThreshold(0.4),
@@ -41,8 +31,7 @@ public:
         // No owned resources.
     }
 
-    //--- Called from URM constructor body and Initialize() to sync
-    //--- the correlation threshold config values.
+    //--- Thresholds are pushed in by URM (constructor and Initialize()); nothing here re-reads config.
     void SetThresholds(const double threshold,
                        const double reduceThreshold,
                        const double blockThreshold)
@@ -52,25 +41,21 @@ public:
         m_correlationBlockThreshold = blockThreshold;
     }
 
-    //--- Called from URM constructor body; the pointer is stable for
-    //--- URM's lifetime because m_portfolioRiskManager is a value member.
+    //--- Set once from URM's constructor; stable because URM holds the portfolio manager by value.
     void SetPortfolioRiskManager(CPortfolioRiskManager* prm)
     {
         m_portfolioRiskManager = prm;
     }
 
-// Validate correlation limits for a trade request
-// maxPositionsSameBase and eaMagicNumber are passed from the
-// forwarder because they change at runtime.
+// Entry gate. maxPositionsSameBase and eaMagicNumber are caller-supplied: they change at runtime.
     bool ValidateCorrelationLimits(const string symbol,
                                    string &message,
                                    double &correlationRisk,
                                    const int maxPositionsSameBase,
                                    const long eaMagicNumber)
     {
-        // Check same base currency limit
         int sameBaseCount = 0;
-        // Batch 118: Extract base currency up to first non-alpha character (handles US30, BTCUSD, etc.)
+        // Base currency = leading alpha run, so synthetics (US30, BTCUSD) parse correctly.
         string symbolBase = "";
         for(int c = 0; c < StringLen(symbol); c++)
         {
@@ -83,14 +68,13 @@ public:
         if(StringLen(symbolBase) < 3)
             symbolBase = StringSubstr(symbol, 0, 3);  // fallback
 
-        // Batch 119: Only count EA-owned positions (filter by magic number)
         for(int i = 0; i < PositionsTotal(); i++)
         {
             if(PositionSelectByTicket(PositionGetTicket(i)))
             {
                 string posSymbol = PositionGetString(POSITION_SYMBOL);
                 long posMagic = PositionGetInteger(POSITION_MAGIC);
-                // Only count positions with magic 0 (manual) or matching EA magic
+                // Magic filter: only manual (magic 0) and this EA's positions count toward the limit.
                 if(StringFind(posSymbol, symbolBase) >= 0 &&
                    (posMagic == 0 || posMagic == eaMagicNumber))
                     sameBaseCount++;
@@ -125,12 +109,10 @@ public:
         return true;
     }
 
-// Calculate max correlation risk of a symbol vs open positions
     double CalculateCorrelationRisk(const string symbolParam)
     {
         double maxCorrelation = 0.0;
 
-        // Check correlation with all open positions
         for(int i = 0; i < PositionsTotal(); i++)
         {
             if(PositionSelectByTicket(PositionGetTicket(i)))
@@ -147,7 +129,6 @@ public:
         return maxCorrelation;
     }
 
-// Calculate correlation between two symbols via the engine
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2)
     {
         // Delegate to unified correlation engine via portfolio risk manager
@@ -162,17 +143,14 @@ public:
         return 1.0;
     }
 
-// Get max correlation with portfolio (alias for above)
+// Alias for CalculateCorrelationRisk; keep the two in step.
     double GetMaxCorrelationWithPortfolio(const string symbolParam)
     {
-        // This is an alias for CalculateCorrelationRisk
         return CalculateCorrelationRisk(symbolParam);
     }
 
-// Get correlation between two symbols (direct engine lookup)
     double GetSymbolCorrelation(const string symbol1, const string symbol2)
     {
-        // Delegate to unified correlation engine via portfolio risk manager
         if(m_portfolioRiskManager == NULL)
             return 1.0;
 
@@ -184,7 +162,7 @@ public:
         return 1.0;
     }
 
-// Check if portfolio correlation allows a new symbol
+// Fail-open when no portfolio manager is wired; unlike the engine fallback above, this path cannot veto.
     bool PortfolioCorrelationAllowed(const string symbolParam)
     {
         if(m_portfolioRiskManager == NULL)

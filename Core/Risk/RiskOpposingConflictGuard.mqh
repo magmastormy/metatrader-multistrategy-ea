@@ -1,18 +1,8 @@
-// Opposing same-symbol cluster conflict cooldown cache (Fix #9).
-// Extracted verbatim from CUnifiedRiskManager (Phase E2, E-E):
-// cooldown short-circuit in ValidateClusterGovernance
-// -> IsCooldownActive
-// conflict-cache update in ValidateClusterGovernance
-// Behaviour is byte-identical to the original inline code;
-// CUnifiedRiskManager keeps a thin forwarder with the original
-// signature so that all call sites remain unchanged.
-// OWNERSHIP NOTE: the `m_clusterMutexEnabled` master switch stays
-// in CUnifiedRiskManager - the guard is only consulted while the
-// mutex feature is enabled, exactly as before.
+// Opposing same-symbol cluster conflict cooldown cache; consulted only while
+// CUnifiedRiskManager's `m_clusterMutexEnabled` switch is on (that gate stays there).
 #ifndef CORE_RISK_RISK_OPPOSING_CONFLICT_GUARD_MQH
 #define CORE_RISK_RISK_OPPOSING_CONFLICT_GUARD_MQH
 
-// Opposing-signal conflict cooldown cache (stateful, owned by value)
 class CRiskOpposingConflictGuard
 {
 private:
@@ -21,8 +11,6 @@ private:
     string   m_lastOpposingConflictSymbol;
 
 public:
-    //--- Constructor performs the zero-init that used to live in the
-    //--- CUnifiedRiskManager initialiser list (identical values).
     CRiskOpposingConflictGuard() :
         m_opposingConflictCooldownSec(120),
         m_lastOpposingConflictTime(0),
@@ -35,10 +23,8 @@ public:
         // No owned resources.
     }
 
-    //--- Fix #9: Opposing conflict cooldown cache - skip full scan if
-    //--- recently rejected for the same symbol.
-    //--- Returns true when the cooldown is still active (caller must reject);
-    //--- `message` is then filled with the original rejection text.
+    //--- True while a conflict is still cooling down for `symbol`, so the caller can skip
+    //--- the full opposing-position scan. True means reject; `message` carries the reason.
     bool IsCooldownActive(const string symbol, string &message)
     {
         if(m_lastOpposingConflictSymbol == symbol &&
@@ -57,15 +43,14 @@ public:
         return false;
     }
 
-    //--- Fix #9: Update cooldown cache when a new opposing conflict is detected.
+    //--- Stamp a conflict for `symbol`: restarts the cooldown. Single slot — a new symbol drops the previous one's.
     void RegisterConflict(const string symbol)
     {
         m_lastOpposingConflictTime = TimeCurrent();
         m_lastOpposingConflictSymbol = symbol;
     }
 
-    //--- Drop the cached conflict for `symbol` (called after the blocking
-    //--- position for that symbol has been closed).
+    //--- Drop the cached conflict once the blocking position for `symbol` has closed.
     void ClearOpposingConflictCache(const string symbol)
     {
         if(m_lastOpposingConflictSymbol == symbol)

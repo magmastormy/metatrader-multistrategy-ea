@@ -1,18 +1,5 @@
-// Stateless per-symbol historical performance statistics derived
-// from the terminal deal history.
-// Extracted verbatim from CUnifiedRiskManager (Phase E1):
-// CUnifiedRiskManager::GetSymbolWinRate      -> GetWinRate
-// CUnifiedRiskManager::GetSymbolProfitFactor -> GetProfitFactor
-// Behaviour is byte-identical to the original member functions;
-// CUnifiedRiskManager keeps thin forwarders with the original
-// signatures so that all call sites remain unchanged.
-// Batch 152 (M-14): HistorySelect(0, ...) materializes the entire
-// terminal deal history on every call, and GetSymbolRiskAllocation
-// queries both metrics for every tracked symbol on each budget
-// refresh. Both metrics are now computed in ONE shared pass and
-// memoized per symbol for RISK_SYMBOL_STATS_TTL_SECONDS; deal
-// history changes slowly so the staleness window is immaterial
-// for adaptive weighting.
+// Win rate + profit factor: HistorySelect materializes the whole deal history per call, so both
+// metrics share ONE pass, memoized per symbol for RISK_SYMBOL_STATS_TTL_SECONDS (staleness is harmless).
 #ifndef CORE_RISK_RISK_SYMBOL_STATS_MQH
 #define CORE_RISK_RISK_SYMBOL_STATS_MQH
 
@@ -23,7 +10,6 @@
 class CRiskSymbolStats
 {
 private:
-    //--- Memoized metric pair per symbol
     struct SSymbolStatsEntry
     {
         string   symbol;
@@ -34,8 +20,7 @@ private:
 
     static SSymbolStatsEntry s_entries[];
 
-    //--- Single shared pass over the most recent 50 EA-closed deals
-    //--- for the symbol; computes both metrics in one HistorySelect.
+    //--- Both metrics from one pass over the 50 most recent EA-closed out-deals of the symbol.
     static void ComputeStats(const string symbol, double &winRate, double &profitFactor)
     {
         HistorySelect(0, TimeCurrent());
@@ -87,8 +72,7 @@ private:
             profitFactor = 1.0;
     }
 
-    //--- Return memoized stats for the symbol, recomputing at most once
-    //--- per TTL window. Always yields fresh values through winRate/pf.
+    //--- Memoized read: recomputes at most once per TTL window; winRate/pf are always populated.
     static void GetStats(const string symbol, double &winRate, double &pf)
     {
         datetime now = TimeCurrent();
@@ -106,7 +90,6 @@ private:
                 return;
             }
 
-            //--- Entry exists but is stale: recompute in place
             ComputeStats(symbol, winRate, pf);
             s_entries[i].winRate = winRate;
             s_entries[i].profitFactor = pf;
@@ -114,8 +97,7 @@ private:
             return;
         }
 
-        //--- Unknown symbol: compute fresh and store (ring-buffer style
-        //--- overwrite once the table is full)
+        //--- Unknown symbol: compute fresh; once full the table overwrites entries round-robin.
         ComputeStats(symbol, winRate, pf);
 
         if(count < RISK_SYMBOL_STATS_MAX_ENTRIES)
@@ -140,8 +122,7 @@ private:
     }
 
 public:
-    //--- Win rate (0-100 scale) over the most recent 50 EA-closed deals
-    //--- for the symbol. Returns 50.0 when there is insufficient data.
+    //--- Win rate (0-100 scale) over the last 50 EA-closed deals; 50.0 when fewer than 5 deals.
     static double GetWinRate(const string symbol)
     {
         if(symbol == "")
@@ -153,8 +134,7 @@ public:
         return winRate;
     }
 
-    //--- Profit factor over the most recent 50 EA-closed deals for the
-    //--- symbol. Returns 1.0 when there is insufficient data.
+    //--- Profit factor (grossWin / grossLoss) over the same 50-deal sample; 1.0 when fewer than 5 deals.
     static double GetProfitFactor(const string symbol)
     {
         if(symbol == "")
@@ -167,7 +147,7 @@ public:
     }
 };
 
-//--- Batch 152: file-scope storage for static class members (MQL5 requirement)
+//--- Static member storage needs this file-scope definition (MQL5 requirement); do not remove.
 CRiskSymbolStats::SSymbolStatsEntry CRiskSymbolStats::s_entries[];
 
 #endif // CORE_RISK_RISK_SYMBOL_STATS_MQH

@@ -71,7 +71,6 @@ public:
                         CMultiEMASystem();
                        ~CMultiEMASystem();
     
-    // Initialization
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe);
     void                Deinit();
     

@@ -1,23 +1,11 @@
 // Validation-gate counters, timing metrics and audit-log sink.
-// Extracted verbatim from CUnifiedRiskManager (Phase E1). Owns the
-// state that used to live in the manager:
-// m_auditLogging, m_auditLogFile, m_validationCount,
-// m_approvedCount, m_rejectedCount, m_lastValidation,
-// The constructor performs the zero-initialisation that previously
-// happened in the CUnifiedRiskManager initialiser list, so default
-// values are unchanged.
-// The message-formatting entry points take primitives instead of
-// STradeValidationRequest / SValidationResult so this module has no
-// dependency on UnifiedRiskManager.mqh (which includes it).
-// CUnifiedRiskManager keeps thin forwarders with the original
-// struct-based signatures.
+// Formatting entry points take primitives, not structs, to avoid a dependency on UnifiedRiskManager.mqh.
 #ifndef CORE_RISK_RISK_VALIDATION_STATS_MQH
 #define CORE_RISK_RISK_VALIDATION_STATS_MQH
 
 #include "../Utils/ErrorHandling.mqh"
 #include "RiskClusterCodec.mqh"
 
-// Validation statistics + audit log (stateful, owned by value)
 class CRiskValidationStats
 {
 private:
@@ -30,7 +18,6 @@ private:
     double   m_avgValidationTime;   // Rolling average validation time (ms)
 
 public:
-    //--- Reproduces the original CUnifiedRiskManager initialiser-list defaults.
     CRiskValidationStats() :
         m_auditLogging(true),
         m_auditLogFile("UnifiedRiskValidation.log"),
@@ -43,37 +30,29 @@ public:
 
     ~CRiskValidationStats() {}
 
-    //--- Configuration -------------------------------------------------
     void   SetAuditLogging(const bool enabled)     { m_auditLogging = enabled; }
     bool   IsAuditLogging() const                  { return m_auditLogging; }
     void   SetAuditLogFile(const string fileName)  { m_auditLogFile = fileName; }
     string GetAuditLogFile() const                 { return m_auditLogFile; }
 
-    //--- Counter accessors ---------------------------------------------
     int      GetValidationCount() const   { return m_validationCount; }
     int      GetApprovedCount() const     { return m_approvedCount; }
     int      GetRejectedCount() const     { return m_rejectedCount; }
     datetime GetLastValidation() const    { return m_lastValidation; }
     double   GetAvgValidationTime() const { return m_avgValidationTime; }
 
-    //--- Record an approval. Mirrors the original inline pair:
-    //---   m_approvedCount++;
-    //---   m_validationCount++;
     void RecordApproval()
     {
         m_approvedCount++;
         m_validationCount++;
     }
 
-    //--- Batch 152: rejection counterpart - m_rejectedCount existed but had no
-    //--- writer, so rejection telemetry always read zero.
     void RecordRejection()
     {
         m_rejectedCount++;
         m_validationCount++;
     }
 
-    //--- Aggregated stats (original CUnifiedRiskManager::GetValidationStats).
     void GetStats(int &total, int &approved, int &rejected, double &approvalRate)
     {
         total = m_validationCount;
@@ -86,15 +65,13 @@ public:
             approvalRate = 0.0;
     }
 
-    //--- Append a line to the audit log file.
-    //--- Batch 119 optimisation (static file handle) preserved verbatim.
-    //--- Declared before its in-class callers (Reset / LogValidationResult).
+    //--- Append a line to the audit log file (no-op when audit logging is disabled).
     void WriteAuditLog(const string message)
     {
         if(!m_auditLogging)
             return;
 
-        // Batch 119: Use static file handle to avoid open/close per call
+        // Static handle keeps the log file open across calls instead of open/close per line.
         static int s_auditHandle = INVALID_HANDLE;
         static string s_auditFile = "";
 
@@ -114,8 +91,7 @@ public:
         }
     }
 
-    //--- Build the audit line for a validation outcome.
-    //--- rawClusterCode is normalised internally, exactly as the original did.
+    //--- Formats the audit line; rawClusterCode is normalised internally.
     static string FormatValidationMessage(const string symbol,
                                           const ENUM_ORDER_TYPE orderType,
                                           const double lotSize,
@@ -141,11 +117,7 @@ public:
                            correlationRisk);
     }
 
-    //--- Log a validation outcome to the audit file and the error handler.
-    //--- Guard order and side effects match the original implementation:
-    //---   1. bail out when audit logging is disabled (no formatting cost)
-    //---   2. format + write audit line
-    //---   3. mirror the result message into CEnhancedErrorHandler
+    //--- Writes the outcome to the audit file and mirrors resultMessage into CEnhancedErrorHandler.
     void LogValidationResult(const string symbol,
                              const ENUM_ORDER_TYPE orderType,
                              const double lotSize,
@@ -173,7 +145,6 @@ public:
                                                     correlationRisk);
         WriteAuditLog(logMessage);
 
-        // Also log to error handler
         CEnhancedErrorHandler::LogError(ERROR_INFO, "UnifiedRiskManager", resultMessage, 0);
     }
 
@@ -201,10 +172,8 @@ public:
         m_lastValidation = TimeCurrent();
     }
 
-    //--- Reset all counters and timing metrics. Audit configuration
-    //--- (m_auditLogging / m_auditLogFile) is intentionally preserved so
-    //--- the reset itself can still be recorded. Mirrors the original
-    //--- CUnifiedRiskManager::ResetStats behaviour exactly.
+    //--- Resets counters and timing metrics only; audit configuration stays on so the
+    //--- reset itself is still written to the audit log.
     void Reset(void)
     {
         m_validationCount = 0;

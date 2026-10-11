@@ -107,7 +107,6 @@ public:
     CChartDrawingManager();
     ~CChartDrawingManager();
     
-    // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES tf, const string prefix = "");
     void SetConfiguration(const SDrawingConfig &config) { m_config = config; }
     void SetMaxObjects(const int maxObjects) { m_maxObjects = MathMax(100, maxObjects); }

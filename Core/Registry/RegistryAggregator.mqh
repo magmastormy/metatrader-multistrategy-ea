@@ -57,7 +57,6 @@ private:
     }
     ~CRegistryAggregator();
     
-    // Initialization
     bool Initialize();
     void Deinitialize();
     

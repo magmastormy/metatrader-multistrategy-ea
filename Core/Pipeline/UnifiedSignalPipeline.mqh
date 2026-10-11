@@ -110,7 +110,6 @@ public:
     CUnifiedSignalPipeline();
     ~CUnifiedSignalPipeline();
     
-    // Initialization
     bool Initialize(SignalFilterSettings &settings);
     
     // Main processing

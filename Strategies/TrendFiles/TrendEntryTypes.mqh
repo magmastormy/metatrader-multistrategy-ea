@@ -61,7 +61,6 @@ public:
                         CTrendEntryTypes();
                        ~CTrendEntryTypes();
     
-    // Initialization
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                   CMultiEMASystem* emaSystem = NULL);
     void                Deinit();

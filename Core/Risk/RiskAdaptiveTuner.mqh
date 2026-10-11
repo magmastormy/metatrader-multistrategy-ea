@@ -1,23 +1,6 @@
-// Adaptive risk-sizing state: active risk per trade, conservative
-// mode flag, throttle pressure, and profit-adjusted risk reduction
-// factor.
-// Extracted verbatim from CUnifiedRiskManager (Phase E3, B):
-// m_activeRiskPerTradePercent (double, init 1.0)
-// m_riskReductionFactor       (double, init 0.5)
-// m_lastThrottlePressure      (double, init 1.0)
-// m_conservativeMode          (bool,   init false)
-// CUnifiedRiskManager::GetThrottlePressure
-// -> GetThrottlePressure
-// Behaviour is byte-identical to the original member functions;
-// CUnifiedRiskManager keeps thin forwarders with the original
-// signatures so that all call sites remain unchanged.
-// OWNERSHIP NOTE: config values (baseRiskPerTradePercent,
-// enableAdaptiveSizing, adaptationMinTrades, drawdown thresholds,
-// min/max risk percent) and the performance analytics pointer are
-// passed as parameters from the forwarder because they change at
-// runtime (ApplyTierOverrides / Initialize / SetPerformanceAnalytics).
-// The moved state fields (active risk, conservative mode, throttle
-// pressure, reduction factor) are owned exclusively by this class.
+// Adaptive risk-sizing state: active risk per trade, conservative mode, throttle pressure, reduction factor.
+// OWNERSHIP: config and the analytics pointer are passed in per call because they change at runtime
+// (ApplyTierOverrides / Initialize / SetPerformanceAnalytics); the state fields here are owned exclusively.
 #ifndef CORE_RISK_RISK_ADAPTIVE_TUNER_MQH
 #define CORE_RISK_RISK_ADAPTIVE_TUNER_MQH
 
@@ -32,16 +15,13 @@ private:
     double m_lastThrottlePressure;       // 1.0 = no pressure, 0.0 = max pressure
     bool   m_conservativeMode;           // Conservative risk mode flag
 
-    //--- Local clamp helper (equivalent to URM's ClampRiskPercent but
-    //--- receives min/max explicitly since this class doesn't own m_config).
+    //--- Clamp helper: min/max arrive as parameters because this class owns no risk config.
     double ClampRiskPercent(const double minVal, const double maxVal, const double value) const
     {
         return MathMax(minVal, MathMin(maxVal, value));
     }
 
 public:
-    //--- Constructor performs the zero-init that used to live in
-    //--- CUnifiedRiskManager's initialiser list (identical values).
     CRiskAdaptiveTuner() :
         m_activeRiskPerTradePercent(1.0),  // Blueprint 10.4: 0-100 scale (1.0 = 1%)
         m_riskReductionFactor(0.5),
@@ -52,10 +32,8 @@ public:
 
     ~CRiskAdaptiveTuner()
     {
-        // No owned resources.
     }
 
-// Getters / setters for the moved state fields
 
     double GetActiveRiskPerTradePercent() const
     {
@@ -92,8 +70,7 @@ public:
         m_conservativeMode = value;
     }
 
-// Config values and analytics pointer are passed from the
-// forwarder because they change at runtime.
+// Config and analytics are parameters, not fields: they change at runtime.
     void UpdateAdaptiveRiskLevel(const double baseRiskPerTradePercent,
                                  const bool enableAdaptiveSizing,
                                  const int adaptationMinTrades,
@@ -104,11 +81,8 @@ public:
                                  CPerformanceAnalytics* performanceAnalytics)
     {
         double targetRisk = baseRiskPerTradePercent;
-        // Batch 152: never blind-clear here. The circuit breaker owns escalation AND
-        // clearing through bool& write-backs (CheckDrawdownCircuitBreaker /
-        // CheckCircuitBreakerRecovery); resetting unconditionally wiped a
-        // breaker-escalated conservative state on the very next validation.
-        // Analytics may only raise the flag below; breaker recovery lowers it.
+        // m_conservativeMode is shared with the drawdown circuit breaker, which writes it through
+        // SetConservativeMode; this path may clear it only when the breaker is not holding it.
         bool conservativeHeld = m_conservativeMode;
 
         if(!enableAdaptiveSizing)
@@ -147,8 +121,7 @@ public:
         }
         else if(!conservativeHeld)
         {
-            // No breaker hold and analytics healthy - explicit clear keeps the flag
-            // from latching on a single stale trigger.
+            // No breaker hold: clear explicitly so one stale trigger cannot latch the flag.
             m_conservativeMode = false;
         }
 

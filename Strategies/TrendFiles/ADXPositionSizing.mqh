@@ -56,7 +56,6 @@ public:
                         CADXPositionSizing();
                        ~CADXPositionSizing();
     
-    // Initialization
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe);
     void                Deinit();
     

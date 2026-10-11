@@ -67,7 +67,6 @@ public:
    void              SetEnabled(bool enabled) { m_enabled = enabled; }
 };
 
-// Constructor
 CDashBridgeTransport::CDashBridgeTransport()
 {
    m_endpoint = "http://127.0.0.1:8765";

@@ -66,7 +66,6 @@ public:
     void CloseAll();
 };
 
-// Constructor
 CSubsystemLogger::CSubsystemLogger() :
     m_basePath(""),
     m_symbol(""),
@@ -89,7 +88,6 @@ CSubsystemLogger::CSubsystemLogger() :
     ArrayInitialize(m_fileCreationTimes, 0);
 }
 
-// Destructor
 CSubsystemLogger::~CSubsystemLogger()
 {
     if(m_initialized)
