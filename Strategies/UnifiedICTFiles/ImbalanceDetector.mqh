@@ -9,7 +9,6 @@
 
 struct SImbalance
 {
-    // --- EXISTING FIELDS (keep unchanged) ---
     datetime time;
     double top;
     double bottom;
@@ -26,7 +25,6 @@ struct SImbalance
     bool isValid;
     double strength;
 
-    // --- NEW FIELDS ---
     double ce;              // Consequent Encroachment level = exact midpoint of gap
     bool isInverse;         // true = this FVG has been violated and flipped (IFVG)
     bool isTested;          // price has returned to this FVG at least once
@@ -67,7 +65,6 @@ public:
     bool                DetectBullishImbalance(int startBar, SImbalance &imb);
     bool                DetectBearishImbalance(int startBar, SImbalance &imb);
 
-    // Rebalance & IFVG
     bool                CheckRebalance(SImbalance &imb);
     void                CheckForIFVG();
 
@@ -77,7 +74,6 @@ public:
     int                 FindBestBullishImbalance();
     int                 FindBestBearishImbalance();
 
-    // Checks
     bool                HasUnfilledImbalance(bool bullish);
     bool                IsInImbalance(double price);
 };
@@ -109,13 +105,11 @@ void CImbalanceDetector::Update()
 {
     ScanForImbalances(50);
 
-    // Update rebalance status for all imbalances
     for(int i = 0; i < m_imbCount; i++)
     {
         CheckRebalance(m_imbalances[i]);
     }
 
-    // P2-D: Check if any filled FVGs have become IFVGs
     CheckForIFVG();
 }
 
@@ -144,30 +138,22 @@ void CImbalanceDetector::ScanForImbalances(int lookback)
     }
 }
 
-// Detect Bullish Imbalance — P0-A Rewrite
-// ICT Bullish FVG Rule:
-// A gap exists when candle[startBar+1].high < candle[startBar-1].low
-// (candle 3 high is below candle 1 low — price never covered that range going up)
-// No color requirement. No body size requirement.
-// Only the MIDDLE candle (impulse) must be bullish to confirm direction.
+// Bullish FVG = candle[startBar+1].high < candle[startBar-1].low: the up-move never traded that range back.
+// Outer candles carry no colour or body-size rule; only the middle (impulse) candle must be bullish.
 bool CImbalanceDetector::DetectBullishImbalance(int startBar, SImbalance &imb)
 {
     if(startBar < 1 || startBar + 2 >= iBars(m_symbol, m_timeframe))
         return false;
 
-    // Bar indexing: startBar = middle candle (candle 2 / the impulse)
-    // candle1 = startBar - 1 (most recent of the three)
-    // candle2 = startBar     (the impulse / middle candle)
-    // candle3 = startBar + 1 (oldest of the three)
+    // series index: startBar is the impulse candle; candle1 = startBar-1 (newest), candle3 = startBar+1 (oldest)
 
     double candle1Low  = iLow(m_symbol,  m_timeframe, startBar - 1);
     double candle3High = iHigh(m_symbol, m_timeframe, startBar + 1);
 
-    // The gap is: from candle3High (bottom of gap) to candle1Low (top of gap)
+    // bullish gap runs from candle3High (bottom) up to candle1Low (top)
     double gapBottom = candle3High;
     double gapTop    = candle1Low;
 
-    // Must be a real gap (top > bottom)
     if(gapTop <= gapBottom)
         return false;
 
@@ -175,23 +161,21 @@ bool CImbalanceDetector::DetectBullishImbalance(int startBar, SImbalance &imb)
     double point   = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double atr     = GetATR(14);
 
-    // Minimum size filter: gap must be at least 5 points AND at least 5% of ATR
+    // floors: 5 points always, 5% of ATR only when ATR is available (GetATR returns 0 on failure)
     if(gapSize < 5.0 * point)
         return false;
     if(atr > 0 && gapSize < atr * 0.05)
         return false;
 
-    // Verify the middle candle is bullish (displacement direction must match FVG direction)
+    // impulse direction must match the FVG direction
     double midOpen  = iOpen(m_symbol,  m_timeframe, startBar);
     double midClose = iClose(m_symbol, m_timeframe, startBar);
     if(midClose <= midOpen)
         return false;  // Middle candle must be bullish for a bullish FVG
 
-    // Calculate displacement size relative to ATR
     double midBody = midClose - midOpen;
     double displacementMult = (atr > 0) ? (midBody / atr) : 0.0;
 
-    // Populate the struct
     imb.time          = iTime(m_symbol, m_timeframe, startBar);
     imb.top           = gapTop;
     imb.bottom        = gapBottom;
@@ -217,10 +201,8 @@ bool CImbalanceDetector::DetectBullishImbalance(int startBar, SImbalance &imb)
     return true;
 }
 
-// Detect Bearish Imbalance — P0-A Rewrite
-// ICT Bearish FVG Rule:
-// A gap exists when candle[startBar+1].low > candle[startBar-1].high
-// (candle 3 low is above candle 1 high — price never covered that range going down)
+// Bearish FVG = candle[startBar+1].low > candle[startBar-1].high: the down-move never traded that range back.
+// Same outer-candle rule as the bullish side: only the middle (impulse) candle must be bearish.
 bool CImbalanceDetector::DetectBearishImbalance(int startBar, SImbalance &imb)
 {
     if(startBar < 1 || startBar + 2 >= iBars(m_symbol, m_timeframe))
@@ -229,11 +211,10 @@ bool CImbalanceDetector::DetectBearishImbalance(int startBar, SImbalance &imb)
     double candle1High = iHigh(m_symbol, m_timeframe, startBar - 1);
     double candle3Low  = iLow(m_symbol,  m_timeframe, startBar + 1);
 
-    // The gap is: from candle1High (bottom of gap) to candle3Low (top of gap)
+    // bearish gap runs from candle1High (bottom) up to candle3Low (top)
     double gapBottom = candle1High;
     double gapTop    = candle3Low;
 
-    // Must be a real gap
     if(gapTop <= gapBottom)
         return false;
 
@@ -246,7 +227,7 @@ bool CImbalanceDetector::DetectBearishImbalance(int startBar, SImbalance &imb)
     if(atr > 0 && gapSize < atr * 0.05)
         return false;
 
-    // Middle candle must be bearish (impulse direction must match FVG direction)
+    // impulse direction must match the FVG direction
     double midOpen  = iOpen(m_symbol,  m_timeframe, startBar);
     double midClose = iClose(m_symbol, m_timeframe, startBar);
     if(midClose >= midOpen)
@@ -280,16 +261,13 @@ bool CImbalanceDetector::DetectBearishImbalance(int startBar, SImbalance &imb)
     return true;
 }
 
-// Check Rebalance — P0-A Corrected Mitigation Logic
-// A bullish FVG is mitigated when a candle CLOSES BELOW the FVG's bottom boundary.
-// A bearish FVG is mitigated when a candle CLOSES ABOVE the FVG's top boundary.
-// A 100% fill (candle body + wick covers entire gap) also counts.
+// Mitigation: a bullish FVG is filled when a bar CLOSES below its bottom; a bearish one when a bar closes above its top.
+// A 100% wick fill (fillPercent >= 100) counts as filled even without a closing break.
 bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
 {
     if(imb.hasRebalanced) return true;
 
-    // Batch 156: closed bars only (shift 1) - intrabar pokes were latching
-    // hasRebalanced off unclosed candles.
+    // closed bars only (loop starts at shift 1): intrabar pokes used to latch mitigation off unclosed candles
     for(int i = 1; i < 100; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
@@ -299,7 +277,7 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
         double low   = iLow(m_symbol,   m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
 
-        // Track touch count (price entering the gap zone)
+        // a test is any bar whose high/low range overlaps the gap
         if(high >= imb.bottom && low <= imb.top)
         {
             if(!imb.isTested)
@@ -310,17 +288,12 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
             imb.testCount++;
         }
 
-        // Calculate fill percentage for partial fills
         double filledTop    = MathMin(high, imb.top);
         double filledBottom = MathMax(low, imb.bottom);
         double filledRange  = MathMax(0.0, filledTop - filledBottom);
         if(imb.size > 0)
             imb.fillPercent = MathMax(imb.fillPercent, (filledRange / imb.size) * 100.0);  // Batch 156: keep deepest penetration, not the oldest bar's
 
-        // CORRECTED MITIGATION RULE:
-        // Bullish FVG mitigated when close < bottom (full break below)
-        // Bearish FVG mitigated when close > top (full break above)
-        // OR when fillPercent >= 100 (entire gap wicked through)
         if(imb.isBullish)
         {
             if(close < imb.bottom || imb.fillPercent >= 100.0)
@@ -342,34 +315,29 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
     return false;
 }
 
-// An FVG becomes an IFVG when price CLOSES through it fully (hasRebalanced = true)
-// and then price returns to the former FVG zone — acting as resistance/support.
+// IFVG: once price has closed fully through an FVG, returning into the old zone flips it into support/resistance.
 void CImbalanceDetector::CheckForIFVG()
 {
     for(int i = 0; i < m_imbCount; i++)
     {
         if(m_imbalances[i].isInverse) continue;  // Already classified as IFVG
 
-        // An FVG becomes an IFVG only after it has been rebalanced (filled)
         if(!m_imbalances[i].hasRebalanced) continue;
 
-        // Check: has price returned to the former FVG zone after filling it?
-        // If so, the former FVG boundary becomes resistance/support
         double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
         if(m_imbalances[i].isBullish)
         {
-            // Former bullish FVG is now flipped — its TOP becomes resistance
+            // filled bullish FVG: bid back under its top = resistance
             bool priceBelowFormerTop = (lastPrice < m_imbalances[i].top && lastPrice > m_imbalances[i].bottom * 0.995);
             if(priceBelowFormerTop)
             {
                 m_imbalances[i].isInverse = true;
-                // The IFVG zone: same coordinates, now acts as resistance (for bearish plays)
             }
         }
         else
         {
-            // Former bearish FVG flipped — its BOTTOM becomes support
+            // filled bearish FVG: bid back over its bottom = support
             bool priceAboveFormerBottom = (lastPrice > m_imbalances[i].bottom && lastPrice < m_imbalances[i].top * 1.005);
             if(priceAboveFormerBottom)
             {
@@ -395,7 +363,6 @@ double CImbalanceDetector::GetATR(int period)
     return 0;
 }
 
-// Calculate Imbalance Strength — P0-A Updated Scoring
 double CImbalanceDetector::CalculateImbalanceStrength(SImbalance &imb)
 {
     double strength = 0.40;  // Base (reduced from 0.50 to allow more differentiation)
@@ -414,10 +381,8 @@ double CImbalanceDetector::CalculateImbalanceStrength(SImbalance &imb)
     if(imb.timeframe >= PERIOD_H4)       strength += 0.15;
     else if(imb.timeframe >= PERIOD_H1)  strength += 0.08;
 
-    // Unfilled = stronger
     if(!imb.hasRebalanced)  strength += 0.10;
 
-    // Created in kill zone = stronger
     if(imb.createdInKillZone)  strength += 0.08;
 
     return MathMin(1.0, strength);

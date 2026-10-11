@@ -1,26 +1,6 @@
-// Owns the collaborator "plumbing" of CEnterpriseStrategyManager - every engine /
-// profiler / manager pointer it holds, the symbol & timeframe context, the init flags
-// and the cached ADX handle - plus the two-phase Initialize() body and both teardown
-// paths (destructor + explicit Deinit).
-// *** BEHAVIOUR CONTRACT ***
-// Initialize(), the destructor teardown and the Deinit teardown are
-// byte-for-byte relocations, including every Print() string, the
-// Phase-1 rollback order (pipeline deleted when TimeframeConsistency
-// fails) and the LEAK-FIX health-monitor re-allocation. The health
-// monitor is configured from the manager's quorum/adaptation config
-// object, which is passed in by reference - the original body read
-// exactly those same fields from its own members.
-// The Deinit path is split into ReleaseOnDeinit() + FinishDeinit()
-// so the manager can re-bind its attribution delegator between the
-// attribution delete and the health-monitor delete, preserving the
-// original statement order exactly.
-// This module deliberately has NO back-pointer to the manager: it
-// is a leaf value object, held BY VALUE, and never observes manager
-// state.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Leaf value object held BY VALUE by CEnterpriseStrategyManager; it has no back-pointer to the manager.
+// ReleaseOnDeinit()/FinishDeinit() must stay separate: the manager re-binds its attribution delegator between them.
+// Include only from EnterpriseStrategyManager.mqh.
 #ifndef STRATEGY_MGR_INFRASTRUCTURE_MQH
 #define STRATEGY_MGR_INFRASTRUCTURE_MQH
 
@@ -80,19 +60,16 @@ public:
                     CUnifiedRiskManager* unifiedRiskManagerPtr,
                     CEntStrategyQuorumConfig &quorumConfig);
 
-    //--- destructor teardown (does NOT touch the injected diagnostics /
-    //--- attribution pointers, exactly like the original destructor)
+    //--- destructor teardown; does NOT delete the injected m_diagnostics / m_attribution
     void ReleaseOnDestruct();
     //--- explicit-Deinit teardown, part 1 (up to and including attribution)
     void ReleaseOnDeinit();
     //--- explicit-Deinit teardown, part 2 (health monitor + init flag)
     void FinishDeinit();
 
-    //--- creates the health monitor the manager's constructor used to allocate
     void AllocateHealthMonitor();
 
-    //--- pipeline half of SetPipelineFilters() (the confidence-floor cache
-    //--- stays with the quorum config object, as it always did)
+    //--- pipeline half of SetPipelineFilters(); the confidence-floor cache stays in the quorum config object
     void ApplyPipelineFilters(SignalFilterSettings &settings);
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
 
@@ -163,10 +140,8 @@ void CStrategyMgrInfrastructure::AllocateHealthMonitor()
     m_healthMonitor = new CStrategyHealthMonitor();
 }
 
-// Two-phase init: Phase 1 (Pipeline, TimeframeConsistency) must succeed or full init fails;
-// Phase 2 (FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine) is optional,
-// degrades gracefully and does not roll back Phase 1. Both phases' objects are owned here
-// and deleted in the destructor.
+// Pipeline and TimeframeConsistency are mandatory: either failure returns false (pipeline is deleted on rollback).
+// FourStateRegimeDetector is optional: its failure only warns and leaves the pointer NULL.
 bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                             bool usePipeline,
                                             CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
@@ -211,7 +186,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     if(m_tfConsistency == NULL)
     {
         Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency allocation failed for ", symbol);
-        // L2-010: Clean up pipeline on allocation failure
         if(m_pipeline != NULL)
         {
             delete m_pipeline;
@@ -224,7 +198,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
         Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for ", symbol);
         delete m_tfConsistency;
         m_tfConsistency = NULL;
-        // L2-010: Clean up pipeline on initialization failure
         if(m_pipeline != NULL)
         {
             delete m_pipeline;
@@ -236,12 +209,8 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_initialized = true;
     m_drawingManager = NULL;
 
-    // L1-007: m_diagnostics is injected from EAOrchestrator - do not create here
-    // L1-007: m_attribution is injected from EAOrchestrator - do not create here
-    // L1-007: Consensus logic lives in CConsensusEngine - nothing to configure here
+    // m_diagnostics and m_attribution are injected from EAOrchestrator; never create them here.
 
-    // LEAK-FIX: the constructor already allocated m_healthMonitor.
-    // Delete any pre-existing instance before re-allocating so the first one is not orphaned.
     if(m_healthMonitor != NULL)
     {
         delete m_healthMonitor;
@@ -259,8 +228,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
         m_healthMonitor.SetStrategyInactiveCounterThreshold(quorumConfig.GetStrategyInactiveCounterThreshold());
     }
 
-    // L6-008: Health monitor is used directly by internal consensus logic
-    // No separate consensus engine to wire
 
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
     if(m_fourStateRegimeDetector != NULL)
@@ -315,8 +282,7 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_tfConsistency = NULL;
     }
 
-    // m_diagnostics is injected from EAOrchestrator - do not delete
-    // m_attribution is injected from EAOrchestrator - do not delete
+    // Do not delete m_diagnostics / m_attribution here (injected; only Deinit releases them).
     if(m_healthMonitor != NULL)
     {
         delete m_healthMonitor;
@@ -326,7 +292,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
 
 void CStrategyMgrInfrastructure::ReleaseOnDeinit()
 {
-    // Clean up components
     if(m_pipeline != NULL)
     {
         delete m_pipeline;
@@ -364,7 +329,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
     }
 }
 
-// Explicit-Deinit teardown, part 2 (verbatim relocation)
 void CStrategyMgrInfrastructure::FinishDeinit()
 {
     if(m_healthMonitor != NULL)
@@ -376,7 +340,6 @@ void CStrategyMgrInfrastructure::FinishDeinit()
     m_initialized = false;
 }
 
-// Set Pipeline Filters (pipeline half - verbatim relocation)
 void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &settings)
 {
     if(m_pipeline != NULL)
@@ -396,7 +359,6 @@ void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &sett
     }
 }
 
-// Consensus diagnostics log interval (verbatim relocation)
 void CStrategyMgrInfrastructure::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
 {
     if(m_diagnostics != NULL)

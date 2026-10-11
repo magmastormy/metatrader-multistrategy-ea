@@ -8,6 +8,37 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 181: Comment reduction, Core/Management and Strategies — 248 lines, three false notes deleted
+
+#### Context
+Continuation of Batch 180 into the two trees left. Mechanical slop is gone from this repository (Batch 180 found only 16 hits repo-wide), so this round is prose only: the "extracted from / phase code / byte-identical" header genre and declaration echoes in the six densest remaining files.
+
+#### Changed (whole-line comments, before -> after)
+| File | Before | After |
+|---|---|---|
+| `Core/Management/StrategyLifecycle.mqh` | 45 | 7 |
+| `Core/Management/StrategyMgrInfrastructure.mqh` | 51 | 13 |
+| `Strategies/SupportResistanceFiles/TrendlineDetector.mqh` | 71 | 20 |
+| `Strategies/StrategySupportResistance.mqh` | 58 | 20 |
+| `Strategies/LiquiditySweepStrategy.mqh` | 62 | 14 |
+| `Strategies/UnifiedICTFiles/ImbalanceDetector.mqh` | 57 | 22 |
+
+Repo-wide: **8,171 -> 7,923 (-248)**, the first time this workstream has been under 8,000. Nothing but whole-line `//` comments changed.
+
+#### What survived, and why
+The keeps are the facts a reader cannot recover from the code: `ReleaseOnDeinit()`/`FinishDeinit()` must stay separate because the manager re-binds its attribution delegator between them (`EnterpriseStrategyManager.mqh:1025-1030`); `m_diagnostics`/`m_attribution` are injected from `EAOrchestrator` and only `Deinit()` may delete them; `GetStrategyPtr(i)` is dereferenced without a NULL guard and that is deliberate; a cached ATR handle and the Hurst/VPIN engines are shared-ownership and must not be released by the strategy; liquidity pools scan **closed bars only** (`CopyRates(..., 1, ...)`), because the live bar's own high would otherwise count as one of the equal highs being swept; ATR is read at shift 1 so the sweep cap does not move with the tick being judged; the risk manager is fail-open when none is injected (`StrategyBase.mqh:479` returns true); a bullish FVG is filled on a *close* below its bottom, with a 100% wick fill as the stated exception.
+
+#### Three stale comments deleted rather than repeated
+Each of these asserted something the code does not do, and was removed instead of being polished:
+- `LEAK-FIX: the constructor already allocated m_healthMonitor` — the constructor's init list sets it to **NULL** (`StrategyMgrInfrastructure.mqh:129`); allocation happens in the init path.
+- A DO-NOT-TOUCH note on `SyncEnabledWithRegistry` citing `EAOrchestrator.mqh:768` — the caller is `:755`, the forwarder is `:798`, and the body moved to `ConsensusEngine.mqh:192`.
+- `Pass price as string tag label` in the trendline drawing path — the label is `StringFormat("%s %.0f%% (T:%d)", ...)` at `StrategySupportResistance.mqh:350` and `:407`: a level-type name, a strength percentage and a touch count. No price is formatted into it.
+
+#### Verification
+- Every comment rewritten into an assertion was grep-checked against the code before it was kept — the lesson from Batch 180, where two such claims turned out false. All six files' assertions are confirmed above.
+- Non-comment lines compared byte-for-byte against `HEAD` for all 6 files: **0 differences**.
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
 ### Batch 180: Comment reduction, Core/Risk — and two false assertions a sweep introduced
 
 #### Context

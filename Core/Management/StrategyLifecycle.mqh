@@ -1,34 +1,5 @@
-// Enable/disable lifecycle, governance-driven activation and the per-bar strategy
-// state transition: manual activation / deactivation by name, the governance and
-// AI-degeneration sweeps, the cooldown / AI-recovery sweep and per-bar readiness reset.
-// Like C4/C5 this module MUTATES the manager, so it holds a
-// NON-const back-pointer and writes through the manager's narrow
-// per-field accessors.
-// DELIBERATELY NOT MOVED:
-// - SyncEnabledWithRegistry(). It is enable/disable lifecycle by
-// nature but is an explicit DO-NOT-TOUCH C9 guard: its body
-// must stay verbatim in the manager and its only call site is
-// Core/Orchestration/EAOrchestrator.mqh:768.
-// - RegisterStrategy(). Registration allocates and Init()s the
-// strategy object and owns the whole StrategyEntry construction
-// (35+ field initialisers); relocating it would require a
-// write accessor for every field in the struct, which is a
-// wider contract than the extraction warrants.
-// - The per-name governance setters (SetStrategyRoleByName,
-// SetStrategyClusterByName, ...). Those are C4-class config
-// setters that Slice 2 deliberately left in the manager.
-// BEHAVIOURAL FIDELITY NOTES (both preserved verbatim, see the
-// inline comments at the call sites):
-// 1. CheckStrategyDisabling returns after delegating to the
-// health monitor; CheckStrategyReEnabling does NOT and falls
-// through into its fallback loop. This asymmetry exists in the
-// original and is intentionally reproduced.
-// 2. CheckStrategyReEnabling dereferences the strategy pointer
-// without a NULL guard. Reproduced as-is.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Writes through the manager's narrow per-field accessors via a NON-const back-pointer.
+// Include only from EnterpriseStrategyManager.mqh; it is not usable standalone.
 #ifndef STRATEGY_LIFECYCLE_MQH
 #define STRATEGY_LIFECYCLE_MQH
 
@@ -110,7 +81,6 @@ void CStrategyLifecycle::CheckStrategyDisabling()
         return;
     }
 
-    // Fallback if health monitor not initialized
     const int strategyCount = m_src.GetStrategyCount();
     for(int i = 0; i < strategyCount; i++)
     {
@@ -122,7 +92,6 @@ void CStrategyLifecycle::CheckStrategyDisabling()
         if(m_src.IsStrategyTemporarilyDisabled(i))
             continue;
 
-        // L6-006: Check AI model degeneration
         if(strategy.ShouldDisableModel())
         {
             m_src.SetStrategyTemporarilyDisabled(i, true);
@@ -151,16 +120,13 @@ void CStrategyLifecycle::CheckStrategyReEnabling()
     if(m_src == NULL)
         return;
 
-    // L1-007: Delegate to CStrategyHealthMonitor.
-    // NOTE (verbatim): unlike CheckStrategyDisabling this branch does NOT
-    // return - the fallback loop below always runs. Preserved as-is.
+    // Unlike CheckStrategyDisabling, this branch does NOT return: the loop below always runs.
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
         healthMonitor.CheckAllStrategiesReEnabling();
     }
 
-    // Fallback if health monitor not initialized
     const int strategyCount = m_src.GetStrategyCount();
     for(int i = 0; i < strategyCount; i++)
     {
@@ -169,9 +135,7 @@ void CStrategyLifecycle::CheckStrategyReEnabling()
         if(!m_src.IsStrategyTemporarilyDisabled(i))
             continue;
 
-        // L6-006: Check AI model recovery for re-enabling.
-        // NOTE (verbatim): the original dereferences the strategy pointer with
-        // no NULL guard here. Preserved as-is - no behaviour change.
+        // GetStrategyPtr(i) is dereferenced with no NULL guard here; kept as-is deliberately.
         if(!m_src.GetStrategyPtr(i).ShouldDisableModel())
         {
             if(m_src.ShouldReEnableStrategy(i))
@@ -210,8 +174,7 @@ void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe
     if(drawingManager != NULL)
         drawingManager.CleanupOldObjects();
 
-    // NOTE (verbatim): barTime is unused downstream, but iTime() may trigger
-    // history loading as a side effect, so the call is preserved.
+    // barTime is unused downstream, but iTime() triggers history loading as a side effect.
     datetime barTime = iTime(symbol, timeframe, 0);
     if(barTime <= 0)
         barTime = TimeCurrent();
@@ -222,7 +185,6 @@ void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe
         regimeDetector.Update();
     }
 
-    // Call OnNewBar and persist per-bar analysis snapshots
     for(int i = 0; i < strategyCount; i++)
     {
         IStrategy* strategy = m_src.GetStrategyPtr(i);

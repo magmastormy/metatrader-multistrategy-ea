@@ -1,4 +1,3 @@
-// Trendline Detection and Validation Engine
 // Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
@@ -31,13 +30,11 @@ struct STrendline
 {
     ENUM_TRENDLINE_TYPE type;
 
-    // Anchor points (at least 2, up to 3 for validation)
     datetime    point1Time;
     double      point1Price;
     datetime    point2Time;
     double      point2Price;
 
-    // Quality metrics
     double      slope;              // Price change per second
     double      slopeDegrees;       // Angle in degrees (for human readability)
     int         touches;            // Confirmed candle touches (close or wick within tolerance)
@@ -47,7 +44,6 @@ struct STrendline
     int         barSpan;            // Number of bars between P1 and P2
     double      minBarSpacing;      // Minimum bars between any two anchor points
 
-    // State
     bool        isValid;
     bool        isBroken;
     bool        isExtended;         // Line has been extended beyond P2
@@ -55,7 +51,6 @@ struct STrendline
     double      breakPrice;
     int         barsSinceLastTouch; // Bars since price last tested this line (recency)
 
-    // ATR context at time of formation
     double      atrAtFormation;     // ATR when trendline was first detected
 
     STrendline() : type(TRENDLINE_SUPPORT), point1Time(0), point1Price(0),
@@ -84,12 +79,10 @@ private:
     int                 m_swingStrength;
     double              m_tolerancePips;
     
-    // Internal methods
     void                FindSwingPoints(int lookback);
     void                FindSupportTrendlines();
     void                FindResistanceTrendlines();
     
-    // NEW helpers
     double              GetATR(int period = 14);
     bool                IsValidSlopeAngle(double slopeDegrees, bool isSupport);
     int                 CountTouches(SSwingPoint &p1, SSwingPoint &p2, double slope,
@@ -124,7 +117,6 @@ public:
     
     double              ProjectTrendline(STrendline &trendline, datetime targetTime);
     
-    // Checks
     bool                IsAtTrendline(double price, int &touchedLineIndex);
     bool                IsTrendlineBroken(STrendline &trendline);
 };
@@ -169,10 +161,8 @@ void CTrendlineDetector::DetectTrendlines(int lookback)
     
     FindSwingPoints(lookback);
     
-    // Connect swing lows (support trendlines)
     FindSupportTrendlines();
     
-    // Connect swing highs (resistance trendlines)
     FindResistanceTrendlines();
 }
 
@@ -211,7 +201,6 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
     double atr = GetATR(14);
     double minSwingSize = atr * 0.30;
     
-    // Find swing highs
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingHigh = true;
@@ -226,7 +215,6 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
         
         if(isSwingHigh)
         {
-            // Check that this high is meaningfully above its immediate neighbors
             double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
             if((high[i] - neighborAvgHigh) >= minSwingSize)
             {
@@ -240,7 +228,6 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
         }
     }
     
-    // Find swing lows
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingLow = true;
@@ -313,7 +300,6 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
     }
 }
 
-// Helpers
 bool CTrendlineDetector::IsValidSlopeAngle(double slopeDegrees, bool isSupport)
 {
     double absAngle = MathAbs(slopeDegrees);
@@ -337,12 +323,8 @@ double CTrendlineDetector::NormalizeSlope(double slope)
     int periodSeconds = PeriodSeconds(m_timeframe);
     if(periodSeconds <= 0) return 0;
 
-    // Batch 156: scale-free normalization. The old formula divided the
-    // per-bar move by 10*POINT ("pips"), which saturates arctan near 90
-    // degrees on synthetics priced in thousands - IsValidSlopeAngle then
-    // rejected nearly every real trendline. Express the slope in ATRs per
-    // bar instead: a usable line advances a fraction of an ATR per bar,
-    // regardless of instrument price scale.
+    // Slope is normalized in ATRs per bar, never in points or pips: a fixed-pip divisor
+    // saturates arctan near 90 degrees on instruments priced in thousands.
     double atr = GetATR(14);
     if(atr <= 0) return 0;
 
@@ -355,34 +337,24 @@ void CTrendlineDetector::FindSupportTrendlines()
 {
     double atr = GetATR(14);
 
-    // Outer loop: P1 (older anchor point)
     for(int i = 0; i < m_swingLowCount - 1 && m_trendlineCount < m_maxTrendlines; i++)
     {
-        // Inner loop: P2 (newer anchor point, must be more recent than P1)
         for(int j = i + 1; j < m_swingLowCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            // Batch 156: the swing arrays are NEWEST-first (barIndex grows as
-            // the detection scan walks into the past), so with the old
-            // assignment p1=i / p2=j we had barIndex[i] < barIndex[j] for
-            // EVERY pair and the "P1 must be older" guard skipped all of
-            // them - zero trendlines were ever detected. Take p1 from the
-            // deeper index so it is genuinely the older anchor.
+            // Swing arrays are newest-first: barIndex grows as the scan walks back in time, so
+            // the older anchor p1 must come from the deeper index.
             SSwingPoint p1 = m_swingLows[j];  // Older (higher bar index)
             SSwingPoint p2 = m_swingLows[i];  // Newer (lower bar index)
 
-            // P1 must be older (higher bar index in series)
             if(p1.barIndex <= p2.barIndex) continue;
 
-            // Minimum and maximum span checks
             if(!IsLineViable(p1, p2)) continue;
 
-            // Calculate slope
             double timeDiff = (double)(p2.time - p1.time);  // positive (p2 is newer)
             if(MathAbs(timeDiff) < 1) continue;
 
             double slope = (p2.price - p1.price) / timeDiff;
 
-            // Convert to degrees for angle filtering
             double slopeDegrees = NormalizeSlope(slope);
 
             // ANGLE FILTER: Must be a proper upward-sloping support line
@@ -392,11 +364,9 @@ void CTrendlineDetector::FindSupportTrendlines()
             int wickTouches = 0, closeTouches = 0;
             int totalTouches = CountTouches(p1, p2, slope, true, wickTouches, closeTouches);
 
-            // Require at least 2 anchors + at least 1 additional touch
-            // (so minimum 3 total points on the line)
+            // Validity needs the 2 anchors plus at least 1 extra touch: 3 points minimum.
             if(totalTouches < 3) continue;
 
-            // Build the trendline
             STrendline tl;
             tl.type         = TRENDLINE_SUPPORT;
             tl.point1Time   = p1.time;
@@ -430,8 +400,7 @@ void CTrendlineDetector::FindResistanceTrendlines()
     {
         for(int j = i + 1; j < m_swingHighCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            // Batch 156: newest-first arrays - p1 must come from the deeper
-            // index to be the older anchor (see FindSupportTrendlines).
+            // Newest-first arrays: p1 comes from the deeper index (see FindSupportTrendlines).
             SSwingPoint p1 = m_swingHighs[j];
             SSwingPoint p2 = m_swingHighs[i];
 
@@ -477,7 +446,6 @@ void CTrendlineDetector::FindResistanceTrendlines()
     }
 }
 
-// Count Touches and Validate Break
 int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double slope,
                                       bool isSupport, int &wickTouches, int &closeTouches)
 {
@@ -488,7 +456,6 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
     double point     = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double tolerance = (atr > 0) ? atr * 0.15 : m_tolerancePips * point;
 
-    // Walk BETWEEN the two anchor points (from P1 bar backward to P2 bar)
     int startBar = p1.barIndex;
     int endBar   = p2.barIndex;
 
@@ -497,7 +464,6 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime == 0) break;
 
-        // Project the trendline to this bar's time
         double expectedPrice = p1.price + slope * (double)(barTime - p1.time);
 
         double barLow   = iLow(m_symbol,   m_timeframe, i);
@@ -511,11 +477,9 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
             if(barClose < expectedPrice - tolerance * 2.0)
                 return 0;  // Line broken — invalid
 
-            // Wick touch: low within tolerance of line
             if(MathAbs(barLow - expectedPrice) <= tolerance)
                 wickTouches++;
 
-            // Close touch: close within tolerance (more significant)
             if(MathAbs(barClose - expectedPrice) <= tolerance)
                 closeTouches++;
         }
@@ -533,8 +497,7 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
         }
     }
 
-    // Also check BEYOND P2 (to the right/more recent side of the chart)
-    // The line should continue to hold after P2
+    // Also test beyond P2 (newest side): the line must continue to hold after the second anchor.
     int checkBars = MathMin(20, p2.barIndex - 1);
     for(int i = p2.barIndex - 1; i >= MathMax(0, p2.barIndex - checkBars); i--)
     {
@@ -578,14 +541,11 @@ double CTrendlineDetector::CalculateTrendlineStrength(STrendline &tl)
 {
     double score = 0.30;  // Base
 
-    // 1. TOUCH COUNT — more touches = more institutional respect (max 25pts)
     int extraTouches = MathMax(0, tl.touches - 2);  // touches beyond the 2 anchors
     score += MathMin(0.25, extraTouches * 0.07);
 
-    // Weight close touches more than wick touches
     score += MathMin(0.10, tl.closeTouches * 0.04);
 
-    // 2. SLOPE ANGLE — optimal range is 20°–45° (max 20pts)
     double absAngle = MathAbs(tl.slopeDegrees);
     if(absAngle >= 20.0 && absAngle <= 45.0)
         score += 0.20;  // Ideal slope
@@ -594,12 +554,10 @@ double CTrendlineDetector::CalculateTrendlineStrength(STrendline &tl)
     else
         score += 0.00;  // Poor slope (still passed angle filter, but gets no bonus)
 
-    // 3. BAR SPAN — longer span means more historical respect (max 15pts)
     if(tl.barSpan >= 80)       score += 0.15;
     else if(tl.barSpan >= 40)  score += 0.10;
     else if(tl.barSpan >= 20)  score += 0.05;
 
-    // 4. RECENCY — line was tested recently (max 10pts)
     if(tl.barsSinceLastTouch <= 5)        score += 0.10;
     else if(tl.barsSinceLastTouch <= 15)  score += 0.05;
     else if(tl.barsSinceLastTouch > 50)   score -= 0.05;  // Stale
@@ -622,14 +580,11 @@ void CTrendlineDetector::DeduplicateTrendlines()
         {
             if(!m_trendlines[j].isValid) continue;
 
-            // Same type check
             if(m_trendlines[i].type != m_trendlines[j].type) continue;
 
-            // Similar slope check
             bool sameSlope = MathAbs(m_trendlines[i].slopeDegrees - m_trendlines[j].slopeDegrees) < angleTol;
             if(!sameSlope) continue;
 
-            // Project both lines to current time and check price proximity
             datetime now = TimeCurrent();
             double price_i = ProjectTrendline(m_trendlines[i], now);
             double price_j = ProjectTrendline(m_trendlines[j], now);
@@ -645,7 +600,6 @@ void CTrendlineDetector::DeduplicateTrendlines()
         }
     }
 
-    // Compact the array: remove all invalid entries
     int newCount = 0;
     for(int i = 0; i < m_trendlineCount; i++)
     {
@@ -698,7 +652,6 @@ void CTrendlineDetector::UpdateRecency()
     {
         if(!m_trendlines[i].isValid || m_trendlines[i].isBroken) continue;
 
-        // Count how many bars since the last touch
         int lastTouchBar = 999;
         for(int b = 0; b < 50; b++)
         {
@@ -722,7 +675,6 @@ void CTrendlineDetector::UpdateRecency()
 
         m_trendlines[i].barsSinceLastTouch = lastTouchBar;
 
-        // Refresh strength based on updated recency
         m_trendlines[i].strength = CalculateTrendlineStrength(m_trendlines[i]);
     }
 }
@@ -751,7 +703,6 @@ int CTrendlineDetector::FindBestLineIndex(bool isSupport)
     return bestIdx;
 }
 
-// Get Best Support / Resistance
 bool CTrendlineDetector::GetBestSupport(STrendline &tl)
 {
     int idx = FindBestSupportLine();
@@ -770,7 +721,6 @@ bool CTrendlineDetector::GetBestResistance(STrendline &tl)
 
 void CTrendlineDetector::Update()
 {
-    // Full re-scan every update
     m_trendlineCount = 0;
     ArrayResize(m_trendlines, 0);
 
@@ -828,7 +778,6 @@ int CTrendlineDetector::FindActiveTrendlineAtPrice(double price)
 
 bool CTrendlineDetector::IsTrendlineBroken(STrendline &trendline)
 {
-    // Check cached break flag first
     if(trendline.isBroken) return true;
 
     double atr   = GetATR(14);

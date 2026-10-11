@@ -1,4 +1,3 @@
-// Support & Resistance + Trendlines Strategy v1.0
 // Copyright 2025, Multi-Strategy EA
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
@@ -10,15 +9,12 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Visualization/ChartDrawingManager.mqh"
 #include "../Core/Engines/FibConfluence.mqh"
-// Risk Manager for AGENTS.md invariant #1
+// Risk gate for entries (AGENTS.md invariant #1)
 #include "../Core/Risk/UnifiedRiskManager.mqh"
-// Batch 103: Hurst/VPIN engine access
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Core/Risk/VPINFilter.mqh"
-// Subsystem Logger for separated log files
 #include "../Core/Utils/SubsystemLogger.mqh"
 
-// S/R Strategy Component Files
 #include "SupportResistanceFiles/SupportResistanceDetector.mqh"
 #include "SupportResistanceFiles/TrendlineDetector.mqh"
 #include "SupportResistanceFiles/SRTradingStrategies.mqh"
@@ -34,32 +30,27 @@ enum ENUM_SR_STRATEGY_MODE
 class CStrategySupportResistance : public CStrategyBase
 {
 private:
-    // Core Components
     CSupportResistanceDetector* m_srDetector;
     CTrendlineDetector*         m_trendDetector;
     CFibConfluence*             m_fibModule;  // Fibonacci confluence helper
     int                         m_atrHandle;  // Cached ATR handle from CIndicatorManager
     
-    // Trading Strategies
     CSRBounceStrategy*          m_bounceStrategy;
     CSRBreakoutStrategy*        m_breakoutStrategy;
     CTrendlineBounceStrategy*   m_trendlineStrategy;
     CChartDrawingManager*       m_drawingManager;
     
-    // Risk Management (AGENTS.md invariant #1) - Uses base class CStrategyBase::GetUnifiedRiskManager()
         CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
 
-    // Batch 103: Per-symbol engine references (not owned)
+    // Per-symbol engine references (not owned)
     CHurstEngine*               m_hurstEngine;
     CVPINFilter*                m_vpinFilter;
 
-    // Configuration
     ENUM_SR_STRATEGY_MODE       m_mode;
     int                         m_lastBarProcessed;
     int                         m_drawBarCounter;  // Batch 103: Throttle drawing
     bool                        m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
     
-    // Statistics
     int                         m_signalsGenerated;
     int                         m_levelsDetected;
     int                         m_trendlinesDetected;
@@ -76,15 +67,12 @@ public:
     virtual string              GetName() const override { return m_name; }
     virtual ENUM_STRATEGY_TYPE  GetType() const override { return STRATEGY_SUPPORT_RESISTANCE; }
 
-    // Batch 103: Set per-symbol Hurst engine (not owned)
     void SetHurstEngine(CHurstEngine* engine) { m_hurstEngine = engine; }
-    // Batch 103: Set per-symbol VPIN filter (not owned)
     void SetVPINFilter(CVPINFilter* filter) { m_vpinFilter = filter; }
     
 private:
     double                      ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence);
     
-    // Configuration
     void                        SetMode(ENUM_SR_STRATEGY_MODE mode) { m_mode = mode; }
     void                        SetMinConfidence(double conf) { m_minConfidence = conf; }
     
@@ -148,7 +136,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
         return false;
     
-    // Initialize S/R Detector
     m_srDetector = new CSupportResistanceDetector();
     if(m_srDetector == NULL || !m_srDetector.Initialize(symbol, timeframe, 20, 3))
     {
@@ -156,7 +143,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         return false;
     }
     
-    // Initialize Trendline Detector
     m_trendDetector = new CTrendlineDetector();
     if(m_trendDetector == NULL || !m_trendDetector.Initialize(symbol, timeframe, 3, 10))
     {
@@ -164,7 +150,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         return false;
     }
     
-    // Initialize Fibonacci Confluence Module
     m_fibModule = new CFibConfluence();
     if(m_fibModule != NULL)
     {
@@ -178,7 +163,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         Print("[S/R v1.0] WARNING: Failed to create cached ATR handle for Fib confluence");
     }
     
-    // Initialize Bounce Strategy
     m_bounceStrategy = new CSRBounceStrategy();
     if(m_bounceStrategy == NULL || !m_bounceStrategy.Initialize(symbol, timeframe, m_srDetector, m_trendDetector))
     {
@@ -187,7 +171,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     }
     m_bounceStrategy.SetMinConfidence(m_minConfidence);
     
-    // Initialize Breakout Strategy
     m_breakoutStrategy = new CSRBreakoutStrategy();
     if(m_breakoutStrategy == NULL || !m_breakoutStrategy.Initialize(symbol, timeframe, m_srDetector))
     {
@@ -196,7 +179,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     }
     m_breakoutStrategy.SetMinConfidence(m_minConfidence);
     
-    // Initialize Trendline Strategy
     m_trendlineStrategy = new CTrendlineBounceStrategy();
     if(m_trendlineStrategy == NULL || !m_trendlineStrategy.Initialize(symbol, timeframe, m_trendDetector, m_srDetector))
     {
@@ -205,14 +187,12 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     }
     m_trendlineStrategy.SetMinConfidence(m_minConfidence);
     
-    // Initial detection
     m_srDetector.DetectLevels(300);  // Increased from 200 to 300 for deeper historical context
     m_trendDetector.DetectTrendlines(100);
     
     m_levelsDetected = m_srDetector.GetLevelCount();
     m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     
-    // Initialize drawing manager
     m_drawingManager = new CChartDrawingManager();
     if(m_drawingManager != NULL)
     {
@@ -229,7 +209,6 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         m_drawingManager.SetConfiguration(config);
     }
     
-    // Initialize subsystem logger for drawing diagnostics
     m_logger = new CSubsystemLogger();
     if(m_logger != NULL)
     {
@@ -238,7 +217,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
                                                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected));
     }
     
-    // ARCHITECTURAL FIX: Risk manager is properly injected via base class Init()
+    // Risk manager arrives through CStrategyBase::Init(); with none injected the gate below is skipped (fail-open).
         if(GetUnifiedRiskManager() != NULL)
             Print("[S/R v1.0] UnifiedRiskManager successfully injected - trades will pass through validation gate");
         else
@@ -273,7 +252,6 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
         return;
     m_lastBarProcessed = currentBar;
     
-    // Update detectors
     if(m_srDetector != NULL)
     {
         m_srDetector.Update();
@@ -286,7 +264,6 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
         m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     }
     
-    // DIAGNOSTIC: Log detection status every 10 bars
     static int s_diagBarCount = 0;
     s_diagBarCount++;
     if(s_diagBarCount % 10 == 0 && m_logger != NULL)
@@ -301,7 +278,7 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
 
-    // Batch 103: Throttle drawing to every 2 bars (reduced from 5 to prevent cleanup deleting objects between draws)
+    // Draw every 2 bars: CleanupOldObjects() runs each bar, so a wider gap let cleanup delete objects between draws.
     m_drawBarCounter++;
     if(m_drawBarCounter % 2 == 0)
     {
@@ -321,7 +298,6 @@ void CStrategySupportResistance::DrawLevels()
     for(int i = 0; i < m_srDetector.GetLevelCount(); i++)
     {
         SSupportResistance lvl;
-        // Filter out weak lines dynamically via gate (e.g. 0.4)
         if(m_srDetector.GetLevel(i, lvl) && lvl.strength >= 0.4)
         {
             ArrayResize(levels, count + 1);
@@ -330,7 +306,6 @@ void CStrategySupportResistance::DrawLevels()
         }
     }
     
-    // DIAGNOSTIC: Log drawing attempt every 5 bars
     static int s_drawLevelCount = 0;
     s_drawLevelCount++;
     if(s_drawLevelCount % 5 == 0 && m_logger != NULL)
@@ -338,7 +313,6 @@ void CStrategySupportResistance::DrawLevels()
         m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-LEVELS] Total=%d PassedFilter=%d WillDraw=%d StrengthThreshold=0.4",
                                                 m_srDetector.GetLevelCount(), count, MathMin(count, 8)));
         
-        // Log individual level details if any found
         if(count > 0)
         {
             string levelDetails = "";
@@ -357,7 +331,6 @@ void CStrategySupportResistance::DrawLevels()
         }
     }
     
-    // Sort descending by strength using efficient ArraySort
     // Note: ArraySort sorts ascending by default, so we reverse after sorting
     ArraySort(levels);
     ArrayReverse(levels);
@@ -379,10 +352,8 @@ void CStrategySupportResistance::DrawLevels()
                                     level.strength * 100.0,
                                     level.touches);
         
-        // Pass price as string tag label
         bool drawn = m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
         
-        // Log drawing result for first level every 10 draws
         if(i == 0 && s_drawLevelCount % 10 == 0 && m_logger != NULL)
         {
             m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-RESULT] Level=%.5f Color=%s Label='%s' Success=%s",
@@ -413,7 +384,6 @@ void CStrategySupportResistance::DrawTrendlines()
         }
     }
     
-    // Sort descending by strength using efficient ArraySort
     // Note: ArraySort sorts ascending by default, so we reverse after sorting
     ArraySort(lines);
     ArrayReverse(lines);
@@ -454,12 +424,11 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         return TRADE_SIGNAL_NONE;
     }
     
-    // Update components
     if(m_srDetector != NULL) m_srDetector.Update();
     if(m_trendDetector != NULL) m_trendDetector.Update();
 
-    // Batch 103: Hurst regime filter — S/R bounce works best in mean-reverting regime
-    // Skip bounce mode if strongly trending (H > 0.55)
+    // Hurst regime filter: S/R bounce works best in a mean-reverting regime.
+    // Bounce mode is skipped while the market is strongly trending (H > 0.55).
     if(m_hurstEngine != NULL && m_hurstEngine.IsWarmedUp())
     {
         double hurst = m_hurstEngine.GetSnapshot().hurstValue;
@@ -470,7 +439,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         }
     }
 
-    // Batch 103: VPIN toxicity filter — skip during high toxicity
+    // VPIN toxicity filter: no signal while VPIN > 0.5.
     if(m_vpinFilter != NULL && m_vpinFilter.IsWarmedUp())
     {
         if(m_vpinFilter.GetVPIN() > 0.5)
@@ -515,7 +484,6 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     {
         confidence = bestResult.confidence;
         
-        // Apply Fibonacci confluence boost
         if(m_fibModule != NULL && m_srDetector != NULL)
         {
             confidence = ApplyFibConfluence(bestResult.signal, bestResult.entryPrice, confidence);
@@ -524,10 +492,8 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-        // LOT VALIDATION DEFERRED: Lot size is an execution parameter, not a signal-quality
-        // parameter. Setting to broker minimum so the validation gate does not reject on lot
-        // size before CPositionSizer has a chance to round up. Actual sizing happens in the
-        // risk manager's post-size validation phase (AGENTS.md invariant #1).
+        // Lot size is an execution parameter, not a signal-quality one: the placeholder is the broker
+        // minimum so the validation gate cannot reject on size before CPositionSizer sizes the trade (invariant #1).
         double brokerMinLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
         if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
         request.lotSize = brokerMinLot;
@@ -543,7 +509,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         if(!ValidateWithRiskManager(request, "SR", confidence))
             return TRADE_SIGNAL_NONE;
         
-        // CONSENSUS LOGGING (AGENTS.md requirement)
+        // Consensus logging (AGENTS.md requirement)
         string signalType = "";
         if(m_mode == SR_MODE_BOUNCE) signalType = "Bounce";
         else if(m_mode == SR_MODE_BREAKOUT) signalType = "Breakout";
@@ -567,7 +533,6 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     return bestResult.signal;
 }
 
-// Apply Fibonacci Confluence Boost
 double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence)
 {
     if(m_fibModule == NULL || m_srDetector == NULL) return confidence;
@@ -586,7 +551,6 @@ double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, 
     if(!hasSupport || !hasResistance) return confidence;
     if(nearestResistance.price <= nearestSupport.price) return confidence;
 
-    // Calculate Fibonacci levels from swing pair
     SFibLevel fibLevels[];
     int fibCount = 0;
 
@@ -605,7 +569,6 @@ double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, 
 
     if(atr <= 0.0) return confidence;
 
-    // Check proximity of price to each Fib level
     double proximityBonus = 0.0;
 
     for(int i = 0; i < fibCount; i++)
@@ -628,7 +591,6 @@ double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, 
         }
     }
 
-    // Cap total proximity bonus at 0.20
     proximityBonus = MathMin(0.20, proximityBonus);
 
     double adjustedConfidence = MathMin(1.0, confidence + proximityBonus);

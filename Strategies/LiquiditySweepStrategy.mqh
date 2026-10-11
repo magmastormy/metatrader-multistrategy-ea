@@ -1,7 +1,4 @@
-// Liquidity Sweep / Stop Hunt Detection Strategy
-// Detects when price briefly exceeds key levels then reverses
-// Algorithmic equivalent of ICT liquidity grab concept
-// Batch 114: New strategy — does NOT replace existing ICT/SMC
+// Liquidity sweep / stop hunt: price briefly pierces a key level, then closes back inside it.
 #ifndef LIQUIDITY_SWEEP_STRATEGY_MQH
 #define LIQUIDITY_SWEEP_STRATEGY_MQH
 
@@ -45,11 +42,9 @@ struct SLiquiditySweepSignal
         levelType(LIQ_LEVEL_NONE) {}
 };
 
-// Detects liquidity sweeps and enters on reversal
 class CLiquiditySweepStrategy : public CStrategyBase
 {
 private:
-    // Configuration
     double m_sweepThresholdATR;     // Min wick beyond level as ATR multiple (default: 0.3)
     int    m_atrPeriod;             // ATR period for threshold
     int    m_lookbackBars;          // Bars to look back for levels
@@ -57,22 +52,19 @@ private:
     double m_equalLevelTolerance;   // Points tolerance for equal highs/lows detection
     int    m_roundNumberPips;       // Round number spacing in pips (default: 50)
 
-    // Indicator handles
     int    m_atrHandle;
 
     CUnifiedRiskManager* m_riskManager;
 
-    // State
     datetime m_lastSignalBar;
 
-    //--- Find session levels (prev session high/low)
     void FindSessionLevels(double &prevSessionHigh, double &prevSessionLow,
                            double &dailyHigh, double &dailyLow)
     {
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
 
-        // Get daily bars for the last 5 days
+        // PERIOD_D1 bars, series order; fewer than 2 copied = fail closed (all four levels stay 0)
         int copied = CopyRates(m_symbol, PERIOD_D1, 0, 5, rates);
         if(copied < 2)
         {
@@ -83,16 +75,14 @@ private:
             return;
         }
 
-        // Previous session (yesterday)
+        // rates[1] = last completed daily bar, rates[0] = the still-forming one
         prevSessionHigh = rates[1].high;
         prevSessionLow = rates[1].low;
 
-        // Daily high/low (today so far)
         dailyHigh = rates[0].high;
         dailyLow = rates[0].low;
     }
 
-    //--- Find round number levels near current price
     void FindRoundNumbers(double currentPrice, double &levels[], int &levelCount)
     {
         levelCount = 0;
@@ -125,45 +115,36 @@ private:
 
         if(isHighLevel)
         {
-            // Sweep above: wick exceeds level but close is back below
+            // Sweep above: wick pierces the level, close returns below it; a pierce past the ATR cap is a breakout
             double wickAbove = high - level;
             return (wickAbove > 0 && wickAbove <= threshold && close < level);
         }
         else
         {
-            // Sweep below: wick exceeds level but close is back above
+            // Sweep below: mirror rule - wick pierces from underneath, close returns above
             double wickBelow = level - low;
             return (wickBelow > 0 && wickBelow <= threshold && close > level);
         }
     }
 
-    //--- Compute confidence based on sweep quality
     double ComputeConfidence(double sweepWick, double atr, double close,
                               double entryPrice, ENUM_LIQUIDITY_LEVEL_TYPE levelType)
     {
         double confidence = 0.5;
 
-        // Factor 1: Wick quality (bigger wick = stronger rejection)
         double wickRatio = sweepWick / MathMax(1e-10, atr);
         confidence += MathMin(0.2, wickRatio * 0.3);
 
-        // Factor 2: Close position (closer to opposite side = stronger)
         double bodyRange = MathAbs(close - entryPrice);
         if(bodyRange > 0 && atr > 0)
             confidence += MathMin(0.1, (bodyRange / atr) * 0.1);
 
-        // Factor 3: Level type importance
         switch(levelType)
         {
             case LIQ_LEVEL_PREV_SESSION_HIGH:
             case LIQ_LEVEL_PREV_SESSION_LOW:
                 confidence += 0.1; // Session levels are strong
                 break;
-            // Batch 155: daily highs/lows fell into default (no bonus), and
-            // with the 0.3xATR wick cap the wick term tops out at ~0.09, so
-            // daily-level sweeps maxed out just around the 0.6 floor and
-            // were mostly rejected - the strongest daily liquidity pool was
-            // effectively untradeable.
             case LIQ_LEVEL_DAILY_HIGH:
             case LIQ_LEVEL_DAILY_LOW:
                 confidence += 0.1; // Daily extremes carry major resting liquidity
@@ -182,7 +163,6 @@ private:
         return MathMax(0.0, MathMin(1.0, confidence));
     }
 
-    //--- Find equal highs/lows (liquidity pools)
     bool FindEqualLevels(double &equalHigh, double &equalLow, bool &hasEqualHigh, bool &hasEqualLow)
     {
         hasEqualHigh = false;
@@ -192,16 +172,15 @@ private:
 
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
-        // Batch 169: pools built from the forming bar are self-referential -
-        // the live high that triggers the sweep also qualifies as one of the
-        // "equal highs" being swept. Copy from shift 1 (closed bars only).
+        // closed bars only (shift 1): otherwise the live bar's own high counts as one of the equal highs it is being swept into
+        // fewer than 10 closed bars scanned = no pools at all
         int copied = CopyRates(m_symbol, m_timeframe, 1, m_lookbackBars, rates);
         if(copied < 10) return false;
 
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double tolerance = m_equalLevelTolerance * point;
 
-        // Find equal highs (two or more highs within tolerance)
+        // equal highs = two highs within `tolerance` (points) and 5-29 bars apart
         for(int i = 0; i < copied - 5; i++)
         {
             for(int j = i + 5; j < MathMin(i + 30, copied); j++)
@@ -216,7 +195,6 @@ private:
             if(hasEqualHigh) break;
         }
 
-        // Find equal lows
         for(int i = 0; i < copied - 5; i++)
         {
             for(int j = i + 5; j < MathMin(i + 30, copied); j++)
@@ -276,7 +254,6 @@ public:
         m_roundNumberPips = MathMax(10, roundNumberPips);
     }
 
-    //--- Generate signal (called each bar)
     SLiquiditySweepSignal GetSignal()
     {
         SLiquiditySweepSignal signal;
@@ -285,13 +262,10 @@ public:
             return signal;
 
         double atr[1];
-        // Batch 169: shift 1. Shift 0 re-estimates ATR from the bar still in
-        // progress, so the sweep threshold moved with the tick that was
-        // supposed to cross it.
+        // ATR at shift 1: shift 0 would move the sweep cap with the tick being judged
         if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) != 1 || atr[0] <= 0)
             return signal;
 
-        // Get current bar data
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
         if(CopyRates(m_symbol, m_timeframe, 0, 2, rates) < 2)
@@ -302,28 +276,23 @@ public:
         double close = rates[1].close;
         double currentPrice = rates[0].close;
 
-        // Find key levels
         double prevSessionHigh, prevSessionLow, dailyHigh, dailyLow;
         FindSessionLevels(prevSessionHigh, prevSessionLow, dailyHigh, dailyLow);
 
-        // Find round numbers
         double roundLevels[];
         int roundCount = 0;
         FindRoundNumbers(currentPrice, roundLevels, roundCount);
 
-        // Find equal highs/lows
         double equalHigh, equalLow;
         bool hasEqualHigh, hasEqualLow;
         FindEqualLevels(equalHigh, equalLow, hasEqualHigh, hasEqualLow);
 
-        // Check for sweeps at each level type
         double bestConfidence = 0;
         double bestSweepLevel = 0;
         double bestSweepWick = 0;
         ENUM_LIQUIDITY_LEVEL_TYPE bestLevelType = LIQ_LEVEL_NONE;
         ENUM_TRADE_SIGNAL bestDirection = TRADE_SIGNAL_NONE;
 
-        // Check session highs/lows
         if(prevSessionHigh > 0 && DetectSweep(prevSessionHigh, true, high, low, close, atr[0]))
         {
             double wick = high - prevSessionHigh;
@@ -352,7 +321,6 @@ public:
             }
         }
 
-        // Check daily levels
         if(dailyHigh > 0 && DetectSweep(dailyHigh, true, high, low, close, atr[0]))
         {
             double wick = high - dailyHigh;
@@ -381,7 +349,6 @@ public:
             }
         }
 
-        // Check equal highs/lows (strongest liquidity)
         if(hasEqualHigh && DetectSweep(equalHigh, true, high, low, close, atr[0]))
         {
             double wick = high - equalHigh;
@@ -410,7 +377,6 @@ public:
             }
         }
 
-        // Check round numbers
         for(int i = 0; i < roundCount; i++)
         {
             bool isHighLevel = (roundLevels[i] > currentPrice);
@@ -429,7 +395,6 @@ public:
             }
         }
 
-        // Validate best signal
         if(bestConfidence < m_sweepMinConfidence)
         {
             LogRejectEvent("BELOW_MIN_CONFIDENCE");
@@ -442,7 +407,7 @@ public:
             return signal;
         }
 
-        // Same-bar filter
+        // Same sweep bar only votes once
         datetime currentBarTime = rates[1].time;
         if(currentBarTime == m_lastSignalBar)
         {
@@ -450,7 +415,6 @@ public:
             return signal;
         }
 
-        // Build signal
         signal.direction = bestDirection;
         signal.entryPrice = close; // Enter at close of sweep bar
         signal.sweepLevel = bestSweepLevel;
@@ -458,11 +422,7 @@ public:
         signal.levelType = bestLevelType;
         signal.confidence = bestConfidence;
 
-        // SL/TP based on sweep structure
-        // Batch 155: the sweep wick trades from the level out to level-wick
-        // (BUY side), so parking the stop HALF-WAY INSIDE the wick put it in
-        // already-traded price - instant stop-outs and stops-level rejections.
-        // Place it beyond the sweep extreme with a small buffer.
+        // stop sits past the sweep extreme (level +/- 1.1x the wick); inside the wick it is already-traded price
         if(bestDirection == TRADE_SIGNAL_BUY)
         {
             signal.stopLoss = bestSweepLevel - bestSweepWick * 1.1; // Beyond the swept extreme
@@ -474,7 +434,6 @@ public:
             signal.takeProfit = close - (signal.stopLoss - close) * 2.0; // 2R target
         }
 
-        // Reason string
         string levelNames[] = {"NONE", "PREV_SESS_H", "PREV_SESS_L", "DAILY_H", "DAILY_L",
                                "ROUND_NUM", "EQUAL_HIGHS", "EQUAL_LOWS"};
         signal.reason = StringFormat("Sweep %s @ %.5f | wick=%.1f ATR | conf=%.2f",
@@ -491,13 +450,8 @@ public:
         return signal;
     }
 
-    //--- Consensus interface (Batch 2026-08-14, FINDING 0):
-    //    Routes the consensus GetSignal(double&) -> ExecuteSignal into this strategy's
-    //    designed liquidity-sweep logic. Previously this class overrode a NON-virtual
-    //    GetSignal() (no-arg) and was therefore never called by the consensus base wrapper,
-    //    so its signals only fired as an auxiliary engine AND bypassed the unified risk gate.
-    //    Now it votes in consensus and stashes its price-based SL/TP as pips for the
-    //    execution path (consumed only when InpUseStrategyStops is enabled).
+    // Consensus vote entry point: CStrategyBase::GetSignal(double&) forwards to this ExecuteSignal override.
+    // SL/TP are stashed for the execution path (used only when InpUseStrategyStops is on); this class places no orders and gates no risk.
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence)
     {
         SLiquiditySweepSignal sig = GetSignal();
@@ -513,14 +467,12 @@ public:
         return sig.direction;
     }
 
-    //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_UNIFIED_ICT; }
     string GetStrategyName() const { return "LiquiditySweep"; }
 
-    // --- Cleanup ---
     void Deinit()
     {
-        // CLiquiditySweepStrategy owns ATR handle - release it
+        // owns its ATR handle: released and invalidated here so the destructor never releases it twice
         if(m_atrHandle != INVALID_HANDLE)
         {
             IndicatorRelease(m_atrHandle);
