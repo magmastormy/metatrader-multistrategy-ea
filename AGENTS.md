@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 174 - VPIN's EXTREME veto armed (it previously only shrank the lot), the post-size risk clamp refuses instead of rounding up and booking a risk it never achieved, and four no-op gates left the sizing chain. Batch 173 applied the live-authority ladder to the shipped lot. Batch 172 wired the authority thresholds and profit factor. Batch 171 closed at 11,201 comment lines removed.
+- Latest Batch: Batch 175 - `CPostConsensusValidator::SetValidatorConfig` had no call site, so the OFI and VPIN filter arms ran OFF despite their inputs defaulting ON and the quality floors ignored configuration; they are now wired, and conservative-tier safe mode tightens the gates it names. Batch 174 armed the VPIN veto and made the post-size risk clamp refuse instead of rounding up. Batch 173 applied the live-authority ladder to the shipped lot. Batch 172 wired the authority thresholds and profit factor.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
@@ -72,7 +72,8 @@ After any strategy/risk/execution change, verify:
 - `[SIGNAL-REJECTED]`
 - `[AI-VOTE]` (if AI enabled)
 - `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or live trade result logs
-- `[POST-CONSENSUS-FILTER] filter=vpin_extreme | VETO` (if VPIN enabled; since Batch 174 the EXTREME regime vetoes entries at `InpVPINExtremeThreshold` instead of only shrinking the lot)
+- `[POST-CONSENSUS-FILTER] filter=vpin_extreme | VETO` (if VPIN enabled; since Batch 174 the EXTREME regime vetoes entries at `InpVPINExtremeThreshold` instead of only shrinking the lot, and since Batch 175 the arm is actually switched on by its input)
+- `[VALIDATOR-CONFIG]` once per symbol at init (Batch 175: the validator's only configuration call site; if it is absent from a session log, no symbol has OFI/VPIN screening)
 - `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` (only where a trade cannot be sized inside the per-trade cap at the broker minimum)
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)

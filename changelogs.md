@@ -8,6 +8,33 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 175: The post-consensus validator had no configuration call site, so two operator-enabled filters never ran
+
+#### Context
+Batch 174 armed VPIN's EXTREME veto and this batch found why it would not have reached a live session: `CPostConsensusValidator::SetValidatorConfig` is declared, defined, and forwarded by `CEnterpriseStrategyManager` — and nothing in the repository calls it. Every validator arm has been running on the class's constructor defaults since the validator was extracted. This is the same failure shape as Batch 172's `InpAuthority*` inputs and Batch 173's multiplier, one level up: not a dead value, a dead configuration surface.
+
+#### Changed
+- **`manager.SetValidatorConfig(...)` is called from `InitializeEnterpriseManagerForSymbol`,** after `ApplyQuorumProfile`. Effective now: `InpEnableOFIProxy` (default **true**, previously OFF) turns on order-flow confirmation; `InpEnableVPINFilter` (default **true**, previously OFF) turns on the VPIN arm including Batch 174's veto; `InpValidatorNewBarMinQuality` (0.68) and `InpValidatorIntrabarMinQuality` (0.70) replace the constructor's 0.75/0.72.
+- **The hard spread cutoff is deliberately not taken straight from config.** `InpHardSpreadCutoffPoints` defaults to 200 points while the live roster's synthetic indices run 1,727-11,140 points of spread, and the setter's own 1000-point floor is still below them — wiring the input naively would have vetoed every synthetic at once, which is the bug the validator's constructor comment records having already been fixed by parking at 15,000. The call passes `MathMax(hardSpreadCutoffPoints, maxEntrySpreadPoints)`, so the input can raise the backstop above the admitted entry spread but cannot re-create that veto.
+- **Conservative-tier safe mode now tightens the gates it claims to,** each through the authority that already owns the domain: `minVoters` (3) onto `SetMinQuorum`/`SetIntrabarMinQuorum`, `minQuorumThreshold` (0.65) onto `SetQuorumThreshold`, `maxSpreadATRRatio` (0.15) onto the pipeline's `regimeCostGate.maxSpreadToAtrRatio`, and `noStacking` through the per-symbol position cap already enforced by `CheckSymbolPositionLimit`. All are `MathMax`/`MathMin` clamps applied after `ApplyQuorumProfile`, so safe mode may only tighten, never loosen, and no second counting or spread gate was created.
+- **Two safe-mode fields stay unenforced, said at init rather than left implied:** `tradeOnlyKillZones` (London 07-10 / NY 12-15 UTC) is FX-session semantics applied to a roster that is mostly 24/7 synthetics the session filter deliberately exempts, and `avoidNewsEvents` has no economic-calendar feed behind it (`IsNearNewsEvent()` is a stub returning false). `[INIT] Conservative safe mode ENABLED` now prints which gates are enforced and which are not. `minConfluence` has no consensus knob to tighten and is likewise not enforced.
+- **`VALIDATOR_BASE_SPREAD_ATR_RATIO` / `VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO`** (0.30 / 0.50) became named constants because the call site must pass them; there is no config field for either, and passing a literal from the orchestrator would have re-tuned the exogenous gate by accident.
+
+#### Deliberately not touched
+- The validator's spike-hunter arm: `m_spikeHunterEnabled` is now set from config, but the branch it guards is an empty no-op (`PostConsensusValidator.mqh:178-181`), so nothing changes. Recorded, not papered over.
+- `InpMaxPositionsPerSymbolMin` is still read by nothing; safe mode uses the literal 1, because "no stacking" means one, not whatever a differently-named floor input says.
+- `validatorNewBarMinConfidence` / `MinConfluence` and their intrabar twins are still read only by the `[ENTERPRISE-CONFIG]` log line. Turning them into vetoes is enforcement the account has never run; they are next in line after this wiring is observed live.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- Live tier today is `RISK_TIER_MODERATE`, so the safe-mode clamps are inert on this account until an operator selects conservative. The validator wiring is not inert: OFI and VPIN arms switch on at next attach.
+
+#### Risk Flag — this batch turns filters ON
+- **Order-flow confirmation and VPIN toxicity now veto entries** on every symbol whose inputs are enabled (both default true). These arms existed in code and in the inputs dialog but have never executed, so no session has ever been filtered by them. Expect `[SIGNAL-REJECTED] ... reason=ofi_contradiction` / `vpin_toxicity` lines that have never appeared in this account's logs, and a lower entry count as a result.
+- **The quality floor drops from 0.75 to 0.68 (new bar) and 0.72 to 0.70 (intrabar)** — the configured values, which are looser than the accidental ones. That admits some signals the unplugged validator would have refused. The direction is the operator's stated config, so it is honored, but it is the one change in this batch that increases trade count.
+- **Engaging conservative tier now removes stacking and demands 3 voters.** On an account that switched to conservative during a drawdown expecting throttled trading, that is the point; on one that switched expecting nothing to change, it is a large difference. `[SAFE-MODE]` and `[INIT] Conservative safe mode ENABLED | enforced: ...` print the exact list at startup.
+- **Runtime evidence owed:** `[VALIDATOR-CONFIG]` once per symbol at init, then `filter=vpin_extreme | VETO` / `ofi_contradiction` on the first toxic or contradictory candidate.
+
 ### Batch 174: Risk-clamp truthfulness, VPIN veto wired, four no-op gates deleted
 
 #### Context
@@ -30,7 +57,7 @@ Batch 173's method — follow a control from its computation to its consumer —
 - `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
 
 #### Risk Flag — two behavior changes on live money
-- **VPIN now blocks entries, not just shrinks them.** On FX and metals, a symbol whose VPIN reaches its configured extreme threshold (0.70 on defaults) now produces zero new positions until toxicity drops, where before it produced a 0.1x trade. This is the filter's documented purpose ("EXTREME — kill new positions") and the reason `InpVPINExtremeThreshold` exists, but it is a real reduction in trade count during toxic conditions, and toxic conditions are exactly when the strategies signal most.
+- **VPIN now blocks entries, not just shrinks them.** On FX and metals, a symbol whose VPIN reaches its configured extreme threshold (0.70 on defaults) now produces zero new positions until toxicity drops, where before it produced a 0.1x trade. This is the filter's documented purpose ("EXTREME — kill new positions") and the reason `InpVPINExtremeThreshold` exists, but it is a real reduction in trade count during toxic conditions, and toxic conditions are exactly when the strategies signal most. **Correction, same session (Batch 175):** the veto was wired to an arm that nothing configured — `SetValidatorConfig` has no call site, so `m_enableVPINFilter` stayed false and Batch 174's veto could not fire. It became live in Batch 175, and the claim above describes the behavior after that wiring.
 - **Some over-cap trades that used to ship are now refused.** Where the compliant lot lands under the broker minimum, the candidate is dropped. The alternative was shipping a position that could lose more than the per-trade cap while the budget recorded it at the cap.
 - **Runtime evidence owed:** `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme | VETO`, `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min`, and `[RISK-GATE-CLAMP]` at 4dp on the first clamped trade.
 

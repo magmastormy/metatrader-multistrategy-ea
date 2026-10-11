@@ -1053,7 +1053,12 @@ else if(m_config.riskTier == RISK_TIER_CONSERVATIVE)
     if(!m_safeMode.Initialize(smConfig))
     Print("[INIT] WARNING: Safe mode initialization failed");
 else
-Print("[INIT] Conservative safe mode ENABLED");
+{
+    SSafeModeConfig announced = m_safeMode.GetConfig();
+    PrintFormat("[INIT] Conservative safe mode ENABLED | enforced: minConfidence>=%.2f, minVoters>=%d, quorum>=%.2f, spread<=%.2f*ATR, noStacking(per-symbol cap -> %d) | not enforced: tradeOnlyKillZones (FX-session hours; the live roster is 24/7 synthetics the session filter exempts) and avoidNewsEvents (no calendar feed)",
+                announced.minConfidence, announced.minVoters, announced.minQuorumThreshold,
+                announced.maxSpreadATRRatio, 1);
+}
 }
 
 // Pass the allocator's max cluster code so the dynamic magic-number range is exact
@@ -1492,9 +1497,19 @@ bool InitializeComponents()
 
     // Configure() must be called explicitly: without it the per-symbol position caps stay at 0
     // (CheckSymbolPositionLimit bypassed) and minLotRiskMultiplier ignores the configured input.
+    // Safe mode's noStacking is enforced through this cap rather than a second counting gate:
+    // CheckSymbolPositionLimit already owns "how many positions may this symbol hold".
+    int safeModeMaxPositionsPerSymbol = m_config.maxPositionsPerSymbol;
+    if(m_config.riskTier == RISK_TIER_CONSERVATIVE && m_safeMode.IsInitialized()
+       && m_safeMode.GetConfig().noStacking)
+    {
+        safeModeMaxPositionsPerSymbol = 1;
+        PrintFormat("[SAFE-MODE] noStacking enforced through the per-symbol position cap | max_positions_per_symbol %d -> 1",
+                    m_config.maxPositionsPerSymbol);
+    }
     m_candidateBuilder.Configure(2.0, 1.5, 5.0,
                                  0.15, m_config.minLotRiskMultiplier, m_config.aiDrawdownSizingLimit,
-                                 true, m_config.maxPositionsPerSymbol, m_config.portfolioMaxPositionsPerSymbol,
+                                 true, safeModeMaxPositionsPerSymbol, m_config.portfolioMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
 
@@ -1825,6 +1840,53 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.SetIntrabarSingleVoterMinConfidence(intrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(m_config.deadlockAttributionIntervalSec);
     manager.ApplyQuorumProfile(m_config.quorumProfile);
+
+    // Batch 175: safe mode is an override that may only tighten, and ApplyQuorumProfile has just
+    // written the profile's own floor, so the clamp belongs after it. minConfluence has no
+    // consensus knob to tighten and is not enforced.
+    if(m_config.riskTier == RISK_TIER_CONSERVATIVE && m_safeMode.IsInitialized())
+    {
+        SSafeModeConfig sm = m_safeMode.GetConfig();
+        int votersAfterProfile = MathMax(1, manager.GetMinQuorum());
+        manager.SetMinQuorum(MathMax(votersAfterProfile, sm.minVoters));
+        manager.SetIntrabarMinQuorum(MathMax(1, MathMax(manager.GetIntrabarMinQuorum(), sm.minVoters)));
+        double thrAfterProfile = manager.GetQuorumThreshold();
+        manager.SetQuorumThreshold(MathMax(thrAfterProfile, sm.minQuorumThreshold));
+        filters.regimeCostGate.maxSpreadToAtrRatio =
+            MathMax(0.01, MathMin(filters.regimeCostGate.maxSpreadToAtrRatio, sm.maxSpreadATRRatio));
+        manager.SetPipelineFilters(filters);
+    }
+
+    // Batch 175: CPostConsensusValidator::SetValidatorConfig existed with no call site anywhere in
+    // the repository, so every arm below ran on the constructor's defaults. InpEnableOFIProxy and
+    // InpEnableVPINFilter were therefore OFF regardless of the operator's inputs (which is also why
+    // the VPIN veto armed in Batch 174 could not reach a live session), and the quality floors were
+    // 0.72/0.75 rather than the configured 0.70/0.68.
+    // The spread cutoff is the one value that must not come straight from config: the configured
+    // InpHardSpreadCutoffPoints default (200) is below synthetic-index spreads of 1,727-11,140
+    // points and would veto the entire synthetic book, which is the failure the constructor
+    // documented by parking at max entry spread. Floor it at the symbol's admitted entry spread.
+    double validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, m_config.maxEntrySpreadPoints);
+    manager.SetValidatorConfig(MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
+                               MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
+                               validatorHardSpreadCutoff,
+                               m_config.spikeHunterEnabled,
+                               m_config.enableOFIProxy,
+                               m_config.enableVPINFilter,
+                               VALIDATOR_BASE_SPREAD_ATR_RATIO,
+                               VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO);
+    PrintFormat("[VALIDATOR-CONFIG] %s | quality_newbar=%.3f quality_intrabar=%.3f | hard_spread_cutoff=%.1fpts (input=%.1f entry_max=%.1f) | OFI=%s VPIN=%s | spread_atr=%.2f/%.2f | spike_arm=%s",
+                symbol,
+                MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
+                MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
+                validatorHardSpreadCutoff,
+                m_config.hardSpreadCutoffPoints,
+                m_config.maxEntrySpreadPoints,
+                m_config.enableOFIProxy ? "ON" : "OFF",
+                m_config.enableVPINFilter ? "ON" : "OFF",
+                VALIDATOR_BASE_SPREAD_ATR_RATIO,
+                VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO,
+                m_config.spikeHunterEnabled ? "set(no-op branch)" : "OFF");
     PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_single_voter=%s | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
     symbol,
     symbolClass,

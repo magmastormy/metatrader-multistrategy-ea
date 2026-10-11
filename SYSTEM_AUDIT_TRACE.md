@@ -1546,3 +1546,13 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Log surface:** `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme | VETO` per blocked candidate, `[POST-CONSENSUS-FILTER] ... filter=vpin_toxic | regime=...` at MEDIUM and above, `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min`, and `[RISK-GATE-CLAMP]` at 4dp. No new tags; all four are readable from the veto's own state.
 - **Invariant check:** AGENTS.md §3.1 unaffected — the VPIN veto sits before the pre-trade risk gate, so it can only reduce what reaches it, and the clamp refusal sits after sizing, so it can only reduce what reaches the executor. §3.3 lifecycle and §3.5 `CIndicatorManager::DestroyInstance()` untouched.
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.
+
+## Batch 175 Validator Configuration and Safe-Mode Enforcement Lifecycle (2026-10-12)
+
+- **Where configuration now enters:** `InitializeEnterpriseManagerForSymbol` -> `ApplyQuorumProfile` -> safe-mode clamps -> `manager.SetValidatorConfig(...)`. Previously the chain ended at `ApplyQuorumProfile`: `CPostConsensusValidator::SetValidatorConfig` had no caller in the repository, so each manager's validator kept its constructor state for the life of the process.
+- **Consequence of the missing edge, per arm:** OFI confirmation and VPIN were unreachable (`m_enableOFIProxy` / `m_enableVPINFilter` false) while both inputs default true; the quality floors were 0.72/0.75 rather than the configured 0.70/0.68; the hard spread cutoff was 15,000 points, which happens to suit this roster but was never derived from anything.
+- **State written:** no new members. `VALIDATOR_BASE_SPREAD_ATR_RATIO` / `VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO` replace the constructor's literals so the default and the call site cannot drift apart.
+- **Safe-mode lifecycle, every clamp through an owner that already exists:** `SetMinQuorum` / `SetIntrabarMinQuorum` / `SetQuorumThreshold` (applied after the quorum profile writes them, so a profile cannot undo the floor), pipeline `regimeCostGate.maxSpreadToAtrRatio` for the spread gate, and the builder's per-symbol position cap for `noStacking`. Enforcement ordering matters and is commented at the call site.
+- **Not enforced, and now printed at init:** `tradeOnlyKillZones` (FX session windows over a 24/7 synthetic roster the session filter exempts), `avoidNewsEvents` (the filter is a stub returning false), `minConfluence` (no consensus knob exists to tighten).
+- **Deinit:** unchanged; `CIndicatorManager::DestroyInstance()` still runs (AGENTS.md §3.5).
+- **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings.

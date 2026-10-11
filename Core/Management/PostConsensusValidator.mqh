@@ -23,6 +23,12 @@
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
 
+// Spread-vs-ATR ratios for the exogenous gate. One source because SetValidatorConfig receives
+// them from the orchestrator, which has no config field for either: passing anything other than
+// these values would silently re-tune the gate.
+#define VALIDATOR_BASE_SPREAD_ATR_RATIO       0.30
+#define VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO  0.50
+
 // Must stay a global struct: CPostConsensusValidator is declared before the manager,
 // and MQL5 cannot name a type nested inside a class that is not yet declared.
 // Also keeps clear of the unrelated SValidationResult in Core/Utils/Enums.mqh
@@ -72,8 +78,8 @@ public:
                                 m_spikeHunterEnabled(false),
                                 m_enableOFIProxy(false),
                                 m_enableVPINFilter(false),
-                                m_baseSpreadATRRatio(0.30),
-                                m_syntheticSpreadATRRatio(0.50),
+                                m_baseSpreadATRRatio(VALIDATOR_BASE_SPREAD_ATR_RATIO),
+                                m_syntheticSpreadATRRatio(VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO),
                                 m_lastVPINMultiplier(1.0) {}
 
     void SetSource(const CEnterpriseStrategyManager* src) { m_src = src; }
