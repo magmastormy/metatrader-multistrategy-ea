@@ -49,9 +49,10 @@ struct SVPINSnapshot
 
 // VPIN = Volume-Synchronized Probability of Informed Trading: the rolling average of |buy - sell| / volume
 // across fixed-VOLUME buckets (not time buckets). Synthetic CFDs have no real LOB data, so the tick rule on
-// price changes proxies the buy/sell split. ShouldBlockNewPositions() is the veto but no gate calls it — it is
-// read only by this filter's own status line — so the only VPIN effect on live trading is the lot reduction that
-// CVPINLotModifier applies from GetPositionSizeMultiplier().
+// price changes proxies the buy/sell split. ShouldBlockNewPositions() is the veto, called by
+// CPostConsensusValidator::CheckVPINFilter, and GetPositionSizeMultiplier() is the lot reduction
+// CVPINLotModifier applies. Both are dead for symbols with no VPIN filter (synthetic indices,
+// no traded volume).
 class CVPINFilter
 {
 private:
@@ -402,6 +403,8 @@ public:
 
         return (m_currentVPIN >= m_extremeThreshold);
     }
+
+    double GetExtremeThreshold() const { return m_extremeThreshold; }
 
 // Warmup needs m_numBuckets completed buckets; below that every read is a neutral default
     bool IsWarmedUp() const

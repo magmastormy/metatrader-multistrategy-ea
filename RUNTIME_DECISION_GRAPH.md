@@ -336,6 +336,14 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 174 VPIN Veto Armed and the Post-Size Clamp Made Truthful (2026-10-12)
+- **New veto edge:** `consensus → CPostConsensusValidator::ValidateSignal → CheckVPINFilter → false` when `CVPINFilter::ShouldBlockNewPositions()`. The `vpin_toxicity` reject branch existed in the caller and had no path into it; `CheckVPINFilter` returned true on all three of its arms. Result: no entry, per-candidate `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme | VETO`.
+- **Thresholds now read from the filter.** The old literals (0.95, 0.85) sat above the configured EXTREME line — `InpVPINExtremeThreshold` default 0.70, clamped 0.30..0.95 — so on default config the extreme arm was unreachable and everything under 0.85 was reported as if no filter had run. Regime comes from `GetToxicityRegime()` / `ShouldBlockNewPositions()` now.
+- **Fail-open preserved on purpose.** A missing VPIN filter means the symbol has no traded volume (Batch 170 stopped building them for synthetic indices), not that order flow is toxic. Making that fail closed would have stopped all synthetic-index trading.
+- **Post-size clamp path (`BuildCandidate`)**: risk over cap → lot scaled to cap → floored to `SYMBOL_VOLUME_STEP` → **if under `SYMBOL_VOLUME_MIN`, refuse** (`[RISK-GATE-REJECT] reason=compliant_lot_below_min` + `RiskGateReject` JSON). Before, this step rounded up to the minimum and then set `candidate.riskPercent = riskCap`, so the daily entry budget booked a risk the position did not carry.
+- **Deleted from the sizing path:** `ApplySkewStepScaling`, `ApplyFullMarginStacking`, `ApplySafeModeRestrictions`, and the `EvaluateEAModeAdmission` call plus definition. Each returned its input untouched; the admission stub also made its rejection branch and confidence bonus unreachable.
+- **Ownership restated:** mode admission is `CLiveAuthorityResolver`'s (`INDICATOR_ONLY` / `AI_ONLY_MODE_NO_AI`), VPIN size is `CVPINLotModifier`'s, VPIN veto is the validator's, and the entry-side of conservative-tier safe mode belongs to nobody yet — recorded in SYSTEM_STRUCTURE.md rather than papered over.
+
 ## Batch 173 Live-Authority Ladder Applied to Position Size (2026-10-11)
 The Batch 172 scope limit above was closed by operator decision: "apply the full ladder, but don't make things fall silently."
 

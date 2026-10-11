@@ -470,25 +470,11 @@ public:
                 {
                     IncrementCyclesSinceIndicatorSignal(symbol);
                 }
-        // Resolve EA mode admission
-                string modeRejectReason = "";
-                double modeConfidenceBonus = 0.0;
-                if(!EvaluateEAModeAdmission(contributorsList, confidence, modeRejectReason, modeConfidenceBonus))
-                {
-                    // Log rejection with correlation ID
-                    if(corrId != "")
-                    {
-                        CJsonLogger::LogSignal(symbol, signal, confidence, "CANDIDATE_BUILDER", corrId, 
-                            "{\"event\":\"ea_mode_admission_rejected\",\"reason\":\"" + modeRejectReason + "\"}");
-                    }
-                    PrintFormat("[CANDIDATE-BUILDER] %s | EA mode admission rejected: %s", symbol, modeRejectReason);
-                    return false;
-                }
-        if(modeConfidenceBonus > 0)
-        {
-            confidence = MathMin(1.0, confidence + modeConfidenceBonus);
-            candidate.confidence = confidence;
-        }
+
+        // Batch 174: the EA-mode admission stub here was deleted. It returned true with a zero
+        // confidence bonus for every candidate, so the rejection branch and the bonus were both
+        // unreachable. CLiveAuthorityResolver owns mode admission (INDICATOR_ONLY / AI_ONLY
+        // vetoes) and runs after this point.
         
         candidate.entryPrice = (signal == TRADE_SIGNAL_BUY) 
             ? SymbolInfoDouble(symbol, SYMBOL_ASK) 
@@ -572,22 +558,15 @@ public:
             return false;
         }
         
+        // Batch 170 and 174 removed five `return lotSize;` stubs from this chain
+        // (VPIN scaling, volatility targeting, skew step, full margin, safe mode). Each sat under a
+        // comment claiming it resized the lot while returning its input untouched. VPIN acts on size
+        // through CVPINLotModifier in the sizer chain and vetoes through CPostConsensusValidator;
+        // skew step, full margin and safe mode have no size hook and are tracked as open work.
         lotSize = ApplyDrawdownScaling(symbol, lotSize, proposedRisk);
-        
         lotSize = ApplyMomentumScaling(symbol, lotSize);
-        
-        // Batch 170: removed the VPIN-toxicity and volatility-targeting scaling steps. Both were
-        // `return lotSize;` stubs ("Would use m_mathRegistry if available") sitting under comments
-        // claiming they resized the lot. VPIN does act on size, but through CVPINLotModifier in the
-        // sizer modifier chain, not here; and it never vetoes anything, contrary to what this
-        // note claimed when it was written.
-        lotSize = ApplySkewStepScaling(symbol, lotSize);
-        
-        lotSize = ApplyFullMarginStacking(symbol, signal, lotSize);
-        
-        lotSize = ApplySafeModeRestrictions(symbol, lotSize);
-        
-        // Floor at broker minimum
+        // Floor at broker minimum. The post-size re-gate below measures the risk this round-up
+        // creates and refuses the candidate when it crosses the per-trade cap.
         double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         if(lotSize < brokerMinLot)
             lotSize = brokerMinLot;
@@ -615,12 +594,29 @@ public:
             // mandate). Instead CLAMP the lot so the realized risk equals the cap and let
             // the trade proceed — risk compliance is preserved, trade frequency is not.
             double compliantLot = candidate.lotSize * (riskCap / finalRiskPct);
+            double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+            if(stepLot > 0.0)
+                compliantLot = NormalizeDouble((long)MathFloor(compliantLot / stepLot + 1e-9) * stepLot, 8);
             double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
             if(compliantLot < brokerMinLot)
-                compliantLot = brokerMinLot;
-            PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.2f -> %.2f | risk=%.2f%% -> cap=%.2f%%",
+            {
+                // No compliant size exists: the smallest lot the broker accepts already carries
+                // more than the cap. Rounding up here used to ship the over-risk trade while
+                // booking riskPercent at the cap, so the daily budget charged less than the
+                // position could lose. Refuse instead, same rule as the authority shrink below.
+                PrintFormat("[RISK-GATE-REJECT] %s | reason=compliant_lot_below_min | needed=%.4f | broker_min=%.4f | risk=%.3f%% | cap=%.3f%%",
+                            symbol, compliantLot, brokerMinLot, finalRiskPct, riskCap);
+                CJsonLogger::LogRiskEvent("RiskGateReject", symbol, "COMPLIANT_LOT_BELOW_MIN",
+                    StringFormat("Lot needed to meet cap %.4f < broker min %.4f at risk %.3f%% vs cap %.3f%%",
+                                 compliantLot, brokerMinLot, finalRiskPct, riskCap),
+                    compliantLot, brokerMinLot, corrId);
+                return false;
+            }
+            PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.4f -> %.4f | risk=%.3f%% -> cap=%.3f%%",
                         symbol, lotSize, compliantLot, finalRiskPct, riskCap);
             candidate.lotSize = compliantLot;
+            // Floor-to-step makes the real risk equal to or under the cap, so booking the cap is
+            // conservative rather than false.
             finalRiskPct = riskCap;
         }
         candidate.riskPercent = finalRiskPct;
@@ -842,33 +838,6 @@ public:
             return newLot;
         }
         return lotSize;
-    }
-    
-    double ApplySkewStepScaling(const string symbol, double lotSize)
-    {
-        // Would use skew step analyzer if available
-        return lotSize;
-    }
-    
-    double ApplyFullMarginStacking(const string symbol, ENUM_TRADE_SIGNAL signal, double lotSize)
-    {
-        // Would use m_fullMarginMode if available
-        return lotSize;
-    }
-    
-    double ApplySafeModeRestrictions(const string symbol, double lotSize)
-    {
-        // Would use m_safeMode if available
-        return lotSize;
-    }
-    
-    bool EvaluateEAModeAdmission(const string &contributors[], double confidence,
-                                 string &rejectReason, double &confidenceBonus)
-    {
-        // Simplified - would use actual EA mode logic
-        rejectReason = "";
-        confidenceBonus = 0.0;
-        return true;
     }
     
     bool ContributorsIncludeAI(const string &contributors[])

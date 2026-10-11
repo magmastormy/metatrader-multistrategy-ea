@@ -226,7 +226,7 @@ There is no legacy default — the semantic scheme is the only scheme.
   - Signal Reversal Exit (SRE) with breathing room, last-stand zone, profit guard
   - Structural Invalidation exit (ICT/Structure trend flip)
   - Breakeven and trailing stop delegation to `CTradeManager`
-  - Safe mode partial profit taking for conservative tier
+  - Safe mode partial profit taking for conservative tier. Position-side only: of `SSafeModeConfig`, just `minConfidence` reaches an entry decision (`EAOrchestrator.mqh:1781`); `IsSignalEvaluationAllowed` (kill-zone + spread), `noStacking`, `minVoters` and `minConfluence` are read by the diagnostics printer alone. Live tier is `RISK_TIER_MODERATE`, so this bites only when an operator selects conservative.
   - Configurable via `ConfigureSRE()` and `ConfigureLifecycle()` from EA inputs
 
 #### CDiagnosticsManager
@@ -470,7 +470,8 @@ There is no legacy default — the semantic scheme is the only scheme.
   - per-family demotion back to shadow when forward evidence degrades — an unproven contributor is capped each cycle, but a promoted one is never demoted except through the `consecutiveLosses < 4` test at evaluation time
   - trial-window tracking: `InpAuthorityTrialHorizonSeconds`, `InpAuthorityMaxTrackedTrials` and `InpNonAIPromotedRiskMultiplier` reach `config` and are read by nothing
   - `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` telemetry — these tags appear in no source file and will never appear in a log
-- Related but separate: VPIN order-flow toxicity does affect size, through `CVPINLotModifier` in the `CPositionSizer` modifier chain, not through this resolver. `CPostConsensusValidator::CheckVPINFilter` never vetoes (it returns true on every path), and its stored `m_lastVPINMultiplier` has no reader.
+- Related but separate: VPIN order-flow toxicity affects size through `CVPINLotModifier` in the `CPositionSizer` modifier chain, not through this resolver. Since Batch 174 it also vetoes: `CPostConsensusValidator::CheckVPINFilter` calls `CVPINFilter::ShouldBlockNewPositions()` and returns false at the filter's configured EXTREME level, reading the regime from the filter instead of the 0.85/0.95 literals that sat above it. `m_lastVPINMultiplier` is a diagnostic mirror of the modifier's value, not a sizing input.
+- Sizing chain ownership (Batch 174): `BuildCandidate`'s modifier chain is `ApplyDrawdownScaling` → `ApplyMomentumScaling` → broker-minimum floor → post-size re-gate → `ScaleLotByLiveAuthority`. The four steps that used to sit in that chain and return their input untouched (`ApplySkewStepScaling`, `ApplyFullMarginStacking`, `ApplySafeModeRestrictions`, `EvaluateEAModeAdmission`) are deleted; skew-step, full-margin and safe-mode each have a real owner elsewhere or need a hook that does not exist yet, and are tracked as open rather than faked in the sizing path.
 - Threshold policy (Batch 172): every `InpAuthority*` input now reaches the resolver, but each is clamped so it can only tighten its gate or shrink its multiplier, never the reverse. The floors are the values this project has always documented (30 samples, expectancyR >= 0.3, PF >= 1.2, promoted 0.75x, bootstrap 0.5x); a clamp is announced once at init as `[AUTHORITY-CONFIG] clamped ...` and the effective set is printed as `[AUTHORITY-CONFIG] effective: ...`.
 
 ### 2.10 Position lifecycle domain

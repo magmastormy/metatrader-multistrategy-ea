@@ -287,6 +287,14 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3425`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
+### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
+
+- **Toxic order flow now blocks entries instead of merely shrinking them.** When a symbol's VPIN reaches its configured extreme threshold (`InpVPINExtremeThreshold`, default 0.70), the post-consensus validator vetoes the candidate and logs `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme | VETO`. The veto method existed with no caller; VPIN only reduced the lot to 0.1x. Expect fewer new positions in exactly the conditions where the strategies signal most. The threshold is the lever if that is too strict.
+- **The validator's old 0.85 and 0.95 literals sat above the configured line,** so with the default 0.70 threshold EXTREME toxicity was reported as if no filter had run. It reads the filter's own regime now, which is also what `CVPINLotModifier` sizes from.
+- **A trade that cannot be sized compliantly is refused, not rounded up.** Where the lot needed to meet the per-trade risk cap falls under the broker minimum, the candidate is dropped with `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min`. It used to be rounded up to the minimum and then booked at the cap: the position could lose more than the cap while the daily budget recorded it as if it had not.
+- **Four steps left the sizing chain** (`ApplySkewStepScaling`, `ApplyFullMarginStacking`, `ApplySafeModeRestrictions`, `EvaluateEAModeAdmission`). Each returned its input untouched, so nothing they claimed to do ever happened and no behavior changes — this is the code stopping the claim.
+- **Conservative-tier safe mode is still only half-wired, now stated where it can be found.** Of `SSafeModeConfig`, only `minConfidence` reaches an entry decision; kill-zone-only trading, `noStacking`, `minVoters` and `minConfluence` are read by the diagnostics printer alone. Your live tier is `RISK_TIER_MODERATE`, so nothing changes today, but selecting conservative will not restrict entries the way the config names imply.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

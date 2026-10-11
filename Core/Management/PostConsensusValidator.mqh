@@ -60,7 +60,7 @@ private:
     bool   m_enableVPINFilter;
     double m_baseSpreadATRRatio;
     double m_syntheticSpreadATRRatio;
-    double m_lastVPINMultiplier;   // position-size multiplier, consumed by sizing
+    double m_lastVPINMultiplier;   // diagnostic mirror of the toxicity size; the lot is scaled by CVPINLotModifier
 
 public:
     CPostConsensusValidator() : m_src(NULL),
@@ -358,25 +358,33 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
                                               double confidence,
                                               ulong scanCycleId)
 {
+    // Fail open on absent data: Batch 170 stopped building VPIN filters for synthetic-index
+    // symbols because their brokers publish no traded volume, so NULL means "not measurable
+    // here", not "toxic".
     CVPINFilter* vpinFilter = (m_src != NULL) ? m_src.GetVPINFilterConst() : NULL;
     if(vpinFilter == NULL || !vpinFilter.IsWarmedUp()) return true;
 
     double vpinValue = vpinFilter.GetVPIN();
     double mult = vpinFilter.GetPositionSizeMultiplier();
+    ENUM_VPIN_TOXICITY regime = vpinFilter.GetToxicityRegime();
 
-    // VPIN never vetoes: EXTREME (>0.95) sizes down to a multiplier floored at 10%,
-    // HIGH (>0.85) applies the filter's multiplier as-is.
-    if(vpinValue > 0.95)
-    {
-        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | signal=%s conf=%.2f | VPIN=%.3f | mult=%.3f (reduced size)",
-                    symbol, EnumToString(signal), confidence, vpinValue, mult);
-        m_lastVPINMultiplier = MathMax(mult, 0.1);
-        return true;
-    }
-
-    if(vpinValue > 0.85)
+    // EXTREME is the filter's own documented kill level (InpVPINExtremeThreshold, default 0.70)
+    // and the thresholds here come from the filter rather than the literals this function used
+    // to compare against, which sat above the configured EXTREME line and never fired.
+    if(vpinFilter.ShouldBlockNewPositions())
     {
         m_lastVPINMultiplier = mult;
+        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | VETO | signal=%s conf=%.2f | VPIN=%.3f >= extreme=%.3f | size_mult=%.3f | new positions blocked until toxicity drops below the threshold",
+                    symbol, EnumToString(signal), confidence, vpinValue,
+                    vpinFilter.GetExtremeThreshold(), mult);
+        return false;
+    }
+
+    if(regime >= VPIN_TOXICITY_MEDIUM)
+    {
+        m_lastVPINMultiplier = mult;
+        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_toxic | regime=%s | signal=%s conf=%.2f | VPIN=%.3f | size_mult=%.3f (CVPINLotModifier applies it)",
+                    symbol, EnumToString(regime), EnumToString(signal), confidence, vpinValue, mult);
         return true;
     }
 

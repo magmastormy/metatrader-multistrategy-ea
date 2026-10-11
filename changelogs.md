@@ -6,7 +6,33 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-11
+## [Unreleased] - 2026-10-12
+
+### Batch 174: Risk-clamp truthfulness, VPIN veto wired, four no-op gates deleted
+
+#### Context
+Batch 173's method — follow a control from its computation to its consumer — found three more of the same shape in the sizing and veto path. All three were fixed rather than recorded, on the operator's instruction to go ahead with the decisions.
+
+#### Changed
+- **The post-size clamp no longer books a risk it did not achieve.** `CCandidateBuilder::BuildCandidate` clamps the lot to the per-trade cap when the sizing modifiers push it over, and that clamp path rounded the result back UP to `SYMBOL_VOLUME_MIN` and then set `candidate.riskPercent = riskCap` unconditionally. Where the minimum lot carries more than the cap, the trade shipped over-risk while the daily entry budget and every log reported it at the cap. The clamp now floors to `SYMBOL_VOLUME_STEP` (so the lot is sendable), and a result under the broker minimum is refused with `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` plus a `RiskGateReject` JSON event. After the step floor the real risk is at or under the cap, so booking the cap is conservative instead of false. `[RISK-GATE-CLAMP]` now prints 4dp lots — at 2dp a 0.01-step symbol printed both sides of the clamp as the same number.
+- **VPIN's EXTREME veto is wired.** `CVPINFilter::ShouldBlockNewPositions()` was called only by the filter's own status line, and `CPostConsensusValidator::CheckVPINFilter` returned true on every path, so the `!CheckVPINFilter(...)` reject beside it could never fire. It now returns false at the veto, logging VPIN, the configured extreme threshold and the size multiplier. The reject plumbing (`vetoReason="vpin_toxicity"`) already existed.
+- **The validator's VPIN thresholds came from the filter, not literals.** `CheckVPINFilter` compared VPIN against hardcoded 0.95 and 0.85 while the filter classifies EXTREME at `InpVPINExtremeThreshold` (default **0.70**, clamped 0.30-0.95) and HIGH at 0.5. On default config the literals sat above the veto line, so the "extreme" log could not be reached and everything below 0.85 was reported as unfiltered. Regime is now read through `GetToxicityRegime()`, and the size reduction is logged at MEDIUM and above as what it is — a `CVPINLotModifier` action, not a validator one.
+- **Four no-op gates deleted.** `ApplySkewStepScaling`, `ApplyFullMarginStacking` and `ApplySafeModeRestrictions` were `return lotSize;` stubs under names claiming a sizing step; `EvaluateEAModeAdmission` returned `true` with a zero confidence bonus for every candidate, so its rejection branch and its bonus were both unreachable. The stub definitions and the admission call site are gone. Mode admission belongs to `CLiveAuthorityResolver` (`INDICATOR_ONLY` / `AI_ONLY_MODE_NO_AI`), which runs after this point — one authority per domain.
+- **`m_lastVPINMultiplier` labelled honestly.** Its comment claimed "position-size multiplier, consumed by sizing"; nothing reads it. It is a diagnostic mirror of what `CVPINLotModifier` applies, and is now written on every branch and documented as such.
+- `GetExtremeThreshold()` added to `CVPINFilter` so the veto log can name the line it crossed.
+
+#### Deliberately not touched
+- **Conservative-tier safe mode** still enforces only `minConfidence`. `IsSignalEvaluationAllowed` (kill-zone + spread), `noStacking`, `minVoters` and `minConfluence` are read by the diagnostics printer alone. The live tier is `RISK_TIER_MODERATE`, so wiring them changes nothing today and would change a great deal the moment an operator engages conservative mode — that is Batch 175, decided on its own merits rather than folded in here.
+- The `ApplyDrawdownScaling` / `ApplyMomentumScaling` round-ups to broker minimum stay: unlike the clamp path, their result is measured by the post-size re-gate at `:600`, so any risk they add is now caught (and refused) there rather than mis-booked.
+- Engine magics, and engines sending outside `CTradeManager`, unchanged.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
+#### Risk Flag — two behavior changes on live money
+- **VPIN now blocks entries, not just shrinks them.** On FX and metals, a symbol whose VPIN reaches its configured extreme threshold (0.70 on defaults) now produces zero new positions until toxicity drops, where before it produced a 0.1x trade. This is the filter's documented purpose ("EXTREME — kill new positions") and the reason `InpVPINExtremeThreshold` exists, but it is a real reduction in trade count during toxic conditions, and toxic conditions are exactly when the strategies signal most.
+- **Some over-cap trades that used to ship are now refused.** Where the compliant lot lands under the broker minimum, the candidate is dropped. The alternative was shipping a position that could lose more than the per-trade cap while the budget recorded it at the cap.
+- **Runtime evidence owed:** `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme | VETO`, `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min`, and `[RISK-GATE-CLAMP]` at 4dp on the first clamped trade.
 
 ### Batch 173: Live-authority ladder applied to position size, with refusals made loud
 

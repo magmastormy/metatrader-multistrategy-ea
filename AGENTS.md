@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-10-11
+- Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 173 - the live-authority risk multiplier now sets the shipped lot (shrink-only, `EAOrchestrator.mqh:3425` -> `CCandidateBuilder::ScaleLotByLiveAuthority`); a lot that falls under `SYMBOL_VOLUME_MIN` is refused and counted, never rounded up; `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` are emitted for the first time. Batch 172 wired the authority thresholds and made profit factor real. Batch 171 closed at 11,201 comment lines removed (19,496 -> 8,295), no code change.
+- Latest Batch: Batch 174 - VPIN's EXTREME veto armed (it previously only shrank the lot), the post-size risk clamp refuses instead of rounding up and booking a risk it never achieved, and four no-op gates left the sizing chain. Batch 173 applied the live-authority ladder to the shipped lot. Batch 172 wired the authority thresholds and profit factor. Batch 171 closed at 11,201 comment lines removed.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
@@ -72,6 +72,8 @@ After any strategy/risk/execution change, verify:
 - `[SIGNAL-REJECTED]`
 - `[AI-VOTE]` (if AI enabled)
 - `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or live trade result logs
+- `[POST-CONSENSUS-FILTER] filter=vpin_extreme | VETO` (if VPIN enabled; since Batch 174 the EXTREME regime vetoes entries at `InpVPINExtremeThreshold` instead of only shrinking the lot)
+- `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` (only where a trade cannot be sized inside the per-trade cap at the broker minimum)
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
 - `[COMPOUNDING-TIER-MILESTONE]` (on account milestone crosses)
