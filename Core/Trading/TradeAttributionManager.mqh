@@ -1,9 +1,8 @@
 // TradeAttributionManager.mqh - Trade attribution & NN prediction
 // Copyright 2025, Aggressive Trading Systems
 // https://www.aggressivetrading.com
-// Encapsulates trade comment building, prediction position mapping,
-// AI pending request tracking, close profit accumulation, and NN
-// attribution diagnostics.
+// Encapsulates trade-comment building, prediction/position mapping, AI pending-request tracking and NN diagnostics; all state is in-memory arrays that do not survive a restart.
+// Closed-deal attribution feeds strategy performance (CStrategyMgrTradeFeedback: UpdatePerformance + health monitor) and NN online training, so it is not cosmetic-only.
 #property copyright "Copyright 2025, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -19,17 +18,14 @@
 class CTradeAttributionManager
 {
 private:
-    // AI pending request mapping
     uint    m_aiPendingRequestIds[];
     string  m_aiPendingSymbols[];
     datetime m_aiPendingPredictionTimes[];
     ENUM_TRADE_SIGNAL m_aiPendingPredictionSignals[];
 
-    // Pending close profit tracking
     ulong   m_pendingClosePositionIds[];
     double  m_pendingCloseNetProfit[];
 
-    // NN attribution diagnostics counters
     int     m_nnDiagEntryMapCount;
     int     m_nnDiagCloseByIdCount;
     int     m_nnDiagCloseFallbackCount;
@@ -37,27 +33,24 @@ private:
     int     m_nnDiagPartialCloseCount;
     datetime m_nnDiagLastSummaryTime;
 
-    // Diagnostics enable flags (set from EA inputs)
     bool    m_enableNNDiagnostics;
     bool    m_runSelfTest;
 
     // Reference to position manager (not owned)
     CPositionManager *m_positionManager;
 
-    //--- Position-level contributor attribution (merged from CAttributionTracker)
+    // m_closedTradeContributors / m_hasClosedTradeAttribution are never written by any method here, so PopClosedTradeAttribution() always returns false.
     ulong   m_attributionPositionIds[];
     string  m_attributionContributorCsv[];
     string  m_closedTradeContributors[];
     double  m_closedTradeNetProfit;
     bool    m_hasClosedTradeAttribution;
 
-    //--- Helper methods (private)
     bool    IsPositionIdStillOpen(const ulong positionId);
 
     bool IsAIContributorName(const string strategyName) const;
 
 public:
-    //--- Helper methods (public, accessed by EnterpriseStrategyManager)
     int     FindAttributionIndexByPositionId(const ulong positionId) const;
     string  JoinContributors(const string &contributors[]) const;
     void    SplitContributors(const string csv, string &contributors[]) const;
@@ -85,19 +78,16 @@ public:
         ClearAll();
     }
 
-    //--- Configuration
     void SetPositionManager(CPositionManager &mgr) { m_positionManager = &mgr; }
     void SetNNDiagnosticsEnabled(bool enabled) { m_enableNNDiagnostics = enabled; }
     void SetRunSelfTest(bool enabled) { m_runSelfTest = enabled; }
 
-    //--- Trade comment building
     string ExtractPredictionIdFromComment(const string comment);
     string BuildTradeCommentWithPrediction(const string baseComment, const string predictionId);
     string NormalizeClusterCode(const string clusterCode);
     int    ClusterCodeToNumeric(const string clusterCode);
     string BuildClusterTaggedTradeComment(const string clusterCode, const string predictionId);
 
-    //--- Contributor analysis
     bool   ContributorsIncludeAI(const string &contributors[]);
     bool   ContributorsIncludeName(const string &contributors[], const string contributorName);
     bool   ContributorsIncludeONNX(const string &contributors[]);
@@ -106,7 +96,6 @@ public:
     bool   ContributorsIncludeNeuralNetwork(const string &contributors[]);
     int    CountIndicatorContributors(const string &contributors[]);
 
-    //--- Position-level contributor attribution (merged from CAttributionTracker)
     void   UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool   PopPositionAttribution(const ulong positionId, string &contributors[]);
     bool   PopClosedTradeAttribution(string &contributors[], double &netProfit);
@@ -115,50 +104,45 @@ public:
     double GetClosedTradeNetProfit() const { return m_closedTradeNetProfit; }
     bool   HasClosedTradeAttribution() const { return m_hasClosedTradeAttribution; }
 
-    //--- Prediction position mapping (delegates to CPositionStateManager)
+    //--- Prediction position mapping: thin wrappers over m_positionManager (CPositionManager); no state lives in this class.
     int    FindPredictionPositionIndex(const ulong positionId);
     void   UpsertPredictionPositionMap(const ulong positionId, const string predictionId);
     string GetPredictionIdForPosition(const ulong positionId);
     void   RemovePredictionPositionMap(const ulong positionId);
 
-    //--- AI prediction position mapping (delegates to CPositionStateManager)
+    //--- AI prediction position mapping: same delegation; a NULL m_positionManager makes every read return its empty default, which looks like "no attribution".
     int    FindAIPredictionPositionIndex(const ulong positionId);
     void   UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal);
     datetime GetAIPredictionTimeForPosition(const ulong positionId);
     ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId);
     void   RemoveAIPredictionPositionMap(const ulong positionId);
 
-    //--- AI pending request mapping
     int    FindAIPendingRequestIndex(const uint requestId);
     void   UpsertAIPendingRequestMap(const uint requestId, const string symbol, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal);
     bool   ConsumeAIPendingRequestMap(const uint requestId, const string symbol, datetime &predictionTime, ENUM_TRADE_SIGNAL &predictionSignal);
 
-    //--- Pending close profit tracking
     int    FindPendingCloseProfitIndex(const ulong positionId);
     void   AccumulatePendingCloseProfit(const ulong positionId, const double netProfit);
     double ConsumePendingCloseProfit(const ulong positionId);
     void   ClearPendingCloseProfit(const ulong positionId);
     
-    // Get all pending close profits with their prediction IDs (for NN training linkage)
+    // Read by EAOrchestrator's ProcessClosedPositionsForNNTraining; rows whose prediction id comes back empty are skipped there.
     int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
 
-    //--- Record position attribution for NN training
     void   RecordPositionAttribution(const ulong dealTicket, const string symbol, const ENUM_ORDER_TYPE orderType,
                                      const double volume, const double price, const double stopLossPips,
                                      const double takeProfitPips, const string clusterCode,
                                      const string strategyRole, const string &contributors[]);
 
-    //--- NN diagnostics summary (public for EA deinit call)
+    //--- [NN-DIAG] summary; EAOrchestrator prints it with context "deinit" before releasing the managers.
     void   NNDiagPrintSummary(const string context = "");
 
-    //--- Clear all internal state (public for EA cleanup)
     void   ClearAll();
 
 private:
     void   NNDiagLog(const string message);
     bool   RunNNAttributionSelfTest();
 
-    //--- Diagnostics counter accessors (for external increment)
     int    GetNNDiagEntryMapCount()     const { return m_nnDiagEntryMapCount; }
     int    GetNNDiagCloseByIdCount()    const { return m_nnDiagCloseByIdCount; }
     int    GetNNDiagCloseFallbackCount() const { return m_nnDiagCloseFallbackCount; }
@@ -171,11 +155,10 @@ private:
     void   IncrementNNDiagCloseMissCount()     { m_nnDiagCloseMissCount++; }
     void   IncrementNNDiagPartialCloseCount()  { m_nnDiagPartialCloseCount++; }
 
-    //--- Reset diagnostics counters
     void   ResetNNDiagnostics();
 };
 
-// Trade comment building implementation
+// Comment contract: BuildTradeCommentWithPrediction appends "|N:<predictionId>" and truncates the base to fit the 31-char broker cap; extraction returns everything after "|N:".
 string CTradeAttributionManager::ExtractPredictionIdFromComment(const string comment)
 {
     int marker = StringFind(comment, "|N:");
@@ -228,7 +211,7 @@ string CTradeAttributionManager::BuildClusterTaggedTradeComment(const string clu
     return BuildTradeCommentWithPrediction(compactBase, predictionId);
 }
 
-// AI contributor name check (moved from global function)
+// Exact string match on four names: a strategy renamed elsewhere stops counting as an AI contributor, silently.
 bool CTradeAttributionManager::IsAIContributorName(const string strategyName) const
 {
     return (strategyName == "Transformer AI" ||
@@ -237,7 +220,6 @@ bool CTradeAttributionManager::IsAIContributorName(const string strategyName) co
             strategyName == "ONNX AI");
 }
 
-// Contributor analysis implementation
 bool CTradeAttributionManager::ContributorsIncludeAI(const string &contributors[])
 {
     for(int i = 0; i < ArraySize(contributors); i++)
@@ -292,7 +274,6 @@ int CTradeAttributionManager::CountIndicatorContributors(const string &contribut
     return count;
 }
 
-// Prediction position mapping (delegates to CPositionManager)
 int CTradeAttributionManager::FindPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -317,7 +298,6 @@ void CTradeAttributionManager::RemovePredictionPositionMap(const ulong positionI
     m_positionManager.RemovePredictionPositionMap(positionId);
 }
 
-// AI prediction position mapping (delegates to CPositionManager)
 int CTradeAttributionManager::FindAIPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -348,7 +328,7 @@ void CTradeAttributionManager::RemoveAIPredictionPositionMap(const ulong positio
     m_positionManager.RemoveAIPredictionPositionMap(positionId);
 }
 
-// AI pending request mapping implementation
+// requestId is the key; a miss falls back to the last upserted entry whose symbol matches, whatever its age.
 int CTradeAttributionManager::FindAIPendingRequestIndex(const uint requestId)
 {
     for(int i = 0; i < ArraySize(m_aiPendingRequestIds); i++)
@@ -430,7 +410,7 @@ bool CTradeAttributionManager::ConsumeAIPendingRequestMap(const uint requestId, 
     return true;
 }
 
-// Pending close profit tracking implementation
+// No caller in the repo invokes AccumulatePendingCloseProfit, so m_pendingClose* stays empty and GetPendingCloseProfits returns 0.
 int CTradeAttributionManager::FindPendingCloseProfitIndex(const ulong positionId)
 {
     for(int i = 0; i < ArraySize(m_pendingClosePositionIds); i++)
@@ -501,7 +481,6 @@ void CTradeAttributionManager::ClearPendingCloseProfit(const ulong positionId)
     }
 }
 
-// Get all pending close profits with their prediction IDs
 int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
 {
 int count = ArraySize(m_pendingClosePositionIds);
@@ -517,7 +496,7 @@ for(int i = 0; i < count; i++)
     positionIds[i] = m_pendingClosePositionIds[i];
     profits[i] = m_pendingCloseNetProfit[i];
         
-    // Get prediction ID from position comment
+    // Prediction id is read from the LIVE position comment, not the position map; an unselectable position yields "" while its profit is still returned.
     if(PositionSelectByTicket(m_pendingClosePositionIds[i]))
     {
         string comment = PositionGetString(POSITION_COMMENT);
@@ -551,7 +530,6 @@ bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
     return false;
 }
 
-// Position-level Contributor Attribution (merged from CAttributionTracker)
 int CTradeAttributionManager::FindAttributionIndexByPositionId(const ulong positionId) const
 {
     int count = ArraySize(m_attributionPositionIds);
@@ -624,7 +602,6 @@ bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, st
     
     SplitContributors(m_attributionContributorCsv[index], contributors);
     
-    // Remove from arrays
     int count = ArraySize(m_attributionPositionIds);
     for(int i = index; i < count - 1; i++)
     {
@@ -664,7 +641,6 @@ void CTradeAttributionManager::ClearClosedTradeAttribution()
     m_closedTradeNetProfit = 0.0;
 }
 
-// NN diagnostics implementation
 void CTradeAttributionManager::NNDiagLog(const string message)
 {
     if(m_enableNNDiagnostics)
@@ -724,7 +700,6 @@ bool CTradeAttributionManager::RunNNAttributionSelfTest()
     return ok;
 }
 
-// Record position attribution for NN training
 void CTradeAttributionManager::RecordPositionAttribution(
     const ulong dealTicket,
     const string symbol,
@@ -737,8 +712,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
     const string strategyRole,
     const string &contributors[])
 {
-    // This method records position attribution for later NN training
-    // In a full implementation, this would store the data for the NN training pipeline
+    // Logging only: nothing is stored, and the sole side effect is the entry-map counter below.
     if(m_enableNNDiagnostics)
     {
         PrintFormat("[TRADE-ATTRIBUTION] deal=%I64u | %s | %s | vol=%.2f | price=%.5f | SL=%.1f | TP=%.1f | cluster=%s | role=%s",
@@ -758,7 +732,6 @@ void CTradeAttributionManager::RecordPositionAttribution(
     IncrementNNDiagEntryMapCount();
 }
 
-// Reset diagnostics counters
 void CTradeAttributionManager::ResetNNDiagnostics()
 {
     m_nnDiagEntryMapCount = 0;
@@ -769,7 +742,7 @@ void CTradeAttributionManager::ResetNNDiagnostics()
     m_nnDiagLastSummaryTime = TimeCurrent();
 }
 
-// Clear all internal state
+// Drops every in-memory map: a position still open here loses its contributor link, so its later close is recorded unattributed.
 void CTradeAttributionManager::ClearAll()
 {
     ArrayResize(m_aiPendingRequestIds, 0);

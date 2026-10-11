@@ -8,6 +8,53 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 188: Comment reduction in the manager and money-arithmetic paths — 181 lines removed, ten false notes, two dead API chains
+
+#### Context
+Fifth round of the comment workstream, on the five largest remaining concentrations: the symbol-scoped manager, the Deriv asset profiler, the exit optimizer, and the pricing and attribution halves of the trading layer.
+
+#### Changed (whole-line comments, before -> after)
+| File | Before | After |
+|---|---|---|
+| `Core/Management/EnterpriseStrategyManager.mqh` | 105 | 60 |
+| `Core/Processing/DerivAssetProfiler.mqh` | 55 | 6 |
+| `Core/Processing/ExitOptimizer.mqh` | 50 | 14 |
+| `Core/Trading/TradeAttributionManager.mqh` | 45 | 18 |
+| `Core/Trading/TradeMgrPricing.mqh` | 44 | 20 |
+
+Repo-wide **7,431 -> 7,250 (-181)**; non-comment lines byte-identical to `HEAD` in all five files.
+
+#### Kept because the code cannot show it
+- The two volume-normalisation twins, stated together so nobody picks the wrong one: `CTradeMgrPricing::NormalizeVolume` floors to `SYMBOL_VOLUME_STEP` and returns 0.0 under `SYMBOL_VOLUME_MIN` so the caller can refuse, while `CPositionSizer::NormalizeVolume` clamps **up** to that minimum and hands back a larger lot than the caller sized.
+- Why the spread-anomaly preflight needs a broker-only stop term: `GetMinimumStopDistance` already folds in 1.5 * spread, so a multiple of it can never be exceeded by the spread it wraps — the comparison would be circular.
+- Round-trip cost is defined once, in price units, and read by both the money model and the take-profit expectancy gate; a second copy would drift.
+- Magic composition `base + offset + symbol index` with family offsets 9000-9999 required to stay distinct, because a shared offset leaves two books indistinguishable to close, attribution and risk — and magic cannot separate the strategy books, which is why send comments do.
+- The 1R baseline: `m_initialRisk = |entry - initialSL|`, and while it is 0 the R-multiple partial-close stage returns no partial.
+- The registry-order fact that explains a whole class of "everything is disabled" reports: auto-registration runs *before* the orchestrator fills the shared `CStrategyRegistry`, so `IsStrategyActive()` is false at that moment and `RegisterStrategy()`'s mode filter locks every strategy out; the re-apply step is what fixes it.
+
+#### Nine pre-existing comments described things that are not there
+Deleted after verification: two claiming delegation to `CPositionStateManager`, a class that does not exist in the repository; "Diagnostics enable flags (set from EA inputs)" for `SetNNDiagnosticsEnabled` / `SetRunSelfTest`, which have zero call sites; "brokers charging per-lot commission go through `CTradeSpreadCostModel`", a class that only converts spread to money; "OU context (injected from the Kalman engine)", since `SetOUContext` is never called; a "must check BEFORE Volatility, VolSwitch symbols contain VOL" ordering rule for a predicate that does not match bare `VOL`; `idx 9/10 LIVE defaults` for literals removed in favour of 7/8; a "delegates to CStrategyHealthMonitor" note on a block that forwards to roster/weighting/lifecycle; and a two-phase-init header claiming the manager creates and destroys OFI/VPIN/family-matrix objects that are in fact injected pointers neither path releases.
+
+#### Two dead API chains, confirmed rather than assumed
+- **`PopClosedTradeAttribution` can never return true and has no consumer.** `m_hasClosedTradeAttribution` is initialized `false` and written `false` at three sites, never `true`; and grepping the whole repository finds only the declaration, the two forwarders (`AttributionDelegator`, `EnterpriseStrategyManager`) and the implementation. Closed-deal attribution reaches strategy performance a different way — `StrategyMgrTradeFeedback.mqh:150` pops *per-position* attribution and calls `UpdatePerformance` and `RecordTradeResult` directly — so this is dead surface, not a starved live control. Recorded; not deleted, because removing three coordinated forwarders is a code change with no safety value.
+- **`AccumulatePendingCloseProfit` has no caller**, so the `m_pendingClose*` arrays stay empty and `GetPendingCloseProfits` returns 0.
+
+#### A fourth parked component, and why `[ENGINE-STATUS]` does not name it
+`CExitOptimizer` is constructed at `OrchestratorMathEngineHub.mqh:274`/`:442` and `MathematicalEngineRegistry.mqh:390`, and `GetExitOptimizer` has no caller outside the registry — nothing anywhere invokes `Evaluate()`. Unlike Batch 178's three engines it has **no enable input**, so the startup report cannot list it. It costs an allocation per symbol and computes nothing; wiring it would create a second exit authority that AGENTS.md §3.3 forbids, so the correct action is to record it, which this entry does.
+
+#### One false comment rewritten rather than deleted
+`StrategyMgrTradeFeedback.mqh:151-152` said "Store in closed trade attribution for PopClosedTradeAttribution / The TradeAttributionManager handles this internally" over a loop that does neither — it calls `UpdatePerformance` and the health monitor directly, and no code on that path writes the fields `PopClosedTradeAttribution` reads. Left alone it would keep a future session chasing the dead chain as though it were the live one. Rewritten to name the loop as the whole closed-trade attribution path. Comment lines only, executable lines untouched.
+
+#### Worth noting about the process
+One agent declined to write a comment this batch's brief invited ("attribution is reporting-only and must not feed a risk decision") because the code contradicts it — closed-deal attribution really does feed `UpdatePerformance` and NN online training. Refusing to write a false constraint is better than writing the tidy one, and is the failure mode the last three rounds kept hitting.
+
+My own error, recorded: I told that round's brief the manager file was 1,980 lines when it is 1,367 — I had conflated it with `TradeManager.mqh` from a later measurement. The agent worked from the real file and flagged the discrepancy.
+
+#### Verification
+- Assertions checked by grep before being kept: `SetAdxHandleCached` has one call site (`ConsensusEngine.mqh:301`); family offsets consumed at `EAOrchestrator.mqh:1265` with composition at `ATRScalpEntry.mqh:147` / `SpikeHunterExecutor.mqh:212`; default values confirmed at `EntStrategyQuorumConfig.mqh:141/148/150-151`, `StrategyMgrRoster.mqh:204`, `PostConsensusValidator.mqh:77`.
+- Non-comment lines byte-identical to `HEAD` for all 6 touched files: **0 differences** (verified per file with a `git diff -U0` filter that keeps only lines not starting with `//`).
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+
 ### Batch 187: The hedging gate could not refuse, and the send path computed a price it never used
 
 #### Context

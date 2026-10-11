@@ -1,12 +1,10 @@
-// Advanced exit optimization module
-// Chandelier exits, R-multiple partials, OU-based TP, time exits
-// Batch 114: Research-driven exit improvements
+// Exit rules: chandelier, R-multiple partial, OU target, time exit, vol-adjusted TP
+// Evaluate() has no caller in the EA loop and nothing here writes an order or touches a position - the lifecycle owner is CTradeManager::ManageAllPositions
 #ifndef EXIT_OPTIMIZER_MQH
 #define EXIT_OPTIMIZER_MQH
 
 #include "../Utils/Enums.mqh"
 
-// Exit Optimization Configuration
 struct SExitConfig
 {
     bool   useChandelier;          // Enable Chandelier exit (default: true)
@@ -21,7 +19,6 @@ struct SExitConfig
     double partial3RMultiple;      // R level for third partial (default: 3.0)
     double partial3Percent;        // % to close at partial 3 (default: 0.25)
 
-    // OU-Based TP
     bool   useOUTarget;           // Enable OU half-life TP (default: true)
     double ouMaxTargetBars;       // Max bars for OU target (default: 50)
 
@@ -59,7 +56,6 @@ struct SExitConfig
     {}
 };
 
-// Exit Action Types
 enum ENUM_EXIT_ACTION
 {
     EXIT_ACTION_NONE = 0,
@@ -86,14 +82,6 @@ struct SExitDecision
     {}
 };
 
-// CExitOptimizer — Advanced exit management
-// Research findings implemented:
-// - Chandelier Exit (Le Beau 2000): uses highest-high since entry
-// instead of current price, prevents premature tightening
-// - R-Multiple Partials: systematic profit taking at 1R, 2R, 3R
-// - OU Half-Life TP: target based on mean-reversion speed
-// - Time Exits: alpha decays after 1-5 days (Jegadeesh & Titman)
-// - Vol-Adjusted TP: wider targets in high-vol regimes
 class CExitOptimizer
 {
 private:
@@ -101,10 +89,8 @@ private:
     string      m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
 
-    // Indicator handles
     int m_atrHandle;
 
-    // Position tracking
     double m_entryPrice;
     double m_initialSL;
     double m_initialRisk;       // |entry - SL| = 1R
@@ -113,11 +99,9 @@ private:
     double m_highestSinceEntry; // For Chandelier
     double m_lowestSinceEntry;  // For Chandelier
 
-    // Regime context
     bool   m_isHighVol;
     bool   m_isTrending;
 
-    // OU context (injected from Kalman engine)
     double m_ouHalfLife;
     double m_ouMu;
 
@@ -171,7 +155,7 @@ public:
         m_config = config;
     }
 
-    //--- Set trade context (call when position opens)
+    //--- Establishes the 1R baseline (m_initialRisk = |entry - initialSL|); while it is 0 CheckRMultiplePartials returns no partial
     void SetTradeContext(double entryPrice, double initialSL)
     {
         m_entryPrice = entryPrice;
@@ -183,21 +167,18 @@ public:
         m_lowestSinceEntry = entryPrice;
     }
 
-    //--- Inject OU parameters (from KalmanMeanReversion engine)
     void SetOUContext(double halfLife, double mu)
     {
         m_ouHalfLife = halfLife;
         m_ouMu = mu;
     }
 
-    //--- Inject regime context
     void SetRegimeContext(bool isHighVol, bool isTrending)
     {
         m_isHighVol = isHighVol;
         m_isTrending = isTrending;
     }
 
-    //--- Get current ATR
     double GetATR() const
     {
         if(m_atrHandle == INVALID_HANDLE) return 0;
@@ -207,7 +188,7 @@ public:
         return 0;
     }
 
-    //--- Compute Chandelier Exit level
+    //--- Bands off the highest/lowest price recorded since entry, not the current price, so a pullback alone does not tighten it
     double ComputeChandelierExit(bool isLong) const
     {
         if(!m_config.useChandelier) return 0;
@@ -221,7 +202,6 @@ public:
             return m_lowestSinceEntry + m_config.chandelierMultiplier * atr;
     }
 
-    //--- Compute volatility-adjusted take profit
     double ComputeVolAdjustedTP(bool isLong) const
     {
         if(!m_config.useVolAdjustedTP) return 0;
@@ -242,14 +222,12 @@ public:
             return m_entryPrice - atr * multiplier;
     }
 
-    //--- Compute OU-based take profit
     double ComputeOUTarget(bool isLong) const
     {
         if(!m_config.useOUTarget || m_ouHalfLife <= 0 || m_ouMu <= 0)
             return 0;
 
         // Target = mu (long-run mean) — this is the natural reversion target
-        // But only if it's in the right direction
         if(isLong && m_ouMu > m_entryPrice)
             return m_ouMu;
         else if(!isLong && m_ouMu < m_entryPrice)
@@ -258,15 +236,13 @@ public:
         return 0; // OU target not applicable (would be counter-trend)
     }
 
-    //--- Compute time-based exit threshold
+    //--- Returns 9999 when the time exit is off, so the bar counter never trips
     int GetMaxHoldingBars() const
     {
         if(!m_config.useTimeExit) return 9999;
         return m_isHighVol ? m_config.maxHoldingBarsHighVol : m_config.maxHoldingBarsDefault;
     }
 
-    //--- Check R-multiple partial levels
-    // Returns which partial to take (0=none, 1/2/3)
     // Takes partials in order — if price jumped from 0R to 3R, takes partial 1 first
     int CheckRMultiplePartials(double currentPrice, bool isLong) const
     {
@@ -279,8 +255,6 @@ public:
         else
             currentR = (m_entryPrice - currentPrice) / m_initialRisk;
 
-        // Check in order: partial 1 first, then 2, then 3
-        // This ensures we don't skip a level on a large move
         if(!(m_partialsTaken & 1) && currentR >= m_config.partial1RMultiple)
             return 1;
         if(!(m_partialsTaken & 2) && currentR >= m_config.partial2RMultiple)
@@ -291,7 +265,6 @@ public:
         return 0;
     }
 
-    //--- Get partial close fraction
     double GetPartialFraction(int partialLevel) const
     {
         switch(partialLevel)
@@ -303,19 +276,17 @@ public:
         }
     }
 
-    //--- Main evaluation: called each bar with current price
+    //--- One decision per call, in priority order: time exit, R-multiple partial, chandelier, OU target, vol-adjusted TP - first match returns
     SExitDecision Evaluate(double currentPrice, bool isLong)
     {
         SExitDecision decision;
         m_barsHeld++;
 
-        // Update highest/lowest since entry
         if(currentPrice > m_highestSinceEntry)
             m_highestSinceEntry = currentPrice;
         if(currentPrice < m_lowestSinceEntry)
             m_lowestSinceEntry = currentPrice;
 
-        // 1. Check time-based exit (highest priority — force close)
         if(m_config.useTimeExit && m_barsHeld >= GetMaxHoldingBars())
         {
             double currentR;
@@ -324,7 +295,7 @@ public:
             else
                 currentR = (m_entryPrice - currentPrice) / MathMax(1e-10, m_initialRisk);
 
-            // Only force exit if not profitable
+            // The forced close is skipped once the trade is at 0.5R or better
             if(currentR < 0.5)
             {
                 decision.action = EXIT_ACTION_CLOSE_FULL;
@@ -347,7 +318,6 @@ public:
                                                 partialLevel, fraction * 100);
                 decision.confidence = 0.9;
 
-                // Mark partial as taken
                 m_partialsTaken |= (1 << (partialLevel - 1));
 
                 // Move SL to breakeven after first partial
@@ -368,7 +338,6 @@ public:
             }
         }
 
-        // 3. Chandelier exit check
         if(m_config.useChandelier)
         {
             double chandelier = ComputeChandelierExit(isLong);
@@ -389,7 +358,6 @@ public:
             }
         }
 
-        // 4. OU-based TP check
         if(m_config.useOUTarget)
         {
             double ouTarget = ComputeOUTarget(isLong);
@@ -407,7 +375,6 @@ public:
             }
         }
 
-        // 5. Vol-adjusted TP check
         if(m_config.useVolAdjustedTP)
         {
             double volTP = ComputeVolAdjustedTP(isLong);
@@ -425,17 +392,14 @@ public:
             }
         }
 
-        // 6. No exit needed
         decision.action = EXIT_ACTION_NONE;
         return decision;
     }
 
-    //--- Accessors
         int    GetBarsHeld() const    { return m_barsHeld; }
         int    GetPartialsTaken() const { return m_partialsTaken; }
         double GetInitialRisk() const { return m_initialRisk; }
 
-        // --- Cleanup ---
         void Deinit()
         {
             if(m_atrHandle != INVALID_HANDLE)

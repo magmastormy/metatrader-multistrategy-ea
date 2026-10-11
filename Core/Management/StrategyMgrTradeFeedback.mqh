@@ -148,8 +148,8 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                 CTradeAttributionManager* attribution = m_src.GetAttribution();
                 if(positionId > 0 && attribution != NULL && attribution.PopPositionAttribution(positionId, contributors))
                 {
-                    // Store in closed trade attribution for PopClosedTradeAttribution
-                    // The TradeAttributionManager handles this internally
+                    // This loop is the whole closed-trade attribution path: it writes strategy
+                    // stats directly and never fills PopClosedTradeAttribution's backing fields.
                     for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
                     {
                         if(contributors[contributorIdx] == "")

@@ -1,5 +1,5 @@
-// Stateless price / volume / stop-level arithmetic for CTradeManager: every member is a static pure function, no instance state.
-// The two helpers that originally touched CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo) receive it by reference.
+// Stateless price / volume / stop-level arithmetic for CTradeManager: every member is static, no instance state.
+// NormalizeVolume() floors to SYMBOL_VOLUME_STEP and returns 0.0 when the floor lands under SYMBOL_VOLUME_MIN so the caller can refuse; CPositionSizer::NormalizeVolume is the twin that clamps UP to that minimum, handing back a larger lot than the caller sized.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -10,9 +10,8 @@
 #include <Trade/SymbolInfo.mqh>
 #include "../../IndicatorManager.mqh"
 
-// A stop inside 1.5 spreads is noise, and brokers often report stops level 0, hence
-// MIN_STOP_DISTANCE_POINTS. Lots are sized on the requested stop, so a broker-forced
-// widening past MAX_ACCEPTABLE_STOP_WIDENING_RATIO risks more than was authorised.
+// A stop inside 1.5 spreads is noise and brokers often report stops level 0: hence MIN_STOP_SPREAD_MULTIPLIER and MIN_STOP_DISTANCE_POINTS.
+// Lots are sized on the requested stop, so a broker-forced widening past MAX_ACCEPTABLE_STOP_WIDENING_RATIO risks more than was authorised.
 #ifndef MIN_STOP_SPREAD_MULTIPLIER
 #define MIN_STOP_SPREAD_MULTIPLIER 1.5
 #endif
@@ -139,7 +138,6 @@ public:
         return NormalizePrice(symbolParam, takeProfit);
     }
 
-// Check whether symbol trade mode supports requested order type
     static bool IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason)
     {
         reason = "";
@@ -171,8 +169,8 @@ public:
         return true;
     }
 
-// Current execution price for a market order
-// symbolInfo is the caller-owned CSymbolInfo (was m_symbolInfo)
+// Send-time price side: ORDER_TYPE_SELL reads SYMBOL_BID, every other order type reads SYMBOL_ASK.
+// A non-positive quote re-reads after refreshing the caller-owned CSymbolInfo; the result is normalized to SYMBOL_DIGITS.
     static double GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType,
                                            CSymbolInfo &symbolInfo)
     {
@@ -192,7 +190,7 @@ public:
         return NormalizePrice(symbolName, price);
     }
 
-// Broker minimum stop/freeze distance
+// Sizing floor, in PRICE units: max(broker stop level, broker freeze level, 1.5 * spread, 10 points) * SYMBOL_POINT.
     static double GetMinimumStopDistance(const string symbolName)
     {
         double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
@@ -204,11 +202,6 @@ public:
         int freezeLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_FREEZE_LEVEL);
         int requiredPoints = MathMax(stopLevel, freezeLevel);
 
-        // Batch 169: floor. Many brokers report SYMBOL_TRADE_STOPS_LEVEL = 0, which
-        // previously produced a 0-point minimum, so a 1-point stop was accepted and
-        // then rejected by the server (INVALID_STOPS) or placed inside the spread
-        // where it triggers on noise. Require the greater of the broker level, a
-        // spread multiple (a stop inside the spread is not a stop) and 10 points.
         int spreadPoints = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
         int spreadBasedMinimum = (int)MathCeil(spreadPoints * MIN_STOP_SPREAD_MULTIPLIER);
         requiredPoints = MathMax(requiredPoints, MathMax(spreadBasedMinimum, MIN_STOP_DISTANCE_POINTS));
@@ -216,11 +209,8 @@ public:
         return (double)requiredPoints * point;
     }
 
-// Broker-declared stop/freeze distance only, in price units.
-// GetMinimumStopDistance() deliberately folds in a spread
-// multiple, which makes it circular for the spread-anomaly gate
-// in preflight: a limit of 2 * (1.5 * spread) can never be
-// exceeded by that spread. This is the term that belongs there.
+// Broker-declared stop/freeze distance only, in price units - no spread term.
+// The spread-anomaly preflight needs this term: GetMinimumStopDistance() already folds in 1.5 * spread, so a multiple of it can never be exceeded by the spread it wraps.
     static double GetBrokerStopLevelDistance(const string symbolName)
     {
         double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
@@ -232,9 +222,8 @@ public:
         return (double)MathMax(stopLevel, freezeLevel) * point;
     }
 
-// Round-trip transaction cost, expressed in PRICE units.
-// Buying at ask and selling at bid costs exactly one quoted spread against the mid, so the factor is 1.0;
-// the previous 2.0 "paid entering and leaving" double-counted the same half spread on each side.
+// Round-trip cost in PRICE units: one quoted spread - entry at ask, exit at bid against the mid.
+// Single definition: the TP expectancy gate below and GetRoundTripCommissionCost both read it, so a second copy would drift.
     static double GetRoundTripCostPrice(const string symbol)
     {
         double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -259,13 +248,8 @@ public:
         slOut = NormalizeDouble(slOut, digits);
         tpOut = NormalizeDouble(tpOut, digits);
 
-        // Batch 169: capture the distance the position was SIZED at before any
-        // broker-driven adjustment, and be able to reject. This function used to
-        // `return true` unconditionally, which made the caller's reject branch dead
-        // code, and it silently pushed a too-close SL out to minDistance *after*
-        // lot sizing - so realised risk exceeded sized risk by however much the
-        // stop widened, escaping the per-trade risk cap (which is evaluated on the
-        // pre-trade stopLossPips).
+        // Capture the stop distance the position was SIZED at, before any broker-driven adjustment.
+        // A too-close SL/TP is pushed out to minDistance + one point; if the SL ends up more than MAX_ACCEPTABLE_STOP_WIDENING_RATIO wider than sized, this returns false so the caller refuses a lot sized on the tighter stop.
         double requestedSlDistance = (slOut > 0.0) ? MathAbs(price - slOut) : 0.0;
 
         if(slOut > 0)
@@ -282,7 +266,6 @@ public:
             }
         }
 
-        // Validate Take Profit
         if(tpOut > 0)
         {
             double dist = MathAbs(price - tpOut);
@@ -306,11 +289,8 @@ public:
             return false;
         }
 
-        // Batch 169: cost-aware target. Nothing in the entry path compared the
-        // reward with the round-trip cost - the absolute spread gate was set to
-        // 15000 points so it never bound either. A take-profit that does not
-        // clear a small multiple of the spread is negative expectancy before
-        // the first tick, so reject it here, the one place both are known.
+        // Cost-aware target: a TP nearer than MIN_TP_COST_MULTIPLE * GetRoundTripCostPrice() does not pay for the spread,
+        // so its expectancy is negative before the first tick and the trade is refused here, where both numbers are computed.
         double costPrice = GetRoundTripCostPrice(symbol);
         if(tpOut > 0.0 && costPrice > 0.0 && point > 0.0)
         {
@@ -328,12 +308,10 @@ public:
         return true;
     }
 
-// Get Round-Trip Commission Cost (entry + exit)
+// Round-trip cost in money for volume lots: despite the name it prices the SPREAD only, no exchange-commission term is read here.
     static double GetRoundTripCommissionCost(const string symbol, const double volume)
     {
-        // SYMBOL_SPREAD is already points - dividing it by tickSize again inflated
-        // every risk estimate by ~10^5. Per-lot commission has no MQL5 constant;
-        // brokers charging it go through CTradeSpreadCostModel.
+        // SYMBOL_SPREAD is already in points; money per point per lot = (tickValue / tickSize) * point.
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -347,7 +325,6 @@ public:
         return costPoints * moneyPerPoint * volume;
     }
 
-// Get Estimated Swap Cost for holding position overnight
     static double GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                        const double volume, const int estimatedHoldDays)
     {
@@ -358,7 +335,7 @@ public:
 
         double swapPerLot = (orderType == ORDER_TYPE_BUY) ? swapLong : swapShort;
 
-        // Swap is typically in points per lot per day
+        // Swap is read here as POINTS per lot per day, not currency - that is what the conversion below assumes.
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -367,7 +344,6 @@ public:
             return 0.0;
         }
 
-        // Convert swap points to currency per lot per day
         double swapPerLotPerDay = (swapPerLot * point / tickSize) * tickValue;
 
         return swapPerLotPerDay * volume * estimatedHoldDays;
@@ -387,12 +363,12 @@ public:
         double stopDistancePrice = stopLossPips * point;
         double riskPerLot = (stopDistancePrice / tickSize) * tickValue;
 
-        // L10-006: Add commission cost to risk calculation
+        // Returned money already contains the round-trip cost term, so a caller adding the cost again would double-count it.
         double commissionCost = GetRoundTripCommissionCost(symbolParam, volume);
         return volume * riskPerLot + commissionCost;
     }
 
-// Get net position volume for netting mode compliance
+// Netting accounts only: returns 0.0 under ACCOUNT_MARGIN_MODE_RETAIL_HEDGING, so a caller must not read 0.0 as "flat" without checking the margin mode.
     static double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type,
                                        const ENUM_ACCOUNT_MARGIN_MODE accountMarginMode)
     {

@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 187 - `CTradeManager::IsHedgingAllowed` returned `true` on both branches, so the pre-send guard at `:1826` could never fire and its blocked-log was unreachable; it now refuses any non-hedging account loudly, because per-strategy books, per-trade risk booking and per-position SL/TP do not survive a netted position. Also deleted `validationPrice`, computed and never read in the same function. Batch 186 fixed `ApplySpreadFilter` being called with three arguments in the wrong slots and gave that arm its missing log line; Batch 185 reduced comments in the three densest files (repo at 7,429); Batches 183-184 fixed a journal read that could stop the EA at load and a retrain check that could never pass.
+- Latest Batch: Batch 188 - comment reduction only, 181 whole-line comments removed from `EnterpriseStrategyManager`/`DerivAssetProfiler`/`ExitOptimizer`/`TradeAttributionManager`/`TradeMgrPricing` (repo at 7,250); diff verified to contain no executable-line changes. Six of the deleted comments asserted behavior the code does not have, and two API chains were confirmed dead while reading them: `PopClosedTradeAttribution` (flag never set, no consumer) and `AccumulatePendingCloseProfit` (no caller). Batch 187 made the hedging gate able to refuse; Batch 186 fixed `ApplySpreadFilter` being called with three arguments in the wrong slots and gave that arm its missing log line.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

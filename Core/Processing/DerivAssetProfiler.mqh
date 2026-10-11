@@ -1,5 +1,5 @@
-// Deriv synthetic index asset profiler
-// Maps symbols to family-specific trading profiles
+// Maps each Deriv synthetic symbol to one of the 18 families below; DERIV_UNKNOWN is the no-match fallback
+// Family magicOffsets (9000..9999) must stay distinct: magic = base + offset + symbol index, so a shared offset leaves two books indistinguishable to close, attribution and risk
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -10,7 +10,6 @@
 
 #include "../Utils/Instruments.mqh"
 
-// Deriv synthetic index family enumeration
 enum ENUM_DERIV_FAMILY
 {
    DERIV_CRASH_BOOM,       // Crash/Boom indices
@@ -34,7 +33,6 @@ enum ENUM_DERIV_FAMILY
    DERIV_UNKNOWN           // Unknown / unclassified
 };
 
-// Per-family Deriv trading profile
 struct SDerivProfile
 {
    ENUM_DERIV_FAMILY family;           // Family enum value
@@ -57,12 +55,10 @@ struct SDerivProfile
    int               spikeCooldownSec; // Cooldown between spike trades in seconds
    int               spikeWindowBars;  // Lookback bars for spike detection
 
-   // L7-006: Per-family strategy enablement flags
    bool              enableTrendStrategies;  // Enable trend-following strategies
    bool              enableMomentumStrategies;
    bool              enableIntrabarOverride; // Allow intrabar policy override for this family
 
-   // Default constructor — MQL5 requires explicit string initialization
    SDerivProfile()
    {
       family               = DERIV_UNKNOWN;
@@ -90,17 +86,14 @@ struct SDerivProfile
    }
 };
 
-// CDerivAssetProfiler — Deriv synthetic index asset profiler
 class CDerivAssetProfiler
 {
 private:
    SDerivProfile  m_profiles[19];  // 18 families + unknown
    bool           m_logFamilyDetection;  // L7-013: Enable logging for family detection
 
-// Initialize all family profiles with production defaults
    void InitializeProfiles()
    {
-      // DERIV_CRASH_BOOM (index 0)
       m_profiles[DERIV_CRASH_BOOM].family               = DERIV_CRASH_BOOM;
       m_profiles[DERIV_CRASH_BOOM].familyName           = "CrashBoom";
       m_profiles[DERIV_CRASH_BOOM].spikeThreshold       = 2.8;
@@ -123,7 +116,6 @@ private:
       m_profiles[DERIV_CRASH_BOOM].enableTrendStrategies  = true;  // Crash/Boom can trend during spikes
       m_profiles[DERIV_CRASH_BOOM].enableMomentumStrategies = true;
 
-      // DERIV_VOLATILITY (index 1)
       m_profiles[DERIV_VOLATILITY].family               = DERIV_VOLATILITY;
       m_profiles[DERIV_VOLATILITY].familyName           = "Volatility";
       m_profiles[DERIV_VOLATILITY].spikeThreshold       = 3.5;
@@ -146,7 +138,6 @@ private:
       m_profiles[DERIV_VOLATILITY].enableTrendStrategies  = false; // Volatility indices don't trend
       m_profiles[DERIV_VOLATILITY].enableMomentumStrategies = false;
 
-      // DERIV_STEP (index 2)
       m_profiles[DERIV_STEP].family                     = DERIV_STEP;
       m_profiles[DERIV_STEP].familyName                 = "Step";
       m_profiles[DERIV_STEP].spikeThreshold             = 4.0;
@@ -169,7 +160,6 @@ private:
       m_profiles[DERIV_STEP].enableTrendStrategies  = false; // Step indices don't trend
       m_profiles[DERIV_STEP].enableMomentumStrategies = false;
 
-      // DERIV_JUMP (index 3)
       m_profiles[DERIV_JUMP].family                     = DERIV_JUMP;
       m_profiles[DERIV_JUMP].familyName                 = "Jump";
       m_profiles[DERIV_JUMP].spikeThreshold             = 2.5;
@@ -192,7 +182,6 @@ private:
       m_profiles[DERIV_JUMP].enableTrendStrategies  = false; // Jump indices are spike-based
       m_profiles[DERIV_JUMP].enableMomentumStrategies = false;
 
-      // DERIV_DEX (index 4)
       m_profiles[DERIV_DEX].family                      = DERIV_DEX;
       m_profiles[DERIV_DEX].familyName                  = "DEX";
       m_profiles[DERIV_DEX].spikeThreshold              = 2.2;
@@ -215,7 +204,6 @@ private:
       m_profiles[DERIV_DEX].enableTrendStrategies  = false;
       m_profiles[DERIV_DEX].enableMomentumStrategies = false;
 
-      // DERIV_MULTISTEP (index 5)
       m_profiles[DERIV_MULTISTEP].family                = DERIV_MULTISTEP;
       m_profiles[DERIV_MULTISTEP].familyName            = "MultiStep";
       m_profiles[DERIV_MULTISTEP].spikeThreshold        = 3.0;
@@ -238,7 +226,6 @@ private:
       m_profiles[DERIV_MULTISTEP].enableTrendStrategies  = false;
       m_profiles[DERIV_MULTISTEP].enableMomentumStrategies = false;
 
-      // DERIV_EXPONENTIAL (index 6)
       m_profiles[DERIV_EXPONENTIAL].family              = DERIV_EXPONENTIAL;
       m_profiles[DERIV_EXPONENTIAL].familyName          = "Exponential";
       m_profiles[DERIV_EXPONENTIAL].spikeThreshold      = 3.2;
@@ -261,7 +248,6 @@ private:
       m_profiles[DERIV_EXPONENTIAL].enableTrendStrategies  = true;  // Exponential growth trends
       m_profiles[DERIV_EXPONENTIAL].enableMomentumStrategies = true;
 
-      // DERIV_HYBRID (index 7)
       m_profiles[DERIV_HYBRID].family                   = DERIV_HYBRID;
       m_profiles[DERIV_HYBRID].familyName               = "Hybrid";
       m_profiles[DERIV_HYBRID].spikeThreshold           = 2.8;
@@ -284,7 +270,6 @@ private:
       m_profiles[DERIV_HYBRID].enableTrendStrategies  = true;
       m_profiles[DERIV_HYBRID].enableMomentumStrategies = true;
 
-      // DERIV_RANGE_BREAK (index 8)
       m_profiles[DERIV_RANGE_BREAK].family              = DERIV_RANGE_BREAK;
       m_profiles[DERIV_RANGE_BREAK].familyName          = "RangeBreak";
       m_profiles[DERIV_RANGE_BREAK].spikeThreshold      = 3.0;
@@ -307,7 +292,6 @@ private:
       m_profiles[DERIV_RANGE_BREAK].enableTrendStrategies  = false;
       m_profiles[DERIV_RANGE_BREAK].enableMomentumStrategies = false;
 
-      // DERIV_SKEW_STEP (index 9)
       m_profiles[DERIV_SKEW_STEP].family                = DERIV_SKEW_STEP;
       m_profiles[DERIV_SKEW_STEP].familyName            = "SkewStep";
       m_profiles[DERIV_SKEW_STEP].spikeThreshold        = 3.5;
@@ -330,7 +314,6 @@ private:
       m_profiles[DERIV_SKEW_STEP].enableTrendStrategies  = false;
       m_profiles[DERIV_SKEW_STEP].enableMomentumStrategies = false;
 
-      // DERIV_VOL_SWITCH (index 10)
       m_profiles[DERIV_VOL_SWITCH].family               = DERIV_VOL_SWITCH;
       m_profiles[DERIV_VOL_SWITCH].familyName           = "VolSwitch";
       m_profiles[DERIV_VOL_SWITCH].spikeThreshold       = 3.0;
@@ -353,7 +336,6 @@ private:
       m_profiles[DERIV_VOL_SWITCH].enableTrendStrategies  = true;  // Volatility changes can trend
       m_profiles[DERIV_VOL_SWITCH].enableMomentumStrategies = true;
 
-      // DERIV_DRIFT_SWITCH (index 11)
       m_profiles[DERIV_DRIFT_SWITCH].family             = DERIV_DRIFT_SWITCH;
       m_profiles[DERIV_DRIFT_SWITCH].familyName         = "DriftSwitch";
       m_profiles[DERIV_DRIFT_SWITCH].spikeThreshold     = 2.8;
@@ -374,7 +356,6 @@ private:
       m_profiles[DERIV_DRIFT_SWITCH].spikeCooldownSec   = 45;
       m_profiles[DERIV_DRIFT_SWITCH].spikeWindowBars    = 40;
 
-      // DERIV_TREK (index 12)
             m_profiles[DERIV_TREK].family                     = DERIV_TREK;
             m_profiles[DERIV_TREK].familyName                 = "Trek";
             m_profiles[DERIV_TREK].spikeThreshold             = 3.0;
@@ -395,7 +376,6 @@ private:
             m_profiles[DERIV_TREK].spikeCooldownSec           = 45;
             m_profiles[DERIV_TREK].spikeWindowBars            = 40;
 
-            // DERIV_TACTICAL (index 13) - FIXED: was 9850 (collision with TREK/DERIVED), now 9860
             m_profiles[DERIV_TACTICAL].family                 = DERIV_TACTICAL;
             m_profiles[DERIV_TACTICAL].familyName             = "Tactical";
             m_profiles[DERIV_TACTICAL].spikeThreshold         = 3.0;
@@ -416,7 +396,6 @@ private:
             m_profiles[DERIV_TACTICAL].spikeCooldownSec       = 45;
             m_profiles[DERIV_TACTICAL].spikeWindowBars        = 40;
 
-            // DERIV_DERIVED (index 14) - FIXED: was 9850 (collision with TREK/TACTICAL), now 9870
             m_profiles[DERIV_DERIVED].family                  = DERIV_DERIVED;
             m_profiles[DERIV_DERIVED].familyName              = "Derived";
             m_profiles[DERIV_DERIVED].spikeThreshold          = 3.0;
@@ -437,7 +416,6 @@ private:
             m_profiles[DERIV_DERIVED].spikeCooldownSec        = 45;
             m_profiles[DERIV_DERIVED].spikeWindowBars         = 40;
 
-      // DERIV_STABLE_SPREAD (index 15)
             m_profiles[DERIV_STABLE_SPREAD].family            = DERIV_STABLE_SPREAD;
             m_profiles[DERIV_STABLE_SPREAD].familyName        = "StableSpread";
             m_profiles[DERIV_STABLE_SPREAD].spikeThreshold    = 4.0;
@@ -458,7 +436,6 @@ private:
             m_profiles[DERIV_STABLE_SPREAD].spikeCooldownSec  = 20;
             m_profiles[DERIV_STABLE_SPREAD].spikeWindowBars   = 30;
 
-            // DERIV_PAIRS_ARBITRAGE (index 16) - FIXED: was 9900 (collision with STABLE_SPREAD), now 9910
             m_profiles[DERIV_PAIRS_ARBITRAGE].family          = DERIV_PAIRS_ARBITRAGE;
             m_profiles[DERIV_PAIRS_ARBITRAGE].familyName      = "PairsArbitrage";
             m_profiles[DERIV_PAIRS_ARBITRAGE].spikeThreshold  = 4.5;
@@ -479,7 +456,6 @@ private:
             m_profiles[DERIV_PAIRS_ARBITRAGE].spikeCooldownSec = 20;
             m_profiles[DERIV_PAIRS_ARBITRAGE].spikeWindowBars = 30;
 
-      // DERIV_SPOT_VOLATILITY (index 17)
       m_profiles[DERIV_SPOT_VOLATILITY].family          = DERIV_SPOT_VOLATILITY;
       m_profiles[DERIV_SPOT_VOLATILITY].familyName      = "SpotVolatility";
       m_profiles[DERIV_SPOT_VOLATILITY].spikeThreshold  = 3.5;
@@ -500,7 +476,6 @@ private:
             m_profiles[DERIV_SPOT_VOLATILITY].spikeCooldownSec = 45;
             m_profiles[DERIV_SPOT_VOLATILITY].spikeWindowBars = 40;
 
-      // DERIV_UNKNOWN (index 18)
       m_profiles[DERIV_UNKNOWN].family                  = DERIV_UNKNOWN;
       m_profiles[DERIV_UNKNOWN].familyName              = "Unknown";
       m_profiles[DERIV_UNKNOWN].spikeThreshold          = 3.0;
@@ -523,94 +498,73 @@ private:
    }
 
 public:
-// Constructor
    CDerivAssetProfiler() : m_logFamilyDetection(true)
    {
       InitializeProfiles();
    }
 
-   // L7-013: Setter for family detection logging
    void SetLogFamilyDetection(bool enabled) { m_logFamilyDetection = enabled; }
 
-// Detect the Deriv family for a symbol using priority-ordered
-// detection functions from Instruments.mqh
+// Detection order is load-bearing: the predicates below overlap on Deriv symbol names
    ENUM_DERIV_FAMILY DetectFamily(const string symbol)
    {
-      // Priority 1: Crash/Boom — most specific spike family
       if(IsBoomCrashSyntheticSymbolName(symbol))
          return DERIV_CRASH_BOOM;
 
-      // Priority 2: DEX
       if(IsDexSyntheticSymbolName(symbol))
          return DERIV_DEX;
 
-      // Priority 3: Jump
       if(IsJumpSyntheticSymbolName(symbol))
          return DERIV_JUMP;
 
-      // Priority 4: Vol Switch — must check BEFORE Volatility
-      //    (VolSwitch symbols contain "VOL" so IsVolatilitySyntheticSymbolName
-      //     would also match — we want VolSwitch to win)
+      // Vol Switch precedes Volatility: a switch name carrying "SFX VOL ", "FX VOL " or "VOLATILITY " is also matched by IsVolatilitySyntheticSymbolName
       if(IsVolSwitchSyntheticSymbolName(symbol))
          return DERIV_VOL_SWITCH;
 
-      // Priority 5: Drift Switch
       if(IsDriftSwitchSyntheticSymbolName(symbol))
          return DERIV_DRIFT_SWITCH;
 
-      // Priority 6: Skew Step
       if(IsSkewStepSyntheticSymbolName(symbol))
          return DERIV_SKEW_STEP;
 
-      // Priority 7: Multi Step
       if(IsMultiStepSyntheticSymbolName(symbol))
          return DERIV_MULTISTEP;
 
-      // Priority 8: Step — only if not already matched as SkewStep/MultiStep
+      // Step follows Skew Step and Multi Step: the "STEP INDEX" test also matches those names
       if(IsStepSyntheticSymbolName(symbol))
          return DERIV_STEP;
 
-      // Priority 9: Volatility — safe now because VolSwitch already matched above
+      // Any name carrying "VOLATILITY " lands here, including the "Spot Volatility" names the DERIV_SPOT_VOLATILITY arm below is meant for
       if(IsVolatilitySyntheticSymbolName(symbol))
          return DERIV_VOLATILITY;
 
-      // Priority 10: Exponential
       if(IsExponentialSyntheticSymbolName(symbol))
          return DERIV_EXPONENTIAL;
 
-      // Priority 11: Hybrid
       if(IsHybridSyntheticSymbolName(symbol))
          return DERIV_HYBRID;
 
-      // Priority 12: Range Break
       if(IsRangeBreakSyntheticSymbolName(symbol))
          return DERIV_RANGE_BREAK;
 
-      // Priority 13: Trek
       if(IsTrekSyntheticSymbolName(symbol))
          return DERIV_TREK;
 
-      // Priority 14: Tactical
       if(IsTacticalSyntheticSymbolName(symbol))
          return DERIV_TACTICAL;
 
-      // Priority 15: Derived
       if(IsDerivedSyntheticSymbolName(symbol))
          return DERIV_DERIVED;
 
-      // Priority 16: Stable Spread
       if(IsStableSpreadSyntheticSymbolName(symbol))
          return DERIV_STABLE_SPREAD;
 
-      // Priority 17: Pairs Arbitrage
       if(IsPairsArbitrageSyntheticSymbolName(symbol))
          return DERIV_PAIRS_ARBITRAGE;
 
-      // Priority 18: Spot Volatility
       if(IsSpotVolatilitySyntheticSymbolName(symbol))
          return DERIV_SPOT_VOLATILITY;
 
-      // No match found
             ENUM_DERIV_FAMILY result = DERIV_UNKNOWN;
             if(m_logFamilyDetection)
             {
@@ -619,14 +573,12 @@ public:
             return result;
    }
 
-// Get the full profile for a symbol
    SDerivProfile GetProfile(const string symbol)
    {
       ENUM_DERIV_FAMILY family = DetectFamily(symbol);
       return m_profiles[family];
    }
 
-// Get the magic offset for a symbol's family
    int GetMagicOffset(const string symbol)
    {
       ENUM_DERIV_FAMILY family = DetectFamily(symbol);
@@ -639,7 +591,6 @@ public:
       return m_profiles[family].familyName;
    }
 
-// Print the full profile for a symbol
    void PrintProfile(const string symbol)
    {
       SDerivProfile prof = GetProfile(symbol);
