@@ -8,6 +8,53 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-12
 
+### Batch 179: Runtime evidence from the last live session, and the two logs that were lying
+
+#### Context
+Batches 168-178 each ended with "runtime evidence owed". The evidence exists: the terminal's own EA journals in `MQL5/Logs/` for 17, 18, 19 and 23 September. They are UTF-16LE, so they must be `iconv`-converted before grepping. The newest is 23 September — the terminal has not attached this EA since the October batches, so nothing below can confirm tonight's new tags; it confirms what the old sessions were actually doing, and that is what the audit needed.
+
+#### What the journals show
+Read against the code, from `20260923.log` (the last live session) unless stated:
+
+| Signature | Count | What it settles |
+|---|---|---|
+| `[POST-CONSENSUS-FILTER] ... filter=atr_ratio` | 71 | The only post-consensus arm that ever fired. |
+| `filter=quality_gate` / `hard_spread_cutoff` / `ofi_*` / `vpin_*` | 0 | Empirically confirms Batch 175: those arms had no configuration call site, so they were never on the path. |
+| `[GRID-RECOVERY]` / `[ATR-SCALP]` / `[SPIKE-HUNTER]` | 4 / 1 / 1 | All of them `Initialized` / `PARKED: not wired` / `Deinitialized`. `gridsOpened=0`. Confirms Batch 178 from the log side. |
+| `[SCALP-ENTRY]` | 6 | All XAUUSD, 0.01 lots. The fast-scalp market path is the only engine that trades. |
+| `[SCALP-PENDING]` | 0 | Batch 177's pending-recovery fix is on a path that has never run here. |
+| `[SIGNAL-REJECTED]` | 0 | Rejects are not being logged as rejections on this account. |
+| `AUTHORITY` | 1 | Only the "single risk authority" init text. Batch 173's ladder has produced no log on a live session yet. |
+| `ATR ratio crisis gate: 10.000` | 46 of 71 | See below — the cap was hiding the real ratio. |
+
+One grep artifact is worth recording so nobody re-chases it: `filter=true` appears 12 times, but it is `trend_filter=true` inside `[ENTERPRISE-CONFIG]`, not a filter event.
+
+#### Found and fixed: the fast-scalp budget was released while the position stayed open
+The same order-ticket/position-ticket mistake Batch 177 fixed for the grid is live on the one engine that trades. `FastScalpEntry.mqh:281` registered the new scalp under `CTradeManager::GetLastTicket()`, which returns `m_lastTradeResult.order` / `m_trade.ResultOrder()` — the **order** ticket. `CFastScalpPositionTracker` is keyed by **position** ticket. So on the next `ManageScalpPositions` call, `SyncScalpPositionTracking` did:
+
+1. `PositionSelectByTicket(orderTicket)` fails → `FreeScalpRiskBudget` finds the tracker slot, but `FreeForTicket` cannot select the ticket either, so `lotSize` stays 0.0, it falls through to `ReleaseFallback()` and subtracts a full `riskPerTrade` from `m_usedScalpRiskPct`;
+2. the same pass re-adds the position under its real ticket — with **no** `riskBudget.Add`, because that only happens at entry.
+
+Net effect: every scalp entry's budget contribution evaporated one tick after the fill, while the position was open. `PassesEntryGates` blocks on `usedScalpRiskPct >= config.scalpRiskPct` (tier `scalpBudgetPct`, default 3.0), so the aggregate scalp risk cap could only ever bind inside the entry tick itself. The `maxScalpPositions` cap still held because it counts live positions by comment, not the accumulator. No over-trading is evidenced on 23 September (6 × 0.01 XAUUSD would not have reached a 3% cap), so this is a defeated control, not a demonstrated loss.
+
+- **Fix**: the entry resolves the position ticket with `CTradeMgrPreflight::FindFreshPositionForSend` (symbol + direction + opened within 30 s + EA-owned magic) and registers *that*. If the position is not visible yet, nothing is registered — `SyncScalpPositionTracking` adopts it by position ticket on the next pass, and the budget the entry already consumed stays consumed. `[SCALP-ENTRY]` prints `ticket=0 | position not visible yet, sync will adopt it` in that case instead of a ticket that would be dropped.
+
+#### Fixed: `[AUTHORITY-GATE]` — the input that gated only a log line
+`InpEnableLiveAuthorityGate` defaults to **false** in both `MultiStrategyAutonomousEA.mq5:216` and `MultiStrategyTestingEA.mq5:228`, and its only consumer anywhere was `if(m_config.enableLiveAuthorityGate) Print("[INIT] LiveAuthorityResolver initialized")`. `m_liveAuthority.Resolve(...)` (`EAOrchestrator.mqh:3485`) and Batch 173's `ScaleLotByLiveAuthority` are called unconditionally, so the gate has run on every candidate for the life of the codebase while a default-configured session logged nothing about it. The init print is now unconditional and says what is wired: `[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=%s is not consulted by the sizing path`.
+
+**Not done, deliberately**: the flag is not being made to gate the sizing path. Turning "the input says off" into "the ladder stops shrinking lots" would let a chart with the saved default silently trade at full size, which is the opposite direction of every other fix here. If the operator wants a real kill switch for the authority gate, it should be built as one — with a loud log and a status report entry — not inherited from a line that never had an effect.
+
+#### Fixed: the ATR crisis gate logged a number it had already clamped
+`result.atrRatio = MathMin(atrValue / atrLongValue, 10.0)` ran *before* the veto message, so 46 of the 71 vetoes in the last session all printed `ATR ratio crisis gate: 10.000`. Those lines covered at least two different events: `ATR14 54.34286 / ATR50 5.13826` (10.58×, a real volatility spike) and `ATR14 3419.82571 / ATR50 7.93232` (**431×**, which is not a volatility reading — that is a data fault being treated as a crisis). The cap still governs the decision; the message now carries `raw %.3f` alongside it so the two are distinguishable. **Recorded, not fixed**: whether a 431× ATR14/ATR50 read can be rejected as bad data instead of vetoed as a crisis is a separate question, and fail-safe (no trade) is the correct side to be on until it is answered.
+
+#### Docs corrected
+- `RUNTIME_DECISION_GRAPH.md` claimed the validator "operates in `EXOGENOUS_ONLY` mode during normal runtime, limiting post-consensus checks" and that it "no longer re-judges … directional quality". Neither is true of the code: the arms run `spread_cutoff → exogenous_atr → quality → ofi → vpin`. The `EXOGENOUS_ONLY` text in a pre-Batch-175 journal is a stale log string, not a mode. The quality gate is documented as what it is: for a `FULL_QUORUM` packet its threshold is `max(0.40, directionalQuality * 0.9)`, self-satisfying above 0.40, so it only ever rejects below that absolute floor.
+- The Batch 78 bullet's `InpEnableLiveAuthorityGate=true` claim is annotated with the correction above.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings** (once with the log-only edits, once again after the scalp ticket fix).
+- Owed from the next attached session: `[AUTHORITY-GATE]`, `[ENGINE-STATUS]`, `[VALIDATOR-CONFIG]`, and the first `[SCALP-ENTRY] ... ticket=` carrying a position ticket.
+
 ### Batch 178: Three trading engines are enabled by their inputs and wired to nothing
 
 #### Context

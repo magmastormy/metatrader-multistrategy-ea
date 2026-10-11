@@ -322,6 +322,16 @@ If your logs show no grid, spike or ATR-scalp entries, that is the reason: they 
 
 Two items are therefore latent rather than live, and sit behind the same decision: grid level state is in-memory only (nothing to reconcile while the grid never trades), and the ATR-scalp magic band (`base + 7000 + symbolIndex`) overlaps the `ASSET_FOREX` asset offset — positions are separated today by send comments, not by magic.
 
+### Batch 179: what the last live session's logs actually said
+
+The terminal's own EA journals (`MQL5/Logs/`, UTF-16LE) for 17-23 September were read against the code. They are the first runtime evidence for Batches 168-178, and the newest is 23 September — this EA has not been attached to a chart since the October batches, so the new tags below cannot be evidenced from here yet.
+
+- **The live-authority gate has always run, whatever its input says.** `InpEnableLiveAuthorityGate` defaults to `false` in both `.mq5` files and gated exactly one init print; `Resolve()` and Batch 173's lot scaling are called unconditionally. Startup now prints `[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=false is not consulted by the sizing path`. The flag was **not** turned into a real switch: making "input off" mean "stop shrinking lots" would let a chart with the saved default quietly trade at full size.
+- **Scalp positions were tracked under the wrong ticket, and that released their risk budget early.** The fast-scalp entry registered the *order* ticket while the tracker is keyed by *position* ticket, so the next management pass dropped the slot, freed a full per-trade risk unit, and re-added the position without consuming anything. `usedScalpRiskPct >= scalpRiskPct` could therefore only ever bind inside the entry tick. The entry now resolves the position ticket (or leaves registration to the sync pass, with the budget left consumed). `maxScalpPositions` was unaffected — it counts live positions, not the accumulator.
+- **The ATR crisis gate logged a number it had already clamped.** 46 of the 71 vetoes in the last session printed `10.000`, covering both a 10.58× spike and a 431× reading that is a data fault, not volatility. The message now carries the raw ratio too. The veto itself still uses the capped value; treating a 431× read as bad data rather than a crisis is recorded, not guessed at.
+- **The journals confirm Batches 175 and 178 from the log side**: no `quality_gate`, `hard_spread_cutoff`, `ofi_*` or `vpin_*` lines ever appear (those arms had no configuration call site), and the grid / ATR-scalp / spike-hunter engines appear only as `Initialized`, `PARKED`, `Deinitialized` with `gridsOpened=0`.
+- **`RUNTIME_DECISION_GRAPH` no longer claims an `EXOGENOUS_ONLY` validator mode.** That string was a stale log label, not a mode: all five arms run. The quality gate is documented honestly as near-self-satisfying above its 0.40 absolute floor.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

@@ -260,16 +260,16 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
     result.atrReady = true;
     result.atrValue = atrValue;
     result.atrLongValue = atrLongValue;
-    result.atrRatio = atrValue / atrLongValue;
-    result.atrRatio = MathMin(result.atrRatio, 10.0);
+    double rawAtrRatio = atrValue / atrLongValue;
+    result.atrRatio = MathMin(rawAtrRatio, 10.0);
 
     // Crisis gate: ATR14/ATR50 above the symbol ceiling vetoes
     double atrCrisisThreshold = GetATRCrisisThreshold(symbol);
     if(result.atrRatio > atrCrisisThreshold)
     {
         exogenousPass = false;
-        exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > %.3f (ATR14 %.5f / ATR50 %.5f)",
-                                        result.atrRatio, atrCrisisThreshold, atrValue, atrLongValue);
+        exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > %.3f (ATR14 %.5f / ATR50 %.5f, raw %.3f)",
+                                        result.atrRatio, atrCrisisThreshold, atrValue, atrLongValue, rawAtrRatio);
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=atr_ratio | signal=%s conf=%.2f | %s",
                     symbol, EnumToString(signal), confidence, exogenousReason);
         return true; // Return true to let caller handle veto

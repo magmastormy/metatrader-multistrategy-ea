@@ -1530,10 +1530,9 @@ bool InitializeComponents()
 
     Print("[INIT] TradeExecutor initialized");
 
-    if(m_config.enableLiveAuthorityGate)
-    {
-        Print("[INIT] LiveAuthorityResolver initialized");
-    }
+    // Resolve() is called for every candidate regardless of this input; it gated only this log line.
+    PrintFormat("[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=%s is not consulted by the sizing path",
+                m_config.enableLiveAuthorityGate ? "true" : "false");
 
     if(!m_positionManager.Initialize(&m_tradeManager, NULL, &m_riskTierManager,
     &m_safeMode, &m_fullMarginMode, NULL,

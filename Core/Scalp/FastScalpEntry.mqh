@@ -278,7 +278,13 @@ public:
          riskBudget.Add(riskPerTrade);
 
          // Register the position for tick-level management
-         ulong ticket = tradeManager.GetLastTicket();
+         // Tracker slots are keyed by position ticket; GetLastTicket() is the order ticket, and the
+         // sync pass dropped such a slot and freed its risk budget while the position was still open.
+         ulong ticket = 0;
+         double filledVolume = 0.0;
+         bool positionVisible =
+             CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, filledVolume);
+
          double filledEntryPrice = tradeManager.GetLastRequestedPrice();
          double filledPoint = SymbolInfoDouble(symbol, SYMBOL_POINT);
          double filledSL = 0.0, filledTP = 0.0;
@@ -306,16 +312,18 @@ public:
                oneRPrice = filledEntryPrice - config.scalpSLPips * filledPoint;
          }
 
-         positionTracker.RegisterScalpPosition(ticket, symbol, filledEntryPrice, filledSL, filledTP, oneRPrice);
+         if(positionVisible)
+            positionTracker.RegisterScalpPosition(ticket, symbol, filledEntryPrice, filledSL, filledTP, oneRPrice);
 
-         PrintFormat("[SCALP-ENTRY] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | ticket=%I64u",
+         PrintFormat("[SCALP-ENTRY] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | ticket=%I64u%s",
                      symbol,
                      signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                      lotSize,
                      config.scalpSLPips,
                      config.scalpTPPips,
                      confidence,
-                     ticket);
+                     ticket,
+                     positionVisible ? "" : " | position not visible yet, sync will adopt it");
       }
 
       return result;

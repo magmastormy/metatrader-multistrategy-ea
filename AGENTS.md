@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-12
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 178 - `[ENGINE-STATUS]` reports at startup which scalp-class engines their inputs claim are ON but nothing ever ticks: spike-hunter, grid-recovery and ATR-scalp initialize, register symbols and deinit with no `ProcessTick` caller, so they open zero trades. Batch 177 gave the engine send paths fill confirmation and fixed the grid's order-vs-position ticket. Batch 176 removed dead configuration surface. Batch 175 plugged the post-consensus validator into its own configuration (OFI and VPIN screening had never run despite both inputs defaulting ON).
+- Latest Batch: Batch 179 - read the terminal's own EA journals (`MQL5/Logs/`, UTF-16LE, newest 2026-09-23) for the runtime evidence Batches 168-178 owed, and fixed what they exposed: the live fast-scalp entry tracked the **order** ticket in a **position**-ticket tracker, so the next sync pass released that trade's risk budget while the position stayed open. `[AUTHORITY-GATE]` now prints unconditionally because `InpEnableLiveAuthorityGate` gated only an init print while the resolver ran on every candidate, and the ATR crisis veto logs its uncapped ratio. Batch 178 `[ENGINE-STATUS]` names the scalp-class engines whose inputs claim ON but that nothing ever ticks. Batch 177 gave the engine send paths fill confirmation and fixed the grid's order-vs-position ticket.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
@@ -65,6 +65,9 @@ A valid AI-related change must include evidence of:
 - Avoid repeated `/config` launch loops for manual workflows.
 - Major changes ship straight to live; validate via compile + static review (AGENTS.md §3 invariants) and log-driven verification (§6) before deploy.
 
+### 5.3 Where runtime evidence actually lives
+Past sessions' logs are the terminal's own EA journals: `<terminal data dir>/MQL5/Logs/YYYYMMDD.log`, **UTF-16LE** — `iconv -f UTF-16LE -t UTF-8` before grepping or nothing matches. Check the newest file's date before claiming anything about "current" behavior; as of Batch 179 the latest journal was 2026-09-23, which means the October batches had never run. `[POST-CONSENSUS-FILTER] filter=true` in those files is `trend_filter=true` from `[ENTERPRISE-CONFIG]`, not a filter event.
+
 ## 6. Logging and Validation Checklist
 After any strategy/risk/execution change, verify:
 - `[HEARTBEAT]`
@@ -74,7 +77,9 @@ After any strategy/risk/execution change, verify:
 - `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or live trade result logs
 - `[POST-CONSENSUS-FILTER] filter=vpin_extreme | VETO` (if VPIN enabled; since Batch 174 the EXTREME regime vetoes entries at `InpVPINExtremeThreshold` instead of only shrinking the lot, and since Batch 175 the arm is actually switched on by its input)
 - `[VALIDATOR-CONFIG]` once per symbol at init (Batch 175: the validator's only configuration call site; if it is absent from a session log, no symbol has OFI/VPIN screening)
+- `[AUTHORITY-GATE]` once at init (Batch 179: the live-authority resolver runs on every risk-approved candidate; `InpEnableLiveAuthorityGate` gates nothing but this line, so do not read `false` as "authority off")
 - `[ENGINE-STATUS]` once at init (Batch 178: names the engines whose inputs say ON but that have no tick-loop caller, so they open no trades)
+- `[SCALP-ENTRY] ... ticket=` carrying a **position** ticket (Batch 179: an order ticket here means the tracker slot is dropped next pass and its risk budget released while the position is open)
 - `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` (only where a trade cannot be sized inside the per-trade cap at the broker minimum)
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
