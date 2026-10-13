@@ -1941,6 +1941,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     }
     // Strategies beyond strategyConfigCount will use defaults from GetIntrabarPolicy lambda
 
+    // These three inputs are read by the strategies' own Init, so they have to land before registration.
+    manager.SetStrategyConstructionInputs(m_config.candlestickRequireTrend,
+                                          m_config.enableMomentumScalping,
+                                          m_config.momentumScalpCooldownSeconds);
 
     manager.AutoRegisterStrategies(strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);

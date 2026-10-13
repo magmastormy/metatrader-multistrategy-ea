@@ -85,6 +85,20 @@ private:
     CStrategyMgrInfrastructure m_infra;
     CStrategyMgrTradeFeedback  m_tradeFeedback;      // magic ownership window + trade feedback
 
+    // Inputs a strategy's Init reads for itself, so they have to be applied before RegisterStrategy calls
+    // Init; the dependency pass that runs after registration is too late for these. Defaults are the
+    // values the strategy classes carry today, so an unset manager behaves as it did.
+    struct SConstructionInputs
+    {
+        bool candlestickRequireTrend;
+        bool momentumScalping;
+        int  momentumScalpCooldownSec;
+        SConstructionInputs() : candlestickRequireTrend(true), momentumScalping(false), momentumScalpCooldownSec(20) {}
+    };
+    SConstructionInputs m_constructionInputs;
+
+    void ConfigureBeforeInit(IStrategy* strategy, const string name);
+
     bool IsPositionIdStillOpen(const ulong positionId) const;
     int FindStrategyIndexByName(const string name) const;
     int FindAttributionIndexByPositionId(const ulong positionId) const;
@@ -344,6 +358,14 @@ public:
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum);
     void SetManagedMagicRangeMax(long rangeMax) { m_tradeFeedback.SetManagedMagicRangeMax(rangeMax); }
+    void SetStrategyConstructionInputs(const bool candlestickRequireTrend,
+                                       const bool momentumScalping,
+                                       const int momentumScalpCooldownSec)
+    {
+        m_constructionInputs.candlestickRequireTrend = candlestickRequireTrend;
+        m_constructionInputs.momentumScalping = momentumScalping;
+        m_constructionInputs.momentumScalpCooldownSec = momentumScalpCooldownSec;
+    }
     bool IsEAOwnedMagic(long magic) const;
     void SetQuorumThreshold(const double threshold);
     void SetIntrabarMinQuorum(int quorum);
@@ -626,6 +648,36 @@ void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyInd
     m_intrabarPolicy.SetStrategyIntrabarPolicyConfig(strategyIndex, policy);
 }
 
+// Catalog creators build each strategy bare, so the operator's per-strategy inputs have to be pushed here
+// rather than in the after-registration dependency pass.
+void CEnterpriseStrategyManager::ConfigureBeforeInit(IStrategy* strategy, const string name)
+{
+    if(strategy == NULL)
+        return;
+
+    if(name == "Candlestick")
+    {
+        CStrategyCandlestick* candlestick = dynamic_cast<CStrategyCandlestick*>(strategy);
+        if(candlestick != NULL)
+            candlestick.SetRequireTrendAlignment(m_constructionInputs.candlestickRequireTrend);
+        else
+            Print("[STRATEGY-CONFIG] Candlestick row did not yield a CStrategyCandlestick - InpCandlestickRequireTrend not applied");
+        return;
+    }
+
+    if(name == "Momentum")
+    {
+        CSimpleMomentumStrategy* momentum = dynamic_cast<CSimpleMomentumStrategy*>(strategy);
+        if(momentum != NULL)
+        {
+            momentum.SetScalpingMode(m_constructionInputs.momentumScalping,
+                                     m_constructionInputs.momentumScalpCooldownSec);
+        }
+        else
+            Print("[STRATEGY-CONFIG] Momentum row did not yield a CSimpleMomentumStrategy - its inputs were not applied");
+    }
+}
+
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig(int strategyIndex) const
 {
     //--- Out-of-range indexes fall back to INTRABAR_POLICY_OFF.
@@ -741,6 +793,7 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             PrintFormat("[CATALOG] creator returned NULL for %s", g_strategyCatalog[i].name);
             continue;
         }
+        ConfigureBeforeInit(s, g_strategyCatalog[i].name);
 
         //--- pIdx is this row's config-builder policy slot; CIntrabarPolicy's always-LIVE fallback is fixed to semantic slots 7/8.
         const int pIdx = CatalogPolicySlot(i);

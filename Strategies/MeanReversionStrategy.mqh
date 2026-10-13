@@ -7,6 +7,7 @@
 // Pre-trade gating: ValidateWithRiskManager() delegates to CUnifiedRiskManager. It returns true when
 // none was injected, but registration refuses such a strategy (StrategyRegistryState.mqh:122).
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/Instruments.mqh"
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
@@ -112,6 +113,10 @@ public:
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
+
+        // The synthetic branch (wider BB deviation, no RSI or volume filter) is a fact about the symbol,
+        // not an operator preference, and nothing set it: every synthetic index ran the FX path.
+        m_isSynthetic = IsSyntheticIndexSymbolName(symbol);
         
         m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
@@ -127,8 +132,9 @@ public:
                     return false;
                 }
         
-                PrintFormat("[MEANREV] Initialized | BB(%d,%.1f) | RSI(%d) | OB=%.1f | OS=%.1f",
-                           m_bbPeriod, m_bbDeviation, m_rsiPeriod, m_rsiOverbought, m_rsiOversold);
+                PrintFormat("[MEANREV] Initialized | BB(%d,%.1f) | RSI(%d) | OB=%.1f | OS=%.1f | path=%s",
+                           m_bbPeriod, m_bbDeviation, m_rsiPeriod, m_rsiOverbought, m_rsiOversold,
+                           m_isSynthetic ? "synthetic(1.5sigma+spike)" : "fx(bands+rsi+volume)");
         
                 return true;
     }

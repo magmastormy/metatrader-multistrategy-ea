@@ -507,6 +507,21 @@ public:
 
                 ValidateTimeframeSuitability();
 
+                // The suitability check above is advisory for trend-following and must be binding for
+                // scalping: outside M1-M15 the sustained-momentum branch would re-signal every cooldown on a
+                // timeframe the strategy itself calls unsuitable.
+                if(m_enableScalping && (m_timeframe < m_minScalpTimeframe || m_timeframe > m_maxScalpTimeframe))
+                {
+                    m_enableScalping = false;
+                    PrintFormat("[MOMENTUM] Scalping input ON but %s is outside the %s-%s band - trend-following mode, one signal per bar",
+                                EnumToString(m_timeframe), EnumToString(m_minScalpTimeframe), EnumToString(m_maxScalpTimeframe));
+                }
+
+                PrintFormat("[MOMENTUM] Effective mode=%s | TF=%s | scalpCooldown=%ds | sameBarGuard=%s",
+                            m_enableScalping ? "scalping" : "trend-following",
+                            EnumToString(m_timeframe), m_scalpCooldownSeconds,
+                            m_enableScalping ? "bypassed" : "active");
+
                 // The ATR floor is an absolute price value, so it must match the symbol scale
                 if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
                     m_minVolatility = 0.05; 

@@ -233,6 +233,17 @@ A strategy now needs five facts and no other call site:
 
 Registration, the registry definition, the enable gate, the intrabar policy and the consensus weight are all read from that row, so step 4 is the only place the name exists twice. Remove a strategy by deleting the lines carrying its `[CAT:]` anchor and its input. Two enumerations are not catalog-driven and are worth naming: `useCuratedStrategySet` force-enables a hard-coded twelve (Statistical Arbitrage stays out because it needs the Python bridge), and `BuildStrategyFlagsForSymbol` suppresses named strategies per symbol class. A row whose `registryType` is missing prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row` rather than trading nothing in silence, and a row whose `siIndex` is `-1` is registered for every symbol, which is what the AI adapter rows rely on.
 
+#### 2.2.3 Strategy construction has two authorities, and only one of them runs (Batch 194)
+
+| Path | Builds | Applies operator inputs | Live? |
+|---|---|---|---|
+| `CStrategyFactory::Create(name, cfg)` | AI adapters, keyed by `SStrategyDefinition.factoryName` | yes, from `SStrategyConfig` | yes, AI rows only |
+| `g_strategyCatalogCreators[i]()` | every indicator strategy | no — bare `new ClassName()` | yes |
+
+The factory still registers fourteen indicator creators and their `CreateMomentum` / `CreateCandlestick` / `CreateMeanReversion` bodies still call `SetScalpingMode` / `SetRequireTrendAlignment` / `SetSyntheticMode`, but no indicator row carries a `factoryName`, so those calls never ran and the inputs behind them were inert. `CEnterpriseStrategyManager::ConfigureBeforeInit(strategy, name)` is the live authority for the values a strategy's `Init` reads for itself, fed by `SetStrategyConstructionInputs` from the orchestrator's own pass that already sets intrabar policies. Anything injected *after* registration (Hurst, OU, VPIN, the Python bridge) stays in `WireAndValidateDependencies`.
+
+Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic` from `IsSyntheticIndexSymbolName(symbol)`, because the branch is a property of the symbol and its config field exists in no `SOrchestratorConfig` and no root `.mq5`.
+
 ### 2.3 Extracted Lifecycle Managers
 
 #### CPositionLifecycleManager

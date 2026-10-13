@@ -8,6 +8,35 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 194: three strategy inputs had no consumer, and one strategy never got its own symbol type
+
+#### Context
+Batch 193 made the catalog the registration authority. Reading what the catalog does *not* do exposed the mirror of that: `CStrategyFactory` still carries a per-strategy configuration path (`CreateMomentum` -> `SetScalpingMode`, `CreateCandlestick` -> `SetRequireTrendAlignment`, `CreateMeanReversion` -> `SetSyntheticMode`), and its only live call site is `EAOrchestrator.mqh:2488`, which passes `g_strategyCatalog[i].factoryName` - empty on every indicator row. Indicator strategies are built by `CatCreate_*`, which constructs them bare. So every input whose value travelled only through the factory config struct was inert, and the classes kept their constructor defaults instead.
+
+#### 1. Momentum's scalping mode never turned on (`Core/Management/EnterpriseStrategyManager.mqh`, `EAOrchestrator.mqh`, `Strategies/SimpleMomentumStrategy.mqh`)
+`InpEnableMomentumScalping` defaults to **true** and reaches `config.enableMomentumScalping`, which had no reader; `InpMomentumScalpCooldownSeconds` (20) likewise. The strategy has run trend-following on every symbol for its whole life. `ConfigureBeforeInit` now applies both before `Init`, because the mode is read inside `ValidateTimeframeSuitability`, which `Init` calls.
+The mode bypasses the one-signal-per-bar guard and enters on sustained momentum (`|fast-slow| > 1.5 x threshold`), so it is bounded rather than merely enabled: the strategy's own declared scalp band is M1-M15, and `ValidateTimeframeSuitability`'s result was discarded there. An out-of-band timeframe now refuses the mode and prints `[MOMENTUM] Scalping input ON but H1 is outside the M1-M15 band - trend-following mode, one signal per bar`. On charts above M15 this batch changes nothing for Momentum.
+
+#### 2. Candlestick was requiring a trend the operator switched off (`EnterpriseStrategyManager.mqh`)
+`InpCandlestickRequireTrend = false` -> `config.candlestickRequireTrend = false` -> never read, while `m_requireTrendAlignment` constructs to **true**. The flag is read in `Init` to decide whether to create the EMA50/EMA200 handles at all, so the post-registration dependency pass could not have applied it; `ConfigureBeforeInit` does, before `Init`. Counter-trend candlestick patterns become eligible on every symbol, which is what the input asked for since it was written.
+
+#### 3. Mean Reversion ran the FX path on synthetic indices (`Strategies/MeanReversionStrategy.mqh`)
+`SetSyntheticMode` had one caller (the dead factory creator), and its source field `meanReversionSyntheticMode` exists in no `SOrchestratorConfig` and no root `.mq5` - so `m_isSynthetic` was false everywhere and `GetSignal()` never reached `GetSignalSynthetic()`, the 1.5-sigma-band + spike branch that Batch 155 had already repaired bar-by-bar. Synthetic indices were being read with Bollinger(20, 2.0) + RSI + tick-volume filters designed for FX liquidity. This is a property of the symbol, not an operator preference, so `Init` now derives it: `m_isSynthetic = IsSyntheticIndexSymbolName(symbol)`, and `[MEANREV] Initialized ... path=synthetic(1.5sigma+spike)|fx(bands+rsi+volume)` states per symbol which branch it took. The synthetic branch creates its own BB handle lazily and fails closed on every data gap, so it needed no other wiring.
+
+#### 4. Recorded, deliberately not wired: `InpTrendADXNoTrendThreshold`
+The factory would have called `SetADXThresholds(12.0, 20, 25, 35)` on every symbol. `CStrategyTrend::Init` treats `m_adxNoTrendThreshold <= 0` as "use `m_adxSizing.InitForAssetClass(...)`", which tunes the four thresholds per asset class - the file's own comment says they are "lowered for synthetic CFDs". Passing the constant would replace per-symbol tuning with one number everywhere, which is a downgrade dressed as a wire-up. It is also unobservable-as-broken: `Init` prints `[TREND v2.1] ADX thresholds applied | Symbol=... | Source=ASSET_CLASS`, so the inert input is already visible in every session log. Left as is.
+
+#### Also recorded, not changed
+`CStrategyCandlestick`/`CSimpleMomentumStrategy`-style `GetStrategyType()` accessors exist on exactly two classes - `LiquiditySweepStrategy.mqh:470` returns `STRATEGY_UNIFIED_ICT` and `RangeCompressionBreakout.mqh:411` returns `STRATEGY_MOMENTUM` - and nothing in the repository calls the method: it is on no interface and has no call site. That made it look like a second strategy identity feeding magic allocation and cluster weighting alongside the catalog's `registryType`. It does not; both are dead accessors, and `STRATEGY_UNIFIED_ICT`'s enum value is genuinely load-bearing only in `ConsensusEngine.mqh:450` and `MagicNumberAllocator.mqh:295`. Left alone.
+
+#### Risk direction
+Items 2 and 3 change which signals strategies submit, not how much any signal is allowed to trade: consensus still needs two independent voters, the post-consensus validator arms are unchanged, and every entry still passes `CUnifiedRiskManager` on its final lot (Batch 190). Item 1 can raise Momentum's re-signalling rate inside M1-M15 only, and only while its own cooldown is the binding limit.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings.
+- No runtime evidence yet (newest journal 2026-09-23). What the first attached session should show: `[MEANREV] Initialized ... path=synthetic` on each synthetic index and `path=fx` on forex; `[MOMENTUM] Effective mode=scalping ... sameBarGuard=bypassed` on M1-M15 charts and `mode=trend-following` with the band-refusal line above that everywhere else; Candlestick registrations that no longer create EMA50/EMA200 handles.
+
+
 ### Batch 193: Five defects that were suppressing valid entries, including one strategy that could never register
 
 #### Context

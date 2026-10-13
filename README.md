@@ -363,6 +363,17 @@ No risk ceiling moved in this batch. Each item was a control that did not behave
 
 Expect more entries at the same risk per trade: a wider stop shrinks the lot, and the per-trade cap, the daily and portfolio budgets and the final lot gate are unchanged.
 
+### Batch 194: strategy inputs that reached no strategy
+
+The strategies are built by catalog creators that construct them bare. `CStrategyFactory` still holds a per-strategy configuration path, but its only live call site passes the AI rows' factory name, so anything whose value travelled through the factory config struct was inert - the class kept its constructor default instead of the operator's input.
+
+- **Momentum's scalping mode never switched on.** `InpEnableMomentumScalping` defaults to true and had no reader, so the strategy has run trend-following everywhere its whole life. It is now applied before `Init`, and bounded: the strategy declares M1-M15 as its scalp band and used to ignore that check's result, so an out-of-band chart now prints `[MOMENTUM] Scalping input ON but H1 is outside the M1-M15 band - trend-following mode, one signal per bar` and keeps the one-signal-per-bar guard. `InpMomentumScalpCooldownSeconds` is live with it.
+- **Candlestick was requiring a trend the operator had switched off.** `InpCandlestickRequireTrend = false` reached nothing while the class defaulted to requiring alignment; the flag is read in `Init` (it decides whether the EMA50/200 handles exist at all), so it is applied before `Init` now. Counter-trend candlestick patterns become eligible.
+- **Mean Reversion never learned its symbol was synthetic.** `SetSyntheticMode` had one caller, in that dead factory path, and its source field exists in no config struct and no `.mq5` - so every synthetic index ran the Bollinger+RSI+tick-volume branch built for FX liquidity. `Init` now derives it from the symbol and prints which path it took: `[MEANREV] Initialized ... path=synthetic(1.5sigma+spike)` or `path=fx(bands+rsi+volume)`.
+- **`InpTrendADXNoTrendThreshold` stays unwired, on purpose.** With a value it would replace `CStrategyTrend`'s per-asset-class ADX tuning with one constant on every symbol. The strategy already logs `Source=ASSET_CLASS` at init, so the inert input is visible rather than silently wrong.
+
+None of this moves a risk limit: consensus still requires two independent voters, the validator arms are unchanged, and every entry still passes `CUnifiedRiskManager` on its final lot.
+
 ## AI Integration
 
 The EA supports three AI operating modes:
