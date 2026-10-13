@@ -8,6 +8,46 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 190: The risk gate was validating a lot the EA never traded
+
+#### Context
+Batch 189's comment pass over the candidate builder and the risk pipeline surfaced seven defects, all of the same family: a gate that cannot reject, a value tested against itself, or a decision made about a lot that is not the one shipped. This batch fixes them. The three files it touches also carry their Batch 189 comment reductions (108 -> 40 in `CandidateBuilder.mqh`, 87 -> 62 in `RiskValidationPipeline.mqh`, 53 -> 42 in `MeanReversionStrategy.mqh`), which is why they were held back from the hygiene commit.
+
+#### 1. The gate now sees the real lot (`Core/Orchestration/CandidateBuilder.mqh`)
+`BuildCandidate` filled `tradeReq.lotSize` with `SYMBOL_VOLUME_MIN` and called `ValidateTradeRequest` before `CalculatePositionSizeWithRisk` ran, so the portfolio, correlation, daily-budget and margin decisions inside the gate were all evaluated for a 0.01-lot trade while the candidate shipped whatever the sizer and modifiers produced. The file's own comment admitted the shipped lot "can carry several times the proposed risk with no gate behind it"; the post-size clamp only checked `GetEffectiveRiskPerTrade`, one of about twenty gates.
+
+The single `ValidateTradeRequest` call now runs at the end, against `candidate.lotSize` after the per-trade cap clamp. It moved rather than being added because each approval keeps a virtual reservation until its TTL and the reservation tag carries a microsecond, so a second call would have double-counted this candidate's risk in the portfolio and daily-budget gates. Refusals print `[RISK-GATE-REJECT] ... reason=final_lot_validation`. When the gate approves but returns a smaller `adjustedLotSize`, that lot is floored to the volume step and adopted with `[RISK-GATE-ADJUST]`; if it cannot be expressed above the broker minimum the candidate is refused rather than rounded up. Adoption is shrink-only: the pipeline can raise `adjustedLotSize` to the broker minimum, and taking that back would ship more than the sizing decided.
+
+Consequence to watch on the first live session: consensus entries that previously passed on a 0.01-lot evaluation may now be refused at their true size. Every such refusal is logged.
+
+#### 2. ATR actually reaches stop distance (`CandidateBuilder.CalculateStops`)
+`atrValue` was hard-wired to 0 next to a comment saying it "would be passed in real implementation", so the ATR branch never ran and every candidate without strategy-proposed stops took its stop from `max(30 points, 0.3% of price)` - volatility-blind. It now reads ATR(14) on the current timeframe through `CTradeMgrPricing::CalculateATR`, which uses the shared `CIndicatorManager` handle cache and creates no handle per call; a 0.0 return (no cache, no data) leaves the fixed band in charge exactly as before. The unused `CUnifiedSignalPipeline* pipeline = NULL` declaration went with it.
+
+#### 3. The minimum-stop floor is compared in one unit (`CandidateBuilder.CalculateStops`)
+`GetMinimumStopDistance()` answers in price units (`TradeMgrPricing.mqh:209` returns `requiredPoints * point`) but was MathMaxed against raw `SYMBOL_TRADE_STOPS_LEVEL` points, so it was about 100,000 times too small on a 5-digit FX symbol and the broker's spread-folded minimum never bound. It is divided by `point` now.
+
+#### 4. Correlation REDUCE can no longer approve a zero lot (`Core/Risk/RiskValidationPipeline.mqh`)
+`MathFloor(lot * reduceFactor / step)` lands on 0 steps for a min-lot position at factor 0.25. The result stayed approved with `adjustedLotSize = 0.0`, and both consumers adopt it only when `> 0.0` (`FastScalpEntry.mqh:86`, `:186`) - so the trade went out at the full lot with the correlation discount silently gone, and the risk recompute at `:703` was skipped because it too tests `> 0.0`. The branch now refuses with `[RISK-GATE-REJECT] ... reason=correlation_reduce_below_min_lot`, releases the virtual reservation and logs the JSON event.
+
+#### 5. The over-max-volume check can reject (`RiskValidationPipeline.ValidateBasicParameters`)
+A lot above `SYMBOL_VOLUME_MAX` printed "caller must cap" and fell through to approval. It now returns false with both values in the message; the guard is `maxLot > 0.0` so a symbol that reports no maximum is not vetoed by an absent limit.
+
+#### 6. The validator quality floor is no longer derived from the value it tests (`Core/Management/PostConsensusValidator.mqh`)
+`GetAdaptiveQualityThreshold` returned `max(0.40, ctx.directionalQuality * 0.9)` for FULL_QUORUM and `max(0.45, ctx.directionalQuality * 0.85)` for SPARSE_INTRABAR, and the caller compared that to the same `ctx.directionalQuality`. Since `0.9 * q < q` always, those two arms could only ever reject below the hard-coded constants, so `InpValidatorNewBarMinQuality = 0.68` and `InpValidatorIntrabarMinQuality = 0.70` were inert for the two classes that carry most entries. The class discount now applies to the configured floor: the effective floors become 0.612 (new bar) and 0.63 / 0.595 (intrabar) instead of 0.40 / 0.45. This tightens entries; the veto already prints `[POST-CONSENSUS-FILTER] ... filter=quality_gate | class=... | quality=... threshold=...`, so the change is countable from the journal.
+
+#### 7. The mean-reversion strategy stopped releasing a handle it does not own (`Strategies/MeanReversionStrategy.mqh`)
+`Cleanup()` called `IndicatorRelease` on `m_stochHandle`, which `Init` takes from `CIndicatorManager::GetStochasticHandle` - the line above it said the manager owns these and never to release them here. `CIndicatorManager::DestroyInstance()` releases the same handle on deinit (AGENTS.md 3.5), so it was released twice and the shared handle died for every other holder of that symbol/timeframe Stochastic. Now only the field is cleared. The same pattern was checked repo-wide: `LiquiditySweepStrategy`, `RangeCompressionBreakout` and `TrendEntryTypes` also release handles, but they create them with `iATR`/`iBands`/`iMA` directly, so those are correct and were left alone.
+
+#### Deliberately not changed
+- `ResolveLiveAuthority` in the builder stays a stub that always authorizes; the orchestrator overwrites the three fields from `CLiveAuthorityResolver`, so deleting the call would be churn with no risk effect.
+- `ApplyDrawdownScaling`'s `floorMult <= m_minLotRiskMultiplier` guard is a tautology (`floorMult < 1.0` by construction), but the resulting lot is still below the lot the caller sized, so the round-up to broker minimum cannot exceed the pre-scaling risk. `[RISK-ADAPT]` logs it.
+- The double approval bookkeeping inside one `Run()` (`:513-516` and `:774-777`), the BID-for-BUY netting re-price, and the unused `GetLastBlockReason()` are recorded, not touched: none changes a lot size or a veto.
+
+#### Verification
+- Compile: 8 root programs, 0 errors / 0 warnings.
+- No runtime evidence yet: the newest terminal journal on this machine is 2026-09-23, so nothing after Batch 172 has been observed live. The new `[RISK-GATE-ADJUST]`, `reason=final_lot_validation`, `reason=correlation_reduce_below_min_lot` and the tightened `filter=quality_gate` line are the first things to look for when the EA is next attached.
+- Expected direction of change: fewer and smaller consensus entries, never larger.
+
 ### Batch 189: Comment reduction in the consensus engine, correlation engine and momentum strategy - 76 lines net, and the reading found dead paths
 
 #### Context

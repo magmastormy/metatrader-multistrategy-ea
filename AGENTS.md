@@ -3,7 +3,7 @@
 ## Document Metadata
 - Last Updated: 2026-10-14
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 189 - comment reduction in `ConsensusEngine`/`CorrelationEngine`/`SimpleMomentumStrategy`/`StrategyBase` (76 lines net, non-comment streams byte-identical to HEAD). Reading them found dead surface, not just stale prose: `EvaluateConsensusProbeOnlyInternal` and the fallback-solo path have no caller, the correlation engine's refresh/reset/cluster helpers have no caller outside the file and its thresholds are stored and never compared. The same round's pass over `CandidateBuilder`, `RiskValidationPipeline` and `MeanReversionStrategy` found seven live defects, and those files commit with Batch 190 so the fixes do not ride in a hygiene commit. Batch 188 cut 181 comments and confirmed two dead attribution chains; Batch 187 made the hedging gate able to refuse.
+- Latest Batch: Batch 190 - the pre-trade risk gate ran on `SYMBOL_VOLUME_MIN`, before the real lot was computed, so portfolio/correlation/budget/margin decisions were made about a 0.01-lot trade and `adjustedLotSize` had no consumer on the consensus path; the single `ValidateTradeRequest` call now runs last against `candidate.lotSize` (one call, not two: an approval keeps a virtual reservation until its TTL). Also fixed: correlation REDUCE approving a 0.0 lot (consumers ignore zero, so the discount vanished), a max-volume check that could not reject, a validator quality floor derived from the value it tested (making `InpValidatorNewBarMinQuality`/`InpValidatorIntrabarMinQuality` inert), `atrValue` hard-wired to 0 in `CalculateStops`, a price-unit stop floor compared against points, and `IndicatorRelease` on a `CIndicatorManager`-owned shared handle. Batch 189 reduced 76 comments in `ConsensusEngine`/`CorrelationEngine`/`SimpleMomentumStrategy` and found the dead surface those reads exposed.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
@@ -81,6 +81,9 @@ After any strategy/risk/execution change, verify:
 - `[ENGINE-STATUS]` once at init (Batch 178: names the engines whose inputs say ON but that have no tick-loop caller, so they open no trades)
 - `[SCALP-ENTRY] ... ticket=` carrying a **position** ticket (Batch 179: an order ticket here means the tracker slot is dropped next pass and its risk budget released while the position is open)
 - `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` (only where a trade cannot be sized inside the per-trade cap at the broker minimum)
+- `[RISK-GATE-REJECT] ... reason=final_lot_validation | reason=adjusted_lot_below_min | reason=correlation_reduce_below_min_lot` (Batch 190: the unified risk gate now runs on the lot the candidate actually ships, so entries that once passed on a 0.01-lot evaluation can now be refused)
+- `[RISK-GATE-ADJUST] ... lot=A -> B | risk=x% -> y%` (Batch 190: the gate approved but asked for a smaller lot, and the builder adopted it)
+- `[POST-CONSENSUS-FILTER] filter=quality_gate ... quality=... threshold=...` (since Batch 190 the threshold derives from the configured floor, not from the quality being tested, so `InpValidatorNewBarMinQuality` / `InpValidatorIntrabarMinQuality` actually bind — expect more of these lines, not fewer)
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
 - `[COMPOUNDING-TIER-MILESTONE]` (on account milestone crosses)

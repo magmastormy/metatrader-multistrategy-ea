@@ -332,6 +332,16 @@ The terminal's own EA journals (`MQL5/Logs/`, UTF-16LE) for 17-23 September were
 - **The journals confirm Batches 175 and 178 from the log side**: no `quality_gate`, `hard_spread_cutoff`, `ofi_*` or `vpin_*` lines ever appear (those arms had no configuration call site), and the grid / ATR-scalp / spike-hunter engines appear only as `Initialized`, `PARKED`, `Deinitialized` with `gridsOpened=0`.
 - **`RUNTIME_DECISION_GRAPH` no longer claims an `EXOGENOUS_ONLY` validator mode.** That string was a stale log label, not a mode: all five arms run. The quality gate is documented honestly as near-self-satisfying above its 0.40 absolute floor.
 
+### Batch 190: the risk gate now prices the trade you are actually sending
+
+The pre-trade gate used to be called before the position was sized, with `lotSize` set to the broker minimum, and the real lot was computed afterwards. Twenty-odd checks inside it — portfolio exposure, the correlation tiers, the daily risk budget, margin, cluster governance — were therefore voting on a 0.01-lot trade while the candidate shipped whatever the sizer, the daily-budget cap, the drawdown and momentum scalers and the min-lot round-up produced. The file's own comment said the shipped lot "can carry several times the proposed risk with no gate behind it"; only the per-trade cap clamp looked at the real size.
+
+- **What changed:** `ValidateTradeRequest` now runs once, at the end, against `candidate.lotSize`. It moved rather than being added because each approval keeps a virtual reservation until its TTL, so two calls would count the same trade twice.
+- **What to expect on the first session:** fewer and smaller consensus entries, never larger. Refusals are countable: `[RISK-GATE-REJECT] ... reason=final_lot_validation`, `reason=adjusted_lot_below_min`, `reason=correlation_reduce_below_min_lot`, and `[RISK-GATE-ADJUST] symbol | lot=A -> B | risk=x% -> y% | reason` when the gate asked for less and got it.
+- **Three gates that could not refuse now can:** a correlation reduction that cannot be expressed above the broker minimum used to approve the full lot with the discount silently gone; a lot above `SYMBOL_VOLUME_MAX` printed "caller must cap" and returned approval; the validator's quality floor was derived from the very quality being compared, so `InpValidatorNewBarMinQuality=0.68` / `InpValidatorIntrabarMinQuality=0.70` did nothing for the two consensus classes that carry most entries. That last one tightens entries: the floors become 0.612 / 0.63 / 0.595 instead of 0.40 / 0.45.
+- **Stop distance is volatility-aware and unit-consistent:** `atrValue` was hard-wired to 0, so the ATR branch in `CalculateStops` never ran; ATR(14) now comes from the shared indicator cache. The broker minimum stop was compared in price units against point counts, roughly 100,000x too small on 5-digit FX, so the spread-folded floor never bound.
+- **One lifecycle bug:** `CMeanReversionStrategy::Cleanup()` released a Stochastic handle owned by `CIndicatorManager`, which releases it again in `DestroyInstance()` — the call AGENTS.md §3.5 requires. Shared handles now stay with their owner; handles a strategy creates itself are still released by that strategy.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

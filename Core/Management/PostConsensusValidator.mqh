@@ -467,11 +467,14 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
 
     switch(decisionClass)
     {
+        // The class discount applies to the configured floor. Deriving it from ctx.directionalQuality
+        // made the comparison self-referential: 0.9*q is always below q, so those two arms could only
+        // ever reject below the hard-coded constants and InpValidator*MinQuality was inert for them.
         case CONSENSUS_DECISION_FULL_QUORUM:
-            return MathMax(0.40, ctx.directionalQuality * 0.9);
+            return MathMax(0.40, baseThreshold * 0.9);
 
         case CONSENSUS_DECISION_SPARSE_INTRABAR:
-            return MathMax(0.45, ctx.directionalQuality * 0.85);
+            return MathMax(0.45, baseThreshold * 0.85);
 
         case CONSENSUS_DECISION_MARGINAL_ADMIT:
             return 0.65;

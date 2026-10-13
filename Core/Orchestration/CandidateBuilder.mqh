@@ -16,7 +16,6 @@
 #include "../../Core/Utils/JsonLogger.mqh"
 #include "../../Core/Utils/Instruments.mqh"
 
-// Trade candidate structure - global for cross-class usage
 struct STradeCandidate
 {
     string symbol;
@@ -67,14 +66,13 @@ private:
     CPerformanceAnalytics*      m_performanceAnalytics;
     CDerivAssetProfiler*        m_derivProfiler;
     
-    // Additional managers from EAOrchestrator Initialize call
+    // Stored from Initialize(); no method in this class reads any of these five.
     CRiskTierManager*           m_riskTierManager;
     CCompoundingTierManager*    m_compoundingTierManager;
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;
     CSessionWeightManager*      m_sessionWeightManager;
     CSkewStepAnalyzer*          m_skewStepAnalyzer;
     
-    // Config
     double                      m_minRRDefault;
     double                      m_minRRMeanReversion;
     double                      m_maxRiskPerTrade;
@@ -85,22 +83,18 @@ private:
     int                         m_maxPositionsPerSymbol;
     int                         m_portfolioMaxPositionsPerSymbol;
     
-    // Cluster-specific minRR
     double                      m_minRRByCluster[];
     
         int                         m_hybridGateRelaxAfterCycles;
         double                      m_aiStandaloneMinConfidence;
         double                      m_aiStandaloneRelaxedConfidence;
-        // Per-symbol cycle tracking for hybrid gate relaxation
         string                      m_symbolCyclesSinceIndicator[];
         int                         m_symbolCyclesSinceIndicatorValues[];
         int                         m_symbolCycleCount;
-        // Per-symbol hybrid gate relaxed state (L3-014 fix)
         string                      m_symbolHybridGateRelaxedKeys[];
         bool                        m_symbolHybridGateRelaxedValues[];
         int                         m_symbolHybridGateRelaxedCount;
     
-    // Helper: check if contributors include indicator strategies
     bool ContributorsIncludeIndicator(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
@@ -119,7 +113,6 @@ private:
         return false;
     }
     
-    // Helper: count indicator contributors
     int CountIndicatorContributors(const string &contributors[])
     {
         int count = 0;
@@ -139,7 +132,6 @@ private:
         return count;
     }
 
-    // Helper: Get cycles since indicator signal for a specific symbol
     int GetCyclesSinceIndicatorSignal(const string &symbol)
     {
         for(int i = 0; i < m_symbolCycleCount; i++)
@@ -150,10 +142,8 @@ private:
         return 0; // Not found, return 0
     }
 
-    // Helper: Set cycles since indicator signal for a specific symbol
     void SetCyclesSinceIndicatorSignal(const string &symbol, int cycles)
     {
-        // Find existing entry
         for(int i = 0; i < m_symbolCycleCount; i++)
         {
             if(m_symbolCyclesSinceIndicator[i] == symbol)
@@ -162,24 +152,20 @@ private:
                 return;
             }
         }
-        // Add new entry if space available
         if(m_symbolCycleCount < ArraySize(m_symbolCyclesSinceIndicator))
         {
             m_symbolCyclesSinceIndicator[m_symbolCycleCount] = symbol;
             m_symbolCyclesSinceIndicatorValues[m_symbolCycleCount] = cycles;
             m_symbolCycleCount++;
         }
-        // If array is full, we could implement LRU eviction, but for now just skip
     }
 
-    // Helper: Increment cycles since indicator signal for a specific symbol
     void IncrementCyclesSinceIndicatorSignal(const string &symbol)
     {
         int currentCycles = GetCyclesSinceIndicatorSignal(symbol);
         SetCyclesSinceIndicatorSignal(symbol, currentCycles + 1);
     }
 
-    // Helper: Get hybrid gate relaxed state for a specific symbol
     bool GetHybridGateRelaxed(const string &symbol)
     {
         for(int i = 0; i < m_symbolHybridGateRelaxedCount; i++)
@@ -190,10 +176,8 @@ private:
         return false; // Not found, default to false
     }
 
-    // Helper: Set hybrid gate relaxed state for a specific symbol
     void SetHybridGateRelaxed(const string &symbol, bool relaxed)
     {
-        // Find existing entry
         for(int i = 0; i < m_symbolHybridGateRelaxedCount; i++)
         {
             if(m_symbolHybridGateRelaxedKeys[i] == symbol)
@@ -202,7 +186,6 @@ private:
                 return;
             }
         }
-        // Add new entry if space available
         if(m_symbolHybridGateRelaxedCount < ArraySize(m_symbolHybridGateRelaxedKeys))
         {
             m_symbolHybridGateRelaxedKeys[m_symbolHybridGateRelaxedCount] = symbol;
@@ -211,13 +194,11 @@ private:
         }
     }
 
-    // Batch 173: a symbol that repeatedly lands under SYMBOL_VOLUME_MIN after a shrink looks merely
-    // quiet in the log. These counters carry it into the periodic status report as a refusal count.
+    // Symbols the live-authority ladder sizes under SYMBOL_VOLUME_MIN, counted for the status report.
     string m_authorityBlockSymbols[];
     int    m_authorityBlockCounts[];
     int    m_authorityBlockedTotal;
-    // Kept separately because GetStatusReport() is const and ArraySize() binds its argument by
-    // reference, so the const path cannot ask the array how long it is.
+    // Count kept separately: GetStatusReport() is const and ArraySize() binds its argument by reference.
     int    m_authorityBlockSymbolsCount;
 
     int NoteAuthorityBlock(const string symbol)
@@ -256,10 +237,8 @@ public:
             {
             ArrayResize(m_minRRByCluster, 10);
             ArrayInitialize(m_minRRByCluster, 2.0);
-            // Cluster-specific overrides
             m_minRRByCluster[MEAN_REVERSION_CLUSTER] = 1.5;
         
-            // Initialize per-symbol cycle tracking arrays
             ArrayResize(m_symbolCyclesSinceIndicator, 50);
             ArrayResize(m_symbolCyclesSinceIndicatorValues, 50);
             for(int _i = 0; _i < 50; _i++)
@@ -268,7 +247,6 @@ public:
                 m_symbolCyclesSinceIndicatorValues[_i] = 0;
             }
 
-            // Initialize per-symbol hybrid gate relaxed state arrays (L3-014 fix)
             ArrayResize(m_symbolHybridGateRelaxedKeys, 50);
             ArrayResize(m_symbolHybridGateRelaxedValues, 50);
             for(int _j = 0; _j < 50; _j++)
@@ -279,15 +257,10 @@ public:
         }
     
     
-    // Batch 173: the live-authority ladder now sets the shipped lot. It is shrink-only by
-    // construction - the score ladder tops out at 1.0 and both the bootstrap cap and the
-    // PROVEN_AI floor can only pull it down - so no candidate can be sized larger than the risk
-    // manager approved.
-    // Floor to SYMBOL_VOLUME_STEP by hand rather than calling CPositionSizer::NormalizeVolume:
-    // that helper clamps UP to SYMBOL_VOLUME_MIN, which would return the entire reduction and
-    // leave the gate logging a shrink that never happened. A lot that lands under the broker
-    // minimum is therefore refused, and the refusal is loud and counted.
-    // Returns false when the candidate must not be sent.
+    // Shrink-only against the approved lot: the authority ladder tops out at 1.0 and the PROVEN_AI
+    // promotion floor is capped at 0.75, so nothing here sizes a candidate larger.
+    // Floors to SYMBOL_VOLUME_STEP by hand because CPositionSizer::NormalizeVolume clamps UP to
+    // SYMBOL_VOLUME_MIN, which would return the whole reduction; a lot under broker min is refused.
     bool ScaleLotByLiveAuthority(STradeCandidate &candidate, const double riskMult, const string corrId)
     {
         string symbol = candidate.symbol;
@@ -339,9 +312,8 @@ public:
             CJsonLogger::LogInfo("AuthorityDecision",
                                  StringFormat("AUTHORITY_REDUCED symbol=%s mult=%.2f lot=%.4f->%.4f", symbol, riskMult, baseLot, scaled),
                                  corrId);
-            // Booked risk has to follow the lot: EAOrchestrator feeds candidate.riskPercent into
-            // RegisterExecutedTradeRisk, so leaving it at the pre-shrink value would charge the
-            // daily entry budget for risk the position never took.
+            // candidate.riskPercent feeds EAOrchestrator's RegisterExecutedTradeRisk, so it must
+            // follow the shrunk lot or the daily budget is charged for risk never taken.
             candidate.riskPercent = newRiskPct;
             candidate.lotSize = scaled;
         }
@@ -360,7 +332,6 @@ public:
         m_derivProfiler = derivProf;
     }
     
-    // Initialize with all dependencies from EAOrchestrator (7 parameters)
     bool Initialize(CPositionSizer* sizer, CUnifiedRiskManager* risk,
                     CRiskTierManager* riskTierMgr, CCompoundingTierManager* compoundingTierMgr,
                     CFamilyStrategyWeightMatrix* familyWeightMatrix,
@@ -396,7 +367,6 @@ public:
         m_aiStandaloneRelaxedConfidence = aiRelaxedConf;
     }
     
-    // Build candidate from validated signal
         bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
                             int confluence, const SConsensusDecisionContext& ctx,
                             CEnterpriseStrategyManager* manager, ulong scanCycleId,
@@ -414,7 +384,6 @@ public:
         candidate.costScore = ctx.costScore;
         candidate.requestTime = TimeCurrent();
         
-        // Get execution context from manager
         string roleTag = "PRIMARY_ALPHA", clusterTag = "NONE", clusterCode = "N", contribSummary = "";
         string contributorsList[];
         manager.GetLastSignalExecutionContext(roleTag, clusterTag, clusterCode, contribSummary);
@@ -430,7 +399,6 @@ public:
         candidate.hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
         candidate.indicatorContributorCount = CountIndicatorContributors(contributorsList);
         
-        // Handle hybrid gate relaxation (L3-014: per-symbol tracking)
                         int cyclesSinceIndicator = GetCyclesSinceIndicatorSignal(symbol);
                         bool hybridGateRelaxed = GetHybridGateRelaxed(symbol);
 
@@ -438,7 +406,6 @@ public:
                                                 {
                                                     if(hybridGateRelaxed)
                                                     {
-                                                        // Log with correlation ID
                                                         if(corrId != "")
                                                         {
                                                             CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate restored - indicator signal detected", "HYBRID_GATE_RESTORED", symbol, corrId, 
@@ -453,7 +420,6 @@ public:
                                                 else if(cyclesSinceIndicator > m_hybridGateRelaxAfterCycles && !hybridGateRelaxed)
                                                 {
                                                     SetHybridGateRelaxed(symbol, true);
-                                                    // Log with correlation ID
                                                     if(corrId != "")
                                                     {
                                                         CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate relaxed - no indicator signals", "HYBRID_GATE_RELAXED", symbol, corrId, 
@@ -463,16 +429,13 @@ public:
                                                                 symbol, cyclesSinceIndicator, m_aiStandaloneMinConfidence, m_aiStandaloneRelaxedConfidence);
                                                 }
         
-                // Increment cycle counter for this symbol if no indicator signal
                 if(!candidate.hasIndicatorContributor)
                 {
                     IncrementCyclesSinceIndicatorSignal(symbol);
                 }
 
-        // Batch 174: the EA-mode admission stub here was deleted. It returned true with a zero
-        // confidence bonus for every candidate, so the rejection branch and the bonus were both
-        // unreachable. CLiveAuthorityResolver owns mode admission (INDICATOR_ONLY / AI_ONLY
-        // vetoes) and runs after this point.
+        // Mode admission (INDICATOR_ONLY / AI_ONLY vetoes) is CLiveAuthorityResolver's, run by
+        // EAOrchestrator after BuildCandidate returns.
         
         candidate.entryPrice = (signal == TRADE_SIGNAL_BUY) 
             ? SymbolInfoDouble(symbol, SYMBOL_ASK) 
@@ -481,11 +444,7 @@ public:
         if(candidate.entryPrice <= 0)
             return false;
         
-        // Calculate SL/TP
-        // FINDING 0 (STRATEGY_AUDIT_2026-08-14): when InpUseStrategyStops is
-        // enabled, prefer the consensus strategy's designed SL/TP (pips) over the
-        // generic fallback. Now ENABLED for LIVE (shadow mode removed 2026-08-14);
-        // the generic fallback only applies when no consensus proposal exists.
+        // InpUseStrategyStops (EA default true) prefers the strategy's designed SL/TP, quoted in pips.
         double propSL = 0.0, propTP = 0.0;
         bool useStratStops = (::InpUseStrategyStops) && manager.GetConsensusProposedStops(signal, propSL, propTP);
         if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
@@ -497,7 +456,6 @@ public:
         if(!CheckAccountCapacity(symbol, candidate))
             return false;
         
-        // Determine risk
         double requestedRisk = m_riskManager.GetActiveRiskPerTradePercent();
         if(requestedRisk <= 0) requestedRisk = m_maxRiskPerTrade;
         
@@ -514,7 +472,6 @@ public:
         if(!CheckSymbolPositionLimit(symbol, candidate))
             return false;
         
-        // Final risk validation with minimum lot
         STradeValidationRequest tradeReq;
         tradeReq.symbol = symbol;
         tradeReq.orderType = candidate.orderType;
@@ -530,18 +487,13 @@ public:
         tradeReq.clusterCode = clusterCode;
         tradeReq.requestTime = TimeCurrent();
         
-        SValidationResult riskResult;
-        riskResult = m_riskManager.ValidateTradeRequest(tradeReq, "pre-size", corrId);
-        if(!riskResult.approved)
-            return false;
-        
-        // Calculate final lot size
+        // The gate runs once, after the lot is final (below): each approval keeps a virtual
+        // reservation until its TTL, so a second call would double-count portfolio risk.
                 double lotSize = m_positionSizer.CalculatePositionSizeWithRisk(symbol, 
                                                                                 candidate.stopLossPips, 
                                                                                 proposedRisk, 
                                                                                 candidate.confidence);
         
-                // Cap for daily budget
                 double remainingDailyRisk = m_riskManager.GetRemainingDailyRiskPercent();
                 if(lotSize > 0 && remainingDailyRisk > 0 && proposedRisk > 0)
                 {
@@ -556,24 +508,20 @@ public:
             return false;
         }
         
-        // Batch 170 and 174 removed five `return lotSize;` stubs from this chain
-        // (VPIN scaling, volatility targeting, skew step, full margin, safe mode). Each sat under a
-        // comment claiming it resized the lot while returning its input untouched. VPIN acts on size
-        // through CVPINLotModifier in the sizer chain and vetoes through CPostConsensusValidator;
-        // skew step, full margin and safe mode have no size hook and are tracked as open work.
+        // VPIN reaches size through CVPINLotModifier (registered in the sizer chain) and vetoes
+        // through CPostConsensusValidator; skew step, full margin and safe mode have no size hook.
         lotSize = ApplyDrawdownScaling(symbol, lotSize, proposedRisk);
         lotSize = ApplyMomentumScaling(symbol, lotSize);
-        // Floor at broker minimum. The post-size re-gate below measures the risk this round-up
-        // creates and refuses the candidate when it crosses the per-trade cap.
+        // This round-up re-adds risk; the re-gate below clamps the lot back to the per-trade cap,
+        // or refuses when no compliant lot exists above the broker minimum.
         double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         if(lotSize < brokerMinLot)
             lotSize = brokerMinLot;
         
         candidate.lotSize = lotSize;
 
-        // Batch 152: post-size re-gate. The pre-size validation ran at broker-minimum
-        // lot; the shipped lot is the product of the sizing modifiers below and can
-        // carry several times the proposed risk with no gate behind it.
+        // Per-trade cap clamp: the lot here is the product of the modifiers above, so it is checked
+        // against GetEffectiveRiskPerTrade before the full gate sees it at its final value.
         double finalTradeRisk = m_riskManager.CalculateTradeRisk(symbol, candidate.lotSize, candidate.stopLossPips);
         double riskDenom = CRiskMath::GetRiskDenominator();
         double finalRiskPct = (finalTradeRisk > 0.0 && riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
@@ -586,11 +534,8 @@ public:
         }
         if(finalRiskPct > riskCap)
         {
-            // Post-size re-gate (Batch 152): the sizing modifiers below can push the
-            // shipped lot above the per-trade risk cap. Rejecting the whole candidate
-            // discards a valid signal and starves the basket (defeats the multi-strategy
-            // mandate). Instead CLAMP the lot so the realized risk equals the cap and let
-            // the trade proceed — risk compliance is preserved, trade frequency is not.
+            // CLAMP the lot so realized risk equals the cap rather than rejecting the candidate:
+            // compliance holds and the multi-strategy basket is not starved of signals.
             double compliantLot = candidate.lotSize * (riskCap / finalRiskPct);
             double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
             if(stepLot > 0.0)
@@ -598,10 +543,8 @@ public:
             double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
             if(compliantLot < brokerMinLot)
             {
-                // No compliant size exists: the smallest lot the broker accepts already carries
-                // more than the cap. Rounding up here used to ship the over-risk trade while
-                // booking riskPercent at the cap, so the daily budget charged less than the
-                // position could lose. Refuse instead, same rule as the authority shrink below.
+                // Broker minimum already carries more than the cap: refuse rather than round up,
+                // which would ship the over-risk trade while booking riskPercent at the cap.
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=compliant_lot_below_min | needed=%.4f | broker_min=%.4f | risk=%.3f%% | cap=%.3f%%",
                             symbol, compliantLot, brokerMinLot, finalRiskPct, riskCap);
                 CJsonLogger::LogRiskEvent("RiskGateReject", symbol, "COMPLIANT_LOT_BELOW_MIN",
@@ -613,25 +556,62 @@ public:
             PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.4f -> %.4f | risk=%.3f%% -> cap=%.3f%%",
                         symbol, lotSize, compliantLot, finalRiskPct, riskCap);
             candidate.lotSize = compliantLot;
-            // Floor-to-step makes the real risk equal to or under the cap, so booking the cap is
-            // conservative rather than false.
+            // Floor-to-step keeps real risk at or under the cap, so booking the cap is conservative.
             finalRiskPct = riskCap;
         }
         candidate.riskPercent = finalRiskPct;
+
+        // The full gate sees the lot this candidate actually ships with. It used to run at
+        // SYMBOL_VOLUME_MIN before sizing, so correlation, portfolio and budget decisions were all
+        // made about a 0.01-lot trade and the returned adjustedLotSize had no consumer at all.
+        tradeReq.lotSize = candidate.lotSize;
+        SValidationResult riskResult;
+        riskResult = m_riskManager.ValidateTradeRequest(tradeReq, "final-lot", corrId);
+        if(!riskResult.approved)
+        {
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=final_lot_validation | lot=%.4f | risk=%.3f%% | %s",
+                        symbol, candidate.lotSize, candidate.riskPercent, riskResult.message);
+            CJsonLogger::LogRiskEvent("RiskGateReject", symbol, "FINAL_LOT_VALIDATION",
+                StringFormat("Lot %.4f at %.3f%% rejected: %s",
+                             candidate.lotSize, candidate.riskPercent, riskResult.message),
+                candidate.lotSize, candidate.riskPercent, corrId);
+            return false;
+        }
+
+        // Shrink-only adoption: the pipeline can raise adjustedLotSize to the broker minimum, and
+        // taking that back would ship more than the sizing above decided.
+        if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < candidate.lotSize)
+        {
+            double volStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+            double adoptedLot = (volStep > 0.0)
+                ? NormalizeDouble((long)MathFloor(riskResult.adjustedLotSize / volStep + 1e-9) * volStep, 8)
+                : riskResult.adjustedLotSize;
+            if(adoptedLot < brokerMinLot)
+            {
+                PrintFormat("[RISK-GATE-REJECT] %s | reason=adjusted_lot_below_min | adjusted=%.4f | broker_min=%.4f | %s",
+                            symbol, adoptedLot, brokerMinLot, riskResult.message);
+                CJsonLogger::LogRiskEvent("RiskGateReject", symbol, "ADJUSTED_LOT_BELOW_MIN",
+                    StringFormat("Risk manager asked for %.4f, below broker min %.4f: %s",
+                                 adoptedLot, brokerMinLot, riskResult.message),
+                 adoptedLot, brokerMinLot, corrId);
+                return false;
+            }
+            double adoptedRisk = m_riskManager.CalculateTradeRisk(symbol, adoptedLot, candidate.stopLossPips);
+            double adoptedPct = (adoptedRisk > 0.0 && riskDenom > 0.0) ? (adoptedRisk / riskDenom) * 100.0 : candidate.riskPercent;
+            PrintFormat("[RISK-GATE-ADJUST] %s | lot=%.4f -> %.4f | risk=%.3f%% -> %.3f%% | %s",
+                        symbol, candidate.lotSize, adoptedLot, candidate.riskPercent, adoptedPct, riskResult.message);
+            candidate.lotSize = adoptedLot;
+            candidate.riskPercent = adoptedPct;
+        }
         
-        // Build reasoning
         candidate.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
                                            roleTag, clusterTag, contribSummary,
                                            ctx.convictionScore, ctx.readinessScore, ctx.contextScore, ctx.costScore);
         
-        // Batch 151: removed the second IncrementCyclesSinceIndicatorSignal() here -
-        // it double-counted every successful build (the increment at the hybrid-gate
-        // block above already ran), relaxing the AI threshold at 2x speed.
 
         return true;
     }
     
-    // === Helper methods ===
     
     bool CalculateStops(const string symbol, ENUM_TRADE_SIGNAL signal, STradeCandidate &candidate,
                         const SConsensusDecisionContext& ctx,
@@ -642,25 +622,22 @@ public:
         
         bool isSynthetic = IsSyntheticIndexSymbolName(symbol);
 
-        // Determine minRR based on cluster (needed before any stop branch)
+        // minRR is resolved first because every stop branch below applies it.
         double minRR = m_minRRDefault;
         if(ctx.dominantCluster == MEAN_REVERSION_CLUSTER)
             minRR = m_minRRMeanReversion;
         
-        // Get ATR from pipeline (currently wired to NULL/0 in this build)
-        CUnifiedSignalPipeline* pipeline = NULL; // Would be passed in real implementation
-        double atrValue = 0;
+        // ATR14 on the current chart timeframe, through CIndicatorManager's shared handle cache.
+        // A zero (no cache, no data) leaves the fixed band below in charge, as before.
+        double atrValue = CTradeMgrPricing::CalculateATR(symbol, PERIOD_CURRENT, 14);
         
         double stopLossPips = 0;
         double takeProfitPips = 0;
 
-        // FINDING 0 (STRATEGY_AUDIT_2026-08-14): use the consensus strategy's
-        // designed SL/TP when the flag is enabled and a real proposal exists.
         if(useStrategyStops && proposedSL > 0)
         {
             stopLossPips = proposedSL;
             takeProfitPips = (proposedTP > 0) ? proposedTP : proposedSL * minRR;
-            // Enforce the cluster minimum R:R on the proposed target
             if(takeProfitPips < stopLossPips * minRR)
                 takeProfitPips = stopLossPips * minRR;
             PrintFormat("[CANDIDATE-BUILDER] %s | FINDING0 strategy-proposed stops | SL=%.1f TP=%.1f minRR=%.2f",
@@ -676,7 +653,6 @@ public:
         }
         else
         {
-            // Fallback when no consensus strategy proposed stops (or flag disabled)
             int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
             double fallbackByStopLevel = MathMax(30.0, (double)stopLevelPts * 2.0);
             double fallbackByPrice = (candidate.entryPrice * (isSynthetic ? 0.010 : 0.003)) / point;
@@ -684,13 +660,12 @@ public:
             takeProfitPips = stopLossPips * minRR;
         }
         
-        // Bound by broker constraints
-        // NULL-guard: m_tradeManager is wired via SetDependencies(); if that wiring is ever
-        // missing, fall back to SYMBOL_TRADE_STOPS_LEVEL (GetMinimumStopDistance() is itself
-        // essentially max(STOPS_LEVEL, FREEZE_LEVEL)*point, so STOPS_LEVEL is a safe floor).
+        // GetMinimumStopDistance() answers in price units, so it is divided by point before it is
+        // compared with STOPS_LEVEL; unconverted it was ~1e5 times too small and silently lost the
+        // broker's spread-folded minimum. With no trade manager the raw STOPS_LEVEL points are used.
         int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
         double brokerMinPoints = (m_tradeManager != NULL)
-                                     ? m_tradeManager.GetMinimumStopDistance(symbol)
+                                     ? m_tradeManager.GetMinimumStopDistance(symbol) / point
                                      : (double)stopLevelPts;
         
         double spreadPoints = 0;
@@ -736,6 +711,8 @@ public:
     
     bool CheckAccountCapacity(const string symbol, const STradeCandidate &candidate)
     {
+        // Smoke check at the broker minimum: candidate.lotSize is not decided until after this call,
+        // and the risk pipeline's own margin step now sees the final lot.
         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         double marginRequired = 0;
         
@@ -754,8 +731,8 @@ public:
     
     bool ResolveLiveAuthority(const string symbol, STradeCandidate &candidate, double &proposedRisk)
     {
-        // This would call the EA's ResolveLiveAuthority function
-        // For now, simplified
+        // Stub: always authorizes at 1.0 and returns true, so it gates nothing. EAOrchestrator
+        // overwrites these three fields from CLiveAuthorityResolver after BuildCandidate returns.
         candidate.liveAuthorityAllowed = true;
         candidate.liveAuthorityRiskMult = 1.0;
         candidate.liveAuthorityReason = "AUTHORIZED";
@@ -771,7 +748,7 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            // NULL-guard: a NULL trade manager simply yields no owned-position match rather than crashing.
+            // A NULL trade manager counts no positions, so this cap fails open instead of crashing.
             if(PositionGetString(POSITION_SYMBOL) == symbol && (m_tradeManager != NULL && m_tradeManager.IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))))
                 existingCount++;
         }
@@ -789,9 +766,7 @@ public:
     {
         if(!m_antiMartingaleEnabled) return lotSize;
 
-        // Batch 151: the old code read ACCOUNT_EQUITY into BOTH peak and current,
-        // so drawdown was always 0 and this scaler was a no-op. Peak equity comes
-        // from the risk circuit breaker's tracked high-water mark.
+        // Peak equity is the risk circuit breaker's high-water mark, not ACCOUNT_EQUITY.
         double peakEquity = (m_riskManager != NULL) ? m_riskManager.GetPeakEquity() : 0.0;
         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
         
@@ -803,7 +778,6 @@ public:
                 double mult = MathMax(0.10, MathMin(1.0, 1.0 - (dd / MathMax(0.01, m_aiDrawdownSizingLimit))));
                 double newLot = lotSize * mult;
                 
-                // Floor at broker min
                 double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
                 if(newLot < brokerMinLot && lotSize > brokerMinLot)
                 {
@@ -857,7 +831,6 @@ public:
         return false;
     }
     
-    // Diagnostics
         string GetStatusReport() const
         {
             string report = "[CandidateBuilder] Config:\n";
@@ -867,14 +840,12 @@ public:
             report += "  HybridGateRelaxCycles=" + IntegerToString(m_hybridGateRelaxAfterCycles);
             report += " | AIStandaloneConf=" + DoubleToString(m_aiStandaloneMinConfidence, 2);
             report += " | AIRelaxedConf=" + DoubleToString(m_aiStandaloneRelaxedConfidence, 2) + "\n";
-            // L3-014: Show per-symbol hybrid gate state
             for(int i = 0; i < m_symbolCycleCount; i++)
             {
                 string symbol = m_symbolCyclesSinceIndicator[i];
                 if(symbol == "") continue;
                 int cycles = m_symbolCyclesSinceIndicatorValues[i];
                 bool relaxed = false;
-                // Find hybrid gate relaxed state for this symbol
                 for(int j = 0; j < m_symbolHybridGateRelaxedCount; j++)
                 {
                     if(m_symbolHybridGateRelaxedKeys[j] == symbol)
@@ -885,9 +856,7 @@ public:
                 }
                 report += "  " + symbol + ": cycles=" + IntegerToString(cycles) + " relaxed=" + (relaxed ? "YES" : "NO") + "\n";
             }
-            // Batch 173: symbols the live-authority ladder has sized out of existence. Without
-            // this the only trace is a per-candidate log line, and a permanently dark symbol
-            // looks the same as a symbol that simply has no signals.
+            // Without this a symbol the ladder sized out of existence looks like one with no signals.
             report += "  authorityLotRefusals total=" + IntegerToString(m_authorityBlockedTotal);
             if(m_authorityBlockedTotal > 0)
             {
