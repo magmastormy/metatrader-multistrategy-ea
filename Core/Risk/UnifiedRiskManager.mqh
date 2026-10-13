@@ -20,8 +20,7 @@
 #include "RiskMarginHealth.mqh"
 #include "RiskTieredCorrelation.mqh"
 #include "RiskAdaptiveTuner.mqh"
-// Defines SUnifiedRiskConfig, STradeValidationRequest, IRiskPipelineHost and
-// CRiskValidationPipeline, so it must stay included before their first use.
+// Declares SUnifiedRiskConfig, STradeValidationRequest, IRiskPipelineHost and CRiskValidationPipeline: must stay included before their first use.
 #include "RiskValidationPipeline.mqh"
 #include <Trade/Trade.mqh>
 
@@ -80,8 +79,7 @@ struct SUnifiedRiskSnapshot
     bool emergencyMode;
 };
 
-// IRiskPipelineHost lets CRiskValidationPipeline call back into the owner-private
-// bookkeeping without duplicating it. CopyRiskConfig() exists because MQL5 forbids pointers to structures.
+// IRiskPipelineHost lets CRiskValidationPipeline call back into owner-private bookkeeping instead of duplicating it.
 class CUnifiedRiskManager : public IRiskPipelineHost
 {
 private:
@@ -111,9 +109,7 @@ private:
 
     long m_eaMagicNumber;  // Magic number used to filter positions for EA-owned accounting
 
-    // Configured envelope captured once at Initialize. ApplyTierOverrides clamps tier
-    // values to it: compounding tiers derive risk from the equity bracket and can demand
-    // 15%/trade, so tiers may LOWER authorised risk but never raise it.
+    // Configured envelope captured once at Initialize; ApplyTierOverrides clamps tier values to it, so tiers may LOWER authorised risk but never raise it.
     double m_envelopeMaxRiskPerTradePercent;
     double m_envelopeBaseRiskPerTradePercent;
     double m_envelopeMaxDailyRiskPercent;
@@ -141,8 +137,7 @@ private:
 
     double m_emergencyRiskOverride;   // 0-100 scale (5.0 = 5%)
 
-    // Declared last: it holds non-owning pointers to the members above, so it must be
-    // constructed after them for WireValidationPipeline() to wire stable addresses.
+    // Declared last: it holds non-owning pointers to the members above, so WireValidationPipeline() needs their final addresses.
     CRiskValidationPipeline m_validationPipeline;
 
     // Called from the constructor body and again from Initialize(); idempotent.
@@ -160,12 +155,10 @@ public:
 
     void SetPerformanceAnalytics(CPerformanceAnalytics* analytics);
 
-    // Used by dual-mode auto-switching.
+    // No caller in this repo: dual-mode auto-switching never wired to this setter.
     void SetBaseRiskPerTrade(double riskPercent);
 
-    // Applies tier overrides in place, without reinitializing the manager: only the
-    // tier-controlled parameters change (daily risk, portfolio risk, drawdown thresholds,
-    // daily loss limit); circuit breaker, daily risk used and virtual positions keep state.
+    // Tier overrides applied in place (no reinit): only daily/portfolio risk, drawdown thresholds and daily-loss limit change; circuit breaker, daily risk used and virtual reservations keep state.
         void ApplyTierOverrides(double tierRiskPerTradePct,
                                 int tierMaxPositions,
                                 double effectiveDaily, double effectivePortfolio,
@@ -181,11 +174,9 @@ public:
     // MQL5 has no pointers to structures, so the pipeline copies the live struct at every public entry point (read-only).
     virtual void CopyRiskConfig(SUnifiedRiskConfig &outConfig) const { outConfig = m_config; }
 
-    // Public so the pipeline reaches it through IRiskPipelineHost; behaviour unchanged.
-    // No "= 0.0" default: every call site already passes an explicit argument.
+    // Public only so the pipeline reaches it through IRiskPipelineHost; no default argument - every call site passes one.
     virtual double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent);
 
-    // Single trade validation authority.
         SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime", const string corrId = "");
         void ConfigureClusterGovernance(const bool enabled,
                                     const int maxConcurrentPerCluster,
@@ -199,6 +190,7 @@ public:
                                         const double riskPercent);
     virtual void ReleaseVirtualPosition(const string ownerTag);
     virtual void UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent);
+    // No caller in this repo. Reservations are released by each rejection branch in the pipeline; one approved but never executed lingers until its 60s TTL is pruned.
     void ClearVirtualPositions();
 
     // Register accepted risk usage only after successful execution.
@@ -212,7 +204,7 @@ public:
     double GetReservedVirtualRiskPercent();
     int GetVirtualReservationCount() const;
     SUnifiedRiskSnapshot GetSnapshot();
-    // Current throttle pressure, consumed by position-limit adjustment.
+    // Throttle pressure written by GetRecommendedRiskPerTradePercent; no consumer of this accessor in this repo.
     double GetThrottlePressure() const;
     bool HasUnprotectedPositions();
     int GetUnprotectedPositionCount();
@@ -221,7 +213,7 @@ public:
     // Access portfolio risk manager (for wiring correlation engine to PositionSizer)
     CPortfolioRiskManager* GetPortfolioRiskManager() { return &m_portfolioRiskManager; }
 
-    // Broker trading day start hour: 0 = midnight server time, 17 = 5pm for forex rollover.
+    // Trading-day roll hour (0 = server midnight). No caller sets this setter, so the day always rolls at midnight server time, not at the 17:00 forex rollover.
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
     
     // Push-synced: the validation pipeline mirrors this scalar, so both copies stay equal.
@@ -238,13 +230,12 @@ public:
     void ResetEmergencyCloseRequested();
     void ResetCircuitBreaker();
     bool CheckCircuitBreakerRecovery();
-    // Crash recovery: get/set circuit breaker state for persistence across restarts
+    // Crash-recovery getters: the EAOrchestrator state writer persists these and RestoreCircuitBreakerState() feeds them back.
     double GetPeakEquity() const;
     double GetDailyStartEquity() const;
     int    GetDrawdownBreachCount() const;
     double GetMaxDrawdownFromPeak() const;
-    // Halt flags are persisted and restored, and the trading-day key is exposed so the
-    // writer can stamp which broker day the restored state belongs to.
+    // Halt flags are persisted and restored; the day key is exposed so the writer can stamp which broker day the restored state belongs to.
     bool   IsDailyLossHaltActive() const;
     int    GetCurrentTradingDayKey();
     // Seeding suppresses the spurious trading-day reset that would otherwise clobber the restored m_dailyStartEquity.
@@ -265,7 +256,6 @@ public:
 
     ENUM_MARGIN_HEALTH_LEVEL MonitorMarginHealth();
 
-    // Single source of truth for drawdown state
     virtual SDrawdownState GetDrawdownState();
     
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
@@ -336,8 +326,7 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              double effectiveDailyLossLimit,
                                              double maxRiskPerTradeOverride)
 {
-    // Every tier value is clamped to the operator's configured envelope.
-    // Lowering risk is allowed; raising it past what was configured is not.
+    // Every tier value is clamped to the operator's envelope: lowering risk is allowed, raising it past what was configured is not.
     double clampedBaseRisk   = m_envelopeCaptured ? MathMin(tierRiskPerTradePct, m_envelopeBaseRiskPerTradePercent) : tierRiskPerTradePct;
     double clampedMaxRisk    = m_envelopeCaptured ? MathMin(maxRiskPerTradeOverride, m_envelopeMaxRiskPerTradePercent) : maxRiskPerTradeOverride;
     double clampedDaily      = m_envelopeCaptured ? MathMin(effectiveDaily, m_envelopeMaxDailyRiskPercent) : effectiveDaily;
@@ -348,8 +337,7 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
     int    clampedSameBase   = (m_envelopeCaptured && m_envelopeMaxPositionsSameBase > 0)
                                ? MathMin(tierMaxPositions, m_envelopeMaxPositionsSameBase) : tierMaxPositions;
 
-    // A clamped ceiling can invert the warning/critical pair (critical must exceed
-    // warning); restore the same +4 relationship Initialize uses.
+    // Clamping can invert the warning/critical pair; restore the same +4 relationship Initialize uses.
     if(clampedDdCritical <= clampedDdWarning)
         clampedDdCritical = clampedDdWarning + 4.0;
 
@@ -513,20 +501,17 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.enableAuditLogging = true;
     m_config.auditLogFile = "UnifiedRiskValidation.log";
 
-    // CRiskTieredCorrelation keeps its own copy of the thresholds; the portfolio manager
-    // pointer it receives stays valid for URM's lifetime.
+    // CRiskTieredCorrelation keeps its own copy of the thresholds; the portfolio-manager pointer stays valid for URM's lifetime.
     m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
                                       m_config.correlationReduceThreshold,
                                       m_config.correlationBlockThreshold);
     m_tieredCorrelation.SetPortfolioRiskManager(&m_portfolioRiskManager);
 
     // Wired here, not in Initialize(), so ValidateTradeRequest can never dereference a NULL collaborator.
-    // All value members are fully constructed by the time the constructor body runs.
     WireValidationPipeline();
 }
 
-// Every pointer handed over is NON-OWNING (this object or its own value members); addresses are
-// stable for CUnifiedRiskManager's lifetime, so re-running is idempotent. Mirrored scalars are push-synced from setters.
+// Every pointer handed over is NON-OWNING and stable for this object's lifetime, so re-running is idempotent; mirrored scalars are push-synced from the setters.
 void CUnifiedRiskManager::WireValidationPipeline()
 {
     m_validationPipeline.Initialize(GetPointer(this),
@@ -557,13 +542,12 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                                      CPerformanceAnalytics* perfAnalytics)
 {
     m_config = config;
-    // NON-OWNING: EAOrchestrator creates it in OnInit and destroys it in Shutdown;
-    // used only for metrics queries.
+    // NON-OWNING: EAOrchestrator holds it as a value member (EAOrchestrator.mqh m_performanceAnalytics) and passes its pointer here; used only for metrics queries.
     m_performanceAnalytics = perfAnalytics;
 
     if(m_config.maxRiskPerTradePercent <= 0.0)
         m_config.maxRiskPerTradePercent = 5.0;
-    // Hard ceiling of 50%/trade; PositionSizer::MAX_RISK_PER_TRADE caps lower (10.0) but is overridable.
+    // Hard ceiling of 50%/trade, the same value as MAX_RISK_PER_TRADE (Core/Utils/Enums.mqh); EAOrchestrator's configured max is already capped at 25%.
     if(m_config.maxRiskPerTradePercent > 50.0)
         m_config.maxRiskPerTradePercent = 50.0;
     if(m_config.minRiskPerTradePercent <= 0.0)
@@ -591,8 +575,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_config.minLotRiskMultiplier <= 0.0)
         m_config.minLotRiskMultiplier = 1.0;
 
-    // Snapshot the operator envelope after the sanity clamping above and before any tier can overwrite it.
-    // Captured once: ApplyTierOverrides mutates m_config in place, so without a stable snapshot the ceiling would drift per tier switch.
+    // Snapshot the operator envelope after the clamps above and before any tier can overwrite it; captured once because ApplyTierOverrides mutates m_config in place, so re-snapshotting would let the ceiling drift.
     if(!m_envelopeCaptured)
     {
         m_envelopeMaxRiskPerTradePercent   = m_config.maxRiskPerTradePercent;
@@ -638,8 +621,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_lastDailyReset = TimeCurrent();
     m_initialized = true;
 
-    // Re-wire so the pipeline picks up the freshly clamped config and the reset m_eaMagicNumber.
-    // Idempotent - all pointers are the same stable addresses handed over in the constructor.
+    // Re-wire so the pipeline picks up the freshly clamped config and the reset m_eaMagicNumber (same stable addresses).
     WireValidationPipeline();
 
     // Scale guard: active risk must land in [0.01, 20.0] %, i.e. inputs are 0-100 not 0-1.
@@ -669,16 +651,14 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     // Keeps the circuit breaker's peak-equity / drawdown-from-peak reading current.
     m_circuitBreaker.RefreshPeakAndDrawdown();
 
-    // Feeds the CVaR equity sampler (minute-gated inside) so IsCVaRLimitExceeded and
-    // GetCurrentCVaR work on real data.
+    // Feeds the CVaR equity sampler (minute-gated inside) so IsCVaRLimitExceeded and GetCurrentCVaR work on real data.
     m_portfolioRiskManager.UpdateEquityCurve();
 
     CheckAndResetDailyLimits();
     UpdateAdaptiveRiskLevel();
     CheckCircuitBreakerRecovery();
 
-    // Breakers must arm with no candidate in flight: gating them on a trade attempt leaves
-    // drawdown protection untriggered. Both calls are idempotent.
+    // Breakers must arm with no candidate in flight, so they run on every cycle here as well as inside the pipeline.
     CheckDrawdownCircuitBreaker();
     CheckDailyLossLimit();
 }
@@ -703,7 +683,7 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
     }
 }
 
-// Thin forwarder: every pre-trade gate is evaluated inside CRiskValidationPipeline::Run.
+// The one entry authority: thin forwarder, every pre-trade gate is evaluated inside CRiskValidationPipeline::Run.
 SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidationRequest &request,
                                                             const string phaseTag,
                                                             const string corrId)
@@ -739,8 +719,7 @@ void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,
 
 void CUnifiedRiskManager::SyncClusterPositionCounts()
 {
-    // Diagnostic output only: ValidateClusterGovernance re-counts positions straight from the
-    // terminal, so these arrays never gate a trade.
+    // Diagnostic output only: the pipeline's ValidateClusterGovernance re-counts positions from the terminal, so these arrays gate nothing.
     ArrayResize(m_clusterSyncCodes, 0);
     ArrayResize(m_clusterSyncCounts, 0);
 
@@ -832,8 +811,7 @@ void CUnifiedRiskManager::ReleaseVirtualPosition(const string ownerTag)
     }
 }
 
-// Re-syncs an early reservation's risk with the validated one: lot-floor and
-// correlation-reduce adjustments land only after Reserve.
+// Re-syncs an early reservation's risk with the validated one: lot-floor and correlation-reduce adjustments land only after Reserve.
 void CUnifiedRiskManager::UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent)
 {
     if(m_virtualPositionBook.UpdateRisk(ownerTag, riskPercent))
@@ -1070,8 +1048,7 @@ double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent(const double additi
     double effective = MathMax(0.0, m_dailyRiskUsedPercent + additionalRisk);
     effective = MathMax(effective, CalculateDailyMarkToMarketLossPercent());
     effective = MathMax(effective, GetCurrentOpenExposureRiskPercent() + additionalRisk);
-    // Cap at the daily limit: without it, MTM P&L + entry exposure can exceed the
-    // limit by 2x before blocking.
+    // Capped at the daily limit so MTM P&L plus entry exposure cannot stack to 2x the limit before blocking.
     if(effective > m_config.maxDailyRiskPercent)
     {
         PrintFormat("[RISK-DAILY-CAP] effective=%.2f%% capped to limit=%.2f%% | entry_used=%.2f%% | mtm=%.2f%% | open_exp=%.2f%%",
@@ -1083,8 +1060,6 @@ double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent(const double additi
     return effective;
 }
 
-// Config and the analytics pointer are parameters because both change at runtime
-// (ApplyTierOverrides / SetPerformanceAnalytics).
 void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
 {
     m_adaptiveTuner.UpdateAdaptiveRiskLevel(m_config.baseRiskPerTradePercent,
@@ -1127,7 +1102,7 @@ double CUnifiedRiskManager::ClampRiskPercent(const double value) const
                    MathMin(m_config.maxRiskPerTradePercent, value));
 }
 
-// Returns: true if trading is allowed, false if circuit breaker hit
+// true = trading allowed; false = drawdown breaker at/over the critical level, and false when the manager is not initialised (fail-closed).
 bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
 {
     if(!m_initialized)
@@ -1151,7 +1126,7 @@ bool CUnifiedRiskManager::IsTradingEnabled() const
     return m_circuitBreaker.IsTradingEnabled();
 }
 
-// Emergency close flag, set by the circuit breaker.
+// Flatten flag raised by the breaker (2nd+ breach or drawdown >= 2x critical); EAOrchestrator's close-all paths consume it.
 bool CUnifiedRiskManager::IsEmergencyCloseRequested() const
 {
     return m_circuitBreaker.IsEmergencyCloseRequested();
@@ -1163,7 +1138,7 @@ void CUnifiedRiskManager::ResetEmergencyCloseRequested()
     m_circuitBreaker.ResetEmergencyCloseRequested();
 }
 
-// Operator action, taken after reviewing why the breaker tripped.
+// Manual breaker reset; no caller in this repo, so nothing in the runtime can clear a halt.
 void CUnifiedRiskManager::ResetCircuitBreaker()
 {
     bool conservative = m_adaptiveTuner.IsConservativeMode();
@@ -1207,8 +1182,7 @@ bool CUnifiedRiskManager::IsDailyLossHaltActive() const
     return m_circuitBreaker.IsDailyLossHaltActive();
 }
 
-// Pure read: never advances m_lastTradingDayKey, so the periodic state writer can call it
-// without stealing the daily reset.
+// Pure read: never advances m_lastTradingDayKey, so the periodic state writer can call it without stealing the daily reset.
 int CUnifiedRiskManager::GetCurrentTradingDayKey()
 {
     return TradingDayKey(TimeCurrent());
@@ -1227,10 +1201,9 @@ double CUnifiedRiskManager::GetSymbolCorrelation(const string symbol1, const str
     return m_tieredCorrelation.GetSymbolCorrelation(symbol1, symbol2);
 }
 
-// Single source of truth for drawdown state.
+// Single source of truth for drawdown state; refreshes the breaker first so its readings are current.
 SDrawdownState CUnifiedRiskManager::GetDrawdownState()
 {
-    // Ensure circuit breaker state is current
     CheckDrawdownCircuitBreaker();
 
     SDrawdownState state;
@@ -1265,8 +1238,7 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     double sl = PositionGetDouble(POSITION_SL);
     double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
     
-    // Closed/closing positions can still pass PositionSelectByTicket yet report zero volume
-    // or zero SL; skipping them prevents phantom risk.
+    // MT5 quirk: closed/closing positions still pass PositionSelectByTicket but report zero volume or zero SL; skipping them avoids phantom risk.
     if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0) {
         return 0.0;
     }
@@ -1280,12 +1252,9 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
         return 0.0;
     }
 
-    // MTM SL distance (current price -> SL) so the budget tracks live exposure: risk is
-    // lower once price has moved toward the SL, higher if it moved away.
+    // MTM SL distance (current price -> SL), so the budget tracks live exposure rather than the distance at entry.
     double slDistance = MathAbs(currentPrice - sl) / point;
-    // Unit trap: slDistance is in POINTS while tickValue is per TICK, identical only when
-    // tickSize == point (5-digit FX). Scale as CalculateMinLotRiskPercent does, else
-    // index/metal symbols understate risk.
+    // Units: slDistance is in POINTS (SYMBOL_POINT) while tickValue is per TICK; those coincide only when tickSize == point, so unscaled index/metal risk is understated.
     double ticksPerPoint = (tickSize > 0.0) ? (point / tickSize) : 1.0;
     double riskAmount = volume * slDistance * tickValue * ticksPerPoint;
     
@@ -1297,7 +1266,7 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     return (riskAmount / equity) * 100.0;  // fraction -> 0-100 % scale
 }
 
-// Recovery cooldown counts bars, not wall-clock minutes.
+// Recovery cooldown counts bars (iBarShift), not wall-clock minutes; wall clock is used only when the bar shift fails.
 bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
 {
     if(!m_initialized)
@@ -1321,8 +1290,7 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     return level;
 }
 
-// Halts all trading when daily realized + unrealized loss exceeds
-// the configured percentage of daily starting equity. Resets on new day.
+// Daily-loss breaker: halts all trading once realised + floating loss (live deals and positions, magic-scoped) exceeds dailyLossLimitPercent of the day's starting equity; the halt latches until the trading-day key changes.
 bool CUnifiedRiskManager::CheckDailyLossLimit()
 {
     if(!m_initialized)
@@ -1330,8 +1298,7 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
 
     datetime nowTime = TimeCurrent();
 
-    // TradingDayKey() is a pure read: this site must not advance m_lastTradingDayKey ahead
-    // of CheckAndResetDailyLimits(), which owns the one-shot daily budget reset.
+    // TradingDayKey() is a pure read here: CheckAndResetDailyLimits() owns the one-shot daily budget reset and must see the day change first.
     if(m_circuitBreaker.IsDailyLossHaltActive()
        && TradingDayKey(nowTime) != m_lastTradingDayKey)
         m_circuitBreaker.ResetDailyLossHalt();
@@ -1341,9 +1308,7 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
                                                    m_dailyStartEquity);
 }
 
-// Allocates daily risk budget across symbols with performance
-// weighting: performing symbols get up to 1.5x, underperformers
-// get 0.5x of their equal share.
+// Splits maxDailyRiskPercent equally over symbols with open positions, then weights it: 1.5x if winRate>55% and PF>1.3, 0.5x if winRate<40% or PF<0.8.
 double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
 {
     string activeSymbols[];
@@ -1369,7 +1334,6 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
         }
     }
 
-    // Always include the requested symbol
     bool symbolFound = false;
     for(int j = 0; j < activeSymbolCount; j++)
     {
@@ -1398,8 +1362,7 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
 
     double allocation = baseShare * perfWeight;
 
-    // Minimum viable risk floor: an allocation below one minimum-lot trade is raised so at
-    // least one position stays viable.
+    // Floor at the minimum-lot trade's risk, otherwise a small allocation can never open even one position.
     double minLotRisk = CalculateMinLotRiskPercent(symbol);
     if(minLotRisk > 0.0 && allocation < minLotRisk)
     {
@@ -1530,7 +1493,6 @@ double CUnifiedRiskManager::GetSymbolProfitFactor(const string symbol)
     return CRiskSymbolStats::GetProfitFactor(symbol);
 }
 
-// Uses ATR-based SL distance to estimate realistic risk per trade
 double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
 {
     double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -1551,8 +1513,7 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
         return 0.0;
     }
 
-    // SL distance proxy: ATR(14) on the daily timeframe.
-    // The handle must come from CIndicatorManager; a statically cached handle gets invalidated and crashes.
+    // SL distance proxy = ATR(14) on PERIOD_D1; the handle must come from CIndicatorManager, whose registry owns it - a statically cached handle is invalidated and crashes.
     double slDistancePoints = 0.0;
     CIndicatorManager* indManager = CIndicatorManager::Instance();
     if(indManager != NULL)
@@ -1617,9 +1578,7 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
     return adjustedUsedRisk;
 }
 
-// Public-API forwarders into CRiskValidationPipeline. No recursion: the pipeline resolves
-// owner-side helpers (IsSymbolDataValid, CalculateTradeRisk, EstimatePositionRiskPercent,
-// GetDrawdownState, ...) through IRiskPipelineHost, never through these forwarders.
+// Public-API forwarders into CRiskValidationPipeline. No recursion: the pipeline reaches owner-side helpers (IsSymbolDataValid, CalculateTradeRisk, EstimatePositionRiskPercent, GetDrawdownState, ...) through IRiskPipelineHost, not through these.
 bool CUnifiedRiskManager::ValidateBasicParameters(const STradeValidationRequest &request, string &message)
 {
     return m_validationPipeline.ValidateBasicParameters(request, message);
@@ -1635,8 +1594,7 @@ bool CUnifiedRiskManager::ValidatePortfolioRisk(const STradeValidationRequest &r
     return m_validationPipeline.ValidatePortfolioRisk(request, tradeRiskPercent, message);
 }
 
-// maxPositionsSameBase and eaMagicNumber are supplied by the pipeline because both change at
-// runtime (ApplyTierOverrides / SetEAMagicNumber).
+// The pipeline supplies maxPositionsSameBase and eaMagicNumber to the tiered-correlation gate because both change at runtime (ApplyTierOverrides / SetEAMagicNumber).
 bool CUnifiedRiskManager::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
 {
     return m_validationPipeline.ValidateCorrelationLimits(request, message, correlationRisk);
@@ -1672,9 +1630,7 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
 
     double dist = stopLossPips * point;  // price distance of the stop
 
-    // Authoritative risk: the broker's own P/L for closing at the stop, exact for every symbol
-    // (synthetic indices included). The tickValue/tickSize/point/currency chain below UNDERSTATES
-    // risk on some symbols (e.g. Volatility 75), which would let oversized trades through the re-gate.
+    // Authoritative risk = the broker's own P/L for closing at the stop; the tickValue/tickSize/point chain below UNDERSTATES some symbols (e.g. Volatility 75), which would let oversized trades through the re-gate.
     double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
     double bid = SymbolInfoDouble(symbolParam, SYMBOL_BID);
     double risk = 0.0;
@@ -1688,7 +1644,7 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     if(risk > 0.0)
         return risk;
 
-    // Fallback: manual math if OrderCalcProfit is unavailable for this symbol.
+    // Fallback manual math when OrderCalcProfit fails; returns 0.0 if tickSize/tickValue are missing, which charges no risk.
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize  = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     if(tickValue <= 0 || tickSize <= 0)
@@ -1843,8 +1799,7 @@ double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) cons
     
     if(stopLoss <= 0.0 || openPrice <= 0.0 || volume <= 0.0)
     {
-        // Conservative: a position without an SL is charged max risk so the cluster
-        // budget is never underestimated.
+        // Fail closed: a position with no SL is charged maxRiskPerTradePercent so the cluster budget is never underestimated.
         return m_config.maxRiskPerTradePercent;
     }
     

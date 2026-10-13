@@ -1,5 +1,5 @@
-// Auto-switches risk tier based on account equity milestones
-// Implements I2 (Compounding Tier System) from problems.md
+// Switches the risk profile between equity brackets as account equity grows.
+// Milestone crossings only log/Alert; the active tier comes from the equity bracket alone.
 #ifndef CORE_RISK_COMPOUNDING_TIER_MANAGER_MQH
 #define CORE_RISK_COMPOUNDING_TIER_MANAGER_MQH
 
@@ -9,8 +9,7 @@
 #include "PositionSizer.mqh"
 #include "../Trading/TradeManager.mqh"
 
-// Compounding Tier Enumeration (separate from risk tiers)
-// L5-021 FIX: Separate enum for compounding tiers
+// Deliberately separate from ENUM_RISK_TIER; nothing maps between them except GetTierName() log strings
 enum ENUM_COMPOUNDING_TIER
 {
     COMPOUNDING_TIER_MICRO_AGGRESSIVE = 0,   // $10-$25
@@ -40,7 +39,6 @@ struct SCompoundingTierConfig
     double dailyLossLimitOverride;
 };
 
-// Automatically switches risk profile as account grows
 class CCompoundingTierManager
 {
 private:
@@ -52,20 +50,17 @@ private:
     bool   m_autoSwitchEnabled;
     bool   m_initialized;
 
-    // Tracking
     datetime m_lastTierSwitchTime;
     double   m_peakEquity;
     int      m_switchCount;
     double   m_highestMilestoneReached;  // Batch 117: one-way watermark for milestones
 
-// Build tier configurations
         void BuildTierConfigs()
         {
             m_tierCount = 9;
             ArrayResize(m_tiers, m_tierCount);
 
             // Tier 0: Micro Aggressive ($10-$25)
-                    // High risk for rapid compounding, accept 25% drawdown
                     m_tiers[0].minEquity              = 10.0;
                     m_tiers[0].maxEquity              = 25.0;
                     m_tiers[0].compoundingTier          = COMPOUNDING_TIER_MICRO_AGGRESSIVE;
@@ -80,7 +75,6 @@ private:
                     m_tiers[0].dailyLossLimitOverride  = 15.0;
 
                     // Tier 1: Growth ($25-$50)
-                    // Moderate aggression, still compounding hard
                     m_tiers[1].minEquity              = 25.0;
                     m_tiers[1].maxEquity              = 50.0;
                     m_tiers[1].compoundingTier          = COMPOUNDING_TIER_GROWTH;
@@ -95,7 +89,6 @@ private:
                     m_tiers[1].dailyLossLimitOverride  = 18.0;
 
                     // Tier 2: Acceleration ($50-$100)
-                    // Balanced — protect gains while still growing
                     m_tiers[2].minEquity              = 50.0;
                     m_tiers[2].maxEquity              = 100.0;
                     m_tiers[2].compoundingTier          = COMPOUNDING_TIER_ACCELERATION;
@@ -110,7 +103,6 @@ private:
                     m_tiers[2].dailyLossLimitOverride  = 20.0;
 
                     // Tier 3: Institutional ($100-$500)
-                    // Capital preservation mode — slow but steady
                     m_tiers[3].minEquity              = 100.0;
                     m_tiers[3].maxEquity              = 500.0;
                     m_tiers[3].compoundingTier          = COMPOUNDING_TIER_INSTITUTIONAL;
@@ -125,7 +117,6 @@ private:
                     m_tiers[3].dailyLossLimitOverride  = 25.0;
 
                     // Tier 4: Professional ($500-$1,000)
-                    // Full institutional approach — strict capital preservation
                     m_tiers[4].minEquity              = 500.0;
                     m_tiers[4].maxEquity              = 1000.0;
                     m_tiers[4].compoundingTier          = COMPOUNDING_TIER_PROFESSIONAL;
@@ -139,8 +130,7 @@ private:
                     m_tiers[4].maxConcurrentOverride   = 5;
                     m_tiers[4].dailyLossLimitOverride  = 15.0;
 
-                    // Tier 5: High Growth ($1,000-$5,000) — USER REQUESTED: 5% risk
-                    // Aggressive growth with controlled risk
+                    // Tier 5: High Growth ($1,000-$5,000)
                     m_tiers[5].minEquity              = 1000.0;
                     m_tiers[5].maxEquity              = 5000.0;
                     m_tiers[5].compoundingTier          = COMPOUNDING_TIER_HIGH_GROWTH;
@@ -154,8 +144,7 @@ private:
                     m_tiers[5].maxConcurrentOverride   = 6;
                     m_tiers[5].dailyLossLimitOverride  = 20.0;
 
-                    // Tier 6: Aggressive Growth ($5,000-$10,000) — USER REQUESTED: 10% risk
-                    // Higher risk for aggressive growth
+                    // Tier 6: Aggressive Growth ($5,000-$10,000)
                     m_tiers[6].minEquity              = 5000.0;
                     m_tiers[6].maxEquity              = 10000.0;
                     m_tiers[6].compoundingTier          = COMPOUNDING_TIER_AGGRESSIVE_GROWTH;
@@ -169,8 +158,7 @@ private:
                     m_tiers[6].maxConcurrentOverride   = 8;
                     m_tiers[6].dailyLossLimitOverride  = 25.0;
 
-                    // Tier 7: Maximum Growth ($10,000-$50,000) — USER REQUESTED: 15% risk
-                    // Maximum risk for accounts that can absorb drawdown
+                    // Tier 7: Maximum Growth ($10,000-$50,000)
                     m_tiers[7].minEquity              = 10000.0;
                     m_tiers[7].maxEquity              = 50000.0;
                     m_tiers[7].compoundingTier          = COMPOUNDING_TIER_MAXIMUM_GROWTH;
@@ -184,8 +172,7 @@ private:
                     m_tiers[7].maxConcurrentOverride   = 10;
                     m_tiers[7].dailyLossLimitOverride  = 30.0;
 
-                    // Tier 8: Capital Preservation ($50,000+) — Institutional mode
-                    // Full institutional approach — strict capital preservation
+                    // Tier 8: Capital Preservation ($50,000+)
                     m_tiers[8].minEquity              = 50000.0;
                     m_tiers[8].maxEquity              = 1e10;
                     m_tiers[8].compoundingTier          = COMPOUNDING_TIER_CAPITAL_PRESERVATION;
@@ -200,7 +187,8 @@ private:
                     m_tiers[8].dailyLossLimitOverride  = 15.0;
         }
 
-// Find tier index for given balance
+// Bracket match is [min, max) in account-currency equity; equity below the first bracket matches no tier and
+// returns the LAST one (Capital Preservation, the most conservative), not the most aggressive
     int FindTierIndex(double equity)
     {
         PrintFormat("[COMPOUNDING-TIER-DEBUG] FindTierIndex called | equity=%.2f | tierCount=%d", equity, m_tierCount);
@@ -219,7 +207,6 @@ private:
         return m_tierCount - 1; // highest tier
     }
 
-// Get tier name for logging
         string GetTierName(int index) const
         {
             string riskTierName = "UNKNOWN";
@@ -257,7 +244,6 @@ public:
         m_highestMilestoneReached(0),
         m_lastTierSwitchTime(0), m_peakEquity(0), m_switchCount(0) {}
 
-// Initialize with default tier configs
         bool Initialize(bool autoSwitch = true)
         {
             BuildTierConfigs();
@@ -266,7 +252,8 @@ public:
             m_peakEquity = m_previousEquity;
             m_startingEquity = m_previousEquity;  // L5-005: Track starting equity for % milestones
 
-            // Determine starting tier
+            // Nothing is persisted: each init re-seeds starting/peak equity and the milestone watermark from the live
+            // account, so a restart lowers the milestone baseline to the equity at restart
             m_currentTierIndex = FindTierIndex(m_previousEquity);
             m_initialized = true;
 
@@ -285,9 +272,8 @@ public:
         return true;
     }
 
-// Check for tier transition — call from OnTimer or OnTick
-// Returns true if tier changed
-// L5-020 FIX: Added downgrade logic with hysteresis
+// Driven from the orchestrator OnTimer tier check; returns true only when the tier index changed.
+// The CTradeManager& argument is not referenced by this method.
         bool CheckTierTransition(CUnifiedRiskManager &riskMgr,
                                  CPositionSizer &posSizer,
                                  CTradeManager &tradeMgr)
@@ -299,7 +285,7 @@ public:
             if(equity > m_peakEquity)
                 m_peakEquity = equity;
 
-            // I8: Check for account milestones
+            // Milestone message only: it never selects a tier, FindTierIndex(equity) below does
             string milestoneMsg = CheckMilestone(m_previousEquity, equity);
             if(StringLen(milestoneMsg) > 0)
             {
@@ -316,15 +302,13 @@ public:
 
             if(newTierIndex != m_currentTierIndex)
             {
-                // L5-020: Add hysteresis for downgrades
-                // Only allow downgrade if equity is significantly below the current tier's minimum
-                // and enough time has passed since last switch (cooldown)
+                // The cooldown blocks every switch, upgrades included, and returns with no log line; a downgrade
+                // additionally needs equity below 90% of the CURRENT tier's min
                 datetime now = TimeCurrent();
                 const int COOLDOWN_SECONDS = 3600; // 1 hour cooldown between tier changes
             
                 if(now - m_lastTierSwitchTime < COOLDOWN_SECONDS)
                 {
-                    // Still in cooldown, don't switch tiers
                     m_previousEquity = equity;
                     return false;
                 }
@@ -332,7 +316,6 @@ public:
                 bool isUpgrade = (newTierIndex > m_currentTierIndex);
                 bool isDowngrade = (newTierIndex < m_currentTierIndex);
             
-                // L5-020: Hysteresis for downgrade - require equity to drop below 90% of tier min
                 if(isDowngrade)
                 {
                     double tierMinEquity = m_tiers[m_currentTierIndex].minEquity;
@@ -340,7 +323,6 @@ public:
                 
                     if(equity >= hysteresisThreshold)
                     {
-                        // Equity hasn't dropped enough to justify downgrade
                         PrintFormat("[COMPOUNDING-TIER] Downgrade blocked by hysteresis | equity=%.2f | threshold=%.2f | tierMin=%.2f",
                                     equity, hysteresisThreshold, tierMinEquity);
                         m_previousEquity = equity;
@@ -357,11 +339,9 @@ public:
                                         m_tiers[oldIndex].minEquity, m_tiers[newTierIndex].minEquity,
                             GetTierName(oldIndex), GetTierName(newTierIndex), m_switchCount);
 
-                // Apply new tier parameters
                 ApplyTierToRiskManager(riskMgr);
                 ApplyTierToPositionSizer(posSizer);
 
-                // Alert
                 string direction = isUpgrade ? "UPGRADE" : "DOWNGRADE";
                 Alert("COMPOUNDING TIER ", direction, ": Account $", DoubleToString(equity, 2),
                       " | New tier: ", GetTierName(m_currentTierIndex),
@@ -375,7 +355,8 @@ public:
             return false;
         }
 
-// Apply current tier to risk manager
+// Hands all eight overrides to CUnifiedRiskManager::ApplyTierOverrides, which clamps each value to the operator
+// envelope captured at risk-manager init (a tier can lower risk, never raise it past the configured ceiling)
         void ApplyTierToRiskManager(CUnifiedRiskManager &riskManager)
         {
             if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
@@ -405,7 +386,8 @@ public:
                         tier.dailyLossLimitOverride);
     }
 
-// Apply current tier to position sizer
+// Writes the tier's raw risk % into the sizer: CPositionSizer::SetParameters does no clamping, so an above-envelope
+// tier value survives here and is only refused later by the pre-trade per-trade cap check
     void ApplyTierToPositionSizer(CPositionSizer &posSizer)
     {
         if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
@@ -437,7 +419,8 @@ public:
         return fallback;
     }
 
-// Get current tier risk percentage
+// The four accessors below are percent (0-100 scale) except GetMaxConcurrent (position count); each returns a
+// hardcoded fallback (1.0 / 3 / 15.0 / 10.0) when no tier is active. No caller in this repo invokes them.
     double GetRiskPerTrade() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -445,7 +428,6 @@ public:
         return 1.0;
     }
 
-// Get current max concurrent positions
     int GetMaxConcurrent() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -453,7 +435,6 @@ public:
         return 3;
     }
 
-// Get current daily loss limit
     double GetDailyLossLimit() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -461,7 +442,6 @@ public:
         return 15.0;
     }
 
-// Get current drawdown critical threshold
     double GetDrawdownCritical() const
     {
         if(m_currentTierIndex >= 0 && m_currentTierIndex < m_tierCount)
@@ -469,16 +449,15 @@ public:
         return 10.0;
     }
 
-// Check if account qualifies for higher tier (milestone check)
+// Milestones are multiples of the equity captured at Initialize (1.25x, 1.5x, 2x, 3x, 6x); "" when none crossed
         string CheckMilestone(double prevEquity, double currEquity)
         {
-            // L5-005: Milestones as percentage of starting equity (25%, 50%, 100%, 200%, 500% growth)
             double milestones[] = {1.25, 1.50, 2.0, 3.0, 6.0};
 
             for(int i = 0; i < ArraySize(milestones); i++)
             {
                 double milestoneEquity = m_startingEquity * milestones[i];
-                // Batch 117: one-way watermark — only fire for milestones above highest reached
+                // One-way watermark: a milestone at or below the highest already reached never re-fires
                 if(prevEquity < milestoneEquity && currEquity >= milestoneEquity && milestoneEquity > m_highestMilestoneReached)
                 {
                     m_highestMilestoneReached = milestoneEquity;
@@ -489,11 +468,11 @@ public:
             return "";
         }
 
-// Enable/disable auto-switching
+// SetAutoSwitch is called from the orchestrator config path; IsAutoSwitchEnabled has no caller
     void SetAutoSwitch(bool enabled) { m_autoSwitchEnabled = enabled; }
     bool IsAutoSwitchEnabled() const { return m_autoSwitchEnabled; }
 
-// Get tier info for diagnostics
+// String only, no caller in this repo: the heartbeat uses GetHeartbeatString below
         string GetDiagnostics() const
         {
             return StringFormat("Tier=%s | Equity=$%.2f | Switches=%d | Peak=$%.2f",
@@ -501,7 +480,8 @@ public:
                                 m_previousEquity, m_switchCount, m_peakEquity);
         }
 
-// Get heartbeat string for periodic logging (L9-003)
+// Feeds [COMPOUNDING-TIER-HEARTBEAT] through DiagnosticsManager. "next_milestone" is the tier's equity ceiling and
+// "balance" is previous equity - neither is the growth milestone CheckMilestone reports
         string GetHeartbeatString() const
         {
             if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)

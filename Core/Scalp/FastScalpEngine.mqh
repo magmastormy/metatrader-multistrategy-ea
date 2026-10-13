@@ -1,17 +1,9 @@
-// Dedicated scalping pipeline bypassing full consensus engine
-// Single-strategy-allowed signals, tight stops, tick-level mgmt
-// CFastScalpEngine is a thin coordinator: every public method is a signature-identical forwarder into a focused FastScalp* module — no behaviour, threshold or log tag changed.
-// FastScalpTypes.mqh            SScalpConfig + tracking structs
-// FastScalpIndicators.mqh       M1 ATR/EMA/RSI cache (stateful)
-// FastScalpFilters.mqh          price/spread/burst/cost gates
-// FastScalpSizing.mqh           lot sizing + confidence score
-// FastScalpSignal.mqh           cached fast path + slow path
-// FastScalpRiskBudget.mqh       scalp risk budget (stateful)
-// FastScalpPositionTracker.mqh  scalp position registry (stateful)
-// FastScalpPendingOrders.mqh    pending limit orders (stateful)
-// FastScalpAsyncTracker.mqh     OrderSendAsync tracking (stateful)
-// FastScalpEntry.mqh            entry gating + trade execution
-// FastScalpExit.mqh             1R partial / breakeven / trailing
+// Scalp pipeline that decides and sends outside consensus (no strategy vote), but every entry still passes CUnifiedRiskManager.
+// This is the only scalp engine with a live driver: EAOrchestrator calls ProcessScalpFastPath from the tick path, throttled to 1 s;
+// the ATR-scalp / spike-hunter / grid engines are parked and named by the init log [ENGINE-STATUS].
+// Forwarder to the FastScalp* modules below (Types config, Indicators M1 ATR/EMA/RSI, Filters price/spread/burst/cost, Sizing
+// lot+confidence, Signal fast/slow path, RiskBudget, PositionTracker, PendingOrders, AsyncTracker, Entry gates+send, Exit
+// 1R partial/breakeven/trailing); Initialize, EvaluateScalpSignal and ShouldEnterScalp keep their own guards.
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -28,7 +20,7 @@
 #include "../Risk/RiskTierManager.mqh"
 #include "../../IndicatorManager.mqh"
 
-// Forward declaration for global profiler access (initialized in EAOrchestrator)
+// Not used in this file: FastScalpFilters.mqh:17 declares its own extern and is the only scalp reader of it.
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
@@ -63,14 +55,12 @@ private:
    long                      m_magicNumber;          // EA magic number for pending orders — Batch 125: changed from uint to long
    bool                      m_initialized;
 
-   //--- Extracted state owners (held BY VALUE)
    CFastScalpIndicators      m_indicators;      // was m_cached{Symbol,BarTime,ATR,FastEMA,SlowEMA,RSI}
    CFastScalpRiskBudget      m_riskBudget;      // was m_usedScalpRiskPct
    CFastScalpPositionTracker m_posTracker;      // was m_scalpPositions[20] / m_scalpPositionCount
    CFastScalpPendingOrders   m_pendingBook;     // was m_pendingOrders[10] / m_pendingOrderCount / m_tradeObj
    CFastScalpAsyncTracker    m_asyncTracker;    // was m_pendingAsync[20] / m_pendingAsyncCount / m_asyncMode / m_maxLatencyMs
 
-   //--- Private forwarders (signatures preserved 1:1 from the original)
    bool RefreshIndicators(string symbol)
    { return m_indicators.RefreshIndicators(symbol, m_config); }
 
@@ -112,8 +102,6 @@ private:
    { return m_posTracker.FindScalpPositionState(ticket); }
 
 public:
-// Scalar members keep their original initialisers; the extracted
-// state objects reproduce the rest in their own constructors.
    CFastScalpEngine() :
       m_tradeManager(NULL),
       m_riskManager(NULL),
@@ -129,7 +117,6 @@ public:
 
    ~CFastScalpEngine()
    {
-      // Cancel any remaining pending orders
       m_pendingBook.CancelAllOnShutdown();
       m_posTracker.Reset();
    }
@@ -153,8 +140,9 @@ public:
       m_riskTierManager = riskTierManager;
       m_aiAdapter       = aiAdapter;  // L10-018: Store AI adapter
 
-      // Note: CTradeManager doesn't expose GetMagicNumber, so we use the default
-      // The market order path goes through CTradeManager which sets magic internally
+      // CTradeManager has no GetMagicNumber accessor: market orders get base magic + per-symbol offset inside it
+      // (TradeManager.mqh:1267), while m_magicNumber is set from config by the orchestrator and reaches only the
+      // pending/async paths. A 0% tier budget zeroes maxScalpPositions here, so PassesEntryGates refuses all.
 
       m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
       if(m_config.scalpRiskPct <= 0.0)
@@ -185,32 +173,27 @@ public:
 
    SScalpConfig GetConfig() const { return m_config; }
 
-// Set magic number for pending orders
    void SetMagicNumber(long magic) { m_magicNumber = magic; }
 
-// When set, EvaluateScalpSignal reads from cache instead of
-// calling CopyBuffer — zero indicator computation in fast path
+// With a cache attached, EvaluateScalpSignal reads indicator values from it instead of calling
+// CopyBuffer, so the fast path does no indicator computation itself.
    void SetSignalCache(CScalpSignalCache* cache) { m_signalCache = cache; }
 
    void SetAsyncMode(bool enabled) { m_asyncTracker.SetAsyncMode(enabled); }
 
-// Set max acceptable latency for async order confirmation
    void SetMaxLatencyMs(uint maxMs) { m_asyncTracker.SetMaxLatencyMs(maxMs); }
 
    int GetPendingAsyncCount() const { return m_asyncTracker.Count(); }
 
    bool IsInitialized() const { return m_initialized; }
 
-// Micro-trend: EMA5/EMA13 crossover on M1
-// Momentum burst: bar body > 0.8 * ATR
-// RSI confirmation: not overbought/oversold
-// Spread gate: reject if spread > 30% of ATR
+// Gates (SScalpConfig defaults, overridable by the orchestrator): EMA 5/13 crossover on M1, M1 bar body
+// > 0.80*ATR for a burst, spread > 0.30*ATR rejects, RSI(7) must not be at its OB/OS limits.
    ENUM_TRADE_SIGNAL EvaluateScalpSignal(string symbol)
    {
       if(!m_initialized)
          return TRADE_SIGNAL_NONE;
 
-      // Try fast-path: read from signal cache (zero CopyBuffer)
       if(m_signalCache != NULL)
       {
          SScalpIndicatorCache cache;
@@ -230,11 +213,14 @@ public:
          }
       }
 
-      // Fallback: existing RefreshIndicators path (slow path / timer path)
+      // Slow path: RefreshIndicators does its own CopyBuffer reads. Reached from the same 1 s-throttled
+      // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry — there
+      // is no timer caller for this engine.
       return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators);
    }
 
-// Checks: cooldown, max positions, scalp risk budget, signal, lots
+// Gate order (each one is a hard refusal): cooldown since last entry (scalpCooldownMs, default 5000 ms) ->
+// CountScalpPositions >= maxScalpPositions (default 3) -> used scalp risk >= scalpRiskPct (tier budget).
    bool ShouldEnterScalp(string symbol, ENUM_TRADE_SIGNAL &signal,
                           double &confidence, double &lotSize)
    {
@@ -252,33 +238,31 @@ public:
       if(signal == TRADE_SIGNAL_NONE)
          return false;
 
-      // Calculate confidence — burst is resolved first, exactly as before,
-      // so the indicator refresh sequence is unchanged.
       bool momentumBurst = IsMomentumBurst(symbol);
       double atr = GetATRCached(symbol);
       confidence = CFastScalpSizing::CalculateConfidence(symbol, atr, momentumBurst);
 
-      // Calculate lot size using CPositionSizer (min-lot fallback inside)
+      // Lot from CPositionSizer::CalculatePositionSize when it is initialised; otherwise the sizer is
+      // bypassed and the lot falls back to SYMBOL_VOLUME_MIN (FastScalpSizing.mqh:72).
       lotSize = CFastScalpSizing::ResolveBaseLotSize(symbol, m_config, confidence, m_positionSizer);
 
       if(lotSize <= 0.0)
          return false;
 
-      // Commission-aware cost validation: reject if total cost (spread + commission)
-      // makes the scalp unviable (breakeven WR > 70% or cost > 25% of TP)
+      // Cost gate: spread + estimated round-trip commission (points) rejects when breakeven WR > 70% or cost >
+      // 25% of TP; synthetics get 85% / 60%. Commission comes from the TICK_VALUE_PROFIT/_LOSS asymmetry.
       if(!IsScalpCostViable(symbol, (double)m_config.scalpSLPips, (double)m_config.scalpTPPips))
          return false;
 
-      // Risk validation through CUnifiedRiskManager
+      // Pre-trade gate #1 of two: ValidateTradeRequest(tag "scalp") here, then again inside
+      // CFastScalpEntry::Execute (tag "scalp-pretrade") on the lot after any adjustment.
       if(!CFastScalpEntry::ValidateRiskAndAdjust(symbol, signal, confidence, lotSize,
                                                  m_config, m_riskManager))
          return false;
 
-      // Margin cap + symbol minimum lot check
       return CFastScalpEntry::FinalizeLotSize(symbol, lotSize);
    }
 
-// Supports both synchronous and async execution modes
    bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
                            double lotSize, double confidence)
    {
@@ -289,19 +273,19 @@ public:
                                       m_lastScalpTime);
    }
 
-// Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)
+// No caller in this repo: the tick driver only sends market orders, so the BUY_LIMIT/SELL_LIMIT book
+// stays empty even though usePendingOrders defaults to true and the init log prints pending=ON.
    bool PlaceScalpPendingOrder(string symbol, ENUM_TRADE_SIGNAL signal, double lotSize)
    {
       return m_pendingBook.Place(symbol, signal, lotSize, m_config, m_magicNumber, m_lastScalpTime);
    }
 
-// Check and manage pending scalp orders (cancel expired)
    void CheckPendingScalpOrders() { m_pendingBook.CheckExpired(m_config); }
 
    void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
-// Quick profit lock, tight trailing, partial close
-// NOT throttled to 1 second like swing trailing
+// 1R partial close / breakeven / trailing. No throttle of its own — it runs once per ProcessScalpFastPath
+// pass, and that driver is the thing limited to one call per second.
    void ManageScalpPositions()
    {
       if(!m_initialized || m_tradeManager == NULL)
@@ -311,39 +295,42 @@ public:
                                            m_tradeManager, m_riskManager, m_config);
    }
 
-// Count positions with "SCALP" in comment
+// Counts every open position whose comment STARTS with "SCALP" (StringFind==0), terminal-wide and without
+// a magic-number or symbol filter — this is the number the maxScalpPositions gate is compared against.
    int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
 
    bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }
 
-// Sync tracked scalp positions with actual open positions
+// Adopts open SCALP positions the tracker lost (keyed by position ticket) and frees the risk budget of
+// tracked tickets that no longer select a position.
    void SyncScalpPositionTracking()
    {
       CFastScalpExit::SyncScalpPositionTracking(m_posTracker, m_riskBudget, m_riskManager);
    }
 
-// Free the scalp risk budget consumed by a ticket
+// Dead wrappers, no caller in this repo: SetConfig, RemovePendingOrder, FreeScalpRiskBudget,
+// RemovePendingAsync, IsScalpPosition, GetUsedScalpRiskPct, GetPendingOrderCount. The send path and the
+// exit path use CFastScalpEntry / CFastScalpExit against the trackers directly instead of these.
    void FreeScalpRiskBudget(ulong ticket)
    {
       CFastScalpExit::FreeScalpRiskBudget(ticket, m_posTracker, m_riskBudget, m_riskManager);
    }
 
-// Track a pending async order after OrderSendAsync
    void OnAsyncOrderSent(ulong orderTicket, string symbol, int direction,
                           double lotSize, double entryPrice, double sl, double tp)
    {
       m_asyncTracker.OnAsyncOrderSent(orderTicket, symbol, direction, lotSize, entryPrice, sl, tp);
    }
 
-// Handle deal confirmation for async scalp orders
-// Called from OnTradeTransaction when a deal matches a pending order
+// Live: MultiStrategyAutonomousEA.mq5:1366 -> EAOrchestrator::ProcessScalpDealConfirmed -> here.
+// Confirms an async deal into the position tracker; no-op when nothing is pending.
    void OnDealConfirmed(ulong dealTicket, ulong orderTicket)
    {
       m_asyncTracker.OnDealConfirmed(dealTicket, orderTicket, m_config, m_posTracker);
    }
 
-// Check pending async orders for expiration
-// Called from OnTick to detect stale unconfirmed orders
+// Live from ProcessScalpFastPath (tick path, 1 s throttle): expires async entries unconfirmed for
+// > 3x scalpMaxLatencyMs and releases budget through ReleaseFallback, which is not keyed to a ticket.
    void CheckPendingAsyncOrders()
    {
       m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager);

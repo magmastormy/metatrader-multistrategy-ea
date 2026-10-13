@@ -1,15 +1,12 @@
-// Registry Aggregator - Enterprise Grade
-// Aggregates multiple typed registries into a unified access point
+// Owns and disposes the typed registries. EAOrchestrator holds exactly one CRegistryAggregator by value
+// (m_registryAggregator) and injects the sub-registry pointers into consumers — managers receive
+// GetStrategyRegistry() — so no second instance of any registry exists that could disagree with this one.
 #ifndef REGISTRY_AGGREGATOR_MQH
 #define REGISTRY_AGGREGATOR_MQH
 
-// NOTE: "IRegistry.mqh" (CRegistryBase<T>) is intentionally NOT included.
-// That template models a single "string symbol -> T* owned instance" map, but every
-// concrete registry here stores a struct-BY-VALUE array (SStrategyDescriptor[],
-// SNNEntry[], SEngineSlot[], SDrawingEntry[], SSymbolScanState[]). MQL5 has no
-// pointers to structs, and the engine registries map one symbol to MANY engines,
-// so the template cannot be applied without rewriting their storage. The include
-// was vestigial (nothing in this file referenced IRegistry/CRegistryBase).
+// CRegistryBase<T> (IRegistry.mqh) is deliberately NOT included: it models one "string -> T* owned
+// instance" map, but every registry here stores structs BY VALUE (SStrategyDescriptor, SNNEntry, SEngineSlot,
+// SDrawingEntry, SSymbolScanState) and maps one symbol to MANY engines, which the template cannot express.
 #include "MathematicalEngineRegistry.mqh"
 #include "InstitutionalEngineRegistry.mqh"
 #include "NeuralNetRegistry.mqh"
@@ -18,7 +15,6 @@
 #include "SymbolStateTracker.mqh"
 #include "../Strategy/StrategyRegistry.mqh"
 
-// Forward declarations
 class CMathematicalEngineRegistry;
 class CInstitutionalEngineRegistry;
 class CDrawingManagerRegistry;
@@ -60,33 +56,30 @@ private:
     bool Initialize();
     void Deinitialize();
     
-    // Mathematical Engine Registry access
     CMathematicalEngineRegistry* GetMathRegistry() const { return m_mathRegistry; }
     
-    // Institutional Engine Registry access
     CInstitutionalEngineRegistry* GetInstitutionalRegistry() const { return m_institutionalRegistry; }
     
-    // Neural Net Registry access
     CNeuralNetRegistry* GetNeuralNetRegistry() const { return m_neuralNetRegistry; }
     
-    // Neural Net online learning tick (drives ResolveBarriers + self-labeled training across all active nets).
-    // Defined here (not via CNeuralNetRegistry* directly from EAOrchestrator) because EAOrchestrator only holds a
-    // forward declaration of CNeuralNetRegistry and cannot call its member through an incomplete type.
+    // Drives online learning for every active net: TickOnlineLearningAll -> per-net TickOnlineLearning, which
+    // runs ResolveBarriers plus the self-labeled observation capture.
+    // Called from EAOrchestrator.mqh:2990; this aggregator owns the only CNeuralNetRegistry instance — the
+    // old claim that EAOrchestrator could not see the type is stale, it includes NeuralNetRegistry.mqh at line 15.
     void TickNeuralNetOnlineLearning() const;
     
-    // Drawing Manager Registry access
     CDrawingManagerRegistry* GetDrawingRegistry() const { return m_drawingRegistry; }
     
-    // Scan Scheduler Registry access
     CScanSchedulerRegistry* GetScanRegistry() const { return m_scanRegistry; }
     
-    // Symbol State Tracker access
         CSymbolStateTracker* GetSymbolStateTracker() const { return m_symbolStateTracker; }
     
-        // Strategy Registry access
         CStrategyRegistry* GetStrategyRegistry() const { return m_strategyRegistry; }
     
-        // Convenience methods for common engine access
+        // Dead surface: no caller in this repo uses the nine Get*(symbol) conveniences below, GetScanScheduler,
+        // GetTotalRegisteredCount or any Is*Ready() probe. Live consumers take the whole registry instead —
+        // GetMathRegistry()/GetInstitutionalRegistry()/GetDrawingRegistry() feed UnifiedSignalPipeline and
+        // OrchestratorMathEngineHub, GetStrategyRegistry() feeds the symbol managers.
     CTrendEngine* GetTrendEngine(const string symbol) const;
     CStructureEngine* GetStructureEngine(const string symbol) const;
     CLiquidityEngine* GetLiquidityEngine(const string symbol) const;
@@ -97,7 +90,6 @@ private:
     CChartDrawingManager* GetDrawingManager(const string symbol) const;
     CSymbolScanScheduler* GetScanScheduler(const string symbol) const;
     
-    // Registry status
     bool IsMathRegistryReady() const { return m_mathRegistry != NULL; }
     bool IsInstitutionalRegistryReady() const { return m_institutionalRegistry != NULL; }
     bool IsNeuralNetRegistryReady() const { return m_neuralNetRegistry != NULL; }
@@ -105,14 +97,13 @@ private:
     bool IsScanRegistryReady() const { return m_scanRegistry != NULL; }
     bool IsSymbolStateTrackerReady() const { return m_symbolStateTracker != NULL; }
     
-    // Get total registered count across all registries
+    // Not "all registries": it sums six of the seven and leaves m_strategyRegistry out entirely.
     int GetTotalRegisteredCount() const;
     
-    // Clear all registries
     void ClearAll();
 
 private:
-    // Prevent copying
+    // Declared private and never defined: copying this class is a link error, which is the point.
     CRegistryAggregator(const CRegistryAggregator&);
 };
 
@@ -121,11 +112,13 @@ CRegistryAggregator::~CRegistryAggregator()
     Deinitialize();
 }
 
+// Must run BEFORE EAOrchestrator::BuildStrategyRegistry(): GetStrategyRegistry() would hand out NULL there.
+// Descriptors stay empty until the orchestrator fills them, so CStrategyRegistry::IsStrategyActive() is false
+// for every name at that point (unknown name -> false) and managers re-apply their flags afterwards.
 bool CRegistryAggregator::Initialize()
 {
     bool ok = true;
     
-    // Initialize Mathematical Engine Registry
     m_mathRegistry = new CMathematicalEngineRegistry();
     if(m_mathRegistry == NULL)
     {
@@ -133,7 +126,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Institutional Engine Registry
     m_institutionalRegistry = new CInstitutionalEngineRegistry();
     if(m_institutionalRegistry == NULL)
     {
@@ -141,7 +133,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Neural Net Registry
     m_neuralNetRegistry = new CNeuralNetRegistry();
     if(m_neuralNetRegistry == NULL)
     {
@@ -149,7 +140,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Drawing Manager Registry
     m_drawingRegistry = new CDrawingManagerRegistry();
     if(m_drawingRegistry == NULL)
     {
@@ -157,7 +147,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Scan Scheduler Registry
     m_scanRegistry = new CScanSchedulerRegistry();
     if(m_scanRegistry == NULL)
     {
@@ -165,7 +154,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Symbol State Tracker
     m_symbolStateTracker = new CSymbolStateTracker();
     if(m_symbolStateTracker == NULL)
     {
@@ -173,7 +161,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    // Initialize Strategy Registry
     m_strategyRegistry = new CStrategyRegistry();
     if(m_strategyRegistry == NULL)
     {
@@ -191,10 +178,8 @@ bool CRegistryAggregator::Initialize()
 
 void CRegistryAggregator::Deinitialize()
 {
-    // Clear all registries
     ClearAll();
     
-    // Delete registry instances
     if(m_mathRegistry != NULL)
     {
         delete m_mathRegistry;
@@ -240,7 +225,6 @@ void CRegistryAggregator::Deinitialize()
         Print("[RegistryAggregator] All registries deinitialized");
 }
 
-// Convenience: Get Trend Engine
 CTrendEngine* CRegistryAggregator::GetTrendEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -248,7 +232,6 @@ CTrendEngine* CRegistryAggregator::GetTrendEngine(const string symbol) const
     return NULL;
 }
 
-// Convenience: Get Structure Engine
 CStructureEngine* CRegistryAggregator::GetStructureEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -256,7 +239,6 @@ CStructureEngine* CRegistryAggregator::GetStructureEngine(const string symbol) c
     return NULL;
 }
 
-// Convenience: Get Liquidity Engine
 CLiquidityEngine* CRegistryAggregator::GetLiquidityEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -264,7 +246,6 @@ CLiquidityEngine* CRegistryAggregator::GetLiquidityEngine(const string symbol) c
     return NULL;
 }
 
-// Convenience: Get Volatility Engine
 CVolatilityEngine* CRegistryAggregator::GetVolatilityEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -272,7 +253,6 @@ CVolatilityEngine* CRegistryAggregator::GetVolatilityEngine(const string symbol)
         return NULL;
     }
 
-    // Convenience: Get Regime Engine
 CRegimeEngine* CRegistryAggregator::GetRegimeEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -280,7 +260,6 @@ CRegimeEngine* CRegistryAggregator::GetRegimeEngine(const string symbol) const
     return NULL;
 }
 
-// Convenience: Get OFI Engine
 COrderFlowImbalanceEngine* CRegistryAggregator::GetOFIEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -288,7 +267,6 @@ COrderFlowImbalanceEngine* CRegistryAggregator::GetOFIEngine(const string symbol
     return NULL;
 }
 
-// Convenience: Get VPIN Filter
 CVPINFilter* CRegistryAggregator::GetVPINFilter(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -296,7 +274,6 @@ CVPINFilter* CRegistryAggregator::GetVPINFilter(const string symbol) const
     return NULL;
 }
 
-// Convenience: Get Drawing Manager
 CChartDrawingManager* CRegistryAggregator::GetDrawingManager(const string symbol) const
 {
     if(m_drawingRegistry != NULL)
@@ -304,13 +281,11 @@ CChartDrawingManager* CRegistryAggregator::GetDrawingManager(const string symbol
     return NULL;
 }
 
-// Convenience: Get Scan Scheduler
-// Note: CScanSchedulerRegistry doesn't have a GetScheduler method.
-// It tracks scan state per symbol. Return NULL for now.
+// Always NULL, and no caller in this repo: CScanSchedulerRegistry holds scan state per symbol rather than
+// scheduler objects. ProcessNewBars reads that state via CScanSchedulerRegistry::CheckNewBar directly
+// (EAOrchestrator.mqh:3404).
 CSymbolScanScheduler* CRegistryAggregator::GetScanScheduler(const string symbol) const
 {
-    // CScanSchedulerRegistry doesn't expose a scheduler object per symbol
-    // It tracks scan state internally. Return NULL.
     return NULL;
 }
 
@@ -332,7 +307,6 @@ void CRegistryAggregator::TickNeuralNetOnlineLearning() const
         m_neuralNetRegistry.TickOnlineLearningAll();
 }
 
-// Clear All Registries
 void CRegistryAggregator::ClearAll()
 {
     if(m_mathRegistry != NULL) m_mathRegistry.Clear();

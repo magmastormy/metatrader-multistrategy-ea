@@ -8,6 +8,47 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 191: Comment reduction in the risk tree, the scalp engine and the registry - 136 lines, and two agent claims that did not survive checking
+
+#### Context
+Seventh round of the comment workstream, on the six densest files Batches 189-190 did not already occupy. Whole-line comments, HEAD -> now:
+
+| File | Before | After |
+|---|---|---|
+| `Core/Risk/UnifiedRiskManager.mqh` | 128 | 83 |
+| `Core/Registry/RegistryAggregator.mqh` | 48 | 22 |
+| `Core/Risk/CompoundingTierManager.mqh` | 53 | 33 |
+| `Core/Engines/KalmanMeanReversion.mqh` | 50 | 32 |
+| `Core/Risk/PortfolioRiskManager.mqh` | 50 | 36 |
+| `Core/Scalp/FastScalpEngine.mqh` | 54 | 41 |
+
+Repo-wide **7,076 -> 6,940 (-136)**. For all six files the non-comment line stream is byte-identical to `HEAD`, so no executable line, blank line or CRLF moved.
+
+#### Two reported defects that were wrong, and what the code actually does
+- **"Nothing in the runtime can clear a halt."** `CUnifiedRiskManager::ResetCircuitBreaker` (`:1142`) genuinely has no caller - declared at `:231`, defined, forwards to the breaker, never invoked. But the daily-loss halt is not permanent: `RiskCircuitBreaker::ResetDailyLossHalt()` (`:339`) clears it and prints `[RISK-DAILY-LOSS] Daily loss halt RESET - new trading day`, and it is called from `UnifiedRiskManager.mqh:1304` on the new-trading-day path. The dead method is an unused manual reset, not a trapped account.
+- **"The CVaR gate has no data."** `m_tradeReturns` / `m_returnCount` are indeed never written (declared `:56`/`:58`, resized and zeroed at `:158-159`, read at `:735`/`:742`), but the gate does not depend on them: `RecordEquityCurveReturn` (`:690`) fills `m_equityCurveReturns`, driven by `CPortfolioRiskManager::UpdateEquityCurve()` (`:710`), which `UnifiedRiskManager.mqh:655` calls. The retained comment is accurate - the source is picked by sample count, `m_useEquityCurveForCVaR` is never read, and below 20 equity samples the gate fails open.
+
+Both were checked against the file before being written into this entry. A subagent report is a hypothesis.
+
+#### Dead surface confirmed
+- `GetKalman(symbol)` (`MathematicalEngineRegistry.mqh:149`) has no caller anywhere, and no code outside the hub touches `m_kalmanEngines[]`. The engine is constructed when the Kalman input is on, updated, and logged - advisory only, never reaching a sizing or veto decision. `TradeExecutor`'s contributor-name mapping for "Kalman" is therefore a branch that cannot be taken.
+- `SetThrottlePressure` writes a value `GetThrottlePressure` has no consumer for; `SetBaseRiskPerTrade` ("used by dual-mode auto-switching") and `SetTradingDayStartHour` have no caller, so the trading day rolls at server midnight regardless.
+- `CPortfolioRiskManager::OnPositionOpened` / `OnPositionClosed` / `InvalidateRiskCache` / `SetCacheRefreshInterval` have no caller, so every portfolio-risk read is a full position scan at the constructor's 60s interval, not the event-driven refresh the comments described.
+
+#### False comments rewritten (claim -> truth)
+`FastScalpEngine.mqh:3` said every public method is a signature-identical forwarder with no behaviour changed; `Initialize`/`ShouldEnterScalp`/`EvaluateScalpSignal` keep guards, read the scalp budget and cap at 0%. `:233` described a "slow path / timer path" with no timer caller. `RegistryAggregator.mqh:73` claimed `EAOrchestrator` holds only a forward declaration of `CNeuralNetRegistry` when it includes the file at `:15`. `:108` described a count "across all registries" that sums six of seven and omits `m_strategyRegistry`. `KalmanMeanReversion.mqh:264` claimed a Kalman gain for kappa; `m_P_mu_kappa` starts at 0 and is only decayed, so the gain is identically 0 and kappa stays at its OLS bootstrap. `CompoundingTierManager.mqh:2` cited a `problems.md` that does not exist in the repository, and `:203`/`:219` described tier selection by "balance" and by "highest tier" when it reads equity and an unmatched bracket returns the last, most conservative tier.
+
+#### Queued for Batch 192 (verified by me, not touched here)
+1. `CFastScalpEngine` runs the pre-trade gate **twice per trade**: `ValidateTradeRequest(request, "scalp")` at `FastScalpEntry.mqh:77` inside the entry decision, then `ValidateTradeRequest(riskReq, "scalp-pretrade")` at `:175` before the send. Each approval reserves a virtual position pruned only by TTL, so one scalp counts its risk twice against the portfolio and daily-budget gates, and `RecordApproval` fires twice. This is the double-count Batch 190 reasoned its way around.
+2. `UnifiedRiskManager::ApplyTierOverrides` prints `[RISK-ENVELOPE]` when any clamped value dropped, but the condition omits `clampedDdWarning`, so a clamp that only lowers the drawdown-warning threshold is silent.
+3. `CompoundingTierManager::ApplyTierToPositionSizer` (`:391`, called from `EAOrchestrator.mqh:973` and `:343`) hands the sizer the tier's raw risk percent while the envelope clamp exists only on the `UnifiedRiskManager` path, so a tier can size above the configured ceiling and be refused downstream instead of clamped.
+4. `EAOrchestrator.mqh:1162` is the only `m_scalpEngine.Initialize` call site; if its trailing `aiAdapter` argument is left defaulted, the engine's `[AI-VOTE]` block at `FastScalpEntry.mqh:194` never runs, which AGENTS.md §4.2 asks to see evidence of. The signature was not read before this line was written - verify before fixing.
+5. `CountScalpPositions` matches the `SCALP` comment prefix without a magic filter, so the `maxScalpPositions` cap counts positions belonging to other engines or instances - task #37's territory.
+
+#### Verification
+- This round changes comment lines only, proven per file by byte-identical non-comment streams; Batch 190's compile (8 programs, 0 errors / 0 warnings) is the build this tree sits on.
+- Every claim in this entry was re-derived by me from the files: `ResetDailyLossHalt` called at `UnifiedRiskManager.mqh:1304`, `UpdateEquityCurve` called at `:655`, the `GetKalman` reference count, the two `ValidateTradeRequest` call sites in `FastScalpEntry.mqh`, and the `[RISK-ENVELOPE]` condition at `UnifiedRiskManager.mqh:348-351`.
+
 ### Batch 190: The risk gate was validating a lot the EA never traded
 
 #### Context
