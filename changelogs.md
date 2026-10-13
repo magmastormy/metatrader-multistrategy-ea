@@ -8,6 +8,34 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 196: fill confirmation accepted any EA-owned position, because magic cannot tell these senders apart
+
+#### The matcher (`Core/Trading/TradeMgrPreflight.mqh`)
+`FindFreshPositionForSend(symbol, orderType, requestedVolume, ticketOut, volumeOut)` is the fallback that answers "did my send actually fill when the broker said it failed?". It tested four things: same symbol, same side, `IsMagicOwned`, opened within 30 s. Not the sender. Its `requestedVolume` parameter was never read. Any position another owner opened on that symbol inside the window was a valid answer.
+
+Magic could not have been the discriminator, which is why the gap survived: a fast-scalp market order goes through `CTradeManager::OpenPosition`, and `TradeManager.mqh:1267` composes `base + per-symbol offset` for market orders - the same magic a consensus entry on that symbol carries. So on one symbol, a scalp send and a consensus send are indistinguishable by magic, and `IsMagicOwned` is true for both.
+
+#### What a wrong "yes" cost
+Six call sites consumed this answer, and each one turns it into state. `GridRecoveryExecution` sets `result = true` and stores the ticket as the level's, then closes levels through `PositionSelectByTicket`/`PositionClose` on exactly that ticket - a level bound to a foreign position is a level that closes a position it does not own. `FastScalpEntry` registers its tracker slot under the adopted ticket, so the slot's risk release and the tick-level management path act on the wrong position while the engine's own fill, if there was one, goes untracked. `SpikeHunterExecutor` and `ATRScalpEntry` mark the spike/scalp opened and suppress the re-fire. On the consensus side (`TradeMgrPreflight.mqh:254`, `TradeManager.mqh:1335`) the receipt gets `accepted = true`, `filledVolume` and a `partialFill` ratio computed from the foreign volume, so the EA books a trade it did not get and attribution and health metrics are fed a fill that never happened. Two of the four engines are parked (no tick-loop caller since Batch 178), so today the live surface is fast-scalp plus both consensus sites.
+
+#### The rule now
+`FindFreshPositionForSend` takes an optional `expectedCommentPrefix`. A caller that names one matches only positions whose comment starts with it; a caller that names none matches only positions no engine claims (`HasEngineComment` over the four prefixes the codebase already uses for ownership decisions: `SCALP`, `ATR-SCALP`, `GRID-RECOVERY`, `SPIKE-HUNT`). The five engine sites pass their own prefix; the two consensus sites keep the empty default and therefore can no longer adopt an engine fill. The order comment is the field the exit paths already trust - `FastScalpExit.mqh:63` closes on `StringFind(comment,"SCALP")==0` and `ATRScalpExit.mqh:70` on its own prefix - so this adds a dependency the account is already carrying rather than a new one.
+
+Checked before writing this: the live fast-scalp send is the **synchronous** branch (`InpScalpAsyncMode = false`), which sends with `comment = "SCALP|EMA<fast>/<slow>|C:<conf>"`; the async branch composes `"AsyncTrade"` and returns before reaching the confirm block, so the prefix is present on every position the `"SCALP"` matcher is asked to find. `"ATR-SCALP|"` does not match the `"SCALP"` prefix (it starts at offset 4), which is the same asymmetry Batch 170 relied on when it made the scalp exit a prefix test. One behaviour the change removes in the other direction: `TradeManager.mqh:1335` is the transient-retcode dedup guard, and an engine position on the same symbol inside 30 s could previously make it conclude "this send already filled" and refuse a legitimate consensus entry. Consensus sends carry the caller's comment (empty by default), so they are still matched by the empty-prefix rule and the dedup keeps working for its own fills.
+
+#### Risk direction
+Strictly fewer false confirmations. A false "yes" used to bind tracking state, risk release and close operations to a position the sender did not open; a false "no" re-fires only the engine's own retry path, which every site already bounds with its own cooldown and counter. No magic, comment, ownership range or lot on any send changed, so positions already open keep the identity that manages them.
+
+#### Recorded, not changed
+- `requestedVolume` is still not read by the matcher. Making it a filter would break partial-fill confirmation (the fill is legitimately smaller than the request), which is the case Batch 177 added this helper for, and a volume *ceiling* would not catch the common case of a smaller foreign position. The owner prefix is the correct key.
+- The underlying magic overlap (scalp and consensus sharing `base + symbol offset`, and `ATRScalpEntry` composing `base + 7000 + symbolIndex` where 7000 is also the FOREX asset offset) stays open as task #37. Re-numbering it would orphan positions already open on this account, which §9 forbids without the operator's decision.
+- `FastScalpPendingOrders::FindRecentScalpEntry`'s pending-order loop already filtered by magic correctly; only its position fallback needed the prefix.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings.
+- No runtime evidence yet (newest journal 2026-09-23). Expected change: `[SCALP-ENTRY] ... ticket=0 | position not visible yet` becomes the honest answer when only a foreign position is in the window, and `[EXECUTION-CONFIRMED-BY-POSITION]` lines can no longer appear for a symbol whose fresh position belongs to an engine.
+
+
 ### Batch 195: two strategies never overrode `GetType()`, so a regime veto never fired
 
 #### Context

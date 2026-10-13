@@ -276,11 +276,25 @@ public:
 
 // Used to confirm a fill whose deal is not in history yet, and
 // to stop a retry duplicating an order the server already dealt.
+// Magic cannot separate these sends: a fast-scalp market order carries base + the same per-symbol
+// offset the consensus path composes (TradeManager.mqh:1267), so on one symbol both owners look
+// identical. The order comment is the discriminator the exit paths already trust, so an owner that
+// names its prefix matches only its own positions, and one that names none matches only positions no
+// engine claims.
+    static bool HasEngineComment(const string comment)
+    {
+        return (StringFind(comment, "SCALP") == 0 ||
+                StringFind(comment, "ATR-SCALP") == 0 ||
+                StringFind(comment, "GRID-RECOVERY") == 0 ||
+                StringFind(comment, "SPIKE-HUNT") == 0);
+    }
+
     static bool FindFreshPositionForSend(const string symbolName,
                                          const ENUM_ORDER_TYPE orderType,
                                          const double requestedVolume,
                                          ulong &ticketOut,
-                                         double &volumeOut)
+                                         double &volumeOut,
+                                         const string expectedCommentPrefix = "")
     {
         ticketOut = 0;
         volumeOut = 0.0;
@@ -299,6 +313,14 @@ public:
             if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != wantType) continue;
             if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
             if((datetime)PositionGetInteger(POSITION_TIME) < cutoff) continue;
+
+            string posComment = PositionGetString(POSITION_COMMENT);
+            if(expectedCommentPrefix != "")
+            {
+                if(StringFind(posComment, expectedCommentPrefix) != 0) continue;
+            }
+            else if(HasEngineComment(posComment))
+                continue;
 
             ticketOut = ticket;
             volumeOut = PositionGetDouble(POSITION_VOLUME);

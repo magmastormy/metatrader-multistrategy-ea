@@ -45,9 +45,10 @@ public:
       m_pendingOrderCount = 0;
    }
 
-// Recover a placement the broker accepted but OrderSend reported as failed: the magic is this
-// engine's own, so a match is unambiguous. Checks pending orders first, then positions, because an
-// immediate fill leaves no order behind.
+// Recover a placement the broker accepted but OrderSend reported as failed: pending orders are matched
+// by this engine's magic, and the position fallback by the "SCALP" comment prefix, because this magic is
+// also what the consensus path composes for the same symbol. Checks orders first, then positions, because
+// an immediate fill leaves no order behind.
    ulong FindRecentScalpEntry(const string symbol, const long magic)
    {
       datetime cutoff = TimeCurrent() - 30;
@@ -64,9 +65,9 @@ public:
 
       ulong posTicket = 0;
       double posVolume = 0.0;
-      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_BUY, 0.0, posTicket, posVolume))
+      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_BUY, 0.0, posTicket, posVolume, "SCALP"))
          return posTicket;
-      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_SELL, 0.0, posTicket, posVolume))
+      if(CTradeMgrPreflight::FindFreshPositionForSend(symbol, ORDER_TYPE_SELL, 0.0, posTicket, posVolume, "SCALP"))
          return posTicket;
       return 0;
    }

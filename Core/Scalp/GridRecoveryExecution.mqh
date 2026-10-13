@@ -132,7 +132,7 @@ public:
          double confirmVolume = 0.0;
          if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
                 (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                lotSize, confirmTicket, confirmVolume))
+                lotSize, confirmTicket, confirmVolume, "GRID-RECOVERY"))
          {
             PrintFormat("[GRID-RECOVERY] FILL CONFIRMED BY POSITION | %s L%d | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | level tracked, not resent",
                         symbol, level, confirmTicket, confirmVolume, lotSize, sendRetcode);

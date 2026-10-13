@@ -385,6 +385,17 @@ None of this moves a risk limit: consensus still requires two independent voters
 
 Expect equal or fewer entries from these two strategies, and `[CONSENSUS-REJECT] ... Ready weight ratio` lines where a trend-regime candidate now carries a vetoed voter.
 
+### Batch 196: fill confirmation could answer "yes" to the wrong owner
+
+When a send comes back failed, the EA asks `FindFreshPositionForSend` whether a position from that send nevertheless exists. Until now it answered yes for **any** EA-owned position on the same symbol and side opened in the last 30 seconds - and it could not have been stricter by magic, because a fast-scalp market order and a consensus entry on the same symbol are given the *same* magic by `CTradeManager`.
+
+That was not a logging nicety. Every caller turns the answer into state: a grid level bound to a borrowed ticket is a level that later calls `PositionClose` on a position it does not own; a scalp tracker slot registered under one releases and manages the wrong risk; a consensus receipt computed from a foreign volume books a trade that never happened, and the transient-retcode dedup guard could refuse a legitimate entry because some engine's fill happened to be in the window.
+
+- **The fix is an owner parameter, not a new identity.** The matcher now takes the comment prefix the send used. A caller that names one matches only its own positions; a caller that names none - the consensus path - matches only positions no engine claims. The four engine prefixes are the same strings the exit paths already trade on, so this relies on a field the account was already depending on.
+- **No send changed.** Magic numbers, comments, lots and ownership ranges are untouched, so positions already open keep the identity that manages them.
+
+A false "yes" used to mis-bind tracking and close operations; a false "no" only re-fires an engine's own retry path, which each site already bounds with its cooldown and counters.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

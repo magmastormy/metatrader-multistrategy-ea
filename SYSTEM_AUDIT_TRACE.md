@@ -1683,3 +1683,13 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 196 Position-to-send Matching Resolved by Owner, Not by Magic (2026-10-14)
+
+- **Lifecycle step changed:** the post-send reconciliation, on all six consumers. `send -> broker says failed / transient retcode -> scan open positions for this send's fill -> bind ticket, risk slot, receipt or dedup decision`. The scan's predicate gained one term: an optional owner comment prefix, with the empty value meaning "no engine's".
+- **State added:** none. One parameter with a default, so every existing call keeps compiling and behaving the same unless it names a prefix; five were updated to name theirs.
+- **Tickets and identity are unchanged.** No send sets a different magic, comment, lot or stop, so positions opened before this build are still matched by the same fields the lifecycle and exit paths use. The change only stops one owner from claiming another owner's position.
+- **Why the prefix and not the magic:** market orders from the consensus path and from fast scalp carry the identical `base + per-symbol offset`, and ATR scalp's `base + 7000 + symbolIndex` collides with the FOREX asset offset 7000 — renumbering either would orphan positions already open on this account (§9), which is why task #37 stays open as a decision rather than a fix.
+- **Failure modes closed, both directions:** a grid level storing a foreign ticket and later calling `PositionClose` on it; a scalp tracker slot registered against a position whose risk budget belongs elsewhere; a consensus receipt whose `filledVolume`/`partialFill` came from a foreign lot; a transient-retcode dedup that refused a legitimate consensus entry because some engine had just filled on the symbol.
+- **§3 invariants:** §3.2 and §3.3 untouched — the send and the lifecycle loop are unchanged, only the interpretation of a failed send.
+- **Found by:** reading `FindFreshPositionForSend` to answer a different question and noticing `requestedVolume` was declared, documented in the header as a lot check, and never referenced in the body — a parameter that promises a discriminator the function does not have.
+

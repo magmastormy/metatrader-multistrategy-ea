@@ -318,7 +318,7 @@ public:
             double confirmVolume = 0.0;
             if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
                    (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                   lotSize, confirmTicket, confirmVolume))
+                   lotSize, confirmTicket, confirmVolume, "SPIKE-HUNT"))
             {
                PrintFormat("[SPIKE-HUNT] FILL CONFIRMED BY POSITION | Symbol=%s | Direction=%s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | spike marked opened, not resent",
                            symbol, dirStr, confirmTicket, confirmVolume, lotSize, sendRetcode);

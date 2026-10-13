@@ -257,7 +257,7 @@ public:
          ulong ticket = 0;
          double filledVolume = 0.0;
          bool positionVisible =
-             CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, filledVolume);
+             CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, filledVolume, "SCALP");
 
          double filledEntryPrice = tradeManager.GetLastRequestedPrice();
          double filledPoint = SymbolInfoDouble(symbol, SYMBOL_POINT);
