@@ -244,6 +244,8 @@ The factory still registers fourteen indicator creators and their `CreateMomentu
 
 Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic` from `IsSyntheticIndexSymbolName(symbol)`, because the branch is a property of the symbol and its config field exists in no `SOrchestratorConfig` and no root `.mq5`.
 
+**A strategy's type is a fourth identity, and it must be a `GetType()` override.** `IStrategy::GetType()` is pure virtual, `CStrategyBase::GetType()` answers `STRATEGY_TYPE_CUSTOM`, and the consensus engine reads it for the regime hard gate and the category weight. Two classes declared `GetStrategyType()` instead — a lookalike with no callers — and quietly lost both (Batch 195). The catalog row's `registryType` and the class's `GetType()` must carry the same `STRATEGY_*` value; anything else gives the registry and the consensus two different strategies under one name.
+
 ### 2.3 Extracted Lifecycle Managers
 
 #### CPositionLifecycleManager

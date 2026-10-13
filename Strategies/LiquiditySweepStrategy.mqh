@@ -467,8 +467,9 @@ public:
         return sig.direction;
     }
 
-    ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_UNIFIED_ICT; }
-    string GetStrategyName() const { return "LiquiditySweep"; }
+    // Must be GetType(): CStrategyBase::GetType() returns STRATEGY_TYPE_CUSTOM, and a lookalike name here
+    // meant the consensus regime gate and category multiplier never saw this strategy's type.
+    virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_LIQUIDITY_SWEEP; }
 
     void Deinit()
     {

@@ -1674,3 +1674,12 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** §3.1, §3.2, §3.3, §3.5 untouched. §3.4 (symbol-scoped manager consensus) is better served: a symbol manager now applies its own symbol's strategy configuration, and Mean Reversion's branch follows the symbol it was given.
 - **Found by:** reading Batch 193's catalog loop for what it did *not* configure, then verifying each setter's call sites — three had exactly one caller, all in the dead factory path.
 
+## Batch 195 Two Strategies Reporting the Wrong Type to Consensus (2026-10-14)
+
+- **No lifecycle step added or removed.** The change is one method name per class: `GetType()` overrides `GetStrategyType()`, so the value that `CConsensusEngine` already read from the interface became correct for Liquidity Sweep and Range Compression. Registration, roster append, health enrolment, signal polling, risk gating and exit ownership are byte-identical.
+- **State added:** none. Both classes already passed their display name to the base constructor, so `GetName()` was never affected; only the type was.
+- **Decision path that changed:** `RegimeStateHardGate` and the category-multiplier switch inside `GetRegimeCategoryMultiplier`, reached from three vote-scoring sites. Range Compression re-acquires the trend-regime veto the code intends for it, and both strategies acquire a regime-dependent weight instead of a neutral one.
+- **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:156`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
+- **§3 invariants:** unchanged.
+- **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+

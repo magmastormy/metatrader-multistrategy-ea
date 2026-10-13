@@ -8,6 +8,32 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 195: two strategies never overrode `GetType()`, so a regime veto never fired
+
+#### Context
+`IStrategy::GetType()` is pure virtual and `CStrategyBase::GetType()` returns `STRATEGY_TYPE_CUSTOM`. Twelve indicator strategies override it. Two do not: `CLiquiditySweepStrategy` and `CRangeCompressionBreakout` declare `GetStrategyType()` instead - a different name, no `override`, and no call site anywhere in the repository - so both have reported CUSTOM to the consensus engine for their whole life. The catalog row's `registryType` (Batch 193) and the registry name match never consult `GetType()`, so nothing else looked wrong: registration, weights, magic and the `[ENTERPRISE]` reports all named them correctly.
+
+#### The veto that did not fire (`Core/Management/ConsensusEngine.mqh`)
+`RegimeStateHardGate` classifies `STRATEGY_RANGE_COMPRESSION` as reversion-like alongside Mean Reversion and returns 0.0 in `REGIME_TREND`, above the comment "fading it is the fastest way to blow an account". With the type arriving as CUSTOM the classification was false, so a compression-fade vote kept full score inside a confirmed trend regime. `GetRegimeCategoryMultiplier` also groups `STRATEGY_RANGE_COMPRESSION` with Volatility Breakout under `breakoutWeightMult` and `STRATEGY_LIQUIDITY_SWEEP` with the ICT family under `ictWeightMult`; both were taking the `default: 1.0` branch instead of their regime weight.
+
+Both classes now override `GetType()` and return the same `STRATEGY_*` value their catalog row declares, so the two identities cannot drift. The dead `GetStrategyName()` accessors went with them - `CStrategyBase::GetName()` already returns the name each class passes to the base constructor ("LiquiditySweep", "RangeCompressionBreakout").
+
+Checked before assuming: every other `GetType()` consumer compares against `STRATEGY_BRAIN` / `STRATEGY_AI_ENHANCED` (`ConsensusEngine.mqh:338`, `:1225`, `ConsensusWeightingConfig.mqh:77`, `StrategyPerformanceHealth.mqh:299`, `StrategyStateReporter.mqh:97`) or resolves a type for the live-authority report (`LiveAuthorityResolver.mqh:368`), so CUSTOM vs their real type changed nothing there. `CMagicNumberAllocator::GetStrategyOffset` does switch on strategy type and would have moved these two positions to another magic bucket - but the allocator is declared as `m_magicNumberAllocator` in the orchestrator and **no method of it is called anywhere**, so it is not the live magic scheme and this fix cannot renumber an open position.
+
+#### One comment corrected, and the gap it was hiding
+`GetRegimeCategoryMultiplier` returned `0.0` under the comment "vote disabled entirely". It is not: a zeroed multiplier removes the vote's score and puts its weight in the `votedWeight` denominator (so it does dilute `readyWeightRatio`, which is where the veto has teeth), but the vote still increments `buyVotes`/`sellVotes` and joins `buyContributorIndices`, so it can still satisfy the minimum-voter floor. Making it drop the vote outright was rejected for this batch: that tightens `winningVotes >= effectiveMinVoters` while loosening the ready-weight ratio by removing the vetoed weight from the denominator, and a mixed change to quorum arithmetic on a live book needs runtime evidence this repository does not have (newest journal 2026-09-23). The comment now says what the code does, and the remaining hole is on the open list.
+
+#### Also recorded, not changed
+`IStrategy::GetWeight()` is pure virtual and implemented by every strategy class, and it has **no caller anywhere**: `RegisterStrategy` writes the value into the object with `SetWeight` and also into the roster, and consensus reads the roster copy (`GetStrategyWeight(i)`). So the object-level weight is a write-only mirror - harmless since Batch 193 made the roster copy correct, and removing fourteen implementations of an interface accessor is a different kind of change than this batch is.
+
+#### Risk direction
+Strictly fewer or equal entries: Range Compression's vote regains its regime veto, and both strategies' scores are multiplied by their category weight instead of a neutral 1.0. No gate, lot, magic, comment or ownership range changed, so positions already open on the account are still matched by the same identity.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings.
+- No runtime evidence yet. Expected log change: `[CONSENSUS-REJECT] ... Ready weight ratio` lines appearing for trend-regime candidates that include a compression or liquidity-sweep voter, where previously the two voted un-diluted.
+
+
 ### Batch 194: three strategy inputs had no consumer, and one strategy never got its own symbol type
 
 #### Context

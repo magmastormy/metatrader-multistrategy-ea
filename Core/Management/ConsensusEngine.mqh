@@ -436,7 +436,7 @@ double CConsensusEngine::GetRegimeCategoryMultiplier(const string symbol, ENUM_S
 
     double gate = RegimeStateHardGate(snap.state, strategyType);
     if(gate <= 0.0)
-        return 0.0;   // vote disabled entirely
+        return 0.0;   // zero score only: the vote still counts toward the minimum-voter floor
 
     // Per-category weight from the live regime composite (Hurst-blended).
     double catMult = 1.0;

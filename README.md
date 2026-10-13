@@ -374,6 +374,17 @@ The strategies are built by catalog creators that construct them bare. `CStrateg
 
 None of this moves a risk limit: consensus still requires two independent voters, the validator arms are unchanged, and every entry still passes `CUnifiedRiskManager` on its final lot.
 
+### Batch 195: a regime veto that had never fired, because two strategies never reported their type
+
+`IStrategy::GetType()` is pure virtual, and `CStrategyBase::GetType()` answers `STRATEGY_TYPE_CUSTOM`. Liquidity Sweep and Range Compression Breakout each declared a method called `GetStrategyType()` - a lookalike name that overrides nothing and has no callers - so both reported CUSTOM to the consensus engine while everything else about them (catalog row, registry name, magic, status reports) looked correct.
+
+- **Range Compression is classified as fading the trend**, and `RegimeStateHardGate` is written to zero its vote in a confirmed trend regime - the case the code itself calls "the fastest way to blow an account". With the type arriving as CUSTOM, that veto never fired. It fires now.
+- **Both strategies now take their regime category weight** (`breakoutWeightMult` for compression, `ictWeightMult` for liquidity sweeps) instead of the neutral 1.0 default branch.
+- **Nothing else moves.** No gate, lot, magic number, position comment or ownership range changed, so positions already open keep the identity that manages them. The type-based magic table in `CMagicNumberAllocator` would have relocated them, but no method of that class is called anywhere - it is on the open list as dead code, not as a live authority.
+- **One comment corrected:** a zero regime multiplier removes a vote's score and dilutes the ready-weight ratio, but the vote still counts toward the minimum-voter floor. Turning that into a real vote-drop would tighten one test while loosening another, so it is recorded as an open item rather than shipped without runtime evidence.
+
+Expect equal or fewer entries from these two strategies, and `[CONSENSUS-REJECT] ... Ready weight ratio` lines where a trend-regime candidate now carries a vetoed voter.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

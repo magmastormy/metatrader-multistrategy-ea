@@ -408,8 +408,10 @@ public:
         return sig.direction;
     }
 
-    ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_MOMENTUM; }
-    string GetStrategyName() const { return "RangeCompressionBreakout"; }
+    // Must be GetType(): CStrategyBase::GetType() returns STRATEGY_TYPE_CUSTOM, so the regime gate never
+    // saw this type. The catalog row and RegimeStateHardGate both name STRATEGY_RANGE_COMPRESSION, which
+    // classifies it reversion-like: its vote is zeroed in a confirmed trend regime.
+    virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_RANGE_COMPRESSION; }
 
     void Deinit()
     {
