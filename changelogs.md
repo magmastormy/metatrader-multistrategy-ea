@@ -6,6 +6,46 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
+## [Unreleased] - 2026-10-14
+
+### Batch 189: Comment reduction in the consensus engine, correlation engine and momentum strategy - 76 lines net, and the reading found dead paths
+
+#### Context
+Sixth round of the comment workstream. The round also covered `Core/Orchestration/CandidateBuilder.mqh` (108 -> 35), `Core/Risk/RiskValidationPipeline.mqh` (87 -> 59) and `Strategies/MeanReversionStrategy.mqh` (53 -> 41), but those three files carry the fixes Batch 189's reading surfaced, so their comment reductions commit with Batch 190 rather than ride in a hygiene commit.
+
+#### Changed here (whole-line comments, HEAD -> now)
+| File | Before | After |
+|---|---|---|
+| `Core/Management/ConsensusEngine.mqh` | 67 | 40 |
+| `Core/Risk/CorrelationEngine.mqh` | 58 | 22 |
+| `Strategies/SimpleMomentumStrategy.mqh` | 55 | 41 |
+| `Core/Strategy/StrategyBase.mqh` | 16 | 17 |
+
+For each file the non-comment line stream is byte-identical to `HEAD`: `diff <(git show HEAD:f | grep -v '^\s*//') <(grep -v '^\s*//' f)` prints nothing, so no executable line, blank line or CRLF moved.
+
+#### Kept because the code cannot show it
+- The strategy-level gate fails open on a NULL risk-manager injection, but `CStrategyRegistryState::RegisterStrategy` (`:122`) refuses registration when `ValidateRiskManagerInjection()` is false. AGENTS.md 3.1 holds because of that registration gate, not because of `ValidateWithRiskManager` - so the invariant note on `StrategyBase.mqh:116` and on both strategy headers now names the registration gate.
+- `candidate.liveAuthority*` is written by a stub in `CandidateBuilder.ResolveLiveAuthority` that always authorizes at 1.0; `EAOrchestrator` overwrites all three fields from `CLiveAuthorityResolver` after `BuildCandidate` returns, so the stub gates nothing.
+- `stopLossPips` are in `SYMBOL_POINT` units, not pip*10 units, and the risk recompute reads them as such.
+- Auto-registration runs before the orchestrator fills the shared `CStrategyRegistry`, so `IsStrategyActive()` is false at that moment and a re-apply step follows.
+
+#### Dead surface and false notes found
+- `ConsensusEngine.mqh:1096` documented the probe-only evaluator as "used for intrabar direction probing"; `EvaluateConsensusProbeOnlyInternal` has no caller anywhere. `:1201` documented a path "called when all strategies abstain" that is reachable only through `TryFallbackSoloSignal`, whose manager forwarder is never called.
+- The correlation engine claimed upper-triangular flat storage while `ComputeMatrix` writes both triangles, claimed "Compute log returns" over simple returns, and annotated `Refresh`/`ForceRefresh`/`SetSymbolsChanged`/`IsCorrelatedCluster`/`CountCorrelatedPositions`/`Reset`/`GetConfig` with "call from the main loop" and "call on deinit" - none has a caller outside the file. Its asset-class and cross-asset thresholds are stored, logged and never compared.
+- `SimpleMomentumStrategy.mqh:390` claimed "1 closed bar of confirmation" while the hysteresis validation is skipped at the default `m_minConfirmationBars = 1`.
+- `MeanReversionStrategy.mqh` called the Stochastic handle "self-managed" when `:118` takes it from the shared `CIndicatorManager` cache, claimed BB-only entries need a Stochastic extreme when the tier only multiplies confidence by 0.90, and called the BB middle line a 20-EMA.
+
+#### Defects this round queued for Batch 190
+1. `CandidateBuilder.mqh` hard-wired `atrValue = 0`, so the ATR stop branch never ran and every non-strategy stop came from a fixed `max(30 pts, 0.3% of price)` band.
+2. `CandidateBuilder.mqh` MathMaxed a **price-unit** `GetMinimumStopDistance()` against raw **point** counts, so the broker's spread-folded minimum stop was never honored.
+3. `CandidateBuilder.mqh` sent `SYMBOL_VOLUME_MIN` into `ValidateTradeRequest` and sized the real lot afterwards, so correlation, portfolio and budget decisions were all made about a 0.01-lot trade and `adjustedLotSize` had no consumer on the consensus path at all.
+4. `RiskValidationPipeline.mqh` floored the correlation REDUCE step to 0.0 and still approved; both consumers adopt `adjustedLotSize` only when `> 0.0`, so the risk reduction silently vanished.
+5. `RiskValidationPipeline.mqh` printed "caller must cap" for a lot above `SYMBOL_VOLUME_MAX` and returned approval - a gate that cannot reject.
+6. `PostConsensusValidator.mqh` derived the quality floor from `ctx.directionalQuality` itself (x0.9 / x0.85) and compared it to that same value, so for FULL_QUORUM and SPARSE_INTRABAR the gate collapsed to a hard-coded 0.40/0.45 and `InpValidatorNewBarMinQuality=0.68` / `InpValidatorIntrabarMinQuality=0.70` were inert.
+7. `MeanReversionStrategy.mqh` called `IndicatorRelease` on the manager-owned shared Stochastic handle, contradicting the line above it; the double release happens at `DestroyInstance` and the handle dies for every other holder.
+
+Also recorded, not fixed: reservation bookkeeping runs twice in one approval (`RiskValidationPipeline.mqh:513-516` and `:774-777`); `ApplyDrawdownScaling`'s `floorMult` guard is a tautology because `floorMult < 1.0` by construction; the netting re-price uses BID for a BUY where the pre-loop used ASK; `GetLastBlockReason()` exists and is unused; `MIN_ACCOUNT_BALANCE` is 1.0, not 100.0, at two sites that label it so; `ClearVirtualPositions()` has no caller, so approved-but-abandoned virtual reservations live only until their TTL prunes them.
+
 ## [Unreleased] - 2026-10-12
 
 ### Batch 188: Comment reduction in the manager and money-arithmetic paths — 181 lines removed, ten false notes, two dead API chains

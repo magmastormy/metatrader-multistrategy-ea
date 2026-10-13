@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-10-12
+- Last Updated: 2026-10-14
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 188 - comment reduction only, 181 whole-line comments removed from `EnterpriseStrategyManager`/`DerivAssetProfiler`/`ExitOptimizer`/`TradeAttributionManager`/`TradeMgrPricing` (repo at 7,250); diff verified to contain no executable-line changes. Six of the deleted comments asserted behavior the code does not have, and two API chains were confirmed dead while reading them: `PopClosedTradeAttribution` (flag never set, no consumer) and `AccumulatePendingCloseProfit` (no caller). Batch 187 made the hedging gate able to refuse; Batch 186 fixed `ApplySpreadFilter` being called with three arguments in the wrong slots and gave that arm its missing log line.
+- Latest Batch: Batch 189 - comment reduction in `ConsensusEngine`/`CorrelationEngine`/`SimpleMomentumStrategy`/`StrategyBase` (76 lines net, non-comment streams byte-identical to HEAD). Reading them found dead surface, not just stale prose: `EvaluateConsensusProbeOnlyInternal` and the fallback-solo path have no caller, the correlation engine's refresh/reset/cluster helpers have no caller outside the file and its thresholds are stored and never compared. The same round's pass over `CandidateBuilder`, `RiskValidationPipeline` and `MeanReversionStrategy` found seven live defects, and those files commit with Batch 190 so the fixes do not ride in a hygiene commit. Batch 188 cut 181 comments and confirmed two dead attribution chains; Batch 187 made the hedging gate able to refuse.
 - Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission

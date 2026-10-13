@@ -3,7 +3,8 @@
 #define SIMPLE_MOMENTUM_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Every entry must pass CUnifiedRiskManager pre-trade gating.
+// Pre-trade gating: ValidateWithRiskManager() delegates to CUnifiedRiskManager. It returns true when
+// none was injected, but registration refuses such a strategy (StrategyRegistryState.mqh:122).
 #include "../Utilities/SafeCopyBuffer.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
@@ -43,7 +44,6 @@ private:
 // direction +1 = fast above slow, -1 = fast below; threshold is the minimum MA gap.
     bool ValidateCrossoverWithHysteresis(const int direction, const double threshold, const int minBars)
     {
-        // Need at least minBars + 1 bars of historical data (including current)
         int requiredBars = minBars + 1;
         int maxBars = MathMax(requiredBars, 5); // Fetch extra for safety
         
@@ -133,8 +133,7 @@ private:
 
     bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
     {
-        // Fail closed: an unavailable filter is not a passing filter. Returning true here
-        // let a data outage count as confirmation and trade on no evidence.
+        // Fail closed: an unavailable filter is not a passing filter.
         if(m_macdHandle == INVALID_HANDLE)
             return false;
 
@@ -143,8 +142,7 @@ private:
            !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
             return false;
 
-        // Oldest-first: [1] is the newest closed bar, [0] the bar before it. Swapped, the
-        // check "confirmed" BUYs with a falling histogram.
+        // Oldest-first: [1] newest closed bar, [0] the bar before; swapped, this "confirms" BUY on a falling histogram.
         double histNow = macdMain[1] - macdSignal[1];
         double histPrev = macdMain[0] - macdSignal[0];
 
@@ -211,7 +209,6 @@ private:
     {
         double confidenceMod = 1.0;
 
-        // Fresh crossover (< 3 bars since crossover) = +15%
         int currentBar = iBars(m_symbol, m_timeframe);
         if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) < 3)
             confidenceMod *= 1.15;
@@ -225,8 +222,7 @@ private:
             double volBuffer[11];
             if(SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volBuffer))
             {
-                // Oldest-first: the newest closed bar is volBuffer[10]; [0] is shift-11,
-                // months of bars back on higher timeframes.
+                // Oldest-first: [10] is the newest closed bar, [0] is shift-11.
                 double currentVol = volBuffer[10];
                 double avgVol = 0;
                 for(int i = 0; i < 10; i++)
@@ -288,9 +284,7 @@ private:
             smaSum += rates[i].close;
         double ema = smaSum / (double)period;
 
-        // rates[copied-1] = shift 0 (current forming bar)
-        // rates[copied-2] = shift 1 (last closed bar) -> emaNow
-        // rates[copied-3] = shift 2 -> emaPrev
+        // rates[copied-1]=shift 0 (forming), [copied-2]=shift 1 -> emaNow, [copied-3]=shift 2 -> emaPrev
         for(int i = period; i < copied - 2; i++)
         {
             ema = multiplier * rates[i].close + invMultiplier * ema;
@@ -317,8 +311,7 @@ private:
 
         if(fastOk)
         {
-            // Static arrays are NOT as-series: [0] is the OLDEST of the copied window, so
-            // start=1,count=2 gives [0]=shift 2 (prev) and [1]=shift 1 (now).
+            // Static arrays are NOT as-series: start=1,count=2 gives [0]=shift 2 (prev), [1]=shift 1 (now).
             fastNow = fastBuffer[1];
             fastPrev = fastBuffer[0];
         }
@@ -356,8 +349,7 @@ private:
     {
         double fastBuffer[3];
 
-        // Closed bars, oldest-first: [0]=shift 3 ... [2]=shift 1. Reversed history made the
-        // ROC multiplier reward deceleration and punish acceleration.
+        // Closed bars, oldest-first: [0]=shift 3 .. [2]=shift 1; reversed history made ROC reward deceleration.
         if(!SafeCopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer)) return false;
 
         emaNow = fastBuffer[2];
@@ -549,8 +541,7 @@ public:
            m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
-        // Conservative mode waits one full bar; scalping mode uses a short wall-clock
-        // cooldown while portfolio/risk caps still prevent uncontrolled stacking.
+        // Conservative cooldown is one full bar; scalping uses a wall-clock cooldown bounded by the timeframe.
         int timeframeSeconds = MathMax(30, (int)PeriodSeconds(m_timeframe));
         int cooldownSeconds = timeframeSeconds;
         if(m_enableScalping)
@@ -560,7 +551,6 @@ public:
 
         if(!m_enableScalping)
         {
-            // One signal per bar outside scalping
             datetime currentBar = iTime(m_symbol, m_timeframe, 1);
             if(currentBar == m_lastSignalBar)
                 return RejectSignal("MOMENTUM_SAME_BAR_GUARD");
@@ -578,8 +568,7 @@ public:
         // The points threshold is a floor: ATR scaling may raise it but never lower it
         double staticThreshold = m_thresholdPoints * point;
 
-        // Oldest-first 10-bar window: [9] is the newest closed bar. Reading [0] of a 2-bar
-        // copy against the absolute floor rejected quiet FX and waved loud synthetics through.
+        // Oldest-first 10-bar window: [9] is the newest closed bar.
         double atrWindow[10];
         if(!SafeCopyBuffer(m_atrHandle, 0, 1, 10, atrWindow))
             return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
@@ -592,7 +581,6 @@ public:
         double volFloor = MathMin(m_minVolatility, close1Vol * 0.0001);
         if(curATR < volFloor)
         {
-            // Market too quiet (relative to this symbol's price scale)
             return RejectSignal("MOMENTUM_LOW_VOLATILITY");
         }
 
@@ -692,7 +680,6 @@ public:
                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
         }
 
-        // Records the cross bar for the freshness modifier below
         if(crossedUp || crossedDown)
             m_crossoverBar = iBars(m_symbol, m_timeframe);
 
@@ -700,8 +687,7 @@ public:
         {
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
             
-            // Ratio is against the symbol's own recent ATR average, not an FX-scale floor:
-            // an absolute ratio read ~100x on synthetics and taxed every signal by 40%.
+            // curATR against this symbol's own recent ATR average; an FX-scale absolute floor read ~100x on synthetics.
             double atrRatio = (avgATR > 0.0) ? curATR / avgATR : 1.0;
             if(atrRatio > 2.0)
             {
@@ -768,7 +754,7 @@ public:
             RecordSignal();
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
             
-            // Consensus logging is an AGENTS.md requirement
+            // [CONSENSUS-DIAG] is a mandated log signature (AGENTS.md section 6); do not drop it.
             LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, MACDConfirmed(signal) ? "YES" : "NO", StrongTrend() ? "STRONG" : "WEAK"), confidence);
             
             PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",

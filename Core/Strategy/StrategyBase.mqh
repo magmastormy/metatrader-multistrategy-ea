@@ -114,7 +114,8 @@ protected:
     virtual void OnRefreshComponents() {}
 
     // Pre-trade risk gate: validates the request through CUnifiedRiskManager; approval applies its confidence multiplier.
-    // Fail-open: returns true when no risk manager was injected, so a missing link does not block entries.
+    // Fail-open on a NULL injection, but RegisterStrategy refuses a strategy that did not take it
+    // (StrategyRegistryState.mqh:122), so a registered strategy always reaches the real gate.
     bool ValidateWithRiskManager(const STradeValidationRequest &request,
                                  const string tagPrefix,
                                  double &confidence);

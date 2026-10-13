@@ -1,48 +1,38 @@
-// Single authoritative correlation computation for the EA runtime
-// Phase 2.2: Unifies three divergent correlation implementations
+// Single authoritative correlation computation: every consumer queries this engine's GetCorrelation.
 #ifndef CORE_RISK_CORRELATION_ENGINE_MQH
 #define CORE_RISK_CORRELATION_ENGINE_MQH
 
-// Constants
 #define CORR_ENGINE_MAX_SYMBOLS  20
 #define CORR_ENGINE_INVALID_IDX  -1
 
-// Computes Pearson correlation on H1 returns over configurable
-// lookback. Caches full correlation matrix. Recomputes periodically
-// (default every 300 seconds), not per-trade.
-// Uses fixed-size arrays, no heap allocation in hot path.
+// Pearson correlation on H1 simple returns over m_lookback bars, cached as a full matrix and
+// rebuilt on an interval (default 300s), not per query. Registry and matrix are fixed-size.
 class CCorrelationEngine
 {
 private:
-    // Configuration
     int      m_lookback;            // H1 bars for Pearson calculation (default 30)
     int      m_refreshIntervalSec;  // Seconds between matrix rebuilds (default 300)
     double   m_conservativeFallback;// Value returned when data insufficient (default 0.0)
     double   m_assetClassThreshold; // L5-016: Correlation threshold for same asset class (default 0.85)
     double   m_crossAssetThreshold; // L5-016: Correlation threshold for different asset classes (default 0.7)
 
-    // Symbol registry (fixed-size)
     string   m_symbols[CORR_ENGINE_MAX_SYMBOLS];
     int      m_symbolCount;
 
-    // Cached correlation matrix [i][j] — upper-triangular stored flat
+    // Cached matrix, flat [i*CORR_ENGINE_MAX_SYMBOLS + j]; ComputeMatrix writes both triangles.
     double   m_matrix[CORR_ENGINE_MAX_SYMBOLS * CORR_ENGINE_MAX_SYMBOLS];
 
-    // Cache timing
     datetime m_lastRefreshTime;
     bool     m_initialized;
 
-    // L5-017: Track if symbols have changed since last rebuild
     bool     m_symbolsChanged;
 
-    // Batch 152: symbols pinned during an in-flight GetCorrelation query - a NEW-entry
-    // candidate has no open position, so the prune pass must not remove it (or shift
-    // its index) between registration and the matrix read.
+    // Symbols pinned during an in-flight GetCorrelation query: a NEW-entry candidate has no open
+    // position, so the prune pass must not remove it (or shift its index) before the matrix read.
     bool     m_pinQueriedSymbols;
     string   m_pinnedSymbolA;
     string   m_pinnedSymbolB;
 
-    // Internal helpers
     int      FindSymbolIndex(const string symbol) const;
     int      RegisterSymbol(const string symbol);
     void     PruneStaleSymbols();  // Batch 119: remove symbols without open positions
@@ -54,35 +44,29 @@ public:
              CCorrelationEngine();
             ~CCorrelationEngine();
 
-    // Initialize with configurable parameters
+    // The asset-class / cross-asset thresholds are stored, logged and echoed by GetConfig only:
+    // nothing in this class compares a correlation against them.
     bool     Initialize(int lookback = 30, int refreshIntervalSec = 300,
                         double conservativeFallback = 0.0,
                         double assetClassThreshold = 0.85,
                         double crossAssetThreshold = 0.7);
 
-    // Refresh the correlation matrix if enough time has elapsed.
-    // Call this from the main loop or before querying correlations.
+    // Dead public surface: Refresh, ForceRefresh, SetSymbolsChanged, IsCorrelatedCluster,
+    // CountCorrelatedPositions, Reset and GetConfig have no caller outside this file.
     void     Refresh();
 
-    // Force an immediate matrix rebuild (e.g., after symbol changes)
     void     ForceRefresh();
 
-    // L5-017: Mark symbols as changed to trigger rebuild
     void     SetSymbolsChanged(bool changed) { m_symbolsChanged = changed; }
 
-    // Primary query API
     double   GetCorrelation(const string sym1, const string sym2);
 
-    // Check if symbol has correlated open positions above threshold
     bool     IsCorrelatedCluster(const string symbol, double threshold = 0.7);
 
-    // Count open positions correlated with the given symbol above threshold
     int      CountCorrelatedPositions(const string symbol, double threshold = 0.7);
 
-    // Clear symbol registry (call on deinit or when symbols change significantly)
     void     Reset();
 
-    // Get current configuration for diagnostics
     string   GetConfig() const;
 };
 
@@ -137,7 +121,6 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
     return true;
 }
 
-// Find symbol index in registry
 int CCorrelationEngine::FindSymbolIndex(const string symbol) const
 {
     for(int i = 0; i < m_symbolCount; i++)
@@ -148,7 +131,8 @@ int CCorrelationEngine::FindSymbolIndex(const string symbol) const
     return CORR_ENGINE_INVALID_IDX;
 }
 
-// Register a symbol, return its index
+// Registry full (CORR_ENGINE_MAX_SYMBOLS) returns INVALID_IDX, which GetCorrelation answers with
+// m_conservativeFallback.
 int CCorrelationEngine::RegisterSymbol(const string symbol)
 {
     int existingIdx = FindSymbolIndex(symbol);
@@ -167,7 +151,6 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
     return m_symbolCount - 1;
 }
 
-// Compute Pearson correlation between two symbols on H1 returns
 double CCorrelationEngine::ComputePearson(const string symbol1, const string symbol2) const
 {
     if(symbol1 == "" || symbol2 == "")
@@ -185,7 +168,6 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
        CopyClose(symbol2, PERIOD_H1, 0, m_lookback, prices2) < m_lookback)
         return m_conservativeFallback;
 
-    // Compute log returns
     int n = m_lookback - 1;
     double sum1 = 0.0, sum2 = 0.0, sum12 = 0.0, sum1sq = 0.0, sum2sq = 0.0;
 
@@ -219,7 +201,6 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
     return correlation;
 }
 
-// Get cached correlation value by matrix indices
 double CCorrelationEngine::GetCachedCorrelation(int idx1, int idx2) const
 {
     if(idx1 < 0 || idx1 >= m_symbolCount || idx2 < 0 || idx2 >= m_symbolCount)
@@ -228,10 +209,8 @@ double CCorrelationEngine::GetCachedCorrelation(int idx1, int idx2) const
     return m_matrix[idx1 * CORR_ENGINE_MAX_SYMBOLS + idx2];
 }
 
-// Compute the full correlation matrix
 void CCorrelationEngine::ComputeMatrix()
 {
-    // Register all currently open position symbols
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
@@ -241,10 +220,8 @@ void CCorrelationEngine::ComputeMatrix()
         RegisterSymbol(posSymbol);
     }
 
-    // Compute pairwise Pearson correlations
     for(int i = 0; i < m_symbolCount; i++)
     {
-        // Diagonal: self-correlation = 1.0
         m_matrix[i * CORR_ENGINE_MAX_SYMBOLS + i] = 1.0;
 
         for(int j = i + 1; j < m_symbolCount; j++)
@@ -256,7 +233,6 @@ void CCorrelationEngine::ComputeMatrix()
     }
 }
 
-// Refresh if enough time has elapsed or symbols changed
 void CCorrelationEngine::Refresh()
 {
     if(!m_initialized)
@@ -265,11 +241,10 @@ void CCorrelationEngine::Refresh()
     datetime now = TimeCurrent();
     bool timeElapsed = (m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec);
     
-    // L5-017: Also refresh if symbols have changed
     if(!timeElapsed && !m_symbolsChanged)
         return;
 
-    // Batch 119: Prune stale symbols before computing matrix
+    // Pruned first so symbols with no open position do not occupy registry slots in the rebuild.
     PruneStaleSymbols();
 
     ComputeMatrix();
@@ -277,14 +252,11 @@ void CCorrelationEngine::Refresh()
     m_symbolsChanged = false; // Reset after rebuild
 }
 
-// Prune symbols that no longer have open positions
-// L5-018 FIX: Full matrix rebuild after pruning to maintain consistency
 void CCorrelationEngine::PruneStaleSymbols()
 {
     if(m_symbolCount <= 0)
         return;
 
-    // Build set of symbols with open positions
     bool hasPosition[];
     ArrayResize(hasPosition, m_symbolCount);
     ArrayInitialize(hasPosition, false);
@@ -300,9 +272,8 @@ void CCorrelationEngine::PruneStaleSymbols()
         }
     }
 
-    // Remove symbols without positions (shift array left).
-    // Batch 152: keep pinned query symbols - a candidate being correlated has no open
-    // position by definition and would otherwise be pruned mid-query.
+    // Drops symbols with no open position by shifting the registry left. Pinned query symbols
+    // survive: a candidate being correlated has no open position yet.
     int writeIdx = 0;
     for(int i = 0; i < m_symbolCount; i++)
     {
@@ -321,13 +292,12 @@ void CCorrelationEngine::PruneStaleSymbols()
     if(writeIdx < m_symbolCount)
     {
         m_symbolCount = writeIdx;
-        // L5-018 FIX: Force full matrix rebuild on next compute since symbols shifted
+        // Registry indices shifted: force a full rebuild on the next compute.
         m_lastRefreshTime = 0;
         m_symbolsChanged = true;
     }
 }
 
-// Force immediate matrix rebuild
 void CCorrelationEngine::ForceRefresh()
 {
     if(!m_initialized)
@@ -337,7 +307,8 @@ void CCorrelationEngine::ForceRefresh()
     m_lastRefreshTime = TimeCurrent();
 }
 
-// Get correlation between two symbols
+// Fail-open by construction: uninitialized engine, missing H1 history and a full registry all
+// answer m_conservativeFallback, which PortfolioRiskManager wires as 0.0 (= uncorrelated).
 double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 {
     if(!m_initialized)
@@ -346,20 +317,17 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
     if(sym1 == sym2)
         return 1.0;
 
-    // Ensure symbols are registered
     int idx1 = RegisterSymbol(sym1);
     int idx2 = RegisterSymbol(sym2);
 
     if(idx1 == CORR_ENGINE_INVALID_IDX || idx2 == CORR_ENGINE_INVALID_IDX)
         return m_conservativeFallback;
 
-    // Batch 152: pin the queried symbols across the refresh so PruneStaleSymbols
-    // cannot drop the candidate (no open position yet) or shift indices mid-query.
+    // Pinned across the refresh so PruneStaleSymbols cannot drop the candidate or shift its index.
     m_pinnedSymbolA = sym1;
     m_pinnedSymbolB = sym2;
     m_pinQueriedSymbols = true;
 
-    // If matrix is stale, refresh it
     datetime now = TimeCurrent();
     if(m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec || m_symbolsChanged)
         Refresh();
@@ -375,7 +343,6 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
     return GetCachedCorrelation(idx1, idx2);
 }
 
-// Get configuration for diagnostics
 string CCorrelationEngine::GetConfig() const
 {
     return StringFormat("Lookback=%d | Refresh=%ds | Fallback=%.2f | AssetClass=%.2f | CrossAsset=%.2f | Symbols=%d | Initialized=%s",
@@ -384,13 +351,12 @@ string CCorrelationEngine::GetConfig() const
                         m_initialized ? "true" : "false");
 }
 
-// Check if symbol has correlated open positions above threshold
 bool CCorrelationEngine::IsCorrelatedCluster(const string symbol, double threshold)
 {
     return (CountCorrelatedPositions(symbol, threshold) > 0);
 }
 
-// Count open positions correlated with symbol above threshold
+// Counts other symbols' open positions only: positions on the queried symbol itself are skipped.
 int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double threshold)
 {
     if(!m_initialized)
@@ -416,7 +382,6 @@ int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double thr
     return count;
 }
 
-// Reset symbol registry and matrix
 void CCorrelationEngine::Reset()
 {
     m_symbolCount = 0;
@@ -428,7 +393,6 @@ void CCorrelationEngine::Reset()
 
 CCorrelationEngine::~CCorrelationEngine()
 {
-    // Cleanup - array memory is automatically managed
     m_symbolCount = 0;
     ArrayInitialize(m_matrix, 0.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
