@@ -342,6 +342,14 @@ The pre-trade gate used to be called before the position was sized, with `lotSiz
 - **Stop distance is volatility-aware and unit-consistent:** `atrValue` was hard-wired to 0, so the ATR branch in `CalculateStops` never ran; ATR(14) now comes from the shared indicator cache. The broker minimum stop was compared in price units against point counts, roughly 100,000x too small on 5-digit FX, so the spread-folded floor never bound.
 - **One lifecycle bug:** `CMeanReversionStrategy::Cleanup()` released a Stochastic handle owned by `CIndicatorManager`, which releases it again in `DestroyInstance()` — the call AGENTS.md §3.5 requires. Shared handles now stay with their owner; handles a strategy creates itself are still released by that strategy.
 
+### Batch 192: what changes in the logs and in sizing
+
+- **Fast-scalp now reserves risk once, not twice.** The entry gate and the pre-send gate both called `ValidateTradeRequest` on the same lot, and every approval holds a virtual position until TTL pruning, so one scalp double-counted against portfolio and daily-risk limits and filed two approvals. The entry-stage gate survived because its request is the one that carries the cluster code.
+- **A risk-manager lot cut is now visible:** `[SCALP-RISK-ADJUSTED] XAUUSD | lot 0.05 -> 0.03 | reason=...`. Adoption is shrink-only — the pipeline can round a reduction up to the broker minimum, and that is no longer taken.
+- **Compounding tiers can no longer size above the envelope.** A tier wrote its raw risk percent straight into the position sizer, which does not clamp, while the envelope clamp applies only on the risk-manager path: the per-trade cap check then refused the entries, so a tier could look applied and trade nothing. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamped value when it binds.
+- **`[RISK-ENVELOPE]` no longer skips a warning-only clamp,** and the line gained `ddWarn A->B`.
+- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1304`), and the CVaR gate is fed by the equity-curve buffer (`:655`). Neither was "fixed".
+
 ## AI Integration
 
 The EA supports three AI operating modes:

@@ -970,7 +970,7 @@ if(m_config.enableCompoundingTiers)
     if(m_compoundingTierManager.Initialize(true))
     {
         m_compoundingTierManager.ApplyTierToRiskManager(m_unifiedRiskManager);
-        m_compoundingTierManager.ApplyTierToPositionSizer(m_positionSizer);
+        m_compoundingTierManager.ApplyTierToPositionSizer(m_positionSizer, m_unifiedRiskManager);
         Print("[INIT] CompoundingTierManager initialized — auto-switch ENABLED");
     }
 else

@@ -340,7 +340,7 @@ public:
                             GetTierName(oldIndex), GetTierName(newTierIndex), m_switchCount);
 
                 ApplyTierToRiskManager(riskMgr);
-                ApplyTierToPositionSizer(posSizer);
+                ApplyTierToPositionSizer(posSizer, riskMgr);
 
                 string direction = isUpgrade ? "UPGRADE" : "DOWNGRADE";
                 Alert("COMPOUNDING TIER ", direction, ": Account $", DoubleToString(equity, 2),
@@ -386,21 +386,30 @@ public:
                         tier.dailyLossLimitOverride);
     }
 
-// Writes the tier's raw risk % into the sizer: CPositionSizer::SetParameters does no clamping, so an above-envelope
-// tier value survives here and is only refused later by the pre-trade per-trade cap check
-    void ApplyTierToPositionSizer(CPositionSizer &posSizer)
+// CPositionSizer::SetParameters does no clamping, so the tier value is clamped here to the risk the
+// manager actually approved after its own envelope clamp (ApplyTierToRiskManager runs first at both
+// call sites). Without this the sizer sizes above the ceiling and the per-trade cap check refuses the
+// entry instead of clamping it, so the tier trades nothing.
+    void ApplyTierToPositionSizer(CPositionSizer &posSizer, CUnifiedRiskManager &riskManager)
     {
         if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
             return;
 
         SCompoundingTierConfig tier = m_tiers[m_currentTierIndex];
+        double tierRisk = tier.riskPerTradeOverride;
+
+        double approvedRisk = riskManager.GetActiveRiskPerTradePercent();
+        bool clampedToEnvelope = (approvedRisk > 0.0 && tierRisk > approvedRisk);
+        if(clampedToEnvelope)
+            tierRisk = approvedRisk;
 
         SPositionSizingParams params = posSizer.GetParameters();
-        params.riskPercent = tier.riskPerTradeOverride;
+        params.riskPercent = tierRisk;
         posSizer.SetParameters(params);
 
-        PrintFormat("[COMPOUNDING-TIER] Applied to PositionSizer | riskPercent=%.1f%%",
-                    tier.riskPerTradeOverride);
+        PrintFormat("[COMPOUNDING-TIER] Applied to PositionSizer | riskPercent=%.1f%% (tier %.1f%%%s)",
+                    tierRisk, tier.riskPerTradeOverride,
+                    clampedToEnvelope ? " | clamped to approved envelope" : "");
     }
 
     SCompoundingTierConfig GetCurrentTier() const

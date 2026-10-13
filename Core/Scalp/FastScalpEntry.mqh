@@ -49,7 +49,8 @@ public:
       return true;
    }
 
-// Applies the risk-adjusted lot size in place when provided.
+// The scalp path's single CUnifiedRiskManager pre-trade gate (AGENTS.md §3.1): refuses the entry, and
+// applies a smaller lot when the gate asks for one. Execute does not validate again.
    static bool ValidateRiskAndAdjust(const string symbol,
                                      ENUM_TRADE_SIGNAL signal,
                                      double confidence,
@@ -82,9 +83,14 @@ public:
             return false;
          }
 
-         // Use risk-adjusted lot size if provided
-         if(result.adjustedLotSize > 0.0)
+         // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
+         // adopting that would ship more than CPositionSizer decided.
+         if(result.adjustedLotSize > 0.0 && result.adjustedLotSize < lotSize)
+         {
+            PrintFormat("[SCALP-RISK-ADJUSTED] %s | lot %.2f -> %.2f | reason=%s",
+                        symbol, lotSize, result.adjustedLotSize, result.message);
             lotSize = result.adjustedLotSize;
+         }
       }
 
       return true;
@@ -153,44 +159,12 @@ public:
          tp = NormalizeDouble(entryPrice - config.scalpTPPips * point, digits);
       }
 
-      // Calculate SL/TP in pips for risk validation
-      double slPips = (point > 0.0) ? config.scalpSLPips : 0.0;
-      double tpPips = (point > 0.0) ? config.scalpTPPips : 0.0;
+      // The scalp path's single pre-trade gate ran in ValidateRiskAndAdjust, on this same lot before
+      // the margin cap. FinalizeLotSize can only shrink or refuse, so re-validating here approved the
+      // same trade a second time and took a second virtual reservation for it.
 
-      // MANDATORY RISK MANAGER VALIDATION (AGENTS.md Invariant #1)
-      // All trade entries must pass CUnifiedRiskManager pre-trade gating
-      if(riskManager != NULL)
-      {
-         STradeValidationRequest riskReq;
-         ZeroMemory(riskReq);
-         riskReq.symbol       = symbol;
-         riskReq.orderType    = orderType;
-         riskReq.lotSize      = lotSize;
-         riskReq.stopLossPips = slPips;
-         riskReq.takeProfitPips = tpPips;
-         riskReq.confidence   = confidence;
-         riskReq.strategy     = "FastScalp";
-         riskReq.requestTime  = TimeCurrent();
-
-         SValidationResult riskResult = riskManager.ValidateTradeRequest(riskReq, "scalp-pretrade");
-         if(!riskResult.approved)
-         {
-            PrintFormat("[SCALP-REJECTED] %s | %s | lot=%.2f | reason=%s",
-                        symbol,
-                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                        lotSize,
-                        riskResult.reason);
-            return false;
-         }
-         // Apply adjusted lot size from risk manager if provided
-         if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
-         {
-            lotSize = riskResult.adjustedLotSize;
-            PrintFormat("[SCALP-RISK-ADJUSTED] %s | lot reduced to %.2f", symbol, lotSize);
-         }
-      }
-
-      // L10-018: AI-VOTE logging
+      // L10-018: AI-VOTE logging. Unreachable today: the only Initialize call site
+      // (EAOrchestrator.mqh:1162) leaves the optional aiAdapter defaulted to NULL.
       if(aiAdapter != NULL)
       {
          PrintFormat("[AI-VOTE] symbol=%s strategy=FastScalp vote=%s",

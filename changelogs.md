@@ -8,6 +8,35 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 192: The scalp traded with two risk reservations, and a tier could size above the envelope
+
+#### Context
+The five items Batch 191 queued after its comment pass, narrowed to the three that change money or observability. Files: `Core/Scalp/FastScalpEntry.mqh`, `Core/Scalp/FastScalpEngine.mqh`, `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/CompoundingTierManager.mqh`, `Core/Orchestration/EAOrchestrator.mqh`.
+
+#### 1. One pre-trade gate per scalp instead of two (`FastScalpEntry.mqh`)
+`ShouldEnterScalp` called `ValidateTradeRequest(request, "scalp")` at `:77`, then `Execute` called it again at `:175` with tag `"scalp-pretrade"` on the same symbol, side, lot, stops and confidence. Each approval reserves a virtual position under a microsecond-unique owner tag and is pruned only by TTL, so every fast-scalp entry booked its risk **twice** against the portfolio and daily-budget gates for up to 60 seconds, and `CRiskValidationStats::RecordApproval` counted one trade as two.
+
+The pre-send call went, not the entry-stage one. The entry-stage request carries `strategyRole`, `strategyCluster` and `clusterCode = "T"`, which the pre-send request left unset, so the surviving gate is the one that gives cluster governance a code to group by; and everything between the two (`FinalizeLotSize` -> `CapLotToMargin`) can only shrink the lot or refuse it, so the second approval could not have caught anything the first missed. `riskReq.lotSize` at the pre-send site was the already-adjusted lot either way.
+
+The adopt branch that came with the removed gate had its own bug: `if(result.adjustedLotSize > 0.0) lotSize = result.adjustedLotSize;` adopted unconditionally, and the pipeline does raise `adjustedLotSize` to `SYMBOL_VOLUME_MIN` on some paths (`RiskValidationPipeline.mqh:507`). It is shrink-only now, and prints `[SCALP-RISK-ADJUSTED] symbol | lot A -> B | reason=...` where the old silent assignment left no trace of a lot the risk manager changed. `slPips`/`tpPips`, computed only to feed the deleted request, went with it.
+
+#### 2. The compounding tier can no longer size above the envelope (`CompoundingTierManager.mqh`)
+`ApplyTierToPositionSizer` wrote `tier.riskPerTradeOverride` straight into `CPositionSizer::SetParameters`, which does no clamping, while the operator-envelope clamp lives only on the `CUnifiedRiskManager` path (`ApplyTierOverrides`). A tier asking for more than the configured ceiling therefore sized at the tier number and got refused downstream by the per-trade cap check - the tier traded nothing, and the refusal looked like a signal problem. It now clamps to `riskManager.GetActiveRiskPerTradePercent()`, which `UnifiedRiskManager.mqh:371` sets from the envelope-clamped base risk, and both call sites (`:343`, `EAOrchestrator.mqh:973`) already apply the risk manager first. When the clamp binds the log says so: `[COMPOUNDING-TIER] Applied to PositionSizer | riskPercent=X (tier Y% | clamped to approved envelope)`.
+
+#### 3. A clamp that only lowered the drawdown warning is no longer silent (`UnifiedRiskManager.mqh`)
+`ApplyTierOverrides` prints `[RISK-ENVELOPE]` if any clamped value dropped below the tier's, but the condition tested `clampedDdCritical` and not `clampedDdWarning`, so an envelope that cut only the warning threshold applied it with no line anywhere. The term is in the condition and `ddWarn A->B` is in the message.
+
+#### Checked and left alone
+- `FastScalpEntry.mqh:167`'s `[AI-VOTE]` block is unreachable: the only `m_scalpEngine.Initialize` call site (`EAOrchestrator.mqh:1162`) passes four of five arguments and `aiAdapter` defaults to NULL (`FastScalpEngine.mqh:127`). An adapter was never built for the scalp path, so wiring one would be inventing an AI vote to log - the comment now states the branch does not run rather than implying it does.
+- `CountScalpPositions` (`FastScalpPositionTracker.mqh:113`) counts any position whose comment *starts with* `SCALP`, terminal-wide, with no magic or symbol filter. Batch 170 already fixed the substring version that let this engine claim ATR-SCALP positions. What remains over-counts rather than under-counts, so `maxScalpPositions` refuses earlier than the operator set - the safe direction, and part of task #37's magic-collision territory.
+- `CUnifiedRiskManager::ResetCircuitBreaker` still has no caller. The halt it would clear resets itself at the trading-day roll (`UnifiedRiskManager.mqh:1304`), so this is unused manual surface, not a trapped account.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, **0 errors / 0 warnings**.
+- No runtime evidence: the newest journal on this machine is still 2026-09-23. The observable predictions are one `[RISK-VIRTUAL] reserve` per scalp instead of two, a `[SCALP-RISK-ADJUSTED]` line whenever the gate shrinks a lot, and a `ddWarn` field on `[RISK-ENVELOPE]`.
+
+
+
 ### Batch 191: Comment reduction in the risk tree, the scalp engine and the registry - 136 lines, and two agent claims that did not survive checking
 
 #### Context

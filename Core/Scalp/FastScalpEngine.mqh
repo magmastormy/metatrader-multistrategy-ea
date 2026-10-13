@@ -254,8 +254,8 @@ public:
       if(!IsScalpCostViable(symbol, (double)m_config.scalpSLPips, (double)m_config.scalpTPPips))
          return false;
 
-      // Pre-trade gate #1 of two: ValidateTradeRequest(tag "scalp") here, then again inside
-      // CFastScalpEntry::Execute (tag "scalp-pretrade") on the lot after any adjustment.
+      // The scalp path's only pre-trade gate; Execute validates the same lot it would have a second
+      // time, and each approval reserves a virtual position until its TTL prunes it.
       if(!CFastScalpEntry::ValidateRiskAndAdjust(symbol, signal, confidence, lotSize,
                                                  m_config, m_riskManager))
          return false;

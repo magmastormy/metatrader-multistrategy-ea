@@ -347,13 +347,15 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
 
     if(clampedBaseRisk < tierRiskPerTradePct || clampedMaxRisk < maxRiskPerTradeOverride ||
        clampedDaily < effectiveDaily || clampedPortfolio < effectivePortfolio ||
-       clampedDdCritical < effectiveDdCritical || clampedDailyLoss < effectiveDailyLossLimit ||
+       clampedDdWarning < effectiveDdWarning || clampedDdCritical < effectiveDdCritical ||
+       clampedDailyLoss < effectiveDailyLossLimit ||
        clampedSameBase < tierMaxPositions)
     {
-        PrintFormat("[RISK-ENVELOPE] Tier %s values clamped to configured ceiling | risk %.2f%%->%.2f%% max %.2f%%->%.2f%% daily %.2f%%->%.2f%% portfolio %.2f%%->%.2f%% ddCrit %.2f%%->%.2f%% dailyLoss %.2f%%->%.2f%% sameBase %d->%d",
+        PrintFormat("[RISK-ENVELOPE] Tier %s values clamped to configured ceiling | risk %.2f%%->%.2f%% max %.2f%%->%.2f%% daily %.2f%%->%.2f%% portfolio %.2f%%->%.2f%% ddWarn %.2f%%->%.2f%% ddCrit %.2f%%->%.2f%% dailyLoss %.2f%%->%.2f%% sameBase %d->%d",
                     "COMPOUNDING", tierRiskPerTradePct, clampedBaseRisk,
                     maxRiskPerTradeOverride, clampedMaxRisk, effectiveDaily, clampedDaily,
-                    effectivePortfolio, clampedPortfolio, effectiveDdCritical, clampedDdCritical,
+                    effectivePortfolio, clampedPortfolio, effectiveDdWarning, clampedDdWarning,
+                    effectiveDdCritical, clampedDdCritical,
                     effectiveDailyLossLimit, clampedDailyLoss, tierMaxPositions, clampedSameBase);
     }
 
