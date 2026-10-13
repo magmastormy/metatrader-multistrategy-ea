@@ -260,7 +260,17 @@ public:
         int idx = FindDormantIndex(symbol);
         if(idx < 0) return false;
         if(m_dormantCooldownUntil[idx] <= 0) return false;
-        return TimeCurrent() < m_dormantCooldownUntil[idx];
+        if(TimeCurrent() >= m_dormantCooldownUntil[idx])
+        {
+            // The strike count has to expire with the cooldown: RecordDormancyWarning tests >= and only a
+            // signal clears it, so a symbol that comes out of cooldown quiet re-armed 30 more minutes on its
+            // first no-signal bar and was effectively never evaluated again.
+            m_dormantCooldownUntil[idx] = 0;
+            m_dormantWarningCount[idx] = 0;
+            PrintFormat("[DORMANT-COOLDOWN] %s | cooldown expired, strikes reset | evaluating again", symbol);
+            return false;
+        }
+        return true;
     }
     
     int FindDormantIndex(const string symbol)

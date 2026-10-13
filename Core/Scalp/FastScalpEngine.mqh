@@ -142,14 +142,11 @@ public:
 
       // CTradeManager has no GetMagicNumber accessor: market orders get base magic + per-symbol offset inside it
       // (TradeManager.mqh:1267), while m_magicNumber is set from config by the orchestrator and reaches only the
-      // pending/async paths. A 0% tier budget zeroes maxScalpPositions here, so PassesEntryGates refuses all.
+      // pending/async paths. The tier budget is re-read in ShouldEnterScalp, so a 0% tier at init is not a latch.
 
       m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
       if(m_config.scalpRiskPct <= 0.0)
-      {
-         Print("[SCALP-ENGINE] Scalp budget is 0% — scalp engine will not trade");
-         m_config.maxScalpPositions = 0;
-      }
+         Print("[SCALP-ENGINE] Scalp budget is 0% at init - entries refused until the tier raises it (re-read every cycle)");
 
       m_initialized = true;
       PrintFormat("[SCALP-ENGINE] Initialized | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d | cooldown=%dms | pending=%s | partial=%s",
@@ -231,8 +228,22 @@ public:
       if(!m_initialized)
          return false;
 
+      // The tier can move the scalp budget after init, so it is re-read here rather than latched there.
+      if(m_riskTierManager != NULL)
+         m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
+
       if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get()))
+      {
+         static datetime s_lastGateLog = 0;
+         if(TimeCurrent() - s_lastGateLog >= 60)
+         {
+            s_lastGateLog = TimeCurrent();
+            PrintFormat("[SCALP-GATE] %s | entry refused | usedRisk=%.2f%% of budget=%.2f%% | maxPos=%d | cooldownLeftMs=%d",
+                        symbol, m_riskBudget.Get(), m_config.scalpRiskPct, m_config.maxScalpPositions,
+                        m_lastScalpTime > 0 ? (m_config.scalpCooldownMs - (int)((TimeCurrent() - m_lastScalpTime) * 1000)) : 0);
+         }
          return false;
+      }
 
       signal = EvaluateScalpSignal(symbol);
       if(signal == TRADE_SIGNAL_NONE)

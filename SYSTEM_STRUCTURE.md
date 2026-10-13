@@ -206,16 +206,32 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 |---|---|---|
 | Written | `COrchestratorStrategyFlagBuilder::BuildStrategyFlags` | semantic `SI_*` (`ENUM_STRATEGY_INDEX`) |
 | Read | `CEnterpriseStrategyManager::AutoRegisterStrategies` via `CatalogEnableSlot(i)` | semantic `SI_*` |
+| Read (registry) | `CEAOrchestrator::BuildStrategyRegistry` via `CatalogEnableSlot(i)` | semantic `SI_*` (Batch 193) |
 | Intrabar policy | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` | each strategy's own `siPolicyIndex` |
+| Voting weight | catalog row, overridden once at init by `InpWeight*` | `StrategyConfigWeight(siIndex, rowDefault)` (Batch 193) |
 
 Ownership after Batch 147 (legacy scheme deleted):
 
 - **`CEnterpriseStrategyManager` owns registration.** `AutoRegisterStrategies` calls `CatalogLogIndexAudit()` (no arg), `CatalogEnableSlot(i)`, `CatalogPolicySlot(i)` — all unconditional semantic. There is no scheme flag to set; `SetUseSemanticStrategyIndices` was removed.
 - **`StrategyCatalog` resolves slots, never decides.** `CatalogEnableSlot(i)` and `CatalogPolicySlot(i)` are the only slot resolvers; `CatalogFlagEnabled` was removed. `CatalogLogIndexAudit()` prints `slot_scheme=SEMANTIC (legacy literals removed in Batch 147)` and is report-only.
+- **`SStrategyDefinition` is the whole registration contract (Batch 193).** The row gained `registryType`, the `ENUM_STRATEGY_TYPE` the registry filter matches on, and `BuildStrategyRegistry` now loops the catalog's indicator rows instead of repeating fourteen hand-written `enabled = flags[SI_X]; RegisterDefinition("X", ...)` pairs — which is how Statistical Arbitrage stayed unregistered while its input, flag slot, class and row all existed. A row with `registryType < 0` prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row - it cannot pass the registry filter`. AI rows keep their own definitions: their enabled flag comes from adapter availability, not a strategy input.
+- **One weight per strategy (Batch 193).** `ApplyCatalogWeightOverrides()` runs after the registry aggregator initializes and before `InitializeEnterpriseManagers()`, writing each row's resolved `InpWeight*` into `SStrategyDefinition.weight`. That row value is what `RegisterStrategy` -> `SetWeight` -> the roster -> `GetStrategyWeight()` gives consensus, and what the registry descriptor reports; before it, the operator's fourteen weight inputs reached only the descriptor, which no indicator path reads. `CatalogApplyConfigWeight` logs every row it moves.
 - **`CIntrabarPolicy` holds the hard-coded LIVE fallback pair** (Mean Reversion / Volatility Breakout) at semantic slots `7/8`. The always-LIVE pair no longer depends on a scheme — it is fixed at the semantic slots, which is exactly what the producer writes.
 - **`MAX_STRATEGY_CONFIGS` = 23.** Slots 21 (FVG Scalper) and 22 (Statistical Arbitrage) own their own rows. `CIntrabarPolicy::m_policyConfig` is sized 32, so the count is safely absorbed.
 
 There is no legacy default — the semantic scheme is the only scheme.
+
+#### 2.2.2 Adding or removing a strategy (Batch 193: the catalog is the whole contract)
+
+A strategy now needs five facts and no other call site:
+
+1. `Strategies/<Name>.mqh` defining a class derived from `IStrategy`.
+2. `#include "../../Strategies/<Name>.mqh"` in `StrategyCatalog.mqh`, tagged `// [CAT:<Name>]`.
+3. `CATALOG_SIMPLE_CREATOR(CatCreate_<Name>, C<Name>)` on the next anchored line.
+4. One `CatalogAdd("<Name>", CAT_KIND_INDICATOR, ..., siIndex, siPolicyIndex, ..., weight, ..., registryType)` row, carrying the row's own `SI_*` flag slot, its own `StrategyConfigBuilder` policy slot, the `STRATEGY_*` enum the registry matches on, and its default weight.
+5. `InpEnable<Name>` / `InpWeight<Name>` in each root `.mq5`, written into `config.enable<Name>` / `config.weight<Name>`, and the new slot appended to `ENUM_STRATEGY_INDEX` with a line in `COrchestratorStrategyFlagBuilder::BuildStrategyFlags`.
+
+Registration, the registry definition, the enable gate, the intrabar policy and the consensus weight are all read from that row, so step 4 is the only place the name exists twice. Remove a strategy by deleting the lines carrying its `[CAT:]` anchor and its input. Two enumerations are not catalog-driven and are worth naming: `useCuratedStrategySet` force-enables a hard-coded twelve (Statistical Arbitrage stays out because it needs the Python bridge), and `BuildStrategyFlagsForSymbol` suppresses named strategies per symbol class. A row whose `registryType` is missing prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row` rather than trading nothing in silence, and a row whose `siIndex` is `-1` is registered for every symbol, which is what the AI adapter rows rely on.
 
 ### 2.3 Extracted Lifecycle Managers
 
@@ -1255,6 +1271,8 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 | Authorised risk ceiling | `CUnifiedRiskManager` envelope (`m_envelope*`) | Captured from config before any compounding tier writes; `ApplyTierOverrides` can only clamp downward. |
 | Scalp risk gate count | One `ValidateTradeRequest` per scalp, at the entry stage (Batch 192) | `Execute` used to run the same check again on the already-adjusted lot. Both calls reserved a virtual position that only TTL pruning releases, so one trade counted its risk twice against the portfolio and daily-budget gates and filed two approvals. The surviving gate is the one whose request sets `clusterCode`/`strategyRole`/`strategyCluster`, which cluster governance groups on; `FinalizeLotSize` after it can only shrink or refuse. Adoption of `adjustedLotSize` is shrink-only and prints `[SCALP-RISK-ADJUSTED]`. |
 | Tier-to-sizer risk | Clamped to the risk manager's approved per-trade risk (Batch 192) | `CPositionSizer::SetParameters` clamps nothing, so a tier writing its raw `riskPerTradeOverride` could exceed the operator envelope that `ApplyTierOverrides` enforces on the risk-manager side; the per-trade cap check then refused entries instead of sizing them, so a tier could look applied while trading nothing. `ApplyTierToPositionSizer` now takes the manager and uses `GetActiveRiskPerTradePercent()`, set from the clamped base risk at `UnifiedRiskManager.mqh:371`. |
+| Consensus stop ceiling | `max(0.3% of price, 3 x ATR)` in `CCandidateBuilder::CalculateStops` (Batch 193) | The percentage cap alone pinned every synthetic stop at 1% of price whenever the `max(broker, 3 x spread)` floor rose above it, and `takeProfitPips` was capped by `ceiling x minRR` rather than by the stop actually taken, so `CheckExecutionCost`'s `spread / tp` became `1 / (3 x minRR)` — a constant veto that read like a market measurement. The lot shrinks for a wider stop, so per-trade currency risk is unchanged; when the floor still binds the designed stop, `[CANDIDATE-BUILDER] ... stop pinned to floor` names designed/floor/spread/tp/costRatio. |
+| Scalp budget read | Per cycle in `ShouldEnterScalp`, not latched at init (Batch 193) | `m_config.scalpRiskPct` came from the risk tier once in `Initialize`, and a 0% tier also set `maxScalpPositions = 0`, which nothing ever restored (default 3, `FastScalpTypes.mqh:34`). After the tier raised the budget `PassesEntryGates` still refused on `scalpCount >= 0` for the whole session. Refusals now print `[SCALP-GATE]` with used risk, budget, cap and remaining cooldown, throttled to one line per minute. |
 | Round-trip cost | `CTradeMgrPricing::GetRoundTripCostPrice` | One definition of cost, used by both the risk money model and the take-profit expectancy gate. |
 | Stop feasibility | `CTradeMgrPricing::GetMinimumStopDistance` / `GetBrokerStopLevelDistance` | The former is the sizing floor (broker level, 1.5 spreads, 10 points); the latter is the broker-only term used by the preflight spread-anomaly gate, kept separate because a spread-derived floor is circular there. |
 | Consensus voter floor | `MIN_CONSENSUS_VOTERS` in `CConsensusEngine::CalculateEffectiveQuorumParamsInternal` | Policy floor applied at the decision point; the old formula capped the requirement at the number of voters actually eligible. |

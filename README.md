@@ -350,6 +350,19 @@ The pre-trade gate used to be called before the position was sized, with `lotSiz
 - **`[RISK-ENVELOPE]` no longer skips a warning-only clamp,** and the line gained `ddWarn A->B`.
 - Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1304`), and the CVaR gate is fed by the equity-curve buffer (`:655`). Neither was "fixed".
 
+### Batch 193: five things that were stopping valid trades, and one strategy that could never start
+
+No risk ceiling moved in this batch. Each item was a control that did not behave as designed.
+
+- **Statistical Arbitrage can now be enabled.** It had an input, a flag slot, a catalog row and a working class, but no `RegisterDefinition` line — the only one of fourteen strategies missing from a hand-written block. The registry now builds indicator definitions by looping the catalog, so adding a strategy is one catalog row plus its input, and a row missing its `registryType` says so at init instead of silently never trading.
+- **`InpWeight*` inputs decide voting weight.** They used to reach only the registry descriptor, which nothing reads for indicators; the catalog literal was the real authority. The resolved input is now written into the row before the managers register, and every row that moves prints `[CATALOG] <name> | registration weight A -> B from operator input`. Five defaults differ from the literal, so relative influence between voters shifts on the first session.
+- **The dormancy cooldown stopped re-arming itself.** A symbol parked after three quiet evaluations stayed parked indefinitely, because the strike count that caused the park was never cleared on expiry — roughly one evaluated bar per half hour per quiet symbol. Expiry now resets the strikes and prints `[DORMANT-COOLDOWN] ... strikes reset`.
+- **A 0% scalp tier no longer latches the engine off for the session.** The budget was read once at init and a 0% tier zeroed `maxScalpPositions`; when the tier raised the budget the engine still refused everything. It is re-read every cycle now, and refusals print `[SCALP-GATE]` with used risk, budget, cap and remaining cooldown (one line per minute).
+- **Momentum keeps the next bar's crossover.** Its cooldown was a full bar measured from when the signal fired, so a mid-bar signal ate the following bar's edge. It is half a bar; the same-bar guard still caps it at one signal per bar.
+- **Stops follow volatility instead of a percentage cap, and the cost gate stopped being circular.** The 0.3%-of-price stop ceiling (1% on synthetics) could sit below the `3 x spread` floor, which made take-profit a function of the spread alone — the cost ratio became a constant, and every candidate on it was vetoed for a reason that had nothing to do with the market. The ceiling is now `max(price cap, 3 x ATR)`, TP is an R-multiple of the stop actually taken, and when the floor still binds, `[CANDIDATE-BUILDER] ... stop pinned to floor | designed= floor= spread= tp= costRatio= limit=` says so at the point it becomes known.
+
+Expect more entries at the same risk per trade: a wider stop shrinks the lot, and the per-trade cap, the daily and portfolio budgets and the final lot gate are unchanged.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

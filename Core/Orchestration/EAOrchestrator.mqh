@@ -650,6 +650,8 @@ if(!m_registryAggregator.Initialize())
     return false;
 }
 
+ApplyCatalogWeightOverrides();
+
 if(!InitializeEnterpriseManagers())
 {
     CleanupOnInitFailure();
@@ -2040,6 +2042,44 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager, c
     // Intentional pass-through: no governance layer is active; consensus weights the strategies.
 }
 
+// The operator's InpWeight* for a flag slot, falling back to the catalog row when a row has no slot.
+double StrategyConfigWeight(const int siIndex, const double catalogFallback)
+{
+    switch(siIndex)
+    {
+        case SI_MOMENTUM:               return m_config.weightMomentum;
+        case SI_TREND:                  return m_config.weightTrend;
+        case SI_SUPPORT_RESISTANCE:     return m_config.weightSupportResistance;
+        case SI_CANDLESTICK:            return m_config.weightCandlestick;
+        case SI_MEAN_REVERSION:         return m_config.weightMeanReversion;
+        case SI_VOLATILITY_BREAKOUT:    return m_config.weightVolatilityBreakout;
+        case SI_STATISTICAL_ARBITRAGE:  return m_config.weightStatisticalArbitrage;
+        case SI_FVG_SCALPER:            return m_config.weightFVGScalper;
+        case SI_TURTLE_SOUP:            return m_config.weightTurtleSoup;
+        case SI_BREAKER_BLOCK:          return m_config.weightBreakerBlock;
+        case SI_NY_OPEN_GAP:            return m_config.weightNYOpenGap;
+        case SI_ASIAN_RANGE_BREAK:      return m_config.weightAsianRangeBreak;
+        case SI_LIQUIDITY_SWEEP:        return m_config.weightLiquiditySweep;
+        case SI_RANGE_COMPRESSION:      return m_config.weightRangeCompression;
+    }
+    return catalogFallback;
+}
+
+// The catalog row is what RegisterStrategy hands the roster, and consensus reads the roster, so an
+// InpWeight* has to be written into the row before the first manager registers. Every row that moves
+// prints its own [CATALOG] line; a row that keeps the code default means the input was never applied.
+void ApplyCatalogWeightOverrides()
+{
+    BuildStrategyCatalog();
+    for(int ci = 0; ci < g_strategyCatalogCount; ci++)
+    {
+        if(g_strategyCatalog[ci].kind != CAT_KIND_INDICATOR)
+            continue;
+        const int fi = CatalogEnableSlot(ci);
+        CatalogApplyConfigWeight(fi, StrategyConfigWeight(fi, g_strategyCatalog[ci].weight));
+    }
+}
+
 void ApplyStrategyWeights(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
 {
     // Intentional pass-through: weights apply via the consensus/role-cluster pipeline; a step here would change behaviour.
@@ -2092,60 +2132,33 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
     // Only register indicators if not in strict AI_ONLY mode
     if(m_config.eaMode != EA_MODE_AI_ONLY)
     {
-        bool enabled;
+        // Definitions come from the catalog, so a strategy cannot be enabled by input and then silently
+        // fail the registry filter because nobody added a hand-written row for it.
+        BuildStrategyCatalog();
+        for(int ci = 0; ci < g_strategyCatalogCount; ci++)
+        {
+            if(g_strategyCatalog[ci].kind != CAT_KIND_INDICATOR)
+                continue;
 
-        enabled = (ArraySize(strategyFlags) > SI_MOMENTUM && strategyFlags[SI_MOMENTUM]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Momentum", STRATEGY_MOMENTUM, false, true, false, m_config.weightMomentum);
+            if(g_strategyCatalog[ci].registryType < 0)
+            {
+                PrintFormat("[STRATEGY-REGISTRY] %s has no registryType in its catalog row - it cannot pass the registry filter",
+                            g_strategyCatalog[ci].name);
+                continue;
+            }
 
-        enabled = (ArraySize(strategyFlags) > SI_TREND && strategyFlags[SI_TREND]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Trend", STRATEGY_TREND, false, true, false, m_config.weightTrend);
+            const int fi = CatalogEnableSlot(ci);
+            bool enabled = (fi < 0) || (ArraySize(strategyFlags) > fi && strategyFlags[fi]);
+            if(!enabled)
+                continue;
 
-        enabled = (ArraySize(strategyFlags) > SI_SUPPORT_RESISTANCE && strategyFlags[SI_SUPPORT_RESISTANCE]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false, true, false, m_config.weightSupportResistance);
-
-        enabled = (ArraySize(strategyFlags) > SI_CANDLESTICK && strategyFlags[SI_CANDLESTICK]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Candlestick", STRATEGY_CANDLESTICK, false, true, false, m_config.weightCandlestick);
-
-        enabled = (ArraySize(strategyFlags) > SI_MEAN_REVERSION && strategyFlags[SI_MEAN_REVERSION]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Mean Reversion", STRATEGY_MEAN_REVERSION, false, true, false, m_config.weightMeanReversion);
-
-        enabled = (ArraySize(strategyFlags) > SI_VOLATILITY_BREAKOUT && strategyFlags[SI_VOLATILITY_BREAKOUT]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Volatility Breakout", STRATEGY_VOLATILITY_BREAKOUT, false, true, false, m_config.weightVolatilityBreakout);
-
-        enabled = (ArraySize(strategyFlags) > SI_FVG_SCALPER && strategyFlags[SI_FVG_SCALPER]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("FVG Scalper", STRATEGY_FVG_SCALPER, false, true, false, m_config.weightFVGScalper);
-
-        enabled = (ArraySize(strategyFlags) > SI_TURTLE_SOUP && strategyFlags[SI_TURTLE_SOUP]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Turtle Soup", STRATEGY_TURTLE_SOUP, false, true, false, m_config.weightTurtleSoup);
-
-        enabled = (ArraySize(strategyFlags) > SI_BREAKER_BLOCK && strategyFlags[SI_BREAKER_BLOCK]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Breaker Block", STRATEGY_BREAKER_BLOCK, false, true, false, m_config.weightBreakerBlock);
-
-        enabled = (ArraySize(strategyFlags) > SI_NY_OPEN_GAP && strategyFlags[SI_NY_OPEN_GAP]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("NY Open Gap", STRATEGY_NY_OPEN_GAP, false, true, false, m_config.weightNYOpenGap);
-
-        enabled = (ArraySize(strategyFlags) > SI_ASIAN_RANGE_BREAK && strategyFlags[SI_ASIAN_RANGE_BREAK]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Asian Range Break", STRATEGY_ASIAN_RANGE_BREAK, false, true, false, m_config.weightAsianRangeBreak);
-
-        enabled = (ArraySize(strategyFlags) > SI_LIQUIDITY_SWEEP && strategyFlags[SI_LIQUIDITY_SWEEP]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Liquidity Sweep", STRATEGY_LIQUIDITY_SWEEP, false, true, false, m_config.weightLiquiditySweep);
-
-        enabled = (ArraySize(strategyFlags) > SI_RANGE_COMPRESSION && strategyFlags[SI_RANGE_COMPRESSION]);
-        if(enabled)
-        strategyRegistry.RegisterDefinition("Range Compression", STRATEGY_RANGE_COMPRESSION, false, true, false, m_config.weightRangeCompression);
+            strategyRegistry.RegisterDefinition(g_strategyCatalog[ci].name,
+                                                (ENUM_STRATEGY_TYPE)g_strategyCatalog[ci].registryType,
+                                                false, true, false,
+                                                g_strategyCatalog[ci].weight);
+        }
     }
+
 
     bool aiBaseEnabled = m_config.enableAIMode;
     double aiWeight = MathMax(0.1, m_config.aiWeightMultiplier);

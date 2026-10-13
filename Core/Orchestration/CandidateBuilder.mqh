@@ -675,11 +675,27 @@ public:
         
         double minSlPips = MathMax((double)MathMax(brokerMinPoints, stopLevelPts) * 1.50,
                                    MathMax(spreadPoints * 3.0, 8.0));
-        double maxSlPips = (candidate.entryPrice * (isSynthetic ? 0.010 : 0.003)) / point;
+        double priceCapPips = (candidate.entryPrice * (isSynthetic ? 0.010 : 0.003)) / point;
+        // The % -of-price ceiling is a bound for missing volatility data, not the stop itself: on the
+        // synthetics it sat below 2*ATR, so every stop pinned at it, TP came out at 2x that, and the cost
+        // gate then vetoed on a ratio built from the spread floor. A stop may widen to 3 ATR; the lot
+        // shrinks to keep the same currency risk, and the per-trade cap and final gate still bind.
+        double atrPips = (point > 0.0) ? atrValue / point : 0.0;
+        double maxSlPips = (atrPips > 0.0) ? MathMax(priceCapPips, 3.0 * atrPips) : priceCapPips;
         if(maxSlPips < minSlPips) maxSlPips = minSlPips;
         
+        double intendedSlPips = stopLossPips;
         stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-        takeProfitPips = MathMin(takeProfitPips, maxSlPips * minRR);
+        // TP is an R-multiple of the stop actually taken, not of the ceiling.
+        takeProfitPips = MathMin(takeProfitPips, stopLossPips * minRR);
+
+        // Names the arithmetic before CheckExecutionCost can report it as a market reading: when the spread
+        // floor is wider than the designed stop, TP becomes 3*spread*minRR and the cost ratio is fixed at
+        // 1/(3*minRR) regardless of the symbol, so every candidate on it is vetoed.
+        if(intendedSlPips < minSlPips && spreadPoints > 0.0 && takeProfitPips > 0.0)
+            PrintFormat("[CANDIDATE-BUILDER] %s | stop pinned to floor | designed=%.1f floor=%.1f spread=%.1f | tp=%.1f costRatio=%.3f limit=%.3f",
+                        symbol, intendedSlPips, minSlPips, spreadPoints, takeProfitPips,
+                        spreadPoints / takeProfitPips, m_maxSpreadToTpRatio);
         
         candidate.stopLossPips = stopLossPips;
         candidate.takeProfitPips = takeProfitPips;

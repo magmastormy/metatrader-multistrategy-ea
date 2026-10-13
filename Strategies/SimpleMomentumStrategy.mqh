@@ -541,9 +541,11 @@ public:
            m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
-        // Conservative cooldown is one full bar; scalping uses a wall-clock cooldown bounded by the timeframe.
+        // Conservative cooldown is half a bar; the same-bar guard below is what limits one signal per bar.
+        // A full-bar cooldown is measured from the evaluation clock, so a signal fired mid-bar suppressed the
+        // next bar's crossover edge too, and by the following bar that edge had decayed.
         int timeframeSeconds = MathMax(30, (int)PeriodSeconds(m_timeframe));
-        int cooldownSeconds = timeframeSeconds;
+        int cooldownSeconds = MathMax(1, timeframeSeconds / 2);
         if(m_enableScalping)
             cooldownSeconds = MathMax(5, MathMin(m_scalpCooldownSeconds, timeframeSeconds));
         if(TimeCurrent() - m_lastSignalTimestamp < cooldownSeconds)
