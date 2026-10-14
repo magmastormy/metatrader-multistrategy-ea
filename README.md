@@ -380,7 +380,7 @@ None of this moves a risk limit: consensus still requires two independent voters
 
 - **Range Compression is classified as fading the trend**, and `RegimeStateHardGate` is written to zero its vote in a confirmed trend regime - the case the code itself calls "the fastest way to blow an account". With the type arriving as CUSTOM, that veto never fired. It fires now.
 - **Both strategies now take their regime category weight** (`breakoutWeightMult` for compression, `ictWeightMult` for liquidity sweeps) instead of the neutral 1.0 default branch.
-- **Nothing else moves.** No gate, lot, magic number, position comment or ownership range changed, so positions already open keep the identity that manages them. The type-based magic table in `CMagicNumberAllocator` would have relocated them, but no method of that class is called anywhere - it is on the open list as dead code, not as a live authority.
+- **Nothing else moves.** No gate, lot, magic number, position comment or ownership range changed, so positions already open keep the identity that manages them. The type-based magic table in `CMagicNumberAllocator` would have relocated them, but no method of that class is called anywhere - it is on the open list as dead code, not as a live authority (deleted in Batch 197).
 - **One comment corrected:** a zero regime multiplier removes a vote's score and dilutes the ready-weight ratio, but the vote still counts toward the minimum-voter floor. Turning that into a real vote-drop would tighten one test while loosening another, so it is recorded as an open item rather than shipped without runtime evidence.
 
 Expect equal or fewer entries from these two strategies, and `[CONSENSUS-REJECT] ... Ready weight ratio` lines where a trend-regime candidate now carries a vetoed voter.
@@ -395,6 +395,14 @@ That was not a logging nicety. Every caller turns the answer into state: a grid 
 - **No send changed.** Magic numbers, comments, lots and ownership ranges are untouched, so positions already open keep the identity that manages them.
 
 A false "yes" used to mis-bind tracking and close operations; a false "no" only re-fires an engine's own retry path, which each site already bounds with its cooldown and counters.
+
+### Batch 197: every engine now ships its own magic, the grid survives a restart, and the lifecycle manager recognises its own positions
+
+- **One number, one owner.** Consensus entries keep `base + assetClassOffset + symbolIndex*100`; the four engines moved to bands under the lowest asset offset - fast scalp `+6000`, ATR scalp `+6100`, grid `+6200+level`, spike `+6300`. Before this a fast scalp sent through `CTradeManager` carried *exactly* its own symbol's consensus magic, and the ATR scalp sat on `base + 7000 + symbolIndex` where 7000 is ASSET_FOREX's offset, so a scalp fill entered that strategy's performance history and, through it, the reliability weight that sizes the next lot. Init prints `[MAGIC-LAYOUT]` and refuses to start if a symbol slot composes into an engine band.
+- **Positions already open are unaffected.** Comment tags stay the exit discriminator: a pre-renumber scalp still carries a consensus-band magic and only its comment tells it apart, and the grid's restart recovery decodes both the new band and the legacy one.
+- **A restart used to forget the grid.** Level tickets lived only in memory, so after a recompile the orphaned levels ran to their own stops with no manager while the engine laid a fresh level 0 on top of them. `[GRID-RESTART]` rebuilds each slot from the open positions at init. The grid engine is parked today (no tick-loop caller since Batch 178), so this is what makes wiring it safe rather than something that fixes a live leak.
+- **The quiet money bug:** `PositionLifecycleManager::IsEAOwnedMagic` still used a `base + symbolCount*100 + cluster` window. On the default 13-symbol universe that ceiling was `base + 1399` while positions shipped at `base + 7000..9400`, so twelve of thirteen symbols were "not ours" - Signal Reversal Exit never fired and no ranging position ever moved to breakeven, despite `InpEnableSignalReversalExit = true`. It reads `CMagicRange` like every other owner now does, so expect both exits to work on the next attach.
+- **Dead authority removed:** `CMagicNumberAllocator` (395 lines) is deleted. Its family-offset table does not match the offsets orders actually ship with, so wiring it in would renumber live positions; its only live call fed the narrow window above.
 
 ## AI Integration
 

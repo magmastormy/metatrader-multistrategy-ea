@@ -8,6 +8,8 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 #define CORE_SCALP_GRID_RECOVERY_TYPES_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 enum ENUM_GRID_PROGRESSION
 {
    GRID_PROGRESSION_MARTINGALE,    // Lot = baseLot * (factor ^ level)
@@ -24,7 +26,7 @@ struct SGridRecoveryConfig
    int      atrPeriod;
    double   slAtrMultiplier;         // SL = ATR * this per level (1.5)
    double   tpAtrMultiplier;         // TP = 0.5 * grid size per level
-   int      magicOffset;             // Magic number offset (8000)
+   int      magicOffset;             // Engine band offset (MAGIC_ENGINE_GRID), plus the level slot
    int      maxDrawdownPercent;      // Max total grid drawdown % (15)
    int      cooldownMs;              // Cooldown between grid entries in ms (30000)
    double   maxCumulativeLotMultiplier; // Cap on total lots vs base lot (3.0)
@@ -42,7 +44,7 @@ struct SGridRecoveryConfig
       atrPeriod                = 14;
       slAtrMultiplier          = 1.5;
       tpAtrMultiplier          = 0.5;   // 0.5 * grid spacing
-      magicOffset              = 8000;
+      magicOffset              = MAGIC_ENGINE_GRID;
       maxDrawdownPercent       = 15;
       cooldownMs               = 30000;
       maxCumulativeLotMultiplier = 3.0; // Cap total exposure at 3x base lot

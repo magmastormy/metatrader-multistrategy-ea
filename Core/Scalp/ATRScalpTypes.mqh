@@ -9,6 +9,8 @@
 #ifndef CORE_SCALP_ATR_SCALP_TYPES_MQH
 #define CORE_SCALP_ATR_SCALP_TYPES_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 struct SATRScalpingConfig
 {
    int      atrPeriod;                // ATR period (default 14)
@@ -18,7 +20,7 @@ struct SATRScalpingConfig
    double   spreadMaxATRRatio;        // Max spread as fraction of ATR (default 0.50 — widened for synthetic indices)
    double   slAtrMultiplier;          // SL = ATR * this (default 1.5)
    double   tpAtrMultiplier;          // TP = ATR * this (default 2.0)
-   int      magicOffset;              // Magic number offset (default 7000)
+   int      magicOffset;              // Engine band offset (MAGIC_ENGINE_ATR_SCALP)
    int      maxPositions;             // Max concurrent scalp positions (default 3)
    int      cooldownMs;               // Cooldown between scalp trades in ms (default 30000)
    int      spikeWindowAvoidMinutes;  // Don't trade this many minutes before expected spike (default 5)
@@ -35,7 +37,7 @@ struct SATRScalpingConfig
       spreadMaxATRRatio       = 0.30;
       slAtrMultiplier         = 1.5;
       tpAtrMultiplier         = 2.0;
-      magicOffset             = 7000;
+      magicOffset             = MAGIC_ENGINE_ATR_SCALP;   // 7000 is ASSET_FOREX's consensus offset
       maxPositions            = 3;
       cooldownMs              = 30000;
       spikeWindowAvoidMinutes = 5;

@@ -4,9 +4,8 @@
 #ifndef CORE_UTILS_MAGIC_RANGE_MQH
 #define CORE_UTILS_MAGIC_RANGE_MQH
 
-// Window: base + asset-class offset + per-symbol/cluster slot. The span must
-// cover the largest offset any profile emits (DERIV_UNKNOWN = 9999);
-// ValidateMagicOwnershipCoverage asserts that at init.
+// Window: base + asset-class offset + per-symbol slot. The span must cover the largest offset
+// any profile emits (DERIV_UNKNOWN = 9999); ValidateMagicOwnershipCoverage asserts that at init.
 #ifndef MAGIC_ASSET_OFFSET_SPAN
 #define MAGIC_ASSET_OFFSET_SPAN 10000
 #endif
@@ -17,9 +16,28 @@
 #define MAGIC_CLUSTER_SPAN 99
 #endif
 
+//--- Magic layout (Batch 197). One number identifies one owner; the symbol comes from the
+//--- position itself, so no engine has to encode it.
+//---     consensus = base + assetClassOffset + symbolIndex * MAGIC_SYMBOL_MULTIPLIER
+//---     fast scalp = base + 6000 | ATR scalp = base + 6100 | grid = base + 6200 + level | spike = base + 6300
+//--- Engine bands sit under the lowest asset offset (7000). Before this a fast scalp shipped
+//--- CTradeManager's consensus magic for its own symbol, and the ATR scalp sat on ASSET_FOREX's offset.
+#define MAGIC_ENGINE_FAST_SCALP  6000
+#define MAGIC_ENGINE_ATR_SCALP   6100
+#define MAGIC_ENGINE_GRID        6200
+#define MAGIC_ENGINE_SPIKE       6300
+#define MAGIC_ENGINE_BAND_SPAN   400
+
 class CMagicRange
 {
 public:
+    //--- True when an offset would land inside a band owned by an engine.
+    static bool IsEngineReservedOffset(const int offset)
+    {
+        return (offset >= MAGIC_ENGINE_FAST_SCALP &&
+                offset < MAGIC_ENGINE_FAST_SCALP + MAGIC_ENGINE_BAND_SPAN);
+    }
+
     //--- Single source of truth for the ownership ceiling.
     static long ComputeMax(const long base, const int symbolCount)
     {
@@ -66,10 +84,10 @@ bool IsMagicOwnershipConfigured()
     return (g_magicBase > 0 && g_magicMax >= g_magicBase);
 }
 
-// The scalp/grid/spike engines exit their own positions, so lifecycle exits skip
-// them while risk, exposure and daily-loss accounting still count them as
-// EA-owned. Magic cannot separate the two books (the ATR scalp engine sits on
-// offset 7000, which is ASSET_FOREX), so the send comment is the discriminator.
+// The scalp/grid/spike engines exit their own positions, so lifecycle exits skip them while risk,
+// exposure and daily-loss accounting still count them as EA-owned. Each engine ships its own magic
+// band since Batch 197, but the comment stays the discriminator: positions opened before the
+// renumber still carry a consensus-band magic, and only the comment tells those apart.
 string g_enginePositionTags[4] = {"ATR-SCALP", "GRID-RECOVERY", "SPIKE-HUNT", "SCALP|"};
 
 bool IsEngineManagedPosition(const string comment)

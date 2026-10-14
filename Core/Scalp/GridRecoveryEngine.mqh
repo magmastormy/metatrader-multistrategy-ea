@@ -116,6 +116,17 @@ public:
       return true;
    }
 
+   // Level tickets lived only in memory, so every restart forgot the positions this grid still owned:
+   // they ran to their own stops with no manager while the engine placed a fresh level 0 alongside them.
+   int RecoverOpenGridLevels()
+   {
+      int total = 0;
+      for(int i = 0; i < m_symbolCount; i++)
+         total += CGridRecoveryLevels::RebuildLevelsFromPositions(m_symbolStates[i], m_baseMagic);
+      PrintFormat("[GRID-RESTART] %d level(s) recovered across %d symbol(s)", total, m_symbolCount);
+      return total;
+   }
+
    bool AddSymbol(const string symbol)
    {
       if(FindSymbolIndex(symbol) >= 0)
@@ -164,7 +175,7 @@ public:
                   m_metrics.TotalGridsOpened(), m_metrics.TotalGridsClosed(), m_metrics.TotalLevelsPlaced());
    }
 
-// Process a tick for a given symbol â€?call every tick
+// Process a tick for a given symbol -> call every tick
    void ProcessTick(const string symbol, double bid, double ask)
    {
       int idx = FindSymbolIndex(symbol);
@@ -207,7 +218,7 @@ public:
 
       if(allInProfit && m_symbolStates[idx].activeLevelCount > 0)
       {
-         PrintFormat("[GRID-RECOVERY] All levels in profit for %s â€?closing grid", symbol);
+         PrintFormat("[GRID-RECOVERY] All levels in profit for %s -> closing grid", symbol);
          CloseAllGrids(symbol);
       }
    }
@@ -254,7 +265,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[GRID-RECOVERY] ATR is zero for %s â€?cannot calculate grid", symbol);
+         PrintFormat("[GRID-RECOVERY] ATR is zero for %s -> cannot calculate grid", symbol);
          return false;
       }
 
@@ -357,9 +368,15 @@ public:
       double sl = 0.0, tp = 0.0;
       CGridRecoveryLevels::CalculateStops(direction, entryPrice, slDistance, tpDistance, digits, sl, tp);
 
-      // Calculate magic number: baseMagic + magicOffset + symbolIndex * 100 + level
-      // FIX: Include level in magic to prevent collision across 8 grid levels
-      int magic = m_baseMagic + m_config.magicOffset + idx * 100 + level;
+      // Engine band + level. The symbolIndex term is gone: the position carries its own symbol, and
+      // keeping it let a level on one symbol land on another owner's magic.
+      if(level < 0 || level >= MAGIC_CLUSTER_SPAN)
+      {
+         PrintFormat("[GRID-RECOVERY] LEVEL REJECTED | %s L%d | level does not fit the %d-slot grid magic band",
+                     symbol, level, MAGIC_CLUSTER_SPAN);
+         return false;
+      }
+      int magic = m_baseMagic + m_config.magicOffset + level;
 
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
       if(!m_execution.PassesRiskValidation(symbol, orderType, lotSize, slDistance, level))
@@ -390,7 +407,7 @@ public:
       return result;
    }
 
-// Manage grid positions â€?check filled levels, add next if needed
+// Manage grid positions -> check filled levels, add next if needed
    void ManageGridPositions(int idx)
    {
       string symbol = m_symbolStates[idx].symbol;
@@ -403,7 +420,7 @@ public:
       // Check drawdown limit
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
       {
-         PrintFormat("[GRID-RECOVERY] Max drawdown reached for %s (%.1f%% >= %d%%) â€?closing grid",
+         PrintFormat("[GRID-RECOVERY] Max drawdown reached for %s (%.1f%% >= %d%%) -> closing grid",
                      symbol, CalculateGridDrawdownPercent(idx), m_config.maxDrawdownPercent);
          CloseAllGrids(symbol);
          return;
@@ -419,7 +436,7 @@ public:
       // If no active levels remain, grid has completed
       if(currentActiveCount == 0 && m_symbolStates[idx].activeLevelCount > 0)
       {
-         PrintFormat("[GRID-RECOVERY] Grid completed for %s â€?all levels closed", symbol);
+         PrintFormat("[GRID-RECOVERY] Grid completed for %s -> all levels closed", symbol);
          m_symbolStates[idx].activeLevelCount = 0;
          m_symbolStates[idx].direction = 0;
          m_symbolStates[idx].totalGridRisk = 0.0;
@@ -444,7 +461,7 @@ public:
                if(OpenGridLevel(idx, direction, nextLevel))
                {
                   m_symbolStates[idx].activeLevelCount = nextLevel + 1;
-                  PrintFormat("[GRID-RECOVERY] Added level %d for %s â€?price moved against grid",
+                  PrintFormat("[GRID-RECOVERY] Added level %d for %s -> price moved against grid",
                               nextLevel, symbol);
                }
             }

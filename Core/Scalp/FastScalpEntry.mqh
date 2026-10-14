@@ -176,10 +176,8 @@ public:
       {
          int direction = (signal == TRADE_SIGNAL_BUY) ? 1 : -1;
 
-         // Batch 152 (T-01): carry the per-symbol strategy offset like the sync
-         // path does, so async scalp positions land in the EA-owned magic range
-         // that ownership scans actually match.
-         ulong magic = (ulong)((long)magicNumber + tradeManager.GetMagicOffsetForSymbol(symbol));
+         // base + GetMagicOffsetForSymbol() is this symbol's consensus magic; the band is what separates the books.
+         ulong magic = (ulong)((long)magicNumber + MAGIC_ENGINE_FAST_SCALP);
          bool sent = tradeManager.SendTradeAsync(orderType, symbol, lotSize,
                                                   entryPrice, sl, tp,
                                                   magic, 5000);
@@ -218,6 +216,7 @@ public:
       }
 
       //--- Synchronous mode: use CTradeManager.OpenPosition (which calls risk manager internally)
+      // Explicit band: leaving magic at 0 lets OpenPosition stamp this symbol's consensus magic.
       bool result = tradeManager.OpenPosition(
                        symbol,
                        orderType,
@@ -225,7 +224,8 @@ public:
                        0.0,  // price = 0 => market order
                        (double)config.scalpSLPips,
                        (double)config.scalpTPPips,
-                       comment);
+                       comment,
+                       (uint)((long)magicNumber + MAGIC_ENGINE_FAST_SCALP));
 
       if(result)
       {

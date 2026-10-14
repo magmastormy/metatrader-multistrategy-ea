@@ -55,8 +55,7 @@ private:
     bool   m_useATRTrailing;
     double m_atrMultiplier;
 
-        int    m_magicNumber;
-        int    m_maxClusterCode;  // L7-008: Dynamic max cluster code from MagicNumberAllocator
+    int    m_magicNumber;
 
     CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
@@ -66,10 +65,7 @@ private:
     CPosLifecycleLossGuard  m_lossGuard;    // loss minimisation + loss tracking
     CPosLifecycleExit       m_exitRules;    // partial profit taking + max hold time
 
-    //--- Upper bound of this EA's magic ownership range.
-    //--- Batch 168: delegates to CMagicRange so this and every other ownership
-    //--- test agree. The old `base + symbolCount*100 + cluster` window excluded
-    //--- the asset-class offsets (7000..9999) that orders actually ship with.
+    //--- Upper bound of this EA's magic ownership range; the one window every ownership test agrees on.
     int MagicMax() const { return (int)CMagicRange::ComputeMax(m_magicNumber, m_symbolCount); }
 
 public:
@@ -105,7 +101,7 @@ public:
     }
 
     bool Initialize(CTradeManager* tm, CConsensusCache* cache,
-                        CRiskTierManager* rtm, CSafeMode* sm, int magicNumber, int maxClusterCode)
+                        CRiskTierManager* rtm, CSafeMode* sm, int magicNumber)
         {
             if(tm == NULL || cache == NULL || rtm == NULL)
                 return false;
@@ -114,7 +110,6 @@ public:
             m_riskTierManager = rtm;
             m_safeMode = sm;
             m_magicNumber = magicNumber;
-            m_maxClusterCode = maxClusterCode;  // L7-008
             m_initialized = true;
             return true;
         }
@@ -188,19 +183,17 @@ public:
 
     void SetRegimeEngine(CRegimeEngine* engine) { m_regimeEngine = engine; }
 
-    //--- Check if a magic number falls within this EA's ownership range
-        //--- Range: [m_magicNumber, m_magicNumber + symbolCount*100 + m_maxClusterCode]
-        //--- L7-008: Uses dynamic max cluster code from MagicNumberAllocator
-        bool IsEAOwnedMagic(long magic) const
-        {
-            int maxMagic = m_magicNumber + m_symbolCount * 100 + m_maxClusterCode;
-            return CPosLifecycleMagicFilter::IsOwned(magic, m_magicNumber, maxMagic);
-        }
+    //--- Ownership is CMagicRange's window; the old narrow one excluded the asset-class
+    //--- offsets orders ship with, so exits below skipped every consensus position.
+    bool IsEAOwnedMagic(long magic) const
+    {
+        return CMagicRange::IsOwned(magic, m_magicNumber, (long)MagicMax());
+    }
 
-        //--- Batch 170: the exit-side test. Same window, minus the scalp/grid/spike
-        //--- books whose own engines already own their exits. Reads the position the
-        //--- caller selected.
-        bool IsPositionLifecycleManaged() const
+    //--- Batch 170: the exit-side test. Same window, minus the scalp/grid/spike
+    //--- books whose own engines already own their exits. Reads the position the
+    //--- caller selected.
+    bool IsPositionLifecycleManaged() const
         {
             if(!IsEAOwnedMagic((long)PositionGetInteger(POSITION_MAGIC)))
                 return false;

@@ -168,7 +168,7 @@ public:
       request.sl        = sl;
       request.tp        = tp;
       request.deviation = 50;
-      request.magic     = magicNumber;
+      request.magic     = magicNumber + MAGIC_ENGINE_FAST_SCALP;
       request.comment   = "SCALP|PEND";
       // L7-015: honor the symbol's supported fill mode; fall back to RETURN (correct for pending orders) when IOC/FOK unavailable
       long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
@@ -184,7 +184,7 @@ public:
                            result.retcode == TRADE_RETCODE_CONNECTION ||
                            result.order > 0);
          ulong recovered = (result.order > 0) ? (ulong)result.order
-                          : (ambiguous ? FindRecentScalpEntry(symbol, magicNumber) : 0);
+                          : (ambiguous ? FindRecentScalpEntry(symbol, (long)request.magic) : 0);
          if(recovered == 0)
          {
             PrintFormat("[SCALP-PENDING-FAILED] %s | retcode=%u | comment=%s",
@@ -192,8 +192,8 @@ public:
             return false;
          }
          result.order = recovered;
-         PrintFormat("[SCALP-PENDING] PLACEMENT RECOVERED | %s | OrderSend said retcode=%u but order/position %I64u exists for magic=%d | tracked, not resent",
-                     symbol, result.retcode, recovered, magicNumber);
+         PrintFormat("[SCALP-PENDING] PLACEMENT RECOVERED | %s | OrderSend said retcode=%u but order/position %I64u exists for magic=%I64d | tracked, not resent",
+                     symbol, result.retcode, recovered, request.magic);
       }
 
       m_pendingOrders[m_pendingOrderCount].ticket     = result.order;

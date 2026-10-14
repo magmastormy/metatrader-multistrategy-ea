@@ -198,8 +198,8 @@ public:
       return result;
    }
 
-// Resolve the open position this send just created: the grid's magic is unique per symbol and
-// level (base + offset + symbolIndex*100 + level), so a magic match identifies the exact position.
+// Resolve the open position this send just created. The magic carries the level and the scan
+// filters the symbol, so the pair names one position.
    ulong FindLevelPositionTicket(const string symbol, const int magic)
    {
       for(int i = PositionsTotal() - 1; i >= 0; i--)

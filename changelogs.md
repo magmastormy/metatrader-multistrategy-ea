@@ -8,6 +8,48 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 197: engines got their own magic bands, the lifecycle manager stopped disowning its own positions, and a restart no longer forgets the grid
+
+#### The layout (`Core/Utils/MagicRange.mqh`)
+One number names one owner. The symbol is read from the position, so no engine has to encode it:
+
+| owner | magic |
+|---|---|
+| consensus | `base + assetClassOffset + symbolIndex * 100` |
+| fast scalp | `base + 6000` |
+| ATR scalp | `base + 6100` |
+| grid recovery | `base + 6200 + level` |
+| spike hunter | `base + 6300` |
+
+Asset-class offsets start at 7000 (ASSET_FOREX) and run to 9999 (DERIV_UNKNOWN), so the four engine bands live in a range no consensus magic can reach, and `[MAGIC-LAYOUT]` asserts exactly that at init for every symbol slot in the universe: a composed consensus offset that lands in 6000..6399 is a `[CRITICAL]` and a refused start, not a silent merge. Only `ASSET_UNIVERSAL` (offset 0) can reach the band, at symbol slot 60 or above.
+
+#### The collisions this removed
+- **Fast scalp, both branches.** `FastScalpEntry` sent through `CTradeManager::OpenPosition` with magic 0, and `TradeManager.mqh:1267` composes `base + GetMagicOffsetForSymbol(symbol)` for market orders - which is, digit for digit, the consensus magic of the same symbol. The async branch composed it by hand to the same number, and `FastScalpPendingOrders` shipped the bare `base`. Every fast scalp on the live book was indistinguishable by magic from a strategy entry on its own symbol.
+- **ATR scalp** composed `base + 7000 + symbolIndex`, and 7000 *is* ASSET_FOREX's offset, so on the first forex slot it equalled that symbol's consensus magic outright.
+- **Grid** composed `base + 8000 + symbolIndex*100 + level` and **spike** `base + 9150 + symbolIndex` - not a direct collision, but both lived inside the range consensus magics are built from, so any new asset-class offset or profile change could claim a grid level's number with no code change anywhere.
+
+Why that costs money rather than tidiness, on the one engine that trades: `CStrategyMgrTradeFeedback::IsEAOwnedMagic` accepts `magic == m_managedMagic`, so a **fast scalp** fill on a symbol arrived as that symbol's *strategy* deal. It entered the per-strategy performance history, which drives the reliability multiplier in the consensus score, which drives the lot. Fast scalp is the only engine with a tick-loop driver (`[ENGINE-STATUS]`, Batch 178), so that is the live half of this fix; the ATR scalp, grid and spike bands are preventive - those three engines are parked and open nothing, so their overlap could only bite when one is wired, and any position they opened before Batch 178 parked them still sits on the account with a consensus-band magic. All four books share the magic-scoped scans (`UnprotectedPositionTracker`, `BasketEquityStop`, the dedup guard at `TradeManager.mqh:1335`).
+
+Positions opened before this batch keep their old magics, so the comment tags (`ATR-SCALP`, `GRID-RECOVERY`, `SPIKE-HUNT`, `SCALP|`) stay the exit discriminator - a legacy scalp still carries a consensus-band magic and only its comment tells it apart. The renumber changes what new sends ship; nothing that reads an existing position changed.
+
+#### Grid restart reconciliation (`Core/Scalp/GridRecoveryLevels.mqh`, `GridRecoveryEngine.mqh`)
+Level tickets lived only in `m_symbolStates[].levels[]`, so every restart, recompile or chart change wiped them while the positions stayed open: the grid believed it held nothing, laid a fresh level 0, and the orphaned levels ran to their own stops with no manager and no drawdown gate - `CalculateGridDrawdownPercent` and `CloseAllGrids` both walk the level table. `RecoverOpenGridLevels()` now runs at init before `[GRID-RECOVERY] Initialized`, scanning open positions whose comment starts with `GRID-RECOVERY` and rebuilding each slot from the position's own magic, symbol, volume, entry, SL and TP. Post-Batch-197 levels decode as `magic - base - 6200`; pre-Batch-197 levels decode through `% 100` off the legacy 8000 band, so positions opened before the renumber are still recovered. A slot already held, or a number that is not a level slot, prints `[GRID-RESTART]` and is left alone rather than double-bound. `OpenGridLevel` also now refuses a level outside `0..MAGIC_CLUSTER_SPAN` instead of shipping a magic that would decode onto another band.
+
+#### The lifecycle manager was disowning the book (`Core/Management/PositionLifecycleManager.mqh`)
+`IsEAOwnedMagic()` still computed `base + symbolCount*100 + maxClusterCode` - the shape Batch 168 removed from `CPositionMgrMagicFilter`, `SyntheticSpikeMonitor` and `UnprotectedPositionTracker` one at a time, and this was the last one left. With the default 13-symbol universe the ceiling was `base + 1399`, while the shipped consensus magics sit at `base + 7000..9400` plus slot: **every position on twelve of the thirteen symbols was "not ours"**. `ManageSignalReversalExit` and the ranging-regime breakeven loop both gate on `IsPositionLifecycleManaged()`, so `InpEnableSignalReversalExit = true` bought nothing: a reversal against an open position never closed it, and a ranging position that reached profit never moved to breakeven. Only ASSET_UNIVERSAL symbols (offset 0, BTCUSD on the default list) fell inside the window. It now delegates to `CMagicRange::IsOwned(magic, base, MagicMax())`, the same call every other owner makes.
+
+This one turns behaviour *on*: on the next attach, signal reversal exit and ranging breakeven start acting on consensus positions for the first time. Both are bounded by their inputs (`InpSignalReversalMinLossR`/`MaxLossR`/`MinTimeSec`, the profit guard) and both were already configured by the operator.
+
+#### Dead code removed with it
+`CMagicNumberAllocator` (395 lines, `Core/Risk/MagicNumberAllocator.mqh`) is deleted. It is not a parked authority but a parallel one: its `AddFamilyOffset` table (VOLATILITY 1000, BOOM_CRASH 2000, FOREX_MAJORS 5000, CRYPTO 8000...) does not match the offsets orders actually ship with (`MultiAssetProfiler`'s asset-class table, 7000-9999), so wiring it in would renumber every open position. Its only live call was `GetMaxClusterCode()` feeding the narrow window above; with that gone the object had no reader left. `m_maxClusterCode`, the `Initialize` parameter that took it, the `AddFamilyOffset` block and `[MAGIC-ALLOC]` init logs go with the class. `ComputeGridMagic` (added earlier in this batch, then unused) also went.
+
+Also repaired: seven `GridRecoveryEngine.mqh` log strings whose em dash had degraded to a U+FFFD/`?` byte pair in an earlier edit round now read `->`, and `FindLevelPositionTicket`'s header no longer claims the grid magic is unique per symbol (it is unique per level; the scan filters the symbol).
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings.
+- No runtime evidence (newest journal still 2026-09-23; the EA is not attached this batch). Expected new lines: `[MAGIC-LAYOUT] consensus=... | fastScalp=+6000 | atrScalp=+6100 | grid=+6200+level | spike=+6300` once per start, `[GRID-RESTART] <symbol> | N level(s) rebuilt from open positions` on a restart with an open grid, `[GRID-RECOVERY] ... LEVEL REJECTED` only for a level count beyond the band, and the first `[SCALP-EXIT] Reversal detected` / `[STRUCTURAL-EXIT]` lines on consensus positions since this EA existed - note that first tag belongs to the lifecycle reversal path, not the scalp engine. `[MAGIC-ALLOC]` lines are gone and mean nothing if seen.
+
+
 ### Batch 196: fill confirmation accepted any EA-owned position, because magic cannot tell these senders apart
 
 #### The matcher (`Core/Trading/TradeMgrPreflight.mqh`)

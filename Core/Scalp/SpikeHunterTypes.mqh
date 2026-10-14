@@ -7,6 +7,8 @@
 #ifndef CORE_SCALP_SPIKE_HUNTER_TYPES_MQH
 #define CORE_SCALP_SPIKE_HUNTER_TYPES_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 struct SSpikeHunterConfig
 {
    double   velocityMultiplier;         // Tick rate multiplier threshold (default 2.5)
@@ -20,7 +22,7 @@ struct SSpikeHunterConfig
    int      maxSpikePositions;         // Max concurrent spike positions (default 3)
    int      cooldownMs;                // Cooldown between spike trades in ms (default 120000)
    int      spikeCooldownForLongTermMs;// Cooldown for long-term entries after spike (default 120000)
-   int      magicOffset;               // Magic number offset from base (default 9150 - unique)
+   int      magicOffset;               // Engine band offset from base (MAGIC_ENGINE_SPIKE)
    bool     enablePushAlerts;          // Send push notifications (default true)
    int      alertThrottleSeconds;      // Min seconds between push alerts (default 120)
    int      minConfluence;             // Min detection layers to confirm (default 2)
@@ -39,7 +41,7 @@ struct SSpikeHunterConfig
       maxSpikePositions         = 3;
       cooldownMs                = 120000;      // Was 60000 - longer spike recovery
       spikeCooldownForLongTermMs = 120000;    // Was 60000
-      magicOffset               = 9150;        // Was 9000 - unique, avoids DERIV_CRASH_BOOM (9000) collision
+      magicOffset               = MAGIC_ENGINE_SPIKE;   // Engine band; 9150 sat inside the Deriv family range
       enablePushAlerts          = true;
       alertThrottleSeconds      = 120;
       minConfluence             = 2;           // Was 1 - require 2/3 layers for quality

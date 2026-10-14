@@ -52,6 +52,64 @@ public:
       }
    }
 
+   // A restart wipes level tickets: the positions the grid still owns would run to their own stops
+   // unmanaged while the engine lays a fresh level 0 on top of them. Magic carries the level.
+   static int RebuildLevelsFromPositions(SGridSymbolState &state, const long baseMagic)
+   {
+      int recovered = 0;
+      int maxLevel = ArraySize(state.levels);
+
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+         if(PositionGetString(POSITION_SYMBOL) != state.symbol)
+            continue;
+         if(StringFind(PositionGetString(POSITION_COMMENT), "GRID-RECOVERY") != 0)
+            continue;
+
+         long delta = PositionGetInteger(POSITION_MAGIC) - baseMagic;
+         int level = -1;
+         if(delta >= MAGIC_ENGINE_GRID && delta < MAGIC_ENGINE_GRID + MAGIC_CLUSTER_SPAN)
+            level = (int)(delta - MAGIC_ENGINE_GRID);
+         else if(delta >= 8000 && delta < 8000 + 10000)
+            level = (int)(delta % MAGIC_SYMBOL_MULTIPLIER);
+
+         if(level < 0 || level >= maxLevel)
+         {
+            PrintFormat("[GRID-RESTART] %s | ticket=%I64u | magic offset %I64d is not a level slot in 0..%d, left untracked",
+                        state.symbol, ticket, delta, maxLevel - 1);
+            continue;
+         }
+         if(state.levels[level].isActive)
+         {
+            PrintFormat("[GRID-RESTART] %s | L%d already held by ticket=%I64u, ignoring ticket=%I64u",
+                        state.symbol, level, state.levels[level].ticket, ticket);
+            continue;
+         }
+
+         state.levels[level].level      = level;
+         state.levels[level].ticket     = ticket;
+         state.levels[level].lotSize    = PositionGetDouble(POSITION_VOLUME);
+         state.levels[level].entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         state.levels[level].sl         = PositionGetDouble(POSITION_SL);
+         state.levels[level].tp         = PositionGetDouble(POSITION_TP);
+         state.levels[level].isActive   = true;
+
+         state.direction = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
+         if(level == 0)
+            state.baseLotSize = PositionGetDouble(POSITION_VOLUME);
+         recovered++;
+      }
+
+      state.activeLevelCount = recovered;
+      if(recovered > 0)
+         PrintFormat("[GRID-RESTART] %s | %d level(s) rebuilt from open positions | direction=%s | baseLot=%.2f",
+                     state.symbol, recovered, state.direction == 1 ? "BUY" : "SELL", state.baseLotSize);
+      return recovered;
+   }
+
    static int FibonacciNumber(int level)
    {
       if(level <= 1)

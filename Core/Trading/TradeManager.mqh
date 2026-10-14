@@ -1260,8 +1260,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         uint sendDeviation = m_enableDynamicSlippage ? GetDynamicSlippage(symbolName) : m_baseSlippage;
         symbolTrade.SetDeviationInPoints(sendDeviation);
 
-        // Stamp the final magic before each send: the pool is stamped once with the bare base magic, so per-strategy
-        // offsets never reached the broker. An explicit override ships as-is (SpikeHunter precomputes base+offset+idx).
+        // Stamp the final magic before each send: the pool carries the bare base, so offsets never reached the broker.
+        // An explicit override ships as-is (the engine bands precompute theirs); otherwise this is the consensus magic.
         ulong shipMagic = (m_pendingExplicitMagic > 0)
                           ? m_pendingExplicitMagic
                           : (ulong)(m_magicNumber + (long)GetMagicOffsetForSymbol(symbolName));

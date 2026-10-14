@@ -72,7 +72,6 @@
 #include "OrchestratorStatusReporter.mqh"
 #include "../../Core/Strategy/StrategyRegistry.mqh"
 #include "../../Core/Management/SymbolUniverseBuilder.mqh"
-#include "../../Core/Risk/MagicNumberAllocator.mqh"
 #include "../../Core/Utils/StructuredLogger.mqh"
 #include "../../Core/Utils/CorrelationId.mqh"
 #include "../../Core/Config/LiveConfigReloader.mqh"
@@ -153,7 +152,6 @@ class CEAOrchestrator
     CRiskTierManager            m_riskTierManager;
     CCompoundingTierManager     m_compoundingTierManager;
     CFamilyStrategyWeightMatrix m_familyWeightMatrix;
-    CMagicNumberAllocator     m_magicNumberAllocator;  // centralized magic-number allocation
     CSessionWeightManager       m_sessionWeightManager;
     CSkewStepAnalyzer           m_skewStepAnalyzer;
     CPerformanceAnalytics       m_performanceAnalytics;
@@ -985,26 +983,6 @@ else
     Print("[INIT] CompoundingTierManager disabled — using static tier");
 }
 
-m_magicNumberAllocator.Initialize((int)m_config.magicNumber, MAGIC_SYMBOL_MULTIPLIER);
-if(m_config.multiAssetProfilerEnabled)
-{
-    CDerivAssetProfiler* derivProfiler = m_multiAssetProfiler.GetDerivProfiler();
-    if(derivProfiler != NULL)
-    {
-        m_magicNumberAllocator.AddFamilyOffset("VOLATILITY", 1000);
-        m_magicNumberAllocator.AddFamilyOffset("BOOM_CRASH", 2000);
-        m_magicNumberAllocator.AddFamilyOffset("JUMP", 3000);
-        m_magicNumberAllocator.AddFamilyOffset("STEP_INDEX", 4000);
-        Print("[MAGIC-ALLOC] Deriv family offsets configured");
-    }
-}
-m_magicNumberAllocator.AddFamilyOffset("FOREX_MAJORS", 5000);
-m_magicNumberAllocator.AddFamilyOffset("FOREX_CROSSES", 6000);
-m_magicNumberAllocator.AddFamilyOffset("FOREX_EXOTICS", 7000);
-m_magicNumberAllocator.AddFamilyOffset("CRYPTO", 8000);
-m_magicNumberAllocator.AddFamilyOffset("METALS", 9000);
-Print("[MAGIC-ALLOC] MagicNumberAllocator initialized with base=", m_config.magicNumber);
-
 if(m_config.enableSessionWeights)
 {
     m_sessionWeightManager.Initialize(true, m_config.sessionDSTOffsetHours);
@@ -1063,8 +1041,7 @@ else
 }
 }
 
-// Pass the allocator's max cluster code so the dynamic magic-number range is exact
-if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTierManager, &m_safeMode, (int)m_config.magicNumber, m_magicNumberAllocator.GetMaxClusterCode()))
+if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTierManager, &m_safeMode, (int)m_config.magicNumber))
 {
     m_lifecycleManager.ConfigureSRE(m_config.enableSignalReversalExit, m_config.signalReversalMinConfidence,
     m_config.signalReversalProfitGuard, m_config.signalReversalMinLossR,
@@ -1195,9 +1172,9 @@ if(m_config.spikeHunterEnabled)
     spikeConfig.maxSpikePositions        = m_config.spikeHunterMaxPositions;
     spikeConfig.cooldownMs               = m_config.spikeHunterCooldownMs;
     spikeConfig.spikeCooldownForLongTermMs = m_config.spikeHunterLongTermCooldownMs;
-    // Must stay 9150: the old hardcoded 9000 collides with DERIV_CRASH_BOOM's family
-    // offset, so spike-hunter orders could share magics with crash-boom orders.
-    spikeConfig.magicOffset              = 9150;
+    // Engine band, not an asset offset: 9150 sat inside the Deriv family range (9000..9999), so a
+    // spike-hunter order could share a magic with a crash-boom or volatility-index position.
+    spikeConfig.magicOffset              = MAGIC_ENGINE_SPIKE;
     spikeConfig.enablePushAlerts         = m_config.spikeHunterPushAlerts;
     spikeConfig.alertThrottleSeconds     = m_config.spikeHunterAlertThrottle;
     spikeConfig.minConfluence            = m_config.spikeHunterMinConfluence;
@@ -1232,9 +1209,12 @@ if(m_config.multiAssetProfilerEnabled)
         SAssetProfile profile = m_multiAssetProfiler.GetProfile(sym);
         m_unifiedRiskManager.SetRiskPerTrade(sym, profile.riskPerTrade);
         m_unifiedRiskManager.SetMaxDrawdownForFamily(sym, (double)profile.maxDrawdownPercent);
-        m_tradeManager.SetMagicOffsetForSymbol(sym, profile.magicOffset);
+        // Asset offset alone gave every forex symbol one magic, so per-symbol books could not be
+        // separated by magic; the symbol slot is added here and CTradeManager ships it verbatim.
+        m_tradeManager.SetMagicOffsetForSymbol(sym, profile.magicOffset + i * MAGIC_SYMBOL_MULTIPLIER);
         PrintFormat("[MULTI-ASSET-PROFILER] %s class=%s -> risk=%.2f%% maxDD=%d%% magic=+%d",
-        sym, profile.className, profile.riskPerTrade, profile.maxDrawdownPercent, profile.magicOffset);
+        sym, profile.className, profile.riskPerTrade, profile.maxDrawdownPercent,
+        profile.magicOffset + i * MAGIC_SYMBOL_MULTIPLIER);
     }
 
     if(m_config.derivProfilerEnabled)
@@ -1264,7 +1244,9 @@ if(m_config.multiAssetProfilerEnabled)
                             profile.atrCompressionRatio,
                             profile.atrMultiplierSL,
                             profile.atrMultiplierTP,
-                            profile.magicOffset,
+                            // The family offset is deliberately not forwarded: 9000..9999 are consensus
+                            // Deriv magics, so honouring it would re-collapse spike orders onto them.
+                            MAGIC_ENGINE_SPIKE,
                             profile.spikeCooldownSec * 1000,
                             2);
                             PrintFormat("[DERIV-PROFILER] %s family=%s -> SpikeHunter overrides applied", sym, profile.familyName);
@@ -1285,7 +1267,7 @@ if(m_config.multiAssetProfilerEnabled)
             gridConfig.atrPeriod               = 14;
             gridConfig.slAtrMultiplier         = 1.0;
             gridConfig.tpAtrMultiplier         = 0.5;
-            gridConfig.magicOffset             = 8000;
+            gridConfig.magicOffset             = MAGIC_ENGINE_GRID;
             gridConfig.maxDrawdownPercent      = 10;
             gridConfig.cooldownMs              = 30000;
 
@@ -1307,10 +1289,13 @@ if(m_config.multiAssetProfilerEnabled)
                         profile.gridProgressionFactor,
                         profile.atrMultiplierSL,
                         profile.atrMultiplierTP,
-                        profile.magicOffset);
+                        // Family offset not forwarded: it is a consensus Deriv magic, and the grid needs
+                        // its own band plus a level slot.
+                        MAGIC_ENGINE_GRID);
                         PrintFormat("[DERIV-PROFILER] %s family=%s -> GridRecovery enabled", sym, profile.familyName);
                     }
                 }
+                m_gridRecovery.RecoverOpenGridLevels();
                 Print("[GRID-RECOVERY] Initialized for mean-reversion families",
               " | PARKED: not wired into the tick loop (documented-dormant; ProcessTick has no caller)");
             }
@@ -1328,7 +1313,9 @@ if(m_config.multiAssetProfilerEnabled)
         scalpConfig.spreadMaxATRRatio      = 0.30;
         scalpConfig.slAtrMultiplier        = 2.0;
         scalpConfig.tpAtrMultiplier        = 2.5;
-        scalpConfig.magicOffset            = 7000;
+        // 7000 is ASSET_FOREX's offset, so this engine's positions were indistinguishable from
+        // forex consensus entries by magic.
+        scalpConfig.magicOffset            = MAGIC_ENGINE_ATR_SCALP;
         scalpConfig.maxPositions           = 3;
         scalpConfig.cooldownMs             = 30000;
         scalpConfig.spikeWindowAvoidMinutes = 5;
@@ -1666,12 +1653,30 @@ long magicRangeMax = g_magicMax;
 m_tradeManager.SetMagicRangeMax(magicRangeMax);
 
 int maxShippedOffset = 0;
+int engineBandCollisions = 0;
 for(int ms = 0; ms < symbolCount; ms++)
 {
     if(m_enterpriseManagerSymbols[ms] == "") continue;
-    int off = m_multiAssetProfiler.GetMagicOffset(m_enterpriseManagerSymbols[ms]);
+    int off = m_multiAssetProfiler.GetMagicOffset(m_enterpriseManagerSymbols[ms])
+              + ms * MAGIC_SYMBOL_MULTIPLIER;
+    if(CMagicRange::IsEngineReservedOffset(off))
+    {
+        PrintFormat("[MAGIC-LAYOUT] FATAL: %s would ship base +%d, inside an engine band (%d..%d) - refusing to trade",
+                    m_enterpriseManagerSymbols[ms], off,
+                    MAGIC_ENGINE_FAST_SCALP, MAGIC_ENGINE_FAST_SCALP + MAGIC_ENGINE_BAND_SPAN - 1);
+        engineBandCollisions++;
+    }
     if(off > maxShippedOffset) maxShippedOffset = off;
 }
+if(engineBandCollisions > 0)
+{
+    PrintFormat("[CRITICAL] Magic layout collides with an engine band - only a zero asset offset (ASSET_UNIVERSAL) reaches it, so those symbols must stay below slot %d",
+                MAGIC_ENGINE_FAST_SCALP / MAGIC_SYMBOL_MULTIPLIER);
+    return false;
+}
+PrintFormat("[MAGIC-LAYOUT] consensus=base+assetOffset+symbolIndex*%d (max +%d) | fastScalp=+%d | atrScalp=+%d | grid=+%d+level | spike=+%d",
+            MAGIC_SYMBOL_MULTIPLIER, maxShippedOffset, MAGIC_ENGINE_FAST_SCALP,
+            MAGIC_ENGINE_ATR_SCALP, MAGIC_ENGINE_GRID, MAGIC_ENGINE_SPIKE);
 if(!ValidateMagicOwnershipCoverage(m_config.magicNumber, maxShippedOffset))
 {
     Print("[CRITICAL] Magic ownership window does not cover the offsets this EA ships with - refusing to trade");
@@ -1763,7 +1768,7 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
     }
 }
 if(m_config.logLevel >= 2)
-PrintFormat("[MAGIC-RANGE] base=%I64d | symbols=%d | range_max=%I64d | encoding=BASE+symbolIndex*%d+clusterCode",
+PrintFormat("[MAGIC-RANGE] base=%I64d | symbols=%d | range_max=%I64d | encoding=BASE+assetOffset+symbolIndex*%d for consensus, engine bands below 7000",
 m_config.magicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
 
 return true;

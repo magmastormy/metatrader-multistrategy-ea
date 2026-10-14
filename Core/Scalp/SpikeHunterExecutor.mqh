@@ -209,8 +209,9 @@ public:
          return false;
       }
 
-      // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
-      int magic = m_baseMagic + m_detector.GetEffectiveMagicOffset(idx) + idx;
+      // Engine band. The old term added the Deriv family offset (9000..9999) plus symbolIndex, which
+      // put spike orders on the same magic as family-classified consensus entries.
+      int magic = m_baseMagic + m_detector.GetEffectiveMagicOffset(idx);
 
       string dirStr = (direction == 1) ? "BUY" : "SELL";
 

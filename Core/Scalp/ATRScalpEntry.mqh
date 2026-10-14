@@ -143,8 +143,8 @@ public:
          return false;
       }
 
-      // Calculate magic number: baseMagic + magicOffset + symbolIndex
-      int magic = m_baseMagic + config.magicOffset + idx;
+      // Band only: base + 7000 + symbolIndex collided with ASSET_FOREX's consensus magic for that slot, and the position already names its symbol.
+      int magic = m_baseMagic + config.magicOffset;
 
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
       if(m_riskManager != NULL)
