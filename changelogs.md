@@ -8,6 +8,29 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 201: the AI's market-regime adaptation had no input, so it adapted to nothing
+
+#### What was missing (`Core/Management/EntStrategySignalContext.mqh`)
+`m_currentMarketRegime` had four readers and no writer - its own header even said the field "still keeps its construction value". The construction value is `MARKET_REGIME_UNKNOWN`, and `CAIEngine::AdaptToRegime` (`AIEngine.mqh:1025`) answers UNKNOWN with its `default:` branch: the adjusted confidence threshold equals the configured one. So the per-regime factors that operator reads about - 0.9 in a trend, 1.1 in a range, 1.2 in volatility - have never been applied to any AI strategy, on any cycle, since the day the code was written. `AIEngine.mqh:495` runs that loop for every manager every cycle; `:424` builds trade explanations from the same dead value, and `:739` / `:912` print it, which is why the journals show a regime string that was really always the same word. Eighth instance of the readers-without-writer shape in this repository, and the first one whose reader is a *threshold*.
+
+#### The writer
+`CEnterpriseStrategyManager::RefreshMarketRegime` reads the same `CRegimeEngine` snapshot the consensus regime gate reads (`pipeline.GetRegimeEngine(symbol).GetSnapshot()`, the source behind `GetRegimeCategoryMultiplier`) and maps it: `REGIME_TREND -> MARKET_REGIME_TRENDING`, `REGIME_RANGE -> MARKET_REGIME_RANGING`, `REGIME_BREAKOUT` and `REGIME_CHAOS -> MARKET_REGIME_VOLATILE`, and an invalid or warming-up snapshot -> `MARKET_REGIME_UNKNOWN`, which is the honest "no adaptation" rather than a guess. It is called at the top of `EvaluateConsensusInternal`, once per symbol per scan, and prints `[MARKET-REGIME] <symbol> | old -> new | valid=` only on a change. One source for both decisions means a vote and an AI threshold cannot disagree about what market they are in.
+
+#### Two nearby findings deliberately not acted on
+- **Consensus participation stays frozen, and wiring it would have been a new suppression.** `UpdateParticipationScore` has no caller, so every strategy's vote carries the constant `0.40 + 0.65 * 0.90 = 0.985`. Its configured targets are 1.0 for a signal, 0.65 for a filtered signal and **0.35 for none**, with decay 0.85 applied per call. Called per scan, a strategy that simply does not fire often - `NYOpenGapStrategy`, `CStatisticalArbitrageStrategy`, anything event-driven - would sit at the 0.35 floor permanently and its vote would be scaled to 0.6275 while a high-frequency strategy's was not. That is a bias invented by the wiring, not a control restored, and it is the same class as the over-restrictions Batches 186-190 had to undo. It needs a frequency-normalised metric or per-strategy targets first, which is a design decision with a journal behind it, not a 4 a.m. refactor.
+- **The lifecycle's ranging-regime trailing pause is still unwired.** `CPositionLifecycleManager::m_regimeEngine` is NULL (Batch 200 recorded it). Making it per-symbol is not a one-line change: `CTradeManager::ManageAllPositions` walks the whole book and has no symbol filter, so the ranging branch and the trailing branch cannot be routed per symbol without changing the exit authority's API. This batch did not touch the exit path - that is the one place where a mistake silently stops protecting open positions.
+
+#### Behaviour direction
+AI confidence thresholds now move with the regime: more permissive in a confirmed trend, more selective in ranges and volatile expansions, unchanged while the regime engine is warming up. Indicator strategies, the consensus gate, cluster governance, the risk ceilings, the lot math, the stops and every send are untouched; no magic or comment changed, so open positions keep their identity.
+
+#### Recorded
+`m_lastCycleSignalsGenerated` / `...AfterPipeline` / `...AfterQuorum` in the same context class remain unwritten - their readers are the funnel report, which is fed by `CExecutionHeartbeatMonitor` instead.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings.
+- No runtime evidence yet - the newest journal is still 2026-09-23 and the EA is not attached. What to look for on the first run after this batch: at least one `[MARKET-REGIME] <symbol> | MARKET_REGIME_UNKNOWN -> ...` per symbol, then AI `[AI-VOTE]` activity differing between trending and ranging periods for the first time. If `[MARKET-REGIME]` never appears while consensus scans run, the regime engine has no validated snapshot for those symbols (`valid=false` is printed on the transition attempt), which is a data question, not a wiring one.
+
+
 ### Batch 200: dead code the audit had already named was deleted, and what is merely unwired is now written down
 
 281 lines removed, 6 added, across 13 files. Every deletion was checked symbol by symbol - the scanner in this batch was only a candidate generator, and it also produced hundreds of false positives (class names, one-line accessors whose backing field is live, methods called through the delegator chain) which were all left alone. Compile is the proof that nothing still referenced them: 8 programs, 0 errors / 0 warnings.

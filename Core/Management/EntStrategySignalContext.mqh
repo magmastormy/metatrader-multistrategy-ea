@@ -3,8 +3,8 @@
 // BEHAVIOUR NOTE: before Batch 199 the contributor fields had no writer at all, so every
 // reader (attribution, authority learning, candidate role/cluster tags, strategy health)
 // saw an empty list. SetContributors is now called from the consensus decision.
-// The funnel counters and m_currentMarketRegime still keep their construction values;
-// nothing writes them.
+// The funnel counters still keep their construction values; nothing writes them.
+// m_currentMarketRegime is written by CEnterpriseStrategyManager::RefreshMarketRegime().
 // The module owns NO back-pointer. The only collaborator it needs
 // is the attribution delegator's JoinContributors() (a read-only
 // helper it does not own), which is therefore passed in by const
@@ -82,6 +82,7 @@ public:
     bool GetLastCycleSignalAfterQuorum() const    { return m_lastCycleSignalAfterQuorum; }
 
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const { return m_currentMarketRegime; }
+    void SetCurrentMarketRegime(const ENUM_MARKET_REGIME regime) { m_currentMarketRegime = regime; }
 };
 
 CEntStrategySignalContext::CEntStrategySignalContext() :

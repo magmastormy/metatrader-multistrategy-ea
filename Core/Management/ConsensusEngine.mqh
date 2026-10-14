@@ -780,6 +780,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     if(m_src == NULL)
         return TRADE_SIGNAL_NONE;
 
+    m_src.RefreshMarketRegime();
+
     int strategyCount = m_src.GetStrategyCount();
     CUnifiedSignalPipeline* pipeline = m_src.GetPipelineConst();
 

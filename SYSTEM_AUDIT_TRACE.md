@@ -1683,6 +1683,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 201 The Regime the AI Acts On Is Now Written, Not Assumed (2026-10-14)
+
+- **Lifecycle step changed:** between `consensus scan` and `AI confidence threshold`, a publication step that never existed: `EvaluateConsensusInternal -> RefreshMarketRegime -> CRegimeEngine snapshot -> m_currentMarketRegime -> AdaptToRegime / explanations`. Entry, risk, execution and exit steps are unchanged; no position, order, stop or magic touched.
+- **State added:** none. One existing field finally has a writer. `m_currentMarketRegime` was constructed as `MARKET_REGIME_UNKNOWN` and read by four consumers, two of which (`AIEngine.mqh:424`, `:495`) turn it into behaviour: the adaptation loop ran every cycle and always hit the `default:` branch, so the trend/range/volatile confidence factors never applied.
+- **Failure mode closed:** an invisible no-op control. `AIEngine.mqh:739` and `:912` printed the regime into reasoning logs, which made the pipeline look regime-aware while it read a constant - the reader that *prints* a value hides the fact that nothing writes it. Same shape as Batch 199's contributor list and Batch 176's VPIN mode twin.
+- **Two controls left unwired, with the judgement written down:** consensus participation (the 0.35 "no signal" target plus per-call decay 0.85 would discount by-design-rare strategies to a 0.6275 multiplier - a bias invented by the wiring, the exact class Batches 186-190 had to undo) and the lifecycle's ranging-regime trailing pause (per-symbol routing needs a symbol-scoped trailing API; `ManageAllPositions` has none, and this is the path that protects open positions, so it is not reshaped without a live attach).
+- **§3 invariants:** §3.1 untouched. §3.2 and §3.3 untouched. §3.4 served: the symbol-scoped decision is again the only place market state is published, now for both the vote and the AI threshold, from one snapshot. §3.5 unaffected.
+- **Verification:** 8 programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings. Runtime expectation on the next attach: at least one `[MARKET-REGIME]` line per symbol per session, and AI vote counts differing by regime for the first time.
+
 ## Batch 200 Dead Code Removed Without Moving a Decision; the Unwired Features Are Now Listed, Not Buried (2026-10-14)
 
 - **Lifecycle steps changed:** none. The deletions had no call site, which the compile of all eight programs establishes - MQL5 would fail on any surviving reference. Entry, exit, risk and send traces from Batch 199 are byte-identical.

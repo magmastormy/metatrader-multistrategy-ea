@@ -336,6 +336,14 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 201: The AI Confidence Threshold Now Moves With the Market Regime (2026-10-14)
+
+- **New edge:** `EvaluateConsensusInternal -> RefreshMarketRegime -> pipeline.GetRegimeEngine(symbol).GetSnapshot() -> m_currentMarketRegime -> CAIEngine::AdaptToRegime / explanations / reasoning logs`. Before this the field had four readers and no writer, so `AdaptToRegime` reached its `default:` branch on every cycle and the 0.9 / 1.1 / 1.2 per-regime confidence factors never applied to any AI strategy.
+- **Mapping, and the conservative case:** `REGIME_TREND -> TRENDING`, `REGIME_RANGE -> RANGING`, `REGIME_BREAKOUT`/`REGIME_CHAOS -> VOLATILE`, invalid or warming-up snapshot -> `MARKET_REGIME_UNKNOWN` (no adaptation). Both the vote weighting and the AI threshold now read the *same* `CRegimeEngine` snapshot, so they cannot disagree about the market.
+- **Visible by design:** `[MARKET-REGIME] <symbol> | old -> new | valid=` prints only on a change. If a journal shows AI trades with no such line, the regime engine never validated a snapshot for that symbol - which is a statement about data, not about this wiring.
+- **Not wired, with the reason:** consensus participation (its 0.35 "no signal" target would permanently discount strategies that are supposed to fire rarely) and the lifecycle's ranging-regime trailing pause (`ManageAllPositions` has no symbol filter, so routing per symbol means changing the exit authority - not attempted without a live attach).
+- **§3 invariants:** §3.1 untouched - the unified risk gate still runs before every entry at the same ceilings. §3.2/§3.3 untouched: no send, no exit path, no stop moved. §3.4 served: the decision point remains the single place the market state is published.
+
 ## Batch 200: No Decision Path Moved; Four Dormant Ones Are Now Documented Instead of Hidden (2026-10-14)
 
 - **Zero edge changes.** Every deletion had no call site, which the compile proves (MQL5 resolves every reference in all eight programs). Entries still flow `consensus -> validator -> unified risk -> builder -> authority -> executor`, exits still flow `OnTick -> ManageAllPositions` plus the lifecycle, and no gate, ceiling, lot, stop, magic or send was touched.

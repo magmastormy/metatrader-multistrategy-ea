@@ -530,6 +530,7 @@ public:
     }
     double GetEnsembleConfidence() const;
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const;
+    void RefreshMarketRegime();
     string GetStrategyWeightsJSON() const;
     string GetStrategyListJSON() const;
     string GetConsensusContextJSON() const;
@@ -1322,6 +1323,41 @@ double CEnterpriseStrategyManager::GetEnsembleConfidence() const
 ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
 {
     return m_signalContext.GetCurrentMarketRegime();
+}
+
+//--- Before Batch 201 nothing wrote m_currentMarketRegime, so every reader acted on
+//--- MARKET_REGIME_UNKNOWN: AIEngine::AdaptToRegime answers that with no threshold change at
+//--- all, which is why AI regime adaptation looked configured and did nothing. Same source as
+//--- the consensus regime gate, so a vote and an adaptation cannot disagree about the market.
+void CEnterpriseStrategyManager::RefreshMarketRegime()
+{
+    CUnifiedSignalPipeline* pipeline = m_infra.GetPipeline();
+    if(pipeline == NULL)
+        return;
+
+    CRegimeEngine* regime = pipeline.GetRegimeEngine(GetManagedSymbol());
+    if(regime == NULL)
+        return;
+
+    SRegimeSnapshot snap = regime.GetSnapshot();
+
+    ENUM_REGIME_STATE st = snap.state;
+    ENUM_MARKET_REGIME mapped = MARKET_REGIME_UNKNOWN;
+    if(snap.valid && st == REGIME_TREND)     mapped = MARKET_REGIME_TRENDING;
+    else if(snap.valid && st == REGIME_RANGE) mapped = MARKET_REGIME_RANGING;
+    else if(snap.valid && (st == REGIME_BREAKOUT || st == REGIME_CHAOS))
+        mapped = MARKET_REGIME_VOLATILE;
+
+    if(mapped == m_signalContext.GetCurrentMarketRegime())
+        return;
+
+    PrintFormat("[MARKET-REGIME] %s | %s -> %s | valid=%s",
+                GetManagedSymbol(),
+                EnumToString(m_signalContext.GetCurrentMarketRegime()),
+                EnumToString(mapped),
+                snap.valid ? "true" : "false");
+
+    m_signalContext.SetCurrentMarketRegime(mapped);
 }
 
 void CEnterpriseStrategyManager::SetDrawingManager(CChartDrawingManager* drawingManager)

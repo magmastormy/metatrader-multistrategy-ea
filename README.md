@@ -423,6 +423,12 @@ Expect **fewer** entries, not more: caps can now refuse what they never measured
 
 No decision path changed: the risk gate, consensus scoring, lot math, stops, magics, comments and sends are untouched, so open positions keep their identity and log shapes are stable. What the audit found *unwired* stays in the code and is listed as a batch-sized gap each: consensus participation has never adapted (every vote scaled by a constant 0.985), the neural net has never been fed a realized P&L, the lifecycle's "pause trailing in a ranging market" branch has no regime source, and the heartbeat's `paused` field always prints false while the spike monitor holds the real state.
 
+### Batch 201: AI confidence now adapts to the market regime
+
+`m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its no-op branch every cycle and the per-regime confidence factors (0.9 in a trend, 1.1 in a range, 1.2 when volatile) had never been applied to any AI strategy. The manager now publishes the regime from the same `CRegimeEngine` snapshot that gates strategy votes - an unvalidated snapshot maps to `UNKNOWN`, meaning no adaptation, rather than a guess - and prints `[MARKET-REGIME] <symbol> | old -> new | valid=` on each change. AI entries become slightly more permissive in a confirmed trend and more selective in ranges and volatile expansions; indicator voting, the consensus gate, risk ceilings, lot math, stops and sends are unchanged.
+
+Two nearby findings were **not** wired, each for a stated reason: participation (a 0.35 "no signal" target would permanently discount strategies meant to fire rarely, like the NY open gap) and the ranging-regime trailing pause (`CTradeManager::ManageAllPositions` has no symbol filter, so per-symbol routing means changing the exit authority - not attempted without a live attach). Both are recorded with their reasoning in `SYSTEM_STRUCTURE.md` §4.
+
 ## AI Integration
 
 The EA supports three AI operating modes:
