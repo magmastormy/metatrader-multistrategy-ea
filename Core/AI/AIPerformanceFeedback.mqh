@@ -123,7 +123,6 @@ private:
     double m_preRetrainAccuracy;
     double m_preRetrainProfitability;
     double m_preRetrainSharpe;
-    datetime m_preRetrainTimestamp;  // Batch 120: when pre-retrain snapshot was taken
 
     // Metrics update throttle: UpdateMetrics() returns early until m_metricsUpdateInterval has elapsed
     datetime m_lastMetricsUpdate;
@@ -207,7 +206,6 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_preRetrainAccuracy(0.0),
     m_preRetrainProfitability(0.0),
     m_preRetrainSharpe(0.0),
-    m_preRetrainTimestamp(0),
     m_lastMetricsUpdate(0),
     m_metricsUpdateInterval(300), // 5 minutes
     m_initialized(false)
@@ -550,7 +548,6 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     m_preRetrainAccuracy = m_currentMetrics.accuracy;
     m_preRetrainProfitability = m_currentMetrics.profitability;
     m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
-    m_preRetrainTimestamp = TimeCurrent();
 
     PersistRetrainingRequest(reason);
     ExportLabeledDataset("AI_Retraining_Dataset.csv", 500);

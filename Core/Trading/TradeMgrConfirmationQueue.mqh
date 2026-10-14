@@ -1,22 +1,10 @@
-// Deferred execution-confirmation queue for CTradeManager
-// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
-// This module OWNS the non-blocking fill-confirmation queue that
-// used to live inside CTradeManager as
-// m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS] /
-// m_pendingConfirmationCount:
-// - Enqueue()                  (was the deferred branch of
-// ConfirmExecutionReceipt)
-// - CheckPendingConfirmations()(the tick-loop resolver)
-// - Clear()                    (destructor / Deinit reset loop)
-// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
-// keeps thin forwarders with the original signatures.
-// NO BACK-POINTER: the queue never needs to reach back into
-// CTradeManager - it only touches MT5 history APIs.
-// SPendingConfirmation + MAX_PENDING_CONFIRMATIONS are declared
-// here (top-level, exactly as they were in TradeManager.mqh) so
-// that every existing reference keeps resolving unchanged. Note
-// Core/Orchestration/TradeExecutor.mqh has its own CLASS-NESTED
-// struct of the same name; that one is unaffected.
+// Deferred execution-confirmation queue for CTradeManager: the non-blocking fill-confirmation
+// records that used to live as m_pendingConfirmations[] / m_pendingConfirmationCount.
+// Held BY VALUE by CTradeManager with thin forwarders at the original signatures; the queue
+// only touches MT5 history APIs, so it never reaches back into CTradeManager.
+// SPendingConfirmation and MAX_PENDING_CONFIRMATIONS are declared here at top level, exactly
+// as they were in TradeManager.mqh. Core/Orchestration/TradeExecutor.mqh has its own
+// class-nested struct of the same name - unrelated, and unaffected by this file.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict

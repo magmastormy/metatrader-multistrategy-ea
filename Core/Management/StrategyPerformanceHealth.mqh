@@ -39,7 +39,6 @@ public:
     void   CalculateStrategyMetrics(const int index);
     bool   ShouldDisableStrategy(const int index);
     bool   ShouldReEnableStrategy(const int index);
-    void   UpdateRegimePerformance(const int index, int regime, const double result);
     void   UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics);
 };
 
@@ -267,23 +266,6 @@ bool CStrategyPerformanceHealth::ShouldReEnableStrategy(const int index)
     if(!m_src.IsStrategyTemporarilyDisabled(index)) return true;
 
     return (TimeCurrent() >= m_src.GetStrategyDisabledUntil(index));
-}
-
-void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int regime, const double result)
-{
-    if(m_src == NULL)
-        return;
-
-    // L1-007: Health monitor doesn't expose regime update by index; use fallback.
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-    {
-        healthMonitor.RecordTradeResult(index, result);
-    }
-
-    if(index < 0 || index >= m_src.GetStrategyCount()) return;
-
-    // Regime attribution is the health monitor's; this hook does no per-trade regime work
 }
 
 void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)

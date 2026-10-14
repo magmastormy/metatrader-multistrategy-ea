@@ -23,11 +23,8 @@
 class CDiagMgrHeartbeat
 {
 public:
-// Windowed delta with the original underflow fallback semantics.
-// NOTE: on underflow this returns the CURRENT value (not zero) —
-// this intentionally mirrors the inline EmitHeartbeat() arithmetic
-// and differs from CDiagnosticsManager::GetWindowScans(), which
-// clamps to 0. Both behaviours are preserved as-is.
+// Windowed delta mirroring EmitHeartbeat()'s arithmetic: on counter underflow this
+// returns the CURRENT value, not zero.
     static ulong WindowDelta(const ulong current, const ulong previous)
     {
         return (current >= previous) ? (current - previous) : current;

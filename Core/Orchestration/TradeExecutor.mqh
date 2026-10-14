@@ -159,27 +159,6 @@ public:
         return result;
     }
     
-    // Execute multiple candidates (ranked by quality)
-    void ExecuteBatch(const STradeCandidate &candidates[], int count, int maxSends)
-    {
-        int sent = 0;
-        for(int i = 0; i < count && sent < maxSends; i++)
-        {
-            SExecutionResult result = Execute(candidates[i]);
-            if(result.executed)
-            {
-                sent++;
-                PrintFormat("[EXECUTION] %s | %s | lot=%.2f | ticket=%I64u | deal=%I64u | price=%.5f",
-                            candidates[i].symbol,
-                            EnumToString(candidates[i].orderType),
-                            candidates[i].lotSize,
-                            result.orderTicket,
-                            result.dealTicket,
-                            result.filledPrice);
-            }
-        }
-    }
-    
     // Check pending confirmations (call from OnTick)
     void CheckPendingConfirmations()
     {

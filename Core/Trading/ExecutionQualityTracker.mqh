@@ -1,26 +1,10 @@
-// Execution-quality telemetry extracted from CTradeManager
-// Phase D, batch T2a. This module OWNS the execution-quality
-// counters that used to live in CTradeManager::m_execMetrics:
-// - UpdateExecutionMetrics   (the single ingest point; all 10
-// writes to the metrics block happen here and nowhere else)
-// - GetExecutionQualityMetrics / GetExecutionQualitySummary
-// - GenerateExecutionQualityReport
-// - ResetExecutionMetrics
-// - narrow field getters for the one reader that stays behind
-// in CTradeManager (AnalyzeAndRecommendOrderParams, which is
-// entangled with the out-of-scope slippage/fill-mode config).
-// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
-// keeps thin forwarders with the original public signatures, so
-// every existing call site is unchanged.
-// NO BACK-POINTER: the two log-emitting bodies need a handful of
-// CTradeManager configuration values (log level and the dynamic-
-// slippage display block). Those are passed in as parameters
-// rather than read through a back-pointer, keeping this module
-// free of any dependency on CTradeManager.
-// NOTE: the metrics struct is the pre-existing top-level
-// ExecutionQualityMetrics from TradeTypes.mqh (field-for-field
-// identical to the old nested CTradeManager::ExecutionQualityMetrics
-// that this batch deletes) - see the report for details.
+// Execution-quality telemetry: the counters that used to live in CTradeManager's
+// m_execMetrics block, with UpdateExecutionMetrics as the single ingest point.
+// Held BY VALUE by CTradeManager, which keeps thin forwarders at the original signatures.
+// No back-pointer: the two log-emitting bodies take the log level and the slippage display
+// values as parameters, so this module has no dependency on CTradeManager.
+// ExecutionQualityMetrics is the top-level struct from TradeTypes.mqh, field-for-field the
+// old nested one.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict

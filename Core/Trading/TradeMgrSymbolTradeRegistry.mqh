@@ -1,22 +1,10 @@
-// Per-symbol CTrade pool + magic offsets + EA-owned ticket cache
-// Extracted from Core/Trading/TradeManager.mqh (God-Object split).
-// This module OWNS three state blocks that used to live directly
-// inside CTradeManager:
-// 1. m_symbolTrades[] / m_symbolTradeCount   (L10-013)
-// one CTrade instance per symbol, so concurrent multi-symbol
-// sends never race on a single shared CTrade.
-// 2. m_magicOffsets[] / m_magicOffsetCount
-// family-specific magic-number differentiation per symbol.
-// 3. m_eaOwnedPositionTickets[] / m_eaOwnedPositionCount (L12-008)
-// O(1) EA-owned position iteration cache.
-// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
-// keeps thin forwarders with the original signatures, so every
-// existing call site is textually unchanged.
-// NO BACK-POINTER: GetSymbolTrade() needs four CTradeManager
-// configuration values (magic / slippage / fill mode / async mode).
-// They are passed in as parameters rather than read through a
-// back-pointer, keeping this module free of any dependency on
-// CTradeManager (same pattern as CPositionStateTracker).
+// Per-symbol CTrade pool, magic offsets and the EA-owned ticket cache, extracted from
+// Core/Trading/TradeManager.mqh.
+// One CTrade per symbol so concurrent multi-symbol sends never race on a shared instance;
+// the ticket array exists to walk EA positions without scanning the whole book.
+// Held BY VALUE by CTradeManager with thin forwarders at the original signatures.
+// No back-pointer: GetSymbolTrade() takes magic / slippage / fill mode / async mode as
+// parameters, so this module has no dependency on CTradeManager.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict

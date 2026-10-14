@@ -516,8 +516,7 @@ public:
                                          ulong &uictNeutralBias,
                                          ulong &uictOtherFilters,
                                          ulong &intervalReasonTotal);
-    bool PopClosedTradeAttribution(string &contributors[], double &netProfit);
-    
+
     int GetActiveStrategyCount() const;
     int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
@@ -540,7 +539,6 @@ public:
     
     double CalculateRecentWinRate(const int index);
     double CalculateSharpeRatio(const int index);
-    void UpdateRegimePerformance(const int index, int regime, const double result);
     void CalculateStrategyMetrics(const int index);
     bool ShouldDisableStrategy(const int index);
     bool ShouldReEnableStrategy(const int index);
@@ -1152,11 +1150,6 @@ void CEnterpriseStrategyManager::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
                                                     intervalReasonTotal);
 }
 
-bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
-{
-    return m_attributionDelegator.PopClosedTradeAttribution(contributors, netProfit);
-}
-
 int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 {
     return m_roster.FindStrategyIndexByName(name);
@@ -1258,12 +1251,6 @@ bool CEnterpriseStrategyManager::ShouldReEnableStrategy(const int index)
 {
     return m_performanceHealth.ShouldReEnableStrategy(index);
 }
-
-void CEnterpriseStrategyManager::UpdateRegimePerformance(const int index, int regime, const double result)
-{
-    m_performanceHealth.UpdateRegimePerformance(index, regime, result);
-}
-
 
 //--- Called once per symbol per new bar by the orchestrator, gated on its own new-bar check.
 void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)

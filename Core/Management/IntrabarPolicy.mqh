@@ -1,28 +1,11 @@
-// Intrabar (within-bar) signal-handling policy extracted from CEnterpriseStrategyManager:
-// the per-slot default policy table (L6-007, formerly m_intrabarPolicyConfig[32], whose
-// ownership moves here wholesale), the slot -> default policy resolution used while
-// auto-registering strategies and the registered-entry policy resolution with the legacy
-// intrabarEligible fallback.
-// Like C4/C5/C7 this module MUTATES the manager, so it holds a
-// NON-const back-pointer and writes through the manager's narrow
-// per-field accessors. It mirrors no injected manager pointer, so
-// (like Slice 2/3) it needs no re-sync on Deinit.
-// MOVED WHOLESALE, NO FORWARDER RETAINED:
-// IsStrategyIntrabarProbeEligible were PRIVATE manager helpers
-// with zero call sites anywhere in the codebase (only each other),
-// so no forwarder is kept - identical to how Slice 2 treated the
-// validator's internal leaf checks.
-// DELIBERATELY NOT MOVED:
-// m_sparseIntrabar* and their setters. Despite the "intrabar"
-// prefix these are consensus QUORUM parameters read by the C9
-// core (CalculateEffectiveQuorumParamsInternal,
-// EvaluateConsensusProbeOnlyInternal) - C9 is a hard guard.
-// - StrategyEntry::isProbeEligible. It is written and read only
-// inside the C9 consensus bodies.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Intrabar (within-bar) signal-handling policy: the per-slot default policy table, the
+// slot -> default resolution used while auto-registering, and the registered-entry
+// resolution with its legacy intrabarEligible fallback.
+// MUTATES the manager, so the back-pointer is non-const and writes go through the
+// manager's narrow per-field accessors.
+// m_sparseIntrabar* stay in the manager despite the prefix: they are consensus QUORUM
+// parameters read by CalculateEffectiveQuorumParamsInternal, not intrabar policy.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef INTRABAR_POLICY_MQH
 #define INTRABAR_POLICY_MQH
 

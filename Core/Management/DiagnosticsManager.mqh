@@ -57,7 +57,6 @@ private:
     int      m_heartbeatIntervalSec;
     datetime m_lastHeartbeatTime;
     datetime m_lastNoSignalAlertTime;
-    datetime m_lastNNHealthLogTime;
 
     // Current counter snapshot (pushed by main EA)
     ulong m_hbScansAttempted;
@@ -175,7 +174,6 @@ public:
                 m_heartbeatIntervalSec(60),
                 m_lastHeartbeatTime(0),
                 m_lastNoSignalAlertTime(0),
-                m_lastNNHealthLogTime(0),
         m_hbScansAttempted(0),
         m_hbIntrabarScansExecuted(0),
         m_hbNoSignalCount(0),
@@ -305,23 +303,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                 }
 
 // Windowed getters: read the m_prev* snapshots, not stale EA globals
-    ulong GetWindowScans() const
-    {
-        return (m_hbScansAttempted >= m_prevScansAttempted) ? (m_hbScansAttempted - m_prevScansAttempted) : 0;
-    }
-
-    ulong GetWindowNoSignal() const
-    {
-        return (m_hbNoSignalCount >= m_prevNoSignalCount) ? (m_hbNoSignalCount - m_prevNoSignalCount) : 0;
-    }
-
-    double GetNoSignalRate() const
-    {
-        ulong ws = GetWindowScans();
-        ulong wn = GetWindowNoSignal();
-        return (ws > 0) ? (100.0 * (double)wn / (double)ws) : 0.0;
-    }
-
     bool IsInitialized() const { return m_initialized; }
 
         bool ShouldLogNormal() const { return m_verbosity >= VERBOSITY_NORMAL; }
@@ -443,30 +424,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             m_lastHeartbeatTime = hbNow;
         }
     }
-
-    void EmitNNHealthCheck(CNeuralNetworkStrategy* &strategies[])
-    {
-        if(!m_aiEnabled || !m_nnEnabled || !m_nnOnlineTraining)
-            return;
-
-        datetime hbNow = TimeCurrent();
-        if(m_lastNNHealthLogTime != 0 && (hbNow - m_lastNNHealthLogTime) < m_heartbeatIntervalSec)
-            return;
-
-        for(int nnIdx = 0; nnIdx < ArraySize(strategies); nnIdx++)
-        {
-            CNeuralNetworkStrategy* nnHealth = strategies[nnIdx];
-            if(nnHealth == NULL)
-                continue;
-
-            // Deliberately minimal: full NN health lives in the main EA, which holds the strategies
-            LOG_IF1(LOG_LEVEL_DEBUG, "[NN-HEALTH] idx=%d | active", nnIdx);
-        }
-
-        m_lastNNHealthLogTime = hbNow;
-    }
-
-    void UpdateTradingPaused(bool paused) { m_tradingPaused = paused; }
 
 // Consensus report lines; the EA passes the quiet-reason and windowed counter values
     void EmitConsensusDiagnostics(ulong quietNoNewBar,

@@ -21,7 +21,6 @@ public:
     void   SplitContributors(const string csv, string &contributors[]) const;
     void   UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool   PopPositionAttribution(const ulong positionId, string &contributors[]);
-    bool   PopClosedTradeAttribution(string &contributors[], double &netProfit);
 };
 
 int CAttributionDelegator::FindAttributionIndexByPositionId(const ulong positionId) const
@@ -87,17 +86,6 @@ bool CAttributionDelegator::PopPositionAttribution(const ulong positionId, strin
     if(m_attribution == NULL)
         return false;
     return m_attribution.PopPositionAttribution(positionId, contributors);
-}
-
-bool CAttributionDelegator::PopClosedTradeAttribution(string &contributors[], double &netProfit)
-{
-    if(m_attribution == NULL)
-    {
-        ArrayResize(contributors, 0);
-        netProfit = 0.0;
-        return false;
-    }
-    return m_attribution.PopClosedTradeAttribution(contributors, netProfit);
 }
 
 #endif // ATTRIBUTION_DELEGATOR_MQH

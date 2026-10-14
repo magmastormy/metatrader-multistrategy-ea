@@ -284,7 +284,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3425`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3376`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -416,6 +416,12 @@ The consensus decision never published who voted. `CEntStrategySignalContext`'s 
 Attribution is now keyed to the fill's own `positionId` at execution rather than to whatever decision the cache holds when the deal event arrives, every executed trade records its voters, and each prints `[TRADE-ATTRIBUTION]`. Engine (scalp/grid/spike) deals are filtered out of the feedback path first, so a scalp's P/L can no longer be scored against the strategies cached on that symbol.
 
 Expect **fewer** entries, not more: caps can now refuse what they never measured. Nothing in the risk ceilings, lot math, stops or sends changed.
+
+### Batch 200: dead code removed, and the unwired-but-wireable list is now explicit
+
+281 lines of code that no path could reach are gone. The deletions all name themselves in `changelogs.md`; the two worth knowing operationally are a never-called duplicate of the VPIN/OFI + Skew Step tick feed (`FeedMicrostructureEngines`, next to the live copy in `OnTick`) and an uncalled `CTradeExecutor::ExecuteBatch` that carried its own `[EXECUTION]` print. Both were places a future edit would have looked correct and done nothing.
+
+No decision path changed: the risk gate, consensus scoring, lot math, stops, magics, comments and sends are untouched, so open positions keep their identity and log shapes are stable. What the audit found *unwired* stays in the code and is listed as a batch-sized gap each: consensus participation has never adapted (every vote scaled by a constant 0.985), the neural net has never been fed a realized P&L, the lifecycle's "pause trailing in a ranging market" branch has no regime source, and the heartbeat's `paused` field always prints false while the spike monitor holds the real state.
 
 ## AI Integration
 

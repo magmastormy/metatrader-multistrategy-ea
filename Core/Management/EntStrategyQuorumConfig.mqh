@@ -1,24 +1,10 @@
-// Pure STORAGE object for the consensus-quorum, sparse-intrabar,
-// adaptive-quorum, regime-relax, decay and participation-formula
-// configuration that used to live as loose members of
-// CEnterpriseStrategyManager, together with the clamping setters
-// that write them.
-// *** CONSENSUS-GATE INTEGRITY NOTICE ***
-// NOTHING here computes anything. Every default value, every
-// MathMax/MathMin clamp bound and every PROFIT-xx annotation is a
-// byte-for-byte relocation of the original manager constructor
-// initialiser list / setter bodies. The consensus decision core
-// (CConsensusEngine) still reads these values through exactly the
-// same CEnterpriseStrategyManager getters it read before - those
-// getters are now one-line forwarders into this object, so the
-// numeric behaviour of the quorum path is unchanged.
-// This module deliberately has NO back-pointer to the manager: it
-// is a leaf value object, held BY VALUE by the manager, and never
-// observes manager state.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Storage object for the consensus-quorum, sparse-intrabar, adaptive-quorum, regime-relax,
+// decay and participation-formula configuration that used to sit as loose manager members,
+// with the clamping setters that write them.
+// Computes nothing: CConsensusEngine reads these through the same manager getters as before,
+// which are one-line forwarders here, so the quorum path's numbers are unchanged.
+// Leaf value object held BY VALUE - no back-pointer, it never observes manager state.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef ENT_STRATEGY_QUORUM_CONFIG_MQH
 #define ENT_STRATEGY_QUORUM_CONFIG_MQH
 

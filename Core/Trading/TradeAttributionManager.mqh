@@ -39,12 +39,8 @@ private:
     // Reference to position manager (not owned)
     CPositionManager *m_positionManager;
 
-    // m_closedTradeContributors / m_hasClosedTradeAttribution are never written by any method here, so PopClosedTradeAttribution() always returns false.
     ulong   m_attributionPositionIds[];
     string  m_attributionContributorCsv[];
-    string  m_closedTradeContributors[];
-    double  m_closedTradeNetProfit;
-    bool    m_hasClosedTradeAttribution;
 
     bool    IsPositionIdStillOpen(const ulong positionId);
 
@@ -64,13 +60,10 @@ public:
         m_nnDiagLastSummaryTime(0),
         m_enableNNDiagnostics(true),
         m_runSelfTest(true),
-        m_positionManager(NULL),
-        m_closedTradeNetProfit(0.0),
-        m_hasClosedTradeAttribution(false)
+        m_positionManager(NULL)
     {
         ArrayResize(m_attributionPositionIds, 0);
         ArrayResize(m_attributionContributorCsv, 0);
-        ArrayResize(m_closedTradeContributors, 0);
     }
 
     ~CTradeAttributionManager()
@@ -98,11 +91,7 @@ public:
 
     void   UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool   PopPositionAttribution(const ulong positionId, string &contributors[]);
-    bool   PopClosedTradeAttribution(string &contributors[], double &netProfit);
     int    GetActiveAttributionCount() const;
-    void   ClearClosedTradeAttribution();
-    double GetClosedTradeNetProfit() const { return m_closedTradeNetProfit; }
-    bool   HasClosedTradeAttribution() const { return m_hasClosedTradeAttribution; }
 
     //--- Prediction position mapping: thin wrappers over m_positionManager (CPositionManager); no state lives in this class.
     int    FindPredictionPositionIndex(const ulong positionId);
@@ -614,31 +603,9 @@ bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, st
     return true;
 }
 
-bool CTradeAttributionManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
-{
-    if(!m_hasClosedTradeAttribution)
-        return false;
-    
-    ArrayCopy(contributors, m_closedTradeContributors);
-    netProfit = m_closedTradeNetProfit;
-    
-    m_hasClosedTradeAttribution = false;
-    ArrayResize(m_closedTradeContributors, 0);
-    m_closedTradeNetProfit = 0.0;
-    
-    return true;
-}
-
 int CTradeAttributionManager::GetActiveAttributionCount() const
 {
     return ArraySize(m_attributionPositionIds);
-}
-
-void CTradeAttributionManager::ClearClosedTradeAttribution()
-{
-    m_hasClosedTradeAttribution = false;
-    ArrayResize(m_closedTradeContributors, 0);
-    m_closedTradeNetProfit = 0.0;
 }
 
 void CTradeAttributionManager::NNDiagLog(const string message)
@@ -753,9 +720,6 @@ void CTradeAttributionManager::ClearAll()
     ArrayResize(m_pendingCloseNetProfit, 0);
     ArrayResize(m_attributionPositionIds, 0);
     ArrayResize(m_attributionContributorCsv, 0);
-    ArrayResize(m_closedTradeContributors, 0);
-    m_closedTradeNetProfit = 0.0;
-    m_hasClosedTradeAttribution = false;
 }
 
 #endif // __TRADE_ATTRIBUTION_MANAGER_MQH__

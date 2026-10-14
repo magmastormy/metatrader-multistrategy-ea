@@ -100,14 +100,6 @@ public:
         m_lastOnnxInitAttempt = 0;
     }
 
-// Full state reset for the manual re-enable path (CEAOrchestrator::ReenableONNXAI).
-    void Reset()
-    {
-        m_onnxSessionDisabled = false;
-        m_onnxInitRetryCount = 0;
-        m_lastOnnxInitAttempt = 0;
-    }
-
     bool     IsDisabled()      const { return m_onnxSessionDisabled; }
     void     MarkDisabled()          { m_onnxSessionDisabled = true; }
     int      GetRetryCount()   const { return m_onnxInitRetryCount; }

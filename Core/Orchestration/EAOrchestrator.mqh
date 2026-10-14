@@ -1953,7 +1953,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
 
     manager.AutoRegisterStrategies(strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
-    ApplyStrategyWeights(manager, symbol, strategyFlags);
 
     // Array is pre-sized in Initialize(); place the manager at its symbol index. Do NOT append:
     // appending leaves indices 0..11 NULL, so CSignalGenerator sees an all-NULL manager array.
@@ -2087,11 +2086,6 @@ void ApplyCatalogWeightOverrides()
         const int fi = CatalogEnableSlot(ci);
         CatalogApplyConfigWeight(fi, StrategyConfigWeight(fi, g_strategyCatalog[ci].weight));
     }
-}
-
-void ApplyStrategyWeights(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
-{
-    // Intentional pass-through: weights apply via the consensus/role-cluster pipeline; a step here would change behaviour.
 }
 
 string GetInstrumentExecutionProfileName(const string& symbol)
@@ -2524,13 +2518,6 @@ void ReleaseNeuralNetStrategies()
             }
 
         public:
-            // Public method to manually re-enable ONNX AI (e.g., after config change or user action)
-            void ReenableONNXAI()
-            {
-                m_onnxInit.Reset();
-                Print("[AI-MODE] ONNX AI manually re-enabled. Will attempt re-initialization on next cycle.");
-            }
-
         CEnterpriseStrategyManager* GetEnterpriseManagerForSymbol(const string symbol)
 {
     int idx = FindEnterpriseManagerIndex(symbol);
@@ -3157,42 +3144,6 @@ void ProcessTickSafetyLoop()
     //    plus TradeManager preflight gates; CTickSafetyMonitor stays a passive query API.
     //  - Synthetic tick-rate spike detection (EvaluateSpike): single-symbol (_Symbol) legacy with no
     //    multi-symbol configuration; deliberately not revived with invented thresholds.
-}
-
-void FeedMicrostructureEngines()
-{
-    // VPIN/OFI feed loop and its 200 ms throttle live in the hub.
-    m_mathEngineHub.FeedMicrostructure(m_managerCount);
-
-    // Feed tick data to Skew Step Analyzer (throttled to 500 ms)
-    if(m_config.enableSkewStepAnalyzer && m_skewStepAnalyzer.IsInitialized())
-    {
-        static uint s_lastSkewStepFeed = 0;
-        uint nowMs = GetTickCount();
-        if(nowMs - s_lastSkewStepFeed >= 500)
-        {
-            CDerivAssetProfiler* derivProf = m_multiAssetProfiler.GetDerivProfiler();
-            if(derivProf != NULL)
-            {
-                for(int i = 0; i < m_managerCount; i++)
-                {
-                    string sym = m_enterpriseManagerSymbols[i];
-                    ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
-                    if(family == DERIV_SKEW_STEP)
-                    {
-                        double close0 = iClose(sym, PERIOD_M1, 0);
-                        double close1 = iClose(sym, PERIOD_M1, 1);
-                        if(close0 > 0 && close1 > 0)
-                        {
-                            double stepSize = close0 - close1;
-                            m_skewStepAnalyzer.RecordStep(stepSize);
-                        }
-                    }
-                }
-            }
-            s_lastSkewStepFeed = nowMs;
-        }
-    }
 }
 
 // OnTradeTransaction forwarder: confirms filled async scalp orders into the position tracker (no-op when none pending).

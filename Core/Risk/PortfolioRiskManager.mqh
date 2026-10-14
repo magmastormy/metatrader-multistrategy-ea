@@ -89,12 +89,6 @@ public:
     // One shared engine instance; also handed to CPositionSizer and CRiskTieredCorrelation so all correlation reads agree
     CCorrelationEngine* GetCorrelationEngine() { return &m_correlationEngine; }
 
-    // These cache hooks and SetCacheRefreshInterval have no caller: the refresh interval stays at the ctor's 60s
-    void OnPositionOpened(string symbol, double riskPct);
-    void OnPositionClosed(string symbol, double riskPct);
-    void InvalidateRiskCache();
-    void SetCacheRefreshInterval(int seconds) { m_cacheRefreshIntervalSec = (seconds > 0 ? seconds : 60); }
-
     double CalculateCVaR(double confidence = 0.95) const;
     bool   IsCVaRLimitExceeded(double proposedRiskPct) const;
     double GetCurrentCVaR() const;
@@ -115,8 +109,6 @@ private:
     int    GetPositionsOnSymbol(const string symbol);
     void   RecordBlockReason(const string reason);
 
-    void   AddPositionToCache(string symbol, double riskPct);
-    void   RemovePositionFromCache(string symbol, double riskPct);
     int    FindSymbolInCache(string symbol);
     void   RefreshRiskCache();
 
@@ -495,38 +487,6 @@ int CPortfolioRiskManager::FindSymbolInCache(string symbol)
     return -1;
 }
 
-void CPortfolioRiskManager::AddPositionToCache(string symbol, double riskPct)
-{
-    m_riskCache.totalRiskPct += riskPct;
-
-    int idx = FindSymbolInCache(symbol);
-    if(idx >= 0)
-        m_riskCache.perSymbolRisk[idx] += riskPct;
-    else
-    {
-        int size = ArraySize(m_riskCache.perSymbolRisk);
-        ArrayResize(m_riskCache.perSymbolRisk, size + 1);
-        ArrayResize(m_riskCache.perSymbolName, size + 1);
-        m_riskCache.perSymbolRisk[size] = riskPct;
-        m_riskCache.perSymbolName[size] = symbol;
-    }
-    m_riskCache.positionCount++;
-}
-
-void CPortfolioRiskManager::RemovePositionFromCache(string symbol, double riskPct)
-{
-    m_riskCache.totalRiskPct -= riskPct;
-    m_riskCache.totalRiskPct = MathMax(0.0, m_riskCache.totalRiskPct);
-
-    int idx = FindSymbolInCache(symbol);
-    if(idx >= 0)
-    {
-        m_riskCache.perSymbolRisk[idx] -= riskPct;
-        m_riskCache.perSymbolRisk[idx] = MathMax(0.0, m_riskCache.perSymbolRisk[idx]);
-    }
-    m_riskCache.positionCount--;
-}
-
 void CPortfolioRiskManager::RefreshRiskCache()
 {
     m_riskCache.version++;
@@ -580,26 +540,6 @@ void CPortfolioRiskManager::RefreshRiskCache()
         m_riskCache.isValid = true;
         m_riskCache.version++; // Increment again to mark completion
     }
-
-// Cache hook on open (no caller in this repo): would add riskPct to the per-symbol budget and the portfolio total
-void CPortfolioRiskManager::OnPositionOpened(string symbol, double riskPct)
-{
-    AddPositionToCache(symbol, riskPct);
-    m_currentTotalRisk = m_riskCache.totalRiskPct;
-}
-
-// Cache hook on close (no caller in this repo): would subtract riskPct, both totals floored at 0
-void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
-{
-    RemovePositionFromCache(symbol, riskPct);
-    m_currentTotalRisk = m_riskCache.totalRiskPct;
-}
-
-// Drops the cache so the next read rescans every position (no caller in this repo)
-void CPortfolioRiskManager::InvalidateRiskCache()
-{
-    m_riskCache.isValid = false;
-}
 
 bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
 {

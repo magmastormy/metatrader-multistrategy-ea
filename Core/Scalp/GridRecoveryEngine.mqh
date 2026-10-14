@@ -484,15 +484,6 @@ public:
       return (m_symbolStates[idx].activeLevelCount > 0);
    }
 
-   double GetTotalGridRisk(const string symbol)
-   {
-      int idx = FindSymbolIndex(symbol);
-      if(idx < 0)
-         return 0.0;
-
-      return m_symbolStates[idx].totalGridRisk;
-   }
-
 // Emergency close all grid positions for a symbol
    bool CloseAllGrids(const string symbol)
    {
