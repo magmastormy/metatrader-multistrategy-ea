@@ -2899,7 +2899,7 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     static datetime s_lastHeartbeat = 0;
     if(s_lastHeartbeat == 0 || (now - s_lastHeartbeat) >= m_config.heartbeatInterval)
     {
-        m_heartbeat.Emit(GetPointer(m_diagnosticsManager));
+        m_heartbeat.Emit(GetPointer(m_diagnosticsManager), m_spikeMonitor.IsPaused());
         s_lastHeartbeat = now;
     }
     

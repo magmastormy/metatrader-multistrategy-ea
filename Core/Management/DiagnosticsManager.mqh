@@ -101,7 +101,7 @@ private:
         // Gates the full-margin / safe-mode diagnostic blocks
     ENUM_RISK_TIER m_riskTier;
 
-    // Trading paused state (updated each tick by main EA)
+    // Trading paused state, pushed with each heartbeat from CSyntheticSpikeMonitor::IsPaused()
     bool  m_tradingPaused;
 
         CEnterpriseStrategyManager* m_managers[];

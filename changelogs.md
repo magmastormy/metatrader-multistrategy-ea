@@ -8,6 +8,17 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 202: the heartbeat's `paused` field now reports a real pause
+
+`CDiagnosticsManager::m_tradingPaused` prints in every `[HEARTBEAT]` line, and its only two writers had no callers, so the field printed `false` for the life of the repository - including in the windows when `CSyntheticSpikeMonitor` had genuinely paused new positions. Batch 200 recorded it as log-only; this closes it.
+
+`CHeartbeatTelemetry::Emit` takes the state as a second parameter and pushes it through `SetTradingPaused` immediately before `UpdateCounters`, and the orchestrator passes `m_spikeMonitor.IsPaused()` (`EAOrchestrator.mqh:2902`), the same accessor the cycle gate already consults. The field's comment said "updated each tick by main EA", which was the design that never got wired; it now says what feeds it and how often.
+
+No decision reads this field, so entry, risk, execution and exit behaviour are unchanged; `IsPaused()` also expires the pause, which the cycle gate already did, so no state advances twice per cycle in practice. The duplicate writer `UpdateTradingPaused` was deleted in Batch 200; `SetTradingPaused` is now the single writer.
+
+Verification: 8 root programs compile at 0 errors / 0 warnings. On the next attach, a synthetic-spike pause should show `paused=true` in the heartbeat lines between the pause and its expiry - the first time that combination has been possible to see in a journal.
+
+
 ### Batch 201: the AI's market-regime adaptation had no input, so it adapted to nothing
 
 #### What was missing (`Core/Management/EntStrategySignalContext.mqh`)

@@ -421,13 +421,17 @@ Expect **fewer** entries, not more: caps can now refuse what they never measured
 
 281 lines of code that no path could reach are gone. The deletions all name themselves in `changelogs.md`; the two worth knowing operationally are a never-called duplicate of the VPIN/OFI + Skew Step tick feed (`FeedMicrostructureEngines`, next to the live copy in `OnTick`) and an uncalled `CTradeExecutor::ExecuteBatch` that carried its own `[EXECUTION]` print. Both were places a future edit would have looked correct and done nothing.
 
-No decision path changed: the risk gate, consensus scoring, lot math, stops, magics, comments and sends are untouched, so open positions keep their identity and log shapes are stable. What the audit found *unwired* stays in the code and is listed as a batch-sized gap each: consensus participation has never adapted (every vote scaled by a constant 0.985), the neural net has never been fed a realized P&L, the lifecycle's "pause trailing in a ranging market" branch has no regime source, and the heartbeat's `paused` field always prints false while the spike monitor holds the real state.
+No decision path changed: the risk gate, consensus scoring, lot math, stops, magics, comments and sends are untouched, so open positions keep their identity and log shapes are stable. What the audit found *unwired* stays in the code and is listed as a batch-sized gap each: consensus participation has never adapted (every vote scaled by a constant 0.985), the neural net has never been fed a realized P&L, the lifecycle's "pause trailing in a ranging market" branch has no regime source, and the heartbeat's `paused` field, which printed false until Batch 202 wired it to the spike monitor's real state.
 
 ### Batch 201: AI confidence now adapts to the market regime
 
 `m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its no-op branch every cycle and the per-regime confidence factors (0.9 in a trend, 1.1 in a range, 1.2 when volatile) had never been applied to any AI strategy. The manager now publishes the regime from the same `CRegimeEngine` snapshot that gates strategy votes - an unvalidated snapshot maps to `UNKNOWN`, meaning no adaptation, rather than a guess - and prints `[MARKET-REGIME] <symbol> | old -> new | valid=` on each change. AI entries become slightly more permissive in a confirmed trend and more selective in ranges and volatile expansions; indicator voting, the consensus gate, risk ceilings, lot math, stops and sends are unchanged.
 
 Two nearby findings were **not** wired, each for a stated reason: participation (a 0.35 "no signal" target would permanently discount strategies meant to fire rarely, like the NY open gap) and the ranging-regime trailing pause (`CTradeManager::ManageAllPositions` has no symbol filter, so per-symbol routing means changing the exit authority - not attempted without a live attach). Both are recorded with their reasoning in `SYSTEM_STRUCTURE.md` §4.
+
+### Batch 202: the heartbeat `paused` field reports a real pause
+
+`m_tradingPaused` printed in every `[HEARTBEAT]` line while its only writers had no callers, so it read `false` even when the synthetic-spike monitor had paused new positions. `CHeartbeatTelemetry::Emit` now takes the state and pushes it through `SetTradingPaused` before the counter snapshot, fed by `m_spikeMonitor.IsPaused()` at the existing emit site. No decision reads that field, so nothing but the log changed - but a pause is now visible in a journal, which is how the operator learns the monitor acted at all.
 
 ## AI Integration
 

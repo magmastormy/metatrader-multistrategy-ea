@@ -106,11 +106,14 @@ public:
     ulong GetSyntheticSpikeEvents()  const { return m_syntheticSpikeEvents; }
 
 // UpdateCounters takes 18 positional arguments: the order below must match the
-// manager's parameter list exactly. NULL diag is tolerated (no-op).
-    void Emit(CDiagnosticsManager* diag) const
+// manager's parameter list exactly. NULL diag is tolerated (no-op). tradingPaused comes
+// from CSyntheticSpikeMonitor, the only holder of that state.
+    void Emit(CDiagnosticsManager* diag, const bool tradingPaused) const
     {
         if(diag == NULL)
             return;
+
+        diag.SetTradingPaused(tradingPaused);
 
         diag.UpdateCounters(
             m_scansAttempted, m_intrabarScansExecuted, m_noSignalCount,
