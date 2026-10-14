@@ -374,7 +374,7 @@ public:
         return result;
     }
 
-    if(m_virtualPositionBook.HasOpposingReservation(request.symbol, request.clusterCode, request.orderType))
+    if(m_virtualPositionBook.HasOpposingReservation(request.symbol, request.orderType))
     {
         result.message = StringFormat("Virtual reservation conflict on %s (opposing candidate already reserved)",
                                       request.symbol);

@@ -1,18 +1,10 @@
 // Owns the last-decided-signal bookkeeping and the cycle/lifetime signal counters
 // that used to be loose members of CEnterpriseStrategyManager.
-// BEHAVIOUR NOTE (verified against the pre-extraction source):
-// every one of these fields is WRITE-ONCE-AT-CONSTRUCTION in the
-// current codebase except m_lastContributorCount /
-// (reset by the trade-close path) and m_successfulSignals
-// (incremented by the trade-close path). The relocation therefore
-// reproduces the original observable values exactly:
-// - the three contributor stores start empty (ArrayResize(...,0)
-// in the manager constructor, mirrored here);
-// - the role / cluster / cluster-code / symbol strings start ""
-// and have no writer, so GetLastSignalExecutionContext() keeps
-// returning empty tags exactly as before;
-// - the funnel counters and the market regime keep MQL5's
-// zero-initialised values, which is what the manager exposed.
+// BEHAVIOUR NOTE: before Batch 199 the contributor fields had no writer at all, so every
+// reader (attribution, authority learning, candidate role/cluster tags, strategy health)
+// saw an empty list. SetContributors is now called from the consensus decision.
+// The funnel counters and m_currentMarketRegime still keep their construction values;
+// nothing writes them.
 // The module owns NO back-pointer. The only collaborator it needs
 // is the attribution delegator's JoinContributors() (a read-only
 // helper it does not own), which is therefore passed in by const
@@ -68,11 +60,17 @@ public:
                                        string &clusterCode,
                                        string &contributorsCsv) const;
 
-    int  GetLastContributorCount() const  { return m_lastContributorCount; }
-    int  GetContributorArraySize() const  { return ArraySize(m_lastSignalContributors); }
-
     //--- reset performed by the trade-close path (verbatim relocation)
     void ResetContributorContext();
+
+    //--- The consensus decision is the only writer. Every reader of this class was waiting on it:
+    //--- attribution, AI-authority outcome learning, cluster grouping and strategy health all
+    //--- received an empty list while no setter existed.
+    void SetContributors(const string &names[], const int &indices[],
+                         const string symbolName, const datetime when,
+                         const string roleTag, const string clusterTag, const string clusterCodeTag);
+
+    void IncrementTotalSignals() { m_totalSignals++; }
 
     int    GetTotalSignals() const      { return m_totalSignals; }
     int    GetSuccessfulSignals() const { return m_successfulSignals; }
@@ -136,6 +134,29 @@ void CEntStrategySignalContext::ResetContributorContext()
     m_lastContributorCount = 0;
     ArrayResize(m_lastSignalContributors, 0);
     ArrayResize(m_lastSignalContributorIndices, 0);
+}
+
+void CEntStrategySignalContext::SetContributors(const string &names[], const int &indices[],
+                                                const string symbolName, const datetime when,
+                                                const string roleTag, const string clusterTag,
+                                                const string clusterCodeTag)
+{
+    int count = ArraySize(names);
+    ArrayResize(m_lastSignalContributors, count);
+    for(int i = 0; i < count; i++)
+        m_lastSignalContributors[i] = names[i];
+
+    int idxCount = ArraySize(indices);
+    ArrayResize(m_lastSignalContributorIndices, idxCount);
+    for(int i = 0; i < idxCount; i++)
+        m_lastSignalContributorIndices[i] = indices[i];
+
+    m_lastContributorCount = count;
+    m_lastSignalSymbol = symbolName;
+    m_lastSignalTime = when;
+    m_lastSignalRole = roleTag;
+    m_lastSignalCluster = clusterTag;
+    m_lastSignalClusterCode = clusterCodeTag;
 }
 
 #endif // ENT_STRATEGY_SIGNAL_CONTEXT_MQH

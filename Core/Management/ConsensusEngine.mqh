@@ -12,6 +12,7 @@
 #include "../Engines/RegimeEngine.mqh"             // CRegimeEngine::GetSnapshot (regime vote weighting)
 #include "../Strategy/StrategyRegistry.mqh"       // CStrategyRegistry::IsStrategyActive / GetMode
 #include "../Utils/JsonLogger.mqh"                // CJsonLogger, CCorrelationIdGenerator
+#include "../Risk/RiskClusterCodec.mqh"           // cluster-code letter for the risk cluster gates
 #include "DiagnosticsManager.mqh"                 // CDiagnosticsManager
 
 // Minimum independent voters for an entry: a lone voter would be 100% consensus, and no quorum
@@ -1002,6 +1003,22 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     PrintFormat("[CONSENSUS-DECISION] %s | %s | class=%s | conf=%.2f | confluence=%d | votes=%d/%d | support=%.2f | quorum=%.2f/%.2f",
                 symbol, EnumToString(consensusSignal), decisionClass, confidence, confluence,
                 buyVotes, sellVotes, supportRatio, quorumRatio, winningQuorum);
+
+    // Publish the winning voters. Attribution, AI-authority outcome learning, the candidate's
+    // role/cluster tags and per-strategy health all read this context, and until now none of
+    // them ever received a contributor.
+    int winningContributors[];
+    if(consensusSignal == TRADE_SIGNAL_BUY)
+        ArrayCopy(winningContributors, buyContributorIndices);
+    else
+        ArrayCopy(winningContributors, sellContributorIndices);
+
+    ENUM_STRATEGY_CLUSTER dominantCluster = ResolveDominantCluster(winningContributors);
+    string dominantClusterTag = StrategyClusterToString(dominantCluster);
+    m_src.SetLastSignalContributors(winningContributors,
+                                    StrategyRoleToString(ResolveDominantRole(winningContributors)),
+                                    dominantClusterTag,
+                                    CRiskClusterCodec::NormalizeClusterCode(dominantClusterTag));
 
     // The validator reads directionalQuality off this context; a default struct would zero it.
     double totalDirScore = buyScore + sellScore;

@@ -195,8 +195,11 @@ public:
         return total;
     }
 
+    // An opposing reservation on the same symbol is a conflict whatever its cluster. The cluster
+    // code used to be compared here and returned "no conflict" when the two matched, which was
+    // unreachable while callers passed "" (the guard then always conflicted); Batch 199 started
+    // populating cluster codes, so that inverted branch would have gone live as a loosening.
     bool HasOpposingReservation(const string symbol,
-                                const string clusterCode,
                                 const ENUM_ORDER_TYPE orderType) const
     {
         // Batch 118: Prune expired entries before checking to avoid false positives
@@ -214,8 +217,7 @@ public:
             if(reservedBuy == requestedBuy)
                 continue;
 
-            if(clusterCode == "" || m_positions[i].clusterCode == "" || m_positions[i].clusterCode != clusterCode)
-                return true;
+            return true;
         }
 
         return false;

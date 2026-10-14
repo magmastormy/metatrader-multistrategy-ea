@@ -398,11 +398,24 @@ A false "yes" used to mis-bind tracking and close operations; a false "no" only 
 
 ### Batch 197: every engine now ships its own magic, the grid survives a restart, and the lifecycle manager recognises its own positions
 
-- **One number, one owner.** Consensus entries keep `base + assetClassOffset + symbolIndex*100`; the four engines moved to bands under the lowest asset offset - fast scalp `+6000`, ATR scalp `+6100`, grid `+6200+level`, spike `+6300`. Before this a fast scalp sent through `CTradeManager` carried *exactly* its own symbol's consensus magic, and the ATR scalp sat on `base + 7000 + symbolIndex` where 7000 is ASSET_FOREX's offset, so a scalp fill entered that strategy's performance history and, through it, the reliability weight that sizes the next lot. Init prints `[MAGIC-LAYOUT]` and refuses to start if a symbol slot composes into an engine band.
+- **One number, one owner.** The four engines moved to bands under the lowest asset offset - fast scalp `+6000`, ATR scalp `+6100`, grid `+6200+level`, spike `+6300` - and consensus entries gained the symbol slot they never had: `SetMagicOffsetForSymbol` registered the asset offset alone, so every forex pair shipped `base + 7000` and every position in an asset class was one book to a magic-keyed reader. Before this a fast scalp sent through `CTradeManager` carried exactly that number, so a scalp fill reached that symbol's strategy attribution. No gate reads an exact magic, so the re-label moves no decision; `[MAGIC-LAYOUT]` now asserts the layout at init and refuses to start if a symbol slot composes into an engine band.
 - **Positions already open are unaffected.** Comment tags stay the exit discriminator: a pre-renumber scalp still carries a consensus-band magic and only its comment tells it apart, and the grid's restart recovery decodes both the new band and the legacy one.
 - **A restart used to forget the grid.** Level tickets lived only in memory, so after a recompile the orphaned levels ran to their own stops with no manager while the engine laid a fresh level 0 on top of them. `[GRID-RESTART]` rebuilds each slot from the open positions at init. The grid engine is parked today (no tick-loop caller since Batch 178), so this is what makes wiring it safe rather than something that fixes a live leak.
 - **The quiet money bug:** `PositionLifecycleManager::IsEAOwnedMagic` still used a `base + symbolCount*100 + cluster` window. On the default 13-symbol universe that ceiling was `base + 1399` while positions shipped at `base + 7000..9400`, so twelve of thirteen symbols were "not ours" - Signal Reversal Exit never fired and no ranging position ever moved to breakeven, despite `InpEnableSignalReversalExit = true`. It reads `CMagicRange` like every other owner now does, so expect both exits to work on the next attach.
 - **Dead authority removed:** `CMagicNumberAllocator` (395 lines) is deleted. Its family-offset table does not match the offsets orders actually ship with, so wiring it in would renumber live positions; its only live call fed the narrow window above.
+
+### Batch 199: the EA can now learn which strategies make money
+
+The consensus decision never published who voted. `CEntStrategySignalContext`'s contributor arrays had readers in four places and a writer in none, and the class documented that in its own header. Consequences, each verified at the call site:
+
+- **Strategy performance never updated.** Per-strategy win rate, trade count and health score are written only by the closed-trade attribution path, which had nothing to pop. Every indicator strategy voted at the registration default forever; AI strategies, whose health has a separate live writer, were the only ones held to their results.
+- **Per-cluster risk caps never applied.** `ValidateClusterGovernance` bailed out on an empty cluster code, so the 5-position / 5%-risk-per-cluster caps and the opposing-cluster mutex were skipped for every candidate. They run now and print `[RISK-CLUSTER]`.
+- **PROVEN_AI never saw an outcome.** The provenance record was gated on a flag computed from that empty list, so the live-authority promotion gate had no input and `[AUTHORITY-LEARN]` could not print.
+- **Performance auto-disable was unreachable**, so a strategy could lose indefinitely without being paused.
+
+Attribution is now keyed to the fill's own `positionId` at execution rather than to whatever decision the cache holds when the deal event arrives, every executed trade records its voters, and each prints `[TRADE-ATTRIBUTION]`. Engine (scalp/grid/spike) deals are filtered out of the feedback path first, so a scalp's P/L can no longer be scored against the strategies cached on that symbol.
+
+Expect **fewer** entries, not more: caps can now refuse what they never measured. Nothing in the risk ceilings, lot math, stops or sends changed.
 
 ## AI Integration
 

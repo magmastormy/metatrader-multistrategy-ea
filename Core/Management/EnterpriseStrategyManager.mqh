@@ -179,10 +179,52 @@ public:
     bool   GetLastCycleSignalAfterQuorumValue() const { return m_signalContext.GetLastCycleSignalAfterQuorum(); }
 
     //--- Last-signal contributor telemetry read by CStrategyMgrTradeFeedback through its m_src back-pointer.
-    int  GetLastContributorCountValue() const { return m_signalContext.GetLastContributorCount(); }
-    int  GetLastContributorArraySize() const  { return m_signalContext.GetContributorArraySize(); }
     void IncrementSuccessfulSignals()         { m_signalContext.IncrementSuccessfulSignals(); }
     void ResetLastContributorContext()        { m_signalContext.ResetContributorContext(); }
+
+    //--- Called by the consensus engine when a decision is accepted. Names come from the roster so
+    //--- the attribution keys match GetStrategyIndexByName; role/cluster tags are the engine's.
+    void SetLastSignalContributors(const int &indices[], const string roleTag,
+                                   const string clusterTag, const string clusterCodeTag)
+    {
+        string names[];
+        ArrayResize(names, 0);
+        for(int i = 0; i < ArraySize(indices); i++)
+        {
+            string name = m_roster.GetStrategyName(indices[i]);
+            if(name == "") continue;
+            int n = ArraySize(names);
+            ArrayResize(names, n + 1);
+            names[n] = name;
+        }
+        m_signalContext.SetContributors(names, indices, GetManagedSymbol(), TimeCurrent(),
+                                        roleTag, clusterTag, clusterCodeTag);
+    }
+
+    //--- Attribute the fill the EA actually got, keyed by its positionId. The cached contributor
+    //--- list belongs to whichever decision ran last, so the send-time indices are the only key
+    //--- that cannot drift by a cycle.
+    void AttributeExecutedPosition(const ulong positionId, const int &indices[])
+    {
+        string names[];
+        ArrayResize(names, 0);
+        for(int i = 0; i < ArraySize(indices); i++)
+        {
+            string name = m_roster.GetStrategyName(indices[i]);
+            if(name == "") continue;
+            int n = ArraySize(names);
+            ArrayResize(names, n + 1);
+            names[n] = name;
+        }
+        if(ArraySize(names) == 0)
+            return;
+        m_attributionDelegator.UpsertPositionAttribution(positionId, names);
+        // Denominator of the "Success Rate" the state reporter prints, so it counts the trades that
+        // can close - a decision refused between here and the send would inflate it.
+        m_signalContext.IncrementTotalSignals();
+        PrintFormat("[TRADE-ATTRIBUTION] %s | position=%I64u | contributors=%s",
+                    GetManagedSymbol(), positionId, m_attributionDelegator.JoinContributors(names));
+    }
 
     //--- Read-only accessors consumed by CPostConsensusValidator and CConsensusWeightingConfig.
     COrderFlowImbalanceEngine*   GetOFIEngineConst() const          { return m_infra.GetOFIEngine(); }

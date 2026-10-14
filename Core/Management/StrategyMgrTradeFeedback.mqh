@@ -2,14 +2,10 @@
 // and the trade-outcome feedback loop: the ownership predicate, the partial-close
 // guard and OnTradeTransaction (deal -> attribution -> performance).
 // *** BEHAVIOUR CONTRACT ***
-// Every body is a byte-for-byte relocation of the original manager
-// body; the only mechanical substitutions are the manager-member
-// reads, which now go through the manager's existing public accessors.
-// No comparison, no arithmetic and no log string was altered.
-// This module MUTATES the manager, so it holds a NON-const back-
-// pointer. It mirrors no injected manager pointer (the attribution
-// manager and health monitor are re-read from the manager on every
-// call), so it needs no re-sync on Deinit.
+// Bodies were relocated byte-for-byte from the original manager; manager-member reads
+// go through the manager's public accessors. Batch 199 added one deliberate exception:
+// the engine-book filter in OnTradeTransaction, which the attribution path needed once
+// the contributor context started being written.
 // NOTE: this header is an implementation detail of
 // EnterpriseStrategyManager.mqh and is included from there (after
 // the shared free helpers, before the manager class). It is not
@@ -19,6 +15,7 @@
 
 #include "StrategyHealthMonitor.mqh"                      // CStrategyHealthMonitor::RecordTradeResult
 #include "../../Core/Trading/TradeAttributionManager.mqh" // CTradeAttributionManager
+#include "../Utils/MagicRange.mqh"                        // IsEngineManagedPosition / CMagicRange
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
@@ -111,22 +108,21 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
             if(dealSymbol != "" && dealSymbol != m_src.GetManagedSymbol())
                 return;
 
+            // An engine's own fill is not this manager's trade. The contributor context holds the
+            // last consensus decision on this symbol, so without this filter a scalp landing in the
+            // same window would be scored as the strategies that did not signal it.
+            string dealComment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+            if(dealComment == "")
+                dealComment = request.comment;
+            if(IsEngineManagedPosition(dealComment) ||
+               CMagicRange::IsEngineReservedOffset((int)(dealMagic - m_managedMagic)))
+                return;
+
             ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
             ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
 
-            if((entryType == DEAL_ENTRY_IN || entryType == DEAL_ENTRY_INOUT) &&
-               positionId > 0 &&
-               m_src.GetLastContributorCountValue() > 0 &&
-               m_src.GetLastContributorArraySize() > 0)
-            {
-                CTradeAttributionManager* attribution = m_src.GetAttribution();
-                if(attribution != NULL)
-                {
-                    string lastContributors[];
-                    m_src.GetLastSignalContributors(lastContributors);
-                    attribution.UpsertPositionAttribution(positionId, lastContributors);
-                }
-            }
+            // Attribution is written at execution, keyed by the fill's own positionId. Re-upserting
+            // from the cached contributor list here would overwrite it with whichever decision ran last.
 
             // We care about exits (deals that close a position) to meaningful profit/loss
             if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY || entryType == DEAL_ENTRY_INOUT)

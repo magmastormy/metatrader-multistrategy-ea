@@ -100,7 +100,9 @@ public:
         {
             if(!PortfolioCorrelationAllowed(symbol))
             {
-                string correlationReason = "";  // GetLastBlockReason would need to be added
+                // CheckCorrelationLimits records the pair and thresholds it compared; without reading it back
+                // this refusal only ever said "Correlation limit exceeded".
+                string correlationReason = m_portfolioRiskManager.GetLastBlockReason();
                 message = (correlationReason != "") ? correlationReason : "Correlation limit exceeded";
                 return false;
             }

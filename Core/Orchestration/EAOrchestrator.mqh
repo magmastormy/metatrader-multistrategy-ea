@@ -3539,14 +3539,18 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                                        ? MathMin(1.0, execResult.filledVolume / candidate.lotSize) : 1.0;
                     m_unifiedRiskManager.RegisterExecutedTradeRisk(executedRisk, fillRatio);
 
-                    // Remember AI-contributed trades so their full close feeds RecordOutcome (PROVEN_AI).
-                    if(candidate.hasAIContributor && execResult.dealTicket > 0
-                       && HistoryDealSelect(execResult.dealTicket))
+                    // Key the closed-trade feedback to the fill this send actually got: the AI rows
+                    // feed RecordOutcome (PROVEN_AI), every row feeds per-strategy attribution.
+                    if(execResult.dealTicket > 0 && HistoryDealSelect(execResult.dealTicket))
                     {
                         long provPosId = HistoryDealGetInteger(execResult.dealTicket, DEAL_POSITION_ID);
                         if(provPosId > 0)
+                        {
                             RecordExecutedTradeProvenance((ulong)provPosId, i,
                                                           candidate.contributorSummary, strategyIndices);
+                            if(m_enterpriseManagers[i] != NULL)
+                                m_enterpriseManagers[i].AttributeExecutedPosition((ulong)provPosId, strategyIndices);
+                        }
                     }
                 }
 
