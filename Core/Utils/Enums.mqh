@@ -328,13 +328,9 @@ struct SConsensusDecisionContext
     double readinessScore;
     double contextScore;
     double costScore;
-    double diversityScore;
     double directionalQuality;
     double supportRatio;
-    double directionalWeight;
-    double readyCoverage;
     double quorumGap;               // Gap between buy/sell scores
-    double stalenessPenalty;
     int eligibleLiveVoterCount;
     int effectiveMinVoters;
     string quorumMode;
@@ -359,13 +355,9 @@ struct SConsensusDecisionContext
         readinessScore(0.0),
         contextScore(0.0),
         costScore(0.0),
-        diversityScore(0.0),
         directionalQuality(0.0),
         supportRatio(0.0),
-        directionalWeight(0.0),
-        readyCoverage(0.0),
         quorumGap(0.0),
-        stalenessPenalty(0.0),
         eligibleLiveVoterCount(0),
         effectiveMinVoters(0),
         quorumMode("FULL_QUORUM"),
@@ -391,13 +383,9 @@ struct SConsensusDecisionContext
         readinessScore(other.readinessScore),
         contextScore(other.contextScore),
         costScore(other.costScore),
-        diversityScore(other.diversityScore),
         directionalQuality(other.directionalQuality),
         supportRatio(other.supportRatio),
-        directionalWeight(other.directionalWeight),
-        readyCoverage(other.readyCoverage),
         quorumGap(other.quorumGap),
-        stalenessPenalty(other.stalenessPenalty),
         eligibleLiveVoterCount(other.eligibleLiveVoterCount),
         effectiveMinVoters(other.effectiveMinVoters),
         quorumMode(other.quorumMode),
@@ -424,13 +412,9 @@ struct SConsensusDecisionContext
         readinessScore = other.readinessScore;
         contextScore = other.contextScore;
         costScore = other.costScore;
-        diversityScore = other.diversityScore;
         directionalQuality = other.directionalQuality;
         supportRatio = other.supportRatio;
-        directionalWeight = other.directionalWeight;
-        readyCoverage = other.readyCoverage;
         quorumGap = other.quorumGap;
-        stalenessPenalty = other.stalenessPenalty;
         eligibleLiveVoterCount = other.eligibleLiveVoterCount;
         effectiveMinVoters = other.effectiveMinVoters;
         quorumMode = other.quorumMode;
