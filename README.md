@@ -445,6 +445,12 @@ Two things were left alone deliberately: realized P/L is still not a *training t
 
 The consensus scan now drops a hard-gated strategy before any of those accumulations. Entry count moves both ways, and both moves are the point: two permitted voters agreeing are no longer diluted by three forbidden ones, while a single permitted voter can no longer reach the two-voter minimum on the strength of a colleague the regime killed. Deweights are untouched (Breakout reversion at 0.25, Chaos at 0.40 still vote with a smaller score). Watch the new `[CONSENSUS-REGIME-VETO] <symbol> | N vote(s) hard-gated by regime | excluded weight= | counted votes=` line; a fully vetoed field now prints `[CONSENSUS-ABSTAIN]` instead of `[CONSENSUS-TIE]`. Risk ceilings, lot math, stops, sends and the exit authority are unchanged.
 
+### Batch 205: the position-size ladder finally reads its own inputs
+
+`CLiveAuthorityResolver` converts an `authorityScore` into the lot multiplier, and four of the terms that build that score - conviction, readiness, context and cost - were handed `0.0` on every consensus trade, because the consensus decision context had no writer for them. So no trade in the repository's history ever earned the `+0.08 / +0.07 / +0.05 / +0.05` those four bonuses pay, every consensus position was sized one to two rungs below the ladder the operator configured, and `InpAuthorityMinReadinessScore`, `InpAuthorityMinContextScore` and `InpAuthorityMinCostScore` changed nothing. The pipeline does measure all three (per signal, in its own evidence snapshot); the values simply never crossed into the decision.
+
+They do now: the consensus loop captures each voter's evidence and publishes the winning side's mean, plus the ready-ratio numerator and denominator the log used to print as zeros. **Consensus lots get larger where the pipeline genuinely measures a ready, in-context, cheap signal, and stay exactly as small as they are where it does not** - each bonus is still conditional on a threshold, and with no pipeline the values stay zero rather than being guessed. Nothing about vetoes, the low-confidence refusal, the AI bootstrap caps or the risk gates moved. Earned bonuses now name themselves in the authority reason string, so a grown lot is traceable to the measurement that earned it.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

@@ -200,15 +200,17 @@ public:
                 reasons += "CONFLUENCE ";
             }
         
-            if(qualityScore >= 0.7) authorityScore += 0.10;
-            if(convictionScore >= 0.65) authorityScore += 0.08;
-            if(readinessScore >= m_authorityMinReadinessScore) authorityScore += 0.07;
-            if(contextScore >= m_authorityMinContextScore) authorityScore += 0.05;
+            // These four bonuses were silent while their inputs arrived unwritten; now that the
+            // consensus publishes them, each names itself in `reasons` so a grown lot is traceable.
+            if(qualityScore >= 0.7)      { authorityScore += 0.10; reasons += "QUALITY "; }
+            if(convictionScore >= 0.65)  { authorityScore += 0.08; reasons += "CONVICTION "; }
+            if(readinessScore >= m_authorityMinReadinessScore) { authorityScore += 0.07; reasons += "READINESS "; }
+            if(contextScore >= m_authorityMinContextScore)     { authorityScore += 0.05; reasons += "CONTEXT "; }
             // costScore is quality-shaped, not cost-shaped: higher means cheaper. The pipeline
             // adds it into the weighted signal score (SignalPipelineWeighter: score += costScore*0.0543),
             // so the bonus is earned at the TOP of the range. The previous `<= 0.3` test paid
             // authority points to the most expensive trades.
-            if(costScore >= m_authorityMinCostScore) authorityScore += 0.05;
+            if(costScore >= m_authorityMinCostScore) { authorityScore += 0.05; reasons += "COST "; }
         
             double minConfidence = m_aiStandaloneMinConfidence;
             if(hasIndicatorContributor)

@@ -8,6 +8,80 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 205: the live-authority lot ladder receives the four measurements it was written to read
+
+#### The broken feed
+`CLiveAuthorityResolver::Resolve` builds `authorityScore` from contributor kinds and four measured inputs,
+and `authorityScore` selects the lot multiplier (`>= 0.80 -> 1.0`, `>= 0.65 -> 0.85`, `>= 0.50 -> 0.70`,
+`>= 0.35 -> 0.50`). The four measured inputs arrived as **`0.0` on every consensus trade, always**:
+
+| Bonus | Condition | Default threshold |
+|---|---|---|
+| `+0.08` | `convictionScore >= 0.65` | hard-coded |
+| `+0.07` | `readinessScore >= InpAuthorityMinReadinessScore` | 0.52 |
+| `0.05` | `contextScore >= InpAuthorityMinContextScore` | 0.48 |
+| `+0.05` | `costScore >= InpAuthorityMinCostScore` | 0.50 |
+
+They are read from `STradeCandidate`, which `CandidateBuilder.mqh:383-386` fills from
+`SConsensusDecisionContext`, which `ConsensusEngine` never wrote. So no trade in the repository's history
+earned any of those `0.25`, every consensus position was sized one to two rungs below the ladder the operator
+configured, and three operator inputs bound nothing. `qualityScore` was the one live measurement in the list
+(it comes from `directionalQuality`), which is why the ladder looked functional at all.
+
+The values do exist elsewhere: `CUnifiedSignalPipeline::ProcessSignal` resets and fills a
+`SPipelineEvidenceSnapshot` with real `readinessScore` / `contextScore` / `costScore` per signal. The dead
+middle ground was the *roster's* twins (`SStrategyRuntimeEntry.readinessScore/contextScore/costScore`, read
+by `GetStrategyReadinessScore()` and friends), which also have no writer - so neither obvious source was
+usable, and Batch 204 found the §4.2 prose describing a design that had long been replaced.
+
+#### What is wired
+- The consensus loop captures each voter's own evidence snapshot immediately after its `ProcessSignal`
+  succeeds, and accumulates it per direction alongside the existing quality sums.
+- After the direction wins, the decision context publishes the winning side's mean `convictionScore`,
+  `readinessScore`, `contextScore` and `costScore`, plus `readyLiveWeight = buyScore + sellScore` and
+  `totalLiveWeight = votedWeight` - the two numbers the ready-ratio gate already divides, so the ratio is
+  reconstructible from the context instead of printed as `0.00`.
+- `convictionScore` is the mean raw `stratConf` of the winning side. It is deliberately not the same quantity
+  as `directionalQuality` (mean of `stratConf x weight`), which feeds the other bonus: conviction is what the
+  strategy stated, quality is what it stated after its weight. Both bonuses existed; both now read their own
+  measurement rather than one real value and three zeros.
+- Averaging is unweighted over the winning side's voters, the same shape as the existing quality average, so
+  no new weighting authority is introduced into a sizing path.
+- `reasons` now names each earned measurement bonus (`QUALITY CONVICTION READINESS CONTEXT COST`). The four
+  measurement bonuses used to change the score without appearing in the reason string that
+  `[AUTHORITY-REDUCED] ... reason=` prints, so a lot that grew after this batch is traceable to which
+  measurement earned it.
+
+#### Behaviour direction
+**Lots on consensus entries get larger wherever the pipeline genuinely measures a ready, in-context, cheap
+signal - and stay exactly as small as they are where it does not.** This is not a blanket raise: every bonus
+is conditional on a threshold, two of which are operator inputs that now bind for the first time. Nothing in
+the veto structure changed; `result.allowed`, the `LOW_CONFIDENCE` refusal, the bootstrap/proven-AI caps and
+every risk gate behave as before, and the ladder's *reduction* direction is untouched. Worst case per trade
+moves from `0.50`-of-scale to the configured size, so per-trade risk rises toward - not above - the operator's
+own `maxRiskPercent` ceiling, which still clamps it.
+
+#### Deliberately not changed
+- `pipeline == NULL` leaves the four values at `0.0`, which pays no bonus. No measurement, no points; the
+  alternative was inventing a neutral value on a sizing path.
+- The roster's per-strategy `readinessScore/contextScore/costScore` remain unwritten. Nothing on the live
+  consensus path needs them now, and feeding them would be a second, per-strategy copy of the same
+  measurement with no defined update cadence.
+- `SConsensusDecisionContext.diversityScore`, `directionalWeight`, `readyCoverage` and `stalenessPenalty` are
+  referenced by nothing outside the struct's own copy operations. They are deleted in a separate hygiene
+  commit in this batch, not folded into the sizing change.
+- The four engine send paths never consult live authority, so their lots are unchanged by this batch.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- No journal evidence exists (newest 2026-09-23), and this batch moves position size, so it needs the first
+  attach. Expected: `[AUTHORITY-CONFIG] effective: ... costScore=0.50 readiness=0.52 context=0.48` unchanged
+  at init, and on trades `AUTHORIZED | score=` values that vary per candidate instead of clustering at the
+  kind-only sum, with `QUALITY/CONVICTION/READINESS/CONTEXT/COST` tokens in `[AUTHORITY-REDUCED] ... reason=`.
+  A candidate log printing `conviction=0.00 readiness=0.00` after this batch means the pipeline is not
+  filling its evidence snapshot.
+
+
 ### Batch 204: a regime veto now vetoes the vote, not just the score
 
 #### The defect

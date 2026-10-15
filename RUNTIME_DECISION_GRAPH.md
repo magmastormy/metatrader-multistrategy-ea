@@ -336,6 +336,15 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 205: The Authority Ladder Is Fed Measurements Instead of Zeros (2026-10-15)
+
+- **New edge:** `pipeline.ProcessSignal(voter) -> SPipelineEvidenceSnapshot -> per-direction mean over the winning side -> SConsensusDecisionContext.convictionScore/readinessScore/contextScore/costScore (+ readyLiveWeight/totalLiveWeight) -> CandidateBuilder.mqh:383-386 -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult rung -> lot`.
+- **What the path did before:** the four measured inputs reached `Resolve` as `0.0` on every consensus candidate, so the `+0.08 conviction`, `+0.07 readiness`, `+0.05 context` and `+0.05 cost` bonuses never fired. `authorityScore` was the kind/confluence/quality sum only, and `riskMult` (`>=0.80 1.0`, `>=0.65 0.85`, `>=0.50 0.70`, `>=0.35 0.50`) sat one to two rungs below what the ladder computes from a measured signal. `InpAuthorityMinReadinessScore`, `InpAuthorityMinContextScore` and `InpAuthorityMinCostScore` had no effect.
+- **Aggregation chosen:** unweighted mean over the winning side's voters, captured per voter right after its own `ProcessSignal` (which resets then fills the snapshot, so a voter never reads another's evidence). `convictionScore` is mean raw `stratConf`; `qualityScore`/`directionalQuality` stays mean `stratConf x weight` - two different bonuses, two different measurements, no double-counting of one value.
+- **Fail-closed:** with no pipeline the values stay `0.0` and pay no bonus. Nothing was substituted for a missing measurement on a sizing path.
+- **Loudness:** `reasons` now appends `QUALITY`, `CONVICTION`, `READINESS`, `CONTEXT`, `COST` for each earned bonus, so `[AUTHORITY-REDUCED] ... reason=` identifies which measurement moved the lot.
+- **Unchanged:** `result.allowed`, the `LOW_CONFIDENCE` refusal, the BOOTSTRAP/PROVEN_AI caps, every risk gate, the ladder's reduction direction, and the four engine send paths (which never consult live authority). Per-trade risk rises toward the configured ceiling, not past it.
+
 ## Batch 204: A Regime Veto Removes the Vote Itself (2026-10-15)
 
 - **Before:** `RegimeStateHardGate(state, type)` returning `0.0` zeroed the *score* only, and `ConsensusEngine.mqh:439` said so. The strategy still incremented `buyVotes`/`sellVotes`, still entered `buyContributorIndices`, still contributed its weight to `votedWeight`, still counted in `totalVotesCast` and in `conflictRatio`, and still got charged the trade outcome through `SetLastSignalContributors`.

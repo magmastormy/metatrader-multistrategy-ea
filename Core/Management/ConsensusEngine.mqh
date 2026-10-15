@@ -809,6 +809,14 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     double sellScore = 0.0;
     double buyDirectionalQuality = 0.0;
     double sellDirectionalQuality = 0.0;
+    double buyConviction = 0.0;
+    double buyReadiness = 0.0;
+    double buyContext = 0.0;
+    double buyCost = 0.0;
+    double sellConviction = 0.0;
+    double sellReadiness = 0.0;
+    double sellContext = 0.0;
+    double sellCost = 0.0;
 
     int buyContributorIndices[];
     int sellContributorIndices[];
@@ -872,11 +880,21 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
         double score = stratConf * weight * participation * reliability * regimeMult;
 
+        // ProcessSignal resets then fills this for the voter it just ran, so the read is that voter's
+        // own measurement. The live-authority lot ladder below is the consumer.
+        SPipelineEvidenceSnapshot evidence;
+        if(pipeline != NULL)
+            pipeline.GetLastEvidenceSnapshot(evidence);
+
         if(signal == TRADE_SIGNAL_BUY)
         {
             buyVotes++;
             buyScore += score;
             buyDirectionalQuality += stratConf * weight;
+            buyConviction += stratConf;
+            buyReadiness += evidence.readinessScore;
+            buyContext += evidence.contextScore;
+            buyCost += evidence.costScore;
             int idx = ArraySize(buyContributorIndices);
             ArrayResize(buyContributorIndices, idx + 1);
             buyContributorIndices[idx] = i;
@@ -886,14 +904,32 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
             sellVotes++;
             sellScore += score;
             sellDirectionalQuality += stratConf * weight;
+            sellConviction += stratConf;
+            sellReadiness += evidence.readinessScore;
+            sellContext += evidence.contextScore;
+            sellCost += evidence.costScore;
             int idx = ArraySize(sellContributorIndices);
             ArrayResize(sellContributorIndices, idx + 1);
             sellContributorIndices[idx] = i;
         }
     }
 
-    if(buyVotes > 0) buyDirectionalQuality /= buyVotes;
-    if(sellVotes > 0) sellDirectionalQuality /= sellVotes;
+    if(buyVotes > 0)
+    {
+        buyDirectionalQuality /= buyVotes;
+        buyConviction /= buyVotes;
+        buyReadiness /= buyVotes;
+        buyContext /= buyVotes;
+        buyCost /= buyVotes;
+    }
+    if(sellVotes > 0)
+    {
+        sellDirectionalQuality /= sellVotes;
+        sellConviction /= sellVotes;
+        sellReadiness /= sellVotes;
+        sellContext /= sellVotes;
+        sellCost /= sellVotes;
+    }
 
     if(regimeVetoedVotes > 0)
         PrintFormat("[CONSENSUS-REGIME-VETO] %s | %d vote(s) hard-gated by regime | excluded weight %.2f | counted votes %d buy / %d sell",
@@ -1050,6 +1086,14 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     m_lastDecisionContext.confidence             = confidence;
     // Clamped to [0,1]: the weighted sum can exceed 1.0, but the quality gate expects a normalized score.
     m_lastDecisionContext.directionalQuality     = MathMax(0.0, MathMin(1.0, winningQuality));
+    // Mean over the winning side's voters, from each voter's own pipeline evidence.
+    const bool winningWasBuy = (consensusSignal == TRADE_SIGNAL_BUY);
+    m_lastDecisionContext.convictionScore        = winningWasBuy ? buyConviction : sellConviction;
+    m_lastDecisionContext.readinessScore         = winningWasBuy ? buyReadiness  : sellReadiness;
+    m_lastDecisionContext.contextScore           = winningWasBuy ? buyContext    : sellContext;
+    m_lastDecisionContext.costScore              = winningWasBuy ? buyCost       : sellCost;
+    m_lastDecisionContext.readyLiveWeight        = buyScore + sellScore;
+    m_lastDecisionContext.totalLiveWeight        = votedWeight;
     m_lastDecisionContext.buyScore               = buyScore;
     m_lastDecisionContext.sellScore              = sellScore;
     m_lastDecisionContext.buySupport             = (totalDirScore > 0.0) ? buyScore / totalDirScore : 0.0;

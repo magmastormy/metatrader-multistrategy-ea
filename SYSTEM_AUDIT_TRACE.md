@@ -1683,6 +1683,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 205 Four Authority Bonuses Were Paid by Nobody (2026-10-15)
+
+- **How it was found:** Batch 204's §4.2 rewrite required listing which `SConsensusDecisionContext` fields had writers. Six did not, and following one of them (`convictionScore`) to its consumers led past `CandidateBuilder.mqh:383-386` into `CLiveAuthorityResolver::Resolve`, where four thresholds read it - i.e. the field was not decorative, it was sizing the trade.
+- **Traced backward from the lot:** `riskMult` rungs (`0.80/0.65/0.50/0.35`) <- `authorityScore` <- the four measurement bonuses <- `STradeCandidate` <- `ctx.*` <- *no writer*. `qualityScore` was the only measured term actually fed (from `directionalQuality`), which is why the ladder never looked broken: it was producing plausible, merely-too-small numbers.
+- **Cross-checked the obvious sources before choosing one:** the roster's per-strategy twins (`GetStrategyReadinessScore` / `ContextScore` / `CostScore`, read only by the uncalled solo-fallback path) have no writer either, so the pipeline's per-signal evidence snapshot was the only real measurement available. `ProcessSignal` calls `ResetEvidenceSnapshot` on entry, so reading the snapshot immediately after a voter's call cannot return another voter's numbers.
+- **Money direction stated plainly:** consensus lots increase where the measurements clear their thresholds. Mitigated by: every bonus staying conditional, two thresholds now binding for the first time as the operator set them, `pipeline == NULL` paying nothing instead of being handed an invented neutral value, and the per-trade risk ceiling upstream unchanged.
+- **Loudness:** `reasons` gained `QUALITY / CONVICTION / READINESS / CONTEXT / COST`, because a lot that grows after this batch must be attributable to a measurement in the journal, not only in the score.
+- **Verification:** compile 8 programs, 0 errors / 0 total warnings. No journal evidence exists (newest 2026-09-23); this moves position size, so the first attach must confirm `AUTHORIZED | score=` varying beyond the kind-only sum.
+
 ## Batch 204 The Regime Veto Stops Being Arithmetic (2026-10-15)
 
 - **How it was found:** the Batch 195 entry in `RUNTIME_DECISION_GRAPH.md` recorded "A zeroed score still counts as a vote for the minimum-voter test", and the AGENTS.md §6 bullet on `[CONSENSUS-REJECT]` called the ready-weight dilution "the known gap". Both described the same veto producing opposite errors, so neither could be read as intended behaviour.
