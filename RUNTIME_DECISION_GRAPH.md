@@ -336,6 +336,25 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 204: A Regime Veto Removes the Vote Itself (2026-10-15)
+
+- **Before:** `RegimeStateHardGate(state, type)` returning `0.0` zeroed the *score* only, and `ConsensusEngine.mqh:439` said so. The strategy still incremented `buyVotes`/`sellVotes`, still entered `buyContributorIndices`, still contributed its weight to `votedWeight`, still counted in `totalVotesCast` and in `conflictRatio`, and still got charged the trade outcome through `SetLastSignalContributors`.
+- **Now:** the category multiplier is read before the accumulations and a value `<= 0.0` skips the strategy outright. `[CONSENSUS-REGIME-VETO] <symbol> | N vote(s) hard-gated by regime | excluded weight=W | counted votes B buy / S sell` reports it once per scan; a fully vetoed field reaches `[CONSENSUS-ABSTAIN]` instead of `[CONSENSUS-TIE] buyScore=0.000 sellScore=0.000`.
+- **Gate-by-gate direction:**
+
+| Gate | Before | After |
+|---|---|---|
+| `readyWeightRatio` | vetoed weight in the denominator, no score in the numerator: the veto tightened it | vetoed strategies absent from both |
+| `winningVotes >= effectiveMinVoters` | a forbidden vote helped reach the two-voter minimum | only permitted votes count |
+| `quorumRatio = winningVotes / totalVotesCast` | vetoed votes on both sides moved the ratio | reflects only real support |
+| `[CONSENSUS-VETOED] conflictRatio` | vetoed opposition could veto a direction it was forbidden to oppose | losing votes are permitted voters only |
+| `winningQuality` / `effectiveQualityThreshold` | per-side quality averaged in zero-score participants | averaged over actual contributors |
+| `winningContributors` -> attribution, `[TRADE-ATTRIBUTION]`, `[AUTHORITY-LEARN]`, `m_strategyHealthScore`, cluster tag and `clusterCode` | a regime-forbidden strategy was credited/blamed for a position it could not open, and that error fed its own future reliability | contributors are permitted voters only |
+
+- **Unchanged:** the deweights. Breakout reversion at 0.25 and Chaos at 0.40 multiply the score and still vote, because `RegimeComposite.mqh:246-250` clamps every category weight to `>= 0.01` and the confidence factors to `0.30`/`0.55` - so `0.0` is reachable only through the hard gate. `eligibleLiveVoterCount` still counts every live voter, because it measures the size of the field for `SPARSE_INTRABAR`, not who spoke.
+- **Supersedes** the Batch 195 note "A zeroed score still counts as a vote for the minimum-voter test".
+- No change to risk gating, lot math, stops, sends or exit authority; the veto table itself is untouched.
+
 ## Batch 203: Realized Trade Results Reach the Neural Net (2026-10-14)
 
 - **New edges (learning only):** `send -> ReservePredictionForSignal(symbol::NN) -> candidate.predictionId -> Execute -> UpsertPredictionPositionMap(positionId, id) -> close deal -> AccumulatePendingCloseProfit(positionId, net) -> ProcessClosedPositionsForNNTraining -> GetPendingCloseProfits (id from the map) -> UpdateTradeResultByPredictionId`. Five of those links had no writer, and the sixth (the comment-based id read) could never resolve because a closed position is not selectable.
@@ -402,7 +421,7 @@ The main EA delegates to the following extracted managers instead of inline logi
 
 ## Batch 195: `GetType()` Restored on Two Strategies, Which Returns a Regime Veto (2026-10-14)
 - **The vote-scoring path is unchanged; the value entering it was wrong.** `EvaluateConsensusInternal` computes `score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType())` (`ConsensusEngine.mqh:856`, `:1134`, `:1264`). `GetRegimeCategoryMultiplier` first calls `RegimeStateHardGate(snap.state, strategyType)`, which returns 0.0 for reversion-like types in `REGIME_TREND` and 0.25 in `REGIME_BREAKOUT`, and then selects a category weight by type. `CLiquiditySweepStrategy` and `CRangeCompressionBreakout` reported `STRATEGY_TYPE_CUSTOM` because they declare `GetStrategyType()` rather than overriding `GetType()`, so they matched no classification and took `default: 1.0`.
-- **Restored edge:** Range Compression (a reversion-like type in the gate) now has its score zeroed in a confirmed trend regime and is deweighted to 0.25 in a breakout regime, and it is grouped with Volatility Breakout under `breakoutWeightMult`; Liquidity Sweep is grouped with the ICT family under `ictWeightMult`. A zeroed score still counts as a vote for the minimum-voter test - see the corrected comment at `ConsensusEngine.mqh:439` - but it dilutes `readyWeightRatio`, because its weight stays in the `votedWeight` denominator while its score leaves the numerator.
+- **Restored edge:** Range Compression (a reversion-like type in the gate) now has its score zeroed in a confirmed trend regime and is deweighted to 0.25 in a breakout regime, and it is grouped with Volatility Breakout under `breakoutWeightMult`; Liquidity Sweep is grouped with the ICT family under `ictWeightMult`. A zeroed score still counted as a vote for the minimum-voter test and diluted `readyWeightRatio`, because its weight stayed in the `votedWeight` denominator while its score left the numerator - **both of those are fixed by Batch 204**, which drops a hard-gated strategy before any accumulation.
 - **What did not move:** magic numbers, position comments, the ownership window, the risk gates, the lot, and every other `GetType()` consumer (five of them test only `STRATEGY_BRAIN`/`STRATEGY_AI_ENHANCED`; `LiveAuthorityResolver` uses it for a report). `CMagicNumberAllocator::GetStrategyOffset` does switch on strategy type, but the allocator has no call site, so no open position changes bucket (the allocator was deleted in Batch 197).
 - **§3 invariants:** §3.1 and §3.2 untouched. §3.4 is served: a manager's consensus now weighs these two voters the way the regime engine intends.
 

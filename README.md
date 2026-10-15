@@ -439,6 +439,12 @@ Six links were missing between a filled trade and the net's training buffer: not
 
 Two things were left alone deliberately: realized P/L is still not a *training target* (the meta-labeler keeps the barrier's directional sample, since switching mid-dataset would mix two label semantics in one training set), and an over-long comment now skips the `|N:<id>` marker instead of replacing the position comment with a truncated fragment. No entry, exit, lot or risk path changed.
 
+### Batch 204: a regime veto now vetoes the vote
+
+`RegimeStateHardGate` zeroes a category the regime forbids - reversion in a confirmed trend, trend/momentum in a range - but only its *score* was zeroed. The vote still counted toward the minimum-voter rule, the quorum ratio and the conflict deadband, still took a contributor slot, and still added its weight to the ready-ratio denominator that then judged it. So one veto made three gates looser and one stricter at the same time, and because Batch 199 charges contributors with the closed trade's outcome, a strategy the regime forbade was credited or blamed for a position it was not allowed to open - through `m_strategyHealthScore`, that error fed the reliability multiplier of its future permitted votes.
+
+The consensus scan now drops a hard-gated strategy before any of those accumulations. Entry count moves both ways, and both moves are the point: two permitted voters agreeing are no longer diluted by three forbidden ones, while a single permitted voter can no longer reach the two-voter minimum on the strength of a colleague the regime killed. Deweights are untouched (Breakout reversion at 0.25, Chaos at 0.40 still vote with a smaller score). Watch the new `[CONSENSUS-REGIME-VETO] <symbol> | N vote(s) hard-gated by regime | excluded weight= | counted votes=` line; a fully vetoed field now prints `[CONSENSUS-ABSTAIN]` instead of `[CONSENSUS-TIE]`. Risk ceilings, lot math, stops, sends and the exit authority are unchanged.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

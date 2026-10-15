@@ -437,7 +437,7 @@ double CConsensusEngine::GetRegimeCategoryMultiplier(const string symbol, ENUM_S
 
     double gate = RegimeStateHardGate(snap.state, strategyType);
     if(gate <= 0.0)
-        return 0.0;   // zero score only: the vote still counts toward the minimum-voter floor
+        return 0.0;   // EvaluateConsensusInternal reads this zero as "not a voter" and drops the vote
 
     // Per-category weight from the live regime composite (Hurst-blended).
     double catMult = 1.0;
@@ -803,6 +803,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     int buyVotes = 0;
     int sellVotes = 0;
     int eligibleLiveVoterCount = 0;
+    int regimeVetoedVotes = 0;
+    double regimeVetoedWeight = 0.0;
     double buyScore = 0.0;
     double sellScore = 0.0;
     double buyDirectionalQuality = 0.0;
@@ -856,7 +858,19 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         double reliability = GetStrategyReliabilityMultiplier(i);
 
         double weight = m_src.GetStrategyWeight(i);
-        double score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
+
+        // The composite is clamped to >= 0.01, so zero here is RegimeStateHardGate's veto. A vetoed
+        // strategy must not be a voter at all: counting it feeds quorum while its weight only
+        // dilutes the ready ratio.
+        double regimeMult = GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
+        if(regimeMult <= 0.0)
+        {
+            regimeVetoedVotes++;
+            regimeVetoedWeight += weight;
+            continue;
+        }
+
+        double score = stratConf * weight * participation * reliability * regimeMult;
 
         if(signal == TRADE_SIGNAL_BUY)
         {
@@ -880,6 +894,10 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(buyVotes > 0) buyDirectionalQuality /= buyVotes;
     if(sellVotes > 0) sellDirectionalQuality /= sellVotes;
+
+    if(regimeVetoedVotes > 0)
+        PrintFormat("[CONSENSUS-REGIME-VETO] %s | %d vote(s) hard-gated by regime | excluded weight %.2f | counted votes %d buy / %d sell",
+                    symbol, regimeVetoedVotes, regimeVetoedWeight, buyVotes, sellVotes);
 
     if(buyVotes == 0 && sellVotes == 0)
     {

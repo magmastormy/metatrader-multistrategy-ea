@@ -6,7 +6,75 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-14
+## [Unreleased] - 2026-10-15
+
+### Batch 204: a regime veto now vetoes the vote, not just the score
+
+#### The defect
+`RegimeStateHardGate` returns `0.0` for a strategy category the live regime forbids - mean reversion in
+`REGIME_TREND`, trend/momentum in `REGIME_RANGE` - and the comment at the zero return said what the code
+did: "zero score only: the vote still counts toward the minimum-voter floor". A vetoed strategy therefore
+passed every other test, incremented `buyVotes`/`sellVotes` and landed in `buyContributorIndices`, with
+only its score zeroed. One veto moved five gates in two opposite directions:
+
+- `winningVotes >= effectiveMinVoters` - **loosened**. One real supporter plus one forbidden one reached the
+  two-independent-voter quorum (Batch 13).
+- `quorumRatio` against `totalVotesCast`, and the `[CONSENSUS-VETOED]` `conflictRatio` - **loosened**. A
+  vetoed losing vote should not have been able to oppose, and a vetoed winning one inflated the ratio.
+- `readyWeightRatio = (buyScore + sellScore) / votedWeight` - **tightened**. `votedWeight` sums the weight of
+  everyone in the contributor arrays, so a vetoed strategy fed the denominator and nothing to the numerator.
+  The line above it claims "abstainers cannot tighten this"; a vetoed voter is worse than an abstainer,
+  because an abstainer is skipped before it reaches the array.
+- `winningContributors` -> `SetLastSignalContributors` -> `[TRADE-ATTRIBUTION]`, `CStrategyMgrTradeFeedback`,
+  the per-strategy health score and `[AUTHORITY-LEARN]` - **polluted**. Since Batch 199 charges contributors
+  with the closed trade's outcome, a strategy the regime forbade was credited or blamed for a position it
+  could not open, and `m_strategyHealthScore` feeds the reliability multiplier of its *future* permitted
+  votes. The learning loop wired in 199 and 203 was training on trades its own gate had vetoed.
+- `buyDirectionalQuality` / `sellDirectionalQuality` - diluted by participants whose contribution was zero.
+
+#### The fix
+`EvaluateConsensusInternal` reads the category multiplier into a variable and, at `<= 0.0`, skips the
+strategy entirely: no vote, no contributor slot, no weight in the denominator. Zero is provably the hard gate
+and nothing else - `RegimeComposite.mqh:246-250` clamps every category weight to `>= 0.01`, the chaos and
+low-confidence factors are `0.30`/`0.55`, and `RegimeStateHardGate` is the only path to zero - so a deweight
+(Breakout reversion at `0.25`, Chaos at `0.40`) still votes with a smaller score, as intended.
+
+#### Behaviour direction
+Entries both appear and disappear, and neither is accidental:
+- **More** where a trend regime killed several reversion voters while a couple of trend voters genuinely
+  agree: the ratio is now `score / (those two weights)` rather than `score / (five weights)`, and the vetoed
+  opposition can no longer trip the conflict deadband.
+- **Fewer** where the only support was vetoed: one permitted voter can no longer reach `effectiveMinVoters`
+  on the strength of a forbidden colleague, and a fully vetoed field prints `[CONSENSUS-ABSTAIN]` where it
+  used to print `[CONSENSUS-TIE] buyScore=0.000 sellScore=0.000`.
+Both directions serve the reason the hard gate exists: fading a confirmed trend is the fastest way to blow an
+account, and that judgement should not depend on which way the surrounding arithmetic happens to fall.
+
+#### Deliberately not changed
+- The dead paths. `EvaluateConsensusProbeOnlyInternal` and `EvaluateConsensusTwoTierInternal` carry the same
+  zero-score shape, and `TryFallbackSoloSignalInternal` a third copy, but each says in its own header that it
+  has no caller; editing them would be an unverifiable claim about behaviour that never runs. They stay in
+  `SYSTEM_STRUCTURE.md` §4 as wireable, not wired.
+- `eligibleLiveVoterCount` still counts every live voter, vetoed or not. It answers "how large is the field",
+  which drives the `SPARSE_INTRABAR` class and the thin-field quality bump; a veto changes who is speaking,
+  not who exists.
+- No new operator input, no threshold moved. This corrects an accounting error, so there is nothing to tune.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- `SYSTEM_STRUCTURE.md` §4.2 was rewritten to the algorithm that actually runs. The Batch 82 vocabulary it
+  carried - role multiplier, dynamic weight decay, contribution-class denominators, four veto-code names -
+  matches no code in the repository, and `SConsensusDecisionContext`'s `convictionScore`, `readinessScore`,
+  `contextScore`, `costScore`, `readyLiveWeight` and `totalLiveWeight` have no writer while
+  `CandidateBuilder.mqh:383-386` copies four of them into every candidate and two log lines print them as
+  `0.00`. Filed as Batch 205 rather than half-fixed here.
+- No runtime evidence: the EA is not attached and the newest journal is 2026-09-23. Expected new signs:
+  `[CONSENSUS-REGIME-VETO] <symbol> | N vote(s) hard-gated by regime | excluded weight | counted votes` at
+  most once per consensus scan, and `[TRADE-ATTRIBUTION] contributors=` that never names a category the
+  regime forbids. A `[CONSENSUS-REJECT] ... Ready weight ratio` line in a confirmed trend regime should now
+  be rarer, and `[CONSENSUS-REJECT] ... Winning votes` more common for the same scan - if the *first* does
+  not drop while the second does not rise, the skip is not being reached.
+
 
 ### Batch 203: the neural net can now see which of its trades made money
 

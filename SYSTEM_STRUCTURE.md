@@ -1187,39 +1187,29 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 
 ### 4.2 Consensus
 
-- Manager computes strategy votes and confidence.
-- Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
-- Quorum is evaluated via normalized weighted conviction pooling:
-  - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
-  - denominator weight = adjusted live weight reduced by contribution class (`raw-none`, `pipeline-filtered`, `infrastructure/warmup`, or other neutral)
-  - ready live weight = `denominator weight x pipeline readinessScore`
-  - **dynamic weight decay** (Batch 82): strategies filtering ≥ 15 consecutive cycles have weight decayed by 5% rate per additional filter, reducing denominator bloat; weight recovers when strategy votes
-  - per-direction conviction = `sum(ready live weight x conviction_i)` for agreeing live voters
-  - conviction is confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
-  - directional quality = `direction conviction / direction weight`
-  - support ratio = `direction weight / total ready live weight`
-  - **adaptive quorum thresholds** (Batch 82): direction passes full quorum if:
-    - 1 active voter: `directional_quality >= 0.40`, support ≥ 0.15
-    - 2 active voters: `directional_quality >= 0.48`, support ≥ 0.30
-    - 3+ active voters: `directional_quality >= InpQuorumThreshold (0.55)`, support ≥ scan-mode floor
-    - AND agreeing voters clear the effective minimum AND `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
-  - Adaptive thresholds prevent denominator dilution where inactive strategies inflate the weight pool; single/dual-voter consensus can now pass with proportional thresholds
-- if both directions pass, higher score wins unless the spread is inside the configured conflict deadband, in which case consensus is vetoed to `TRADE_SIGNAL_NONE`
-- intrabar may instead admit a `SPARSE_INTRABAR` decision when exactly one direction has one voter and readiness/context/cost/support/coverage thresholds all remain high
-- Vote admission into quorum reuses the pipeline's effective confidence threshold for that cycle, preventing pipeline-approved relaxed-threshold signals from being dropped before consensus.
-- Consensus may fail by:
-  - raw no-vote
-  - quorum miss (threshold and/or min voters)
-  - intrabar ineligibility
-  - filter rejection
-- **Detailed veto diagnostics** (Batch 82): failures emit specific veto codes with numeric evidence:
-  - `no_voters`: no strategies produced votes
-  - `insufficient_quality`: shows actual quality vs required, voter count, support ratio
-  - `insufficient_support`: shows actual support vs required floor, voter count, quality
-  - `insufficient_readiness_weight`: shows ready vs minimum required weight
-- `direction_quorum_not_met`: shows all four dimensions (buy/sell quality and support)
-- Post-quorum nullification is emitted as `[CONSENSUS-VETO]` when timeframe consistency or the intrabar single-voter floor clears an otherwise qualified candidate.
-- Untagged placeholder abstentions (`BASE_INITIALIZED`, empty override tags) are defensively downgraded before ready-live weighting so broken strategy telemetry cannot silently bloat the quorum denominator.
+Live path is `CConsensusEngine::EvaluateConsensusInternal` (the Two-Tier, probe-only and fallback-solo siblings have no caller).
+
+- `m_src.RefreshMarketRegime()` publishes the per-symbol regime into the signal context first, so AI adaptation and this scan read the same snapshot.
+- Per live voter: raw signal and confidence, then `CUnifiedSignalPipeline::ProcessSignal` may filter it (`[CONSENSUS-FILTERED]`). A NONE or filtered signal contributes nothing.
+- **Vote score** = `stratConf × weight × participation × reliability × regimeCategoryMult`.
+  - `weight` is the catalog row's weight, operator-overridden at init (`[CATALOG]`).
+  - `participation` = `clamp(0.55, 1.05, 0.40 + 0.65 × participationScore)`; `participationScore` is registered at 0.90 and never updated, so this is a constant 0.985 (recorded in §4.8).
+  - `reliability` = `clamp(0.55, 1.15, 0.65 + 0.50 × healthScore)` — live since Batch 199 wrote the contributor list that feeds the health counters.
+  - `regimeCategoryMult` comes from the same `CRegimeSnapshot` as the hard gate; invalid snapshots return 0.30 (stand-aside, not a veto).
+- **A regime hard veto is not a vote** (Batch 204). `RegimeStateHardGate` returns 0.0 for reversion in `REGIME_TREND` and for trend/momentum in `REGIME_RANGE`; the multiplier is therefore 0 and the strategy is skipped before any accumulation, so it cannot enter the vote count, the contributor array, the ready-ratio denominator, the conflict deadband or the outcome-learning charge. A *deweight* (Breakout reversion 0.25, Chaos 0.40, low confidence 0.55) still votes with a smaller score. `[CONSENSUS-REGIME-VETO]` reports the excluded count and weight once per scan.
+- Directional quality per side is the mean of `stratConf × weight` over that side's voters (vetoed strategies excluded by the rule above).
+- Gates, in order, each printing `[CONSENSUS-REJECT]` with its own numbers:
+  - `readyWeightRatio = (buyScore + sellScore) / votedWeight`, where `votedWeight` sums the weights of the strategies that actually contributed score; compared against `InpConsensusMinReadyWeightRatio` (clamped 0.10–1.00 at `EAOrchestrator.mqh:1853`).
+  - Higher score wins; exact tie → `[CONSENSUS-TIE]`.
+  - `winningVotes ≥ effectiveMinVoters` where `effectiveMinVoters = max(baseMinQuorum, MIN_CONSENSUS_VOTERS=2)`, deliberately never capped by the eligible count (capping made one lone voter 100% consensus).
+  - `supportRatio = winningScore / (winningScore + losingScore) ≥ supportFloor` (mode-specific).
+  - `quorumRatio = winningVotes / (buyVotes + sellVotes) ≥ buyQuorum/sellQuorum`, each `clamp(0.30, 0.80, baseQuorum ± quality adjustment)`.
+  - `conflictRatio = losingVotes / (winningVotes + losingVotes) ≤ InpConsensusConflictDeadband` → `[CONSENSUS-VETOED]`.
+  - `winningQuality ≥ effectiveQualityThreshold` = `max(pipeline min confidence, last pipeline effective floor)`.
+- `confidence = min(0.95, winningQuality × 0.8 + supportRatio × 0.2)`; `confluence = winningVotes`; class is `SPARSE_INTRABAR` when intrabar and fewer than three eligible live voters, else `FULL_QUORUM`.
+- Winning contributor indices are published through `SetLastSignalContributors` with the dominant role, cluster tag and normalized cluster code — the input Batch 199's attribution, `[TRADE-ATTRIBUTION]`, `[RISK-CLUSTER]` governance and `[AUTHORITY-LEARN]` all read.
+- Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final acceptance; post-quorum nullification prints `[CONSENSUS-VETO]`.
+- **Legacy vocabulary still in this file's older notes:** "role multiplier", "dynamic weight decay", "contribution class denominator", and the veto codes `insufficient_quality` / `insufficient_support` / `insufficient_readiness_weight` / `direction_quorum_not_met` describe the Batch 82 implementation and match no code in the repository. The live strings are the `[CONSENSUS-REJECT]` reasons above. `SConsensusDecisionContext.convictionScore/readinessScore/contextScore/costScore/readyLiveWeight/totalLiveWeight` are the same design's leftovers: no writer, but `CandidateBuilder.mqh:383-386` copies them into the candidate and the candidate log prints them as `0.00`.
 
 ### 4.3 Validation
 
@@ -1320,6 +1310,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **Consensus participation has never adapted** (recorded Batch 200, left alone in 201). `StrategyMgrRoster.mqh:256` registers `participationScore = 0.90` and `UpdateParticipationScore` / `RecordSignalGenerated` / `RecordSignalFiltered` have no caller, so `GetStrategyParticipationMultiplier` returns the same `0.40 + 0.65*0.90 = 0.985` for every strategy in every vote: the score formula's adaptive term is a constant haircut. Not wired in 201 on purpose - its targets (1.0 signal / 0.65 filtered / **0.35 none**) with decay 0.85 per call would pin intrinsically low-frequency strategies (`NYOpenGapStrategy`, statistical arbitrage) at the floor and scale their votes to 0.6275, which is a bias the wiring would invent rather than a control it restores.
 - **The regime value the AI reads is now written** (Batch 201). `m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its `default:` branch every cycle and the per-regime confidence factors (0.9 trend / 1.1 range / 1.2 volatile) were never applied. `CEnterpriseStrategyManager::RefreshMarketRegime` maps the live `CRegimeEngine` snapshot - the same source as `GetRegimeCategoryMultiplier` - into `ENUM_MARKET_REGIME` at the top of `EvaluateConsensusInternal` and prints `[MARKET-REGIME]` on each change; an invalid snapshot stays `MARKET_REGIME_UNKNOWN`, which is the honest no-adaptation case.
 - **The ranging-regime trailing pause is still unwired, and why.** `CPositionLifecycleManager::m_regimeEngine` is NULL (`SetRegimeEngine` has no caller), so the branch at `PositionLifecycleManager.mqh:372` never runs. The per-symbol regime source now exists (`GetManagerForSymbol(symbol).GetCurrentMarketRegime()`), but `CTradeManager::ManageAllPositions` walks the whole book with no symbol filter, so ranging symbols cannot be routed to the breakeven-only branch without changing the exit authority's API. Not attempted without an attach to verify it against live positions.
+- **A regime hard veto now removes the vote** (Batch 204). `RegimeStateHardGate`'s `0.0` used to zero only the score: the strategy still counted in `buyVotes`/`sellVotes`, entered `winningContributors`, kept its weight in the ready-ratio denominator and could oppose through the conflict deadband. One veto loosened the min-voter, quorum and conflict gates while tightening the weight gate, and charged the outcome to a strategy the regime forbade. The skip is provably restricted to the hard gate: `RegimeComposite.mqh:246-250` clamps every category weight to `>= 0.01` and the chaos/low-confidence factors are `0.30`/`0.55`, so no deweight can reach zero.
 - **Trade-linked neural-net labels are connected** (Batch 203). Reserve immediately before the send, bind at execution through `UpsertPredictionPositionMap(positionId, predictionId)`, accumulate realized profit+swap+commission at close, drain in `ProcessClosedPositionsForNNTraining` which now *consumes* each row it reads. The id is resolved from the position map, not the position comment: a closed position is not selectable, and the previous comment read returned an empty id for every row, which is why the whole loop was inert even after its writers arrived. Only a candidate whose contributor list names the neural net may take a label (`ContributorsIncludeNeuralNet`), and `ReleaseNeuralNetPrediction` un-tags a reservation whose send produced no position.
 - **Realized P&L is still not a training target, on purpose** (Batch 203). `UpdateTradeResultByPredictionId` tags the barrier entry and counts a win; the meta-labeler keeps the barrier's directional outcome as its sample. Switching the meta target to profitability is the textbook meta-labeling move, but the existing dataset would then mix semantics mid-stream - old samples "direction was right", new ones "trade paid" - and that transition window is invisible on a live account. Operator decision, with journals.
 - **`m_tradeLinkedLabels` can double-count one winning trade**: once when the result lands on an unresolved barrier entry, once in `AddTrainingExample` when that entry resolves. Counter's only consumers are a `>= 5` readiness guard and the checkpoint summary, so it is recorded rather than patched.
