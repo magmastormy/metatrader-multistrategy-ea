@@ -284,7 +284,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3376`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3517`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -432,6 +432,12 @@ Two nearby findings were **not** wired, each for a stated reason: participation 
 ### Batch 202: the heartbeat `paused` field reports a real pause
 
 `m_tradingPaused` printed in every `[HEARTBEAT]` line while its only writers had no callers, so it read `false` even when the synthetic-spike monitor had paused new positions. `CHeartbeatTelemetry::Emit` now takes the state and pushes it through `SetTradingPaused` before the counter snapshot, fed by `m_spikeMonitor.IsPaused()` at the existing emit site. No decision reads that field, so nothing but the log changed - but a pause is now visible in a journal, which is how the operator learns the monitor acted at all.
+
+### Batch 203: the neural net now learns from its own trades
+
+Six links were missing between a filled trade and the net's training buffer: nothing reserved a prediction for the send, nothing assigned `candidate.predictionId`, nothing wrote the position-to-prediction map, nothing queued the realized result at close, the drain never consumed its rows, and the id lookup read a **live position comment** - impossible once the position had closed, so even a filled queue would have returned empty ids. All six are connected now, and a label is only taken when the net actually contributed to the decision (`candidate.hasNeuralNetContributor`), with the reservation released if the send produces no position.
+
+Two things were left alone deliberately: realized P/L is still not a *training target* (the meta-labeler keeps the barrier's directional sample, since switching mid-dataset would mix two label semantics in one training set), and an over-long comment now skips the `|N:<id>` marker instead of replacing the position comment with a truncated fragment. No entry, exit, lot or risk path changed.
 
 ## AI Integration
 

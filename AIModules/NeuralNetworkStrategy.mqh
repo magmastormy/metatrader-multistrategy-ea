@@ -1660,6 +1660,8 @@ public:
         m_enableOnlineTraining = enabled;
     }
 
+    bool IsOnlineTrainingEnabled() const { return m_enableOnlineTraining; }
+
     void SetWeightMutationEnabled(const bool enabled)
     {
         // Deprecated: retained for backward compatibility only.

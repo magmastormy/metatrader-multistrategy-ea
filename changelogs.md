@@ -8,6 +8,34 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-14
 
+### Batch 203: the neural net can now see which of its trades made money
+
+#### The broken chain
+The net's online training has never been fed a realized trade result. Five links were missing, each verified at its own call site: `ReservePredictionForSignal` had no caller, so no observation was ever marked as belonging to a trade; `candidate.predictionId` was never assigned, so `TradeExecutor.mqh:416`'s branch that appends `|N:<id>` to the order comment never ran; nothing called `UpsertPredictionPositionMap` outside the class self-test, so the position-to-prediction map stayed empty; `AccumulatePendingCloseProfit` had no caller, so the pending-close arrays stayed empty and `GetPendingCloseProfits` returned 0; and `ProcessClosedPositionsForNNTraining` therefore returned at its first guard every cycle for the whole life of the repo. `[NEURAL-NET] TRAIN-BOOTSTRAP` said as much at runtime - it trains on self-labelled barrier outcomes because no traded label ever arrives.
+
+A sixth flaw meant wiring the writer alone would have accomplished nothing: `GetPendingCloseProfits` resolved the prediction id by selecting the **live position** and reading its comment. A closed position is not selectable, so every row would have come back with an empty id and been skipped. It reads the persistent map now, with the comment only as a fallback while a position still exists.
+
+#### What is wired
+- `Send site` (`EAOrchestrator`): the observation is reserved **immediately before** `m_tradeExecutor.Execute`, not at candidate build, so no validator/risk/authority refusal can leave a trade-tagged barrier entry for a trade that never happened. If the send does not resolve to a position, `ReleaseNeuralNetPrediction` un-tags it; the release also fires on a send that executed but whose deal could not be read back.
+- `ContributorsIncludeNeuralNet` is a new candidate flag: only a decision the net actually advocated may take a label. Reserving for an indicator-only trade would credit the net with a direction it never proposed - the pollution this batch was at risk of introducing, and the reason the wiring was not done blind in 201.
+- `Execution`: `UpsertPredictionPositionMap(positionId, predictionId)` binds the fill to the prediction and prints `[NN-LABEL] <symbol> | position= | prediction= | bound at send`.
+- `Close`: `AccumulatePendingCloseProfit(positionId, netProfit)` joins the existing account-level feeds, where profit, swap and commission are already summed.
+- `Drain`: `ProcessClosedPositionsForNNTraining` now consumes every row it reads, linked or not - a row left behind is re-read on every cycle forever. The `IsTraining()` precondition is gone, so a net that has not reached its first training run still accrues the trade-linked count that its own bootstrap guard reads.
+- `ClearPendingCloseProfit` deleted: an uncalled duplicate of `ConsumePendingCloseProfit` minus the return value.
+
+#### Deliberately not changed
+`UpdateTradeResultByPredictionId` sets `linkedToTrade` and counts a win; the realized number is **not** turned into a training target, and the meta-labeler keeps the barrier's directional outcome as its sample. Making profitability the meta target is the textbook move, but the existing dataset would then mix two label semantics - old samples "direction was right", new ones "trade paid" - and that mixed window is invisible in a live account and unverifiable without a run. It is recorded in `SYSTEM_STRUCTURE.md` §4 as a decision for the operator with journals in hand.
+
+Also noted, not fixed: `m_tradeLinkedLabels` can double-count one winning trade (once here when the result lands on an unresolved barrier entry, once in `AddTrainingExample` when that entry resolves). The counter's only consumers are a `>= 5` readiness guard and checkpoint stats.
+
+#### Behaviour direction
+No entry, exit, lot or risk path changed. A net-advantaged trade's comment now carries `|N:<id>` **when it fits**: `BuildTradeCommentWithPrediction` used to return a truncated `|N:` fragment whenever the base plus id passed the broker's 31-character cap, which would both wipe the readable base and produce a marker `ExtractPredictionIdFromComment` cannot parse; it leaves the comment alone in that case, because the position map is the binding the close path actually reads. Engine send comments (ATR-SCALP / GRID-RECOVERY / SPIKE-HUNT / SCALP|) are untouched - they never set `predictionId` - so Batch 197's exit discrimination is unaffected. What changes is what the net learns from.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- No runtime evidence - the EA is still not attached and the newest journal is 2026-09-23. Expected first-run signs: `[NN-LABEL]` per net-advantaged fill, `[NN-TRAINING] Updated trade result for prediction ...` per close of one, `[NEURAL-NET] TRAIN-BOOTSTRAP` disappearing once five such labels exist, and `tradeLinked=` rising in the checkpoint summary. If `[NN-LABEL]` appears but `[NN-TRAINING]` never does on closes, the map lookup is failing and the labels are being dropped.
+
+
 ### Batch 202: the heartbeat's `paused` field now reports a real pause
 
 `CDiagnosticsManager::m_tradingPaused` prints in every `[HEARTBEAT]` line, and its only two writers had no callers, so the field printed `false` for the life of the repository - including in the windows when `CSyntheticSpikeMonitor` had genuinely paused new positions. Batch 200 recorded it as log-only; this closes it.
@@ -93,7 +121,7 @@ What that switched off, verified consumer by consumer:
 #### The writer
 `EvaluateConsensusInternal` publishes at the one point where the winning side is known and every gate has passed: `SetLastSignalContributors(winningContributors, dominantRole, dominantCluster, normalizedClusterCode)` (`ConsensusEngine.mqh:1007-1021`), with names resolved from the roster so they match `GetStrategyIndexByName`, and the cluster code normalized through `CRiskClusterCodec` because risk compares it letter-for-letter.
 
-Attribution is recorded **at execution against the fill's own `positionId`** (`EAOrchestrator.mqh:3493-3504` -> `AttributeExecutedPosition`), not at `DEAL_ENTRY_IN` from the cached context. The cache holds whichever decision ran last; the send knows exactly which voters produced this trade. The old `DEAL_ENTRY_IN` upsert is removed for that reason, and provenance now records every executed trade rather than only AI ones. Each attribution prints `[TRADE-ATTRIBUTION] <symbol> | position= | contributors=` so the loop's first live output is visible.
+Attribution is recorded **at execution against the fill's own `positionId`** (`EAOrchestrator.mqh:3544-3563` -> `AttributeExecutedPosition`), not at `DEAL_ENTRY_IN` from the cached context. The cache holds whichever decision ran last; the send knows exactly which voters produced this trade. The old `DEAL_ENTRY_IN` upsert is removed for that reason, and provenance now records every executed trade rather than only AI ones. Each attribution prints `[TRADE-ATTRIBUTION] <symbol> | position= | contributors=` so the loop's first live output is visible.
 
 Engine books are now filtered out of the feedback path before anything is recorded (`StrategyMgrTradeFeedback.mqh:111-118`, by comment tag *or* by Batch 197's magic band). This is the gap Batch 197 recorded: an engine deal on a symbol with a live contributor context would otherwise be tagged with strategies that never signalled it, and its P/L would move their weight.
 
@@ -537,7 +565,7 @@ Batch 185 deleted a comment at `TradeManager.mqh` that described a netting check
 On FX that quotient is tiny (`EURUSD` at a 15-point spread: `0.00015 / 0.30 = 0.0005`) so the gate never fired. On the rest of the book it is enormous: `XAUUSD` at a 25-point spread gives `0.25 / 0.30 = 0.83` against a 0.25 threshold, and a Volatility-25 spread of 1,727 points gives `17.27 / 0.50 = 34.5`. In other words the gate was **inert on FX and rejecting essentially every gold and synthetic consensus entry** — and `result.spreadScore` was recorded as 0 for all of them.
 
 #### Also fixed: this was the last silent veto
-`EAOrchestrator.mqh:3418-3422` handles a failed validation with `m_heartbeat.IncValidatorRejects(); continue;` and prints nothing. Every other arm prints its own `[POST-CONSENSUS-FILTER]` line, so the spread veto was invisible — that is why the September journals show 71 `atr_ratio` lines and not one spread line, which reads as "the spread gate never triggered" rather than "it triggered and said nothing". Both branches of the gate now print `filter=spread_vs_atr` with the ratio, the threshold in force and the ATR, and the reason string says `spread/ATR=` instead of `ratio=`.
+`EAOrchestrator.mqh:3483-3487` handles a failed validation with `m_heartbeat.IncValidatorRejects(); continue;` and prints nothing. Every other arm prints its own `[POST-CONSENSUS-FILTER]` line, so the spread veto was invisible — that is why the September journals show 71 `atr_ratio` lines and not one spread line, which reads as "the spread gate never triggered" rather than "it triggered and said nothing". Both branches of the gate now print `filter=spread_vs_atr` with the ratio, the threshold in force and the ATR, and the reason string says `spread/ATR=` instead of `ratio=`.
 
 #### Changed
 - `Core/Management/PostConsensusValidator.mqh:292`: arguments passed in the declared order — `(symbol, spreadScore, effectiveSpreadATRRatio, atrValue)`.
@@ -757,7 +785,7 @@ Net effect: every scalp entry's budget contribution evaporated one tick after th
 - **Fix**: the entry resolves the position ticket with `CTradeMgrPreflight::FindFreshPositionForSend` (symbol + direction + opened within 30 s + EA-owned magic) and registers *that*. If the position is not visible yet, nothing is registered — `SyncScalpPositionTracking` adopts it by position ticket on the next pass, and the budget the entry already consumed stays consumed. `[SCALP-ENTRY]` prints `ticket=0 | position not visible yet, sync will adopt it` in that case instead of a ticket that would be dropped.
 
 #### Fixed: `[AUTHORITY-GATE]` — the input that gated only a log line
-`InpEnableLiveAuthorityGate` defaults to **false** in both `MultiStrategyAutonomousEA.mq5:216` and `MultiStrategyTestingEA.mq5:228`, and its only consumer anywhere was `if(m_config.enableLiveAuthorityGate) Print("[INIT] LiveAuthorityResolver initialized")`. `m_liveAuthority.Resolve(...)` (`EAOrchestrator.mqh:3436`) and Batch 173's `ScaleLotByLiveAuthority` are called unconditionally, so the gate has run on every candidate for the life of the codebase while a default-configured session logged nothing about it. The init print is now unconditional and says what is wired: `[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=%s is not consulted by the sizing path`.
+`InpEnableLiveAuthorityGate` defaults to **false** in both `MultiStrategyAutonomousEA.mq5:216` and `MultiStrategyTestingEA.mq5:228`, and its only consumer anywhere was `if(m_config.enableLiveAuthorityGate) Print("[INIT] LiveAuthorityResolver initialized")`. `m_liveAuthority.Resolve(...)` (`EAOrchestrator.mqh:3500`) and Batch 173's `ScaleLotByLiveAuthority` are called unconditionally, so the gate has run on every candidate for the life of the codebase while a default-configured session logged nothing about it. The init print is now unconditional and says what is wired: `[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=%s is not consulted by the sizing path`.
 
 **Not done, deliberately**: the flag is not being made to gate the sizing path. Turning "the input says off" into "the ladder stops shrinking lots" would let a chart with the saved default silently trade at full size, which is the opposite direction of every other fix here. If the operator wants a real kill switch for the authority gate, it should be built as one — with a loud log and a status report entry — not inherited from a line that never had an effect.
 

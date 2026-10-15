@@ -44,6 +44,7 @@ struct STradeCandidate
     bool liveAuthorityAllowed;
     bool hasAIContributor;
     bool hasONNXContributor;
+    bool hasNeuralNetContributor;
     bool hasIndicatorContributor;
     int indicatorContributorCount;
     string predictionId;  // For linking trade outcome to NN training (L11-014)
@@ -53,6 +54,7 @@ struct STradeCandidate
                        confluence(0), qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
                        costScore(0), liveAuthorityRiskMult(1.0),
                        liveAuthorityAllowed(false), hasAIContributor(false), hasONNXContributor(false),
+                       hasNeuralNetContributor(false),
                        hasIndicatorContributor(false), indicatorContributorCount(0),
                        predictionId("") {}
 };
@@ -396,6 +398,7 @@ public:
         
         candidate.hasAIContributor = ContributorsIncludeAI(contributorsList);
         candidate.hasONNXContributor = ContributorsIncludeONNX(contributorsList);
+        candidate.hasNeuralNetContributor = ContributorsIncludeNeuralNet(contributorsList);
         candidate.hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
         candidate.indicatorContributorCount = CountIndicatorContributors(contributorsList);
         
@@ -844,6 +847,15 @@ public:
     {
         for(int i = 0; i < ArraySize(contributors); i++)
             if(StringFind(contributors[i], "ONNX") >= 0) return true;
+        return false;
+    }
+
+    // Only a candidate the net actually advocated may take a trade-linked label; reserving for an
+    // indicator-only trade would credit the net with a decision it did not make.
+    bool ContributorsIncludeNeuralNet(const string &contributors[])
+    {
+        for(int i = 0; i < ArraySize(contributors); i++)
+            if(StringFind(contributors[i], "Neural") >= 0) return true;
         return false;
     }
     

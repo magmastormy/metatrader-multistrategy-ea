@@ -3093,39 +3093,77 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 }
 
     // Process closed positions and link them to NN predictions for online training.
+//--- Trade-linked labels. The reservation marks one neural-net observation as belonging to a
+//--- trade; it is taken immediately before the send so no aborted candidate can leave a tagged
+//--- entry behind, and released again if the fill never resolves to a position.
+bool ReserveNeuralNetPrediction(const string symbol, const ENUM_TRADE_SIGNAL signal, string &predictionIdOut)
+{
+    predictionIdOut = "";
+    int nnCount = ArraySize(m_neuralNetStrategies);
+    for(int i = 0; i < nnCount && i < ArraySize(m_neuralNetStrategySymbols); i++)
+    {
+        if(m_neuralNetStrategies[i] == NULL || m_neuralNetStrategySymbols[i] != symbol)
+            continue;
+        if(!m_neuralNetStrategies[i].IsOnlineTrainingEnabled())
+            return false;
+
+        string pid = "";
+        if(!m_neuralNetStrategies[i].ReservePredictionForSignal(signal, pid) || pid == "")
+            return false;
+
+        predictionIdOut = pid;
+        return true;
+    }
+    return false;
+}
+
+void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
+{
+    if(predictionId == "")
+        return;
+
+    int nnCount = ArraySize(m_neuralNetStrategies);
+    for(int i = 0; i < nnCount && i < ArraySize(m_neuralNetStrategySymbols); i++)
+    {
+        if(m_neuralNetStrategies[i] == NULL || m_neuralNetStrategySymbols[i] != symbol)
+            continue;
+        m_neuralNetStrategies[i].ReleasePredictionReservation(predictionId);
+        return;
+    }
+}
+
     void ProcessClosedPositionsForNNTraining()
     {
-        // NN diagnostics are not exposed publicly; the guard is the strategy-count check below.
-        
-        if(ArraySize(m_neuralNetStrategies) == 0)
-            return;
-        
         ulong positionIds[];
         double profits[];
         string predictionIds[];
-        
+
         int closedCount = m_attributionManager.GetPendingCloseProfits(positionIds, profits, predictionIds);
         if(closedCount <= 0)
             return;
-        
+
         for(int i = 0; i < closedCount; i++)
         {
+            // Every row is consumed, linked to a prediction or not: a row left behind is re-read
+            // on each cycle forever, and an indicator trade has no consumer at all.
+            m_attributionManager.ConsumePendingCloseProfit(positionIds[i]);
+
             string predId = predictionIds[i];
-            double profit = profits[i];
-            
             if(predId == "")
                 continue;
-            
-            // The prediction ID format is "symbol_timeframe_timestamp".
+
+            // Tagged whether or not the net is training yet - the trade-linked count is what the
+            // bootstrap guard reads before the first training run.
             for(int nnIdx = 0; nnIdx < ArraySize(m_neuralNetStrategies); nnIdx++)
             {
                 CNeuralNetworkStrategy* nn = m_neuralNetStrategies[nnIdx];
-                if(nn == NULL || !nn.IsTraining())
+                if(nn == NULL)
                     continue;
-                
-                if(nn.UpdateTradeResultByPredictionId(predId, profit))
+
+                if(nn.UpdateTradeResultByPredictionId(predId, profits[i]))
                 {
-                    PrintFormat("[NN-TRAINING] Updated trade result for prediction %s: profit=%.2f", predId, profit);
+                    PrintFormat("[NN-TRAINING] Updated trade result for prediction %s: profit=%.2f",
+                                predId, profits[i]);
                     break;
                 }
             }
@@ -3295,6 +3333,11 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
     m_performanceAnalytics.RecordClosedTrade(trans.deal, netProfit);
     m_positionManager.RecordClosedTrade(netProfit);
     FeedAuthorityOutcome(positionId, netProfit);
+
+    // The neural net's trade-linked label queue: ProcessClosedPositionsForNNTraining drains this
+    // each cycle and resolves the prediction from the position map, so the close is the only place
+    // the realized result can be attached.
+    m_attributionManager.AccumulatePendingCloseProfit(positionId, netProfit);
 }
 
 void ProcessScalpFastPath()
@@ -3476,6 +3519,14 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
                 if(!canOpenNewTrades) continue;
 
+                // Reserve the neural-net observation this send will be labelled against, and put the
+                // id in the order comment so the trade is traceable to the prediction that made it.
+                string nnPredictionId = "";
+                if(candidate.hasNeuralNetContributor)
+                    ReserveNeuralNetPrediction(symbol, newBarSignals[i].signal, nnPredictionId);
+                candidate.predictionId = nnPredictionId;
+                bool nnLabelBound = false;
+
                 // Only a real send arms the min-seconds-between-trades cooldown.
                 CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
                 if(execResult.executed)
@@ -3501,9 +3552,22 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                                                           candidate.contributorSummary, strategyIndices);
                             if(m_enterpriseManagers[i] != NULL)
                                 m_enterpriseManagers[i].AttributeExecutedPosition((ulong)provPosId, strategyIndices);
+
+                            if(nnPredictionId != "")
+                            {
+                                m_attributionManager.UpsertPredictionPositionMap((ulong)provPosId, nnPredictionId);
+                                nnLabelBound = true;
+                                PrintFormat("[NN-LABEL] %s | position=%I64u | prediction=%s | bound at send",
+                                            symbol, (ulong)provPosId, nnPredictionId);
+                            }
                         }
                     }
                 }
+                else if(nnPredictionId != "")
+                    ReleaseNeuralNetPrediction(symbol, nnPredictionId);
+
+                if(nnPredictionId != "" && !nnLabelBound && execResult.executed)
+                    ReleaseNeuralNetPrediction(symbol, nnPredictionId);
 
                 // Update heartbeat funnel (validated + risk-approved reached execution)
                 m_heartbeat.IncSignalsValidated();

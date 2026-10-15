@@ -113,7 +113,6 @@ public:
     int    FindPendingCloseProfitIndex(const ulong positionId);
     void   AccumulatePendingCloseProfit(const ulong positionId, const double netProfit);
     double ConsumePendingCloseProfit(const ulong positionId);
-    void   ClearPendingCloseProfit(const ulong positionId);
     
     // Read by EAOrchestrator's ProcessClosedPositionsForNNTraining; rows whose prediction id comes back empty are skipped there.
     int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
@@ -170,8 +169,12 @@ string CTradeAttributionManager::BuildTradeCommentWithPrediction(const string ba
     string suffix = "|N:" + predictionId;
     const int maxCommentLength = 31;
     int availableBase = maxCommentLength - StringLen(suffix);
-    if(availableBase < 0)
-        return StringSubstr(suffix, 0, maxCommentLength);
+
+    // A synthetic-index symbol name plus the id can fill the broker's 31-char cap on its own. Shipping
+    // a truncated |N: fragment would be unreadable to ExtractPredictionIdFromComment *and* wipe the base
+    // comment other paths read, while the position map already carries the binding. Skip the marker.
+    if(availableBase < 4)
+        return comment;
 
     if(StringLen(comment) > availableBase)
         comment = StringSubstr(comment, 0, availableBase);
@@ -399,7 +402,6 @@ bool CTradeAttributionManager::ConsumeAIPendingRequestMap(const uint requestId, 
     return true;
 }
 
-// No caller in the repo invokes AccumulatePendingCloseProfit, so m_pendingClose* stays empty and GetPendingCloseProfits returns 0.
 int CTradeAttributionManager::FindPendingCloseProfitIndex(const ulong positionId)
 {
     for(int i = 0; i < ArraySize(m_pendingClosePositionIds); i++)
@@ -451,25 +453,6 @@ double CTradeAttributionManager::ConsumePendingCloseProfit(const ulong positionI
     return accumulated;
 }
 
-void CTradeAttributionManager::ClearPendingCloseProfit(const ulong positionId)
-{
-    int idx = FindPendingCloseProfitIndex(positionId);
-    if(idx < 0)
-        return;
-
-    int last = ArraySize(m_pendingClosePositionIds) - 1;
-    if(last >= 0)
-    {
-        if(idx != last)
-        {
-            m_pendingClosePositionIds[idx] = m_pendingClosePositionIds[last];
-            m_pendingCloseNetProfit[idx] = m_pendingCloseNetProfit[last];
-        }
-        ArrayResize(m_pendingClosePositionIds, last);
-        ArrayResize(m_pendingCloseNetProfit, last);
-    }
-}
-
 int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
 {
 int count = ArraySize(m_pendingClosePositionIds);
@@ -484,17 +467,13 @@ for(int i = 0; i < count; i++)
 {
     positionIds[i] = m_pendingClosePositionIds[i];
     profits[i] = m_pendingCloseNetProfit[i];
-        
-    // Prediction id is read from the LIVE position comment, not the position map; an unselectable position yields "" while its profit is still returned.
-    if(PositionSelectByTicket(m_pendingClosePositionIds[i]))
-    {
-        string comment = PositionGetString(POSITION_COMMENT);
-        predictionIds[i] = ExtractPredictionIdFromComment(comment);
-    }
-    else
-    {
-        predictionIds[i] = "";
-    }
+
+    // The id comes from the position-to-prediction map, which outlives the position. Reading it
+    // back off the live comment could not work: a closed position is not selectable, so every
+    // row used to come back with an empty id and the caller skipped it.
+    predictionIds[i] = GetPredictionIdForPosition(m_pendingClosePositionIds[i]);
+    if(predictionIds[i] == "" && PositionSelectByTicket(m_pendingClosePositionIds[i]))
+        predictionIds[i] = ExtractPredictionIdFromComment(PositionGetString(POSITION_COMMENT));
 }
     
 return count;
