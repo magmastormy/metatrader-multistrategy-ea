@@ -585,6 +585,30 @@ restricted to tags verified in the tree, and the phantom names are recorded so n
 
 No decision path changed: nothing deleted was reachable by a trade.
 
+### Batch 216: the fast-scalp cache was computing six indicator series nobody read
+
+`CScalpSignalCache` keeps one entry per symbol and has a single consumer - the fast-scalp signal check, which
+reads four EMA values, the ATR, the RSI and the spread. The struct held twenty-one fields, and every M1 bar it
+filled six more: an ATR value from five bars ago, three Bollinger bands, ADX, and current plus 20-bar-average
+volume. Across thirteen symbols that is 78 `CopyBuffer` calls and thirteen averaging loops a minute, inside the
+tick path, whose results no gate, no sizing decision and no log line ever looked at. Three shared indicator
+handles per symbol were acquired at init for the same purpose. All of it is gone, along with the
+`bidPrice`/`askPrice` fields that only the next line of the same function read, and five methods with no caller
+(`HasNewBar`, `EnsureInitialized`, `GetCacheCount`, `IsInitialized`, `SetScalpSetup`).
+
+One thing was deliberately not wired: `SetPeriods` could change the cache's EMA, ATR and RSI periods, and nothing
+called it. The scalp engine's own periods are separate hard-coded literals. They match today only because neither
+can move - calling the setter would let the fast path and the fallback path evaluate different EMAs on the same
+symbol and disagree about the crossover. So the configurability is deleted rather than introduced, and the note
+says so: if these numbers ever become inputs, both paths must read one place.
+
+The last correction in this batch is about what the documentation told you the scalp engine is. Two sections
+described three scalp *strategies* - Momentum, Spread and VolatilityBreakout - with file paths. Two of those files
+have never existed. The third is real, complete, and not in the program: nothing includes it, it has no catalog
+row, no enable input, nothing registers it. What actually decides a fast scalp is an M1 EMA 5/13 crossover, an
+RSI(7) limit and a spread-vs-ATR cost test. The unregistered strategy file stays where it is, listed as something
+you can activate, because switching on a trading path that has never traded is your decision and not a cleanup.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

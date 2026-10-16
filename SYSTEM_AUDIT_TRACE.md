@@ -1704,6 +1704,35 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 216 A Per-Tick Cache That Nobody Was Reading Most Of (2026-10-17)
+
+- **How it was found:** following Batch 214's RSI finding one step further. Asking "what does the consumer of
+  this struct actually read?" for `SScalpIndicatorCache` meant enumerating every field and every reader, and the
+  answer was eight read out of twenty-one. The unread thirteen were not harmless: six of them are computed by
+  `CopyBuffer` calls in the tick path every M1 bar for every symbol.
+- **Verified the single-consumer claim by owner, not by name** (Batch 215's lesson applied immediately): the only
+  route to the struct is `CScalpSignalCache::GetCache`, and the only call of that is
+  `m_signalCache.GetCache` in `CFastScalpEngine::EvaluateScalpSignal`. The engine mirrors five of its fields into
+  `CFastScalpIndicators` via `SetCachedValues`, which is why the EMA fields stay even though the crossover itself
+  comes from `cache.emaFast/emaSlow`.
+- **`atrPrev` looked like a live feature and was not:** the comment said "ATR 5 bars ago (for direction)", which
+  invites the inference that ATR direction gates something. It gates nothing on this path - the scalp signal uses
+  the current ATR only - so the 6-bar read existed solely to fill a field. Removing it also removed the
+  `CopyBufferN` helper, whose second and last user was the volume average.
+- **Kept, deliberately, one dead file:** `Core/Scalp/ScalpVolatilityBreakout.mqh`. The rule this session has
+  applied is that unreachable *construction* is deleted (Batch 210's factory paths) while a wired-but-undriven
+  *feature* is recorded (Batch 200's parked engines, §4's list). This file is neither - it is a complete strategy
+  class that no program includes. Deleting it would close an option; enabling it would open a trading path that
+  has never traded, which is activation, not hygiene. So it stays, named in §4 with what enabling it requires
+  (catalog row, `SI_*` slot, enable input, registration) and the two sibling classes that do not exist at all
+  recorded as documentation fiction.
+- **Rejected wiring with a written reason:** `SetPeriods` had no caller, and calling it would be the only way for
+  the cache's `emaFast/emaSlow/atr/rsi` periods to differ from `SScalpConfig`'s, which are literals set at
+  `EAOrchestrator.mqh:1303`. Two paths evaluating different EMAs on one symbol is a real defect shape - the fast
+  and slow paths already compute the same signal by different routes - so the configurability was deleted instead
+  of introduced. If those numbers become operator inputs, both paths must read one source.
+- **§3 invariants:** unchanged. No gate, veto or lot moved; only the reads feeding them.
+
 ## Batch 215 A Log Tag Is a Search Index, and 92 of Them Point at Nothing (2026-10-17)
 
 - **How it was found:** the standing method - read the docs a batch touches - applied at scale instead of

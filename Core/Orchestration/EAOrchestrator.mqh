@@ -1140,8 +1140,6 @@ else
     if(m_scalpCache.Initialize(m_enterpriseManagerSymbols, m_managerCount, PERIOD_M1))
     {
         m_scalpEngine.SetSignalCache(GetPointer(m_scalpCache));
-        for(int si = 0; si < m_managerCount; si++)
-        m_scalpCache.SetScalpSetup(m_enterpriseManagerSymbols[si], true, 1);
         Print("[SCALP-CACHE] Fast-path dual-path architecture enabled");
     }
 else

@@ -8,6 +8,55 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 216: the scalp signal cache did 78 buffer reads a minute for numbers nobody reads
+
+`CScalpSignalCache` is the fast path's per-symbol indicator store, and it has exactly one consumer:
+`CFastScalpSignal::EvaluateFromCache`, reached through `GetCache`. That consumer reads eight fields -
+`emaFast/emaSlow` and their previous-bar values, `atrValue`, `rsiValue`, `spreadPoints`, `lastBarTime` - plus
+`isValid`. The struct carried twenty-one.
+
+#### 1. Six indicator series computed on every new bar for no reader
+`UpdateOnNewBar` per symbol read a 6-bar ATR series (for `atrPrev`, "ATR 5 bars ago for direction"), three
+Bollinger buffers (`bbUpper/bbLower/bbMiddle`), ADX (`adxValue`) and a 21-bar volume series summed in a loop
+(`volumeCurrent/volumeAvg`). None of those six fields is read anywhere in the repository. On the default
+13-symbol universe at M1 that is 78 `CopyBuffer` calls and 13 summation loops a minute, executed inside the tick
+path, to maintain numbers no decision consumes - plus three shared indicator handles per symbol acquired at
+init (`GetBandsHandle`, `GetADXHandle`, `GetVolumesHandle`) for the same reason.
+
+Deleted: the six fields, the four handle slots, the reads, the `CopyBufferN` helper that only they used, and the
+period fields feeding those handles (`m_bbPeriod`, `m_bbDeviation`, `m_adxPeriod`, `m_volumePeriod`).
+`bidPrice`/`askPrice` also go: `UpdateTickValues` wrote them every tick and only its own next lines read them,
+so the spread is now computed into `spreadPoints` from locals.
+
+#### 2. `SetPeriods` was the only way the two paths could disagree, and nothing called it
+`SScalpIndicatorCache`'s periods and `SScalpConfig`'s drive the same crossover from two places, so a divergence
+would mean the fast path and the slow path evaluate different EMAs on the same symbol. They match today because
+`SScalpConfig.fastEMA/slowEMA/rsiPeriod` are literals (5/13/7, `EAOrchestrator.mqh:1303`) and the cache's own
+defaults are the same numbers - and `SetPeriods`, the only route to changing the cache's copy, had no caller. It
+is deleted rather than wired: wiring it would create the divergence it was written to allow, with no operator
+input on the config side to keep them paired. If the periods ever become inputs, both paths must read one place.
+
+Also deleted as uncalled: `HasNewBar`, `EnsureInitialized`, `GetCacheCount`, `IsInitialized`, and `SetScalpSetup`
+- whose single call site wrote `active=true, setupType=1` for every symbol at init into two fields no reader
+existed for. `setupType` (`0=none, 1=momentum, 2=spread, 3=breakout`) was the last trace of the three-scalp-
+strategy design the documents still describe, below.
+
+#### 3. Documentation: two scalp strategies have no file, the third is not in the build
+`SYSTEM_STRUCTURE.md` §2.17 and `RUNTIME_DECISION_GRAPH.md` both listed three scalp strategy classes as what the
+engine runs. `CScalpMomentumStrategy` and `CScalpSpreadStrategy` have **no file in the repository** - the paths
+cited do not exist. `CScalpVolatilityBreakout` is a real, complete 233-line `CStrategyBase` subclass, but nothing
+`#include`s it: no catalog row, no `SI_*` slot, no `InpEnable*` input, no `factoryName`, so it is not compiled
+into any program. The live entry rule is `CFastScalpSignal` - EMA 5/13 crossover + RSI(7) + spread-vs-ATR - with
+no strategy object involved.
+
+`ScalpVolatilityBreakout.mqh` is kept, unlike Batch 210's unreachable factory paths: those were half-built
+construction routes to classes built elsewhere, while this is a whole strategy that could be activated. Turning
+it on means a catalog row, an enable input and a `RegisterStrategy` call, and it would open a path that has never
+traded - a strategy-activation decision, so it goes on §4's *unwired but wireable* list instead of being deleted
+or switched on blind.
+
+`sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+
 ### Batch 215: two symbol-state classes nothing wrote to, three inputs nothing read, and 92 log tags no code prints
 
 A deletion batch, plus the documentation sweep that found it. No decision path changed shape: every removal is

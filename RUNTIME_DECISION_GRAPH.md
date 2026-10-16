@@ -39,7 +39,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Error aggregation & verbosity: `CEnhancedErrorHandler` (enhanced in Batch 91)
 - Bar processing & multi-timeframe: inline per-symbol bar gating in `EAOrchestrator::ProcessNewBars` via `CScanSchedulerRegistry` (BarProcessor.mqh deleted in Batch 151 - zero callers)
 - Scalping engine: `CFastScalpEngine` + `CScalpSignalCache` (Batch 97)
-- Scalp strategies: `CScalpMomentumStrategy`, `CScalpSpreadStrategy`, `CScalpVolatilityBreakout` (Batch 97)
+- Scalp signal rules in `CFastScalpSignal` (the three scalp *strategy* classes Batch 97 documented were never all three real - see Scalping Fast Path, corrected Batch 216)
 - Position lifecycle: `CPositionLifecycleManager` (Batch 98)
 - Diagnostics/heartbeat: `CDiagnosticsManager` (Batch 98)
 - Unprotected position tracking: `CUnprotectedPositionTracker` (Batch 98)
@@ -263,7 +263,7 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Scalp fast path entries still pass through `CUnifiedRiskManager` pre-trade gating
 
 ### Scalp Signal Cache Architecture
-- `SScalpIndicatorCache` struct: 13 indicator values + tick-level bid/ask/spread + state tracking + 7 handle references
+- `SScalpIndicatorCache` struct (trimmed in Batch 216): `emaFast/emaFastPrev/emaSlow/emaSlowPrev`, `atrValue`, `rsiValue`, tick-level `spreadPoints`, `lastBarTime`, `isValid`, four handle references. Its former BB/ADX/volume/ATR-history fields were computed per symbol per bar and read by nobody.
 - `CScalpSignalCache` class: fixed-size array for 20 symbols
 - `UpdateOnNewBar()`: CopyBuffer path (runs only on new bar formation)
 - `UpdateTickValues()`: SymbolInfoDouble-only path (runs every tick, minimal computation)
@@ -281,10 +281,14 @@ The main EA delegates to the following extracted managers instead of inline logi
 - `CheckPendingAsyncOrders()` timeout handling via `InpScalpMaxLatencyMs`
 - `OnTradeTransaction()` routes scalp async confirmations to `CFastScalpEngine`
 
-### Scalp Strategies
-- **ScalpMomentum**: EMA trend + pullback (0.5 ATR) + ATR expanding + spread < 0.3 ATR + RSI 40-60; SL=0.75×ATR, TP=1.5×ATR (1:2 R:R); SCALP_CLUSTER
-- **ScalpSpread**: Wide spread returning + price near EMA + RSI filter; SL=0.06×ATR, TP=0.3×ATR; MEAN_REVERSION_CLUSTER
-- **ScalpVolatilityBreakout**: ATR at 20-bar low + BB breakout + strong bar + RSI confirmation; SL=BB middle, TP=2×ATR; SCALP_CLUSTER
+### Scalp Strategies - no strategy object is on this path (corrected in Batch 216)
+The three bullets this section used to carry (`ScalpMomentum`, `ScalpSpread`, `ScalpVolatilityBreakout`) describe
+classes two of which have no file in the repository and one of which is not `#include`d by anything, so none of
+them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::EvaluateFromCache` /
+`EvaluateSlowPath`: M1 EMA 5/13 crossover, RSI(7) not at its OB/OS limit, spread <= 0.30 x ATR, then
+`CFastScalpSizing` for confidence and `CFastScalpEntry::ValidateRiskAndAdjust` for the single pre-trade gate call.
+`SScalpConfig` carries those five numbers; `SetScalpSetup`'s `setupType` (0=none, 1=momentum, 2=spread,
+3=breakout) was the ghost of the three-strategy design and is deleted in Batch 216 - nothing read it.
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
 - OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
@@ -334,6 +338,30 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 216: The Scalp Cache Stopped Computing Six Series Nobody Reads (2026-10-17)
+
+- **Edge after the change:** `ProcessScalpFastPath -> UpdateOnNewBar(4 CopyBuffer) -> UpdateTickValues(spread
+  only) -> ShouldEnterScalp -> EvaluateFromCache`. The decision set is identical; the work that produced it
+  dropped to a quarter of its buffer reads.
+- **What was removed:** `atrPrev`, `bbUpper/bbLower/bbMiddle`, `adxValue`, `volumeCurrent/volumeAvg` - computed
+  per symbol per M1 bar (a 6-bar ATR series, three Bollinger buffers, ADX, a 21-bar volume read plus a summation
+  loop) and read by nothing. On 13 symbols that is 78 `CopyBuffer` calls and 13 loops a minute inside the tick
+  path. The three handles feeding them (`GetBandsHandle`, `GetADXHandle`, `GetVolumesHandle`) are no longer
+  acquired per symbol, and `CopyBufferN` went with its only two users.
+- **Also gone:** `bidPrice`/`askPrice` (written every tick, read only by the next line of the same function, so
+  spread is now computed from locals), and the uncalled `HasNewBar`, `EnsureInitialized`, `GetCacheCount`,
+  `IsInitialized`, `SetScalpSetup`.
+- **Refused wiring:** `SetPeriods` was the only way to change the cache's EMA/ATR/RSI periods, and
+  `SScalpConfig`'s are separate literals (`EAOrchestrator.mqh:1303`). The two agree today only because neither
+  moves; calling `SetPeriods` would let them diverge, which would mean the fast path and the slow path evaluate
+  different EMAs on one symbol. Deleted, with the reason recorded - if the periods become inputs, one place must
+  feed both.
+- **Doc fiction corrected:** the "three scalp strategies" in §2.17 and the Scalping Fast Path section. Two of
+  them have never had a file; `CScalpVolatilityBreakout` exists as 233 complete lines but is not `#include`d, has
+  no catalog row, no `SI_*` slot and no enable input, so it is not in the binary. Kept and listed in §4 as
+  wireable-but-unregistered rather than deleted or silently activated.
+- **§3 invariants:** unchanged. The one pre-trade gate call on the shipped lot is untouched.
 
 ## Batch 215: Two Symbol-State Holders With No Writer, Three Inputs With No Reader, and the Tag Sweep That Found Them (2026-10-17)
 
