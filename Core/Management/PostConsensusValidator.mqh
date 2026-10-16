@@ -161,9 +161,12 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
             CJsonLogger::LogSignal(symbol, signal, confidence, "VALIDATOR", corrId,
                 "{\"event\":\"quality_gate_rejected\",\"class\":\"" + CStrategyStateReporter::ConsensusDecisionClassToString((ENUM_CONSENSUS_DECISION_CLASS)ctx.decisionClass) + "\",\"quality\":" + DoubleToString(ctx.directionalQuality, 3) + "\",\"threshold\":" + DoubleToString(qualityThreshold, 3) + "}");
         }
-        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=quality_gate | class=%s | signal=%s conf=%.2f | quality=%.3f threshold=%.3f",
+        // quality is sum(voter confidence x registration weight) / vote count, so it sits above the mean confidence
+        // whenever weights exceed 1.0 (the default roster runs 1.0-2.0). conviction is that unweighted mean: the gap
+        // between the two is how much of a pass the weight supplied rather than the measured signal.
+        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=quality_gate | class=%s | signal=%s conf=%.2f | quality=%.3f threshold=%.3f | conviction=%.3f",
                     symbol, CStrategyStateReporter::ConsensusDecisionClassToString((ENUM_CONSENSUS_DECISION_CLASS)ctx.decisionClass),
-                    EnumToString(signal), confidence, ctx.directionalQuality, qualityThreshold);
+                    EnumToString(signal), confidence, ctx.directionalQuality, qualityThreshold, ctx.convictionScore);
         return result;
     }
 

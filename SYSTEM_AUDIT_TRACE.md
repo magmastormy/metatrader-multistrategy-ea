@@ -1705,6 +1705,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 220 A Quality Threshold Read Against the Wrong Scale (2026-10-17)
+- **Decision path:** unchanged. No threshold, comparison or admission rule moved.
+- **Observability:** `[POST-CONSENSUS-FILTER] filter=quality_gate` now carries `conviction=` beside `quality=`.
+- **Finding:** `directionalQuality` divides a weight-multiplied sum by a headcount, so it is ~1.5x the mean
+  voter confidence on the default roster (weights 1.0-2.0); the 0.68 configured floor therefore gates at roughly
+  0.41 confidence, and the derived `confidence` inherits the inflation. Rescaling the divisor would tighten
+  entry everywhere simultaneously, so it is recorded as operator policy in `SYSTEM_STRUCTURE.md` section 4.
+- **Verification:** compile 8 root programs, 0 errors / 0 total warnings.
+
 ## Batch 219 A Resolved Value With Six Readers And No Writer (2026-10-17)
 - **Lifecycle:** `[STRUCTURAL-EXIT]` is reachable for the first time. It fires inside the existing
   opposing-signal branch when the current scan reached consensus on `STRUCTURE_CLUSTER` with confidence

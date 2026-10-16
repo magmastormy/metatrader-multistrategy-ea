@@ -8,6 +8,29 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 220: the consensus quality floor measures registration weight as well as confidence
+
+`buyDirectionalQuality += stratConf * weight` (`ConsensusEngine.mqh:890`) divided by `buyVotes` (:916) is not
+a weighted mean - the denominator is a headcount. With the default roster's registration weights (1.0
+Momentum, 1.2 Trend, 1.5 Support/Resistance, 1.8 Mean Reversion, 2.0 Volatility Breakout) the metric runs
+about 1.5x the committee's mean confidence, so `InpValidatorNewBarMinQuality = 0.68` - discounted to 0.612 for
+a full quorum by `GetAdaptiveQualityThreshold` - admits a mean confidence near 0.41. The same inflation
+carries into `confidence = MathMin(0.95, winningQuality * 0.8 + supportRatio * 0.2)` (:1048), which is why that
+number sits at its ceiling for high-weight committees and why every downstream confidence gate looks slack.
+
+#### Measured and reported, not rescaled
+Changing the divisor to the summed weight makes both quantities dimensionally honest - and raises the admission
+bar on every symbol at once, because a 0.612 threshold would then mean 0.612 *confidence* instead of roughly
+0.41. That is a decision about how strict consensus should be, which the operator owns, so it is recorded in
+`SYSTEM_STRUCTURE.md` section 4 with the arithmetic rather than guessed at here. Precedents: Batch 217 left
+volatility targeting unwired for the same reason, Batch 213 the Kelly re-arming, Batch 201 the participation
+score.
+
+#### What shipped
+A `filter=quality_gate` refusal now prints `conviction=` next to `quality=`, so the gap - the part of the score
+the weights supplied - is readable in the journal. One added format argument and its value; no threshold,
+no comparison, no admission decision changed. Compile 8 root programs, 0 errors / 0 total warnings.
+
 ### Batch 219: `dominantCluster` had six readers and no writer, so two designed branches never ran
 
 `ConsensusEngine` resolves the winning side's cluster on every decision that reaches consensus

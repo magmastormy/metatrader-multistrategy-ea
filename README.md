@@ -632,6 +632,16 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 220: the quality floor has been measuring strategy weight as well as conviction
+
+`directionalQuality` accumulates `voter confidence x registration weight` and divides by the number of voters,
+not by the summed weight. On the default roster (Momentum 1.0 up to Volatility Breakout 2.0) that puts the
+metric about 1.5x the committee's mean confidence, so `InpValidatorNewBarMinQuality = 0.68` admits trades on
+roughly 0.41 mean confidence, and the consensus `confidence` figure inherits the same inflation. Rescaling it
+would raise the admission bar on every symbol at once, which is an operator decision rather than a cleanup, so
+this batch changes no comparison: a `quality_gate` refusal now prints `conviction=` beside `quality=`, and the
+difference between the two is how much of the pass came from the weights.
+
 ### Batch 219: a resolved value with six readers and no writer
 
 Every consensus decision that reaches consensus resolves its winning cluster

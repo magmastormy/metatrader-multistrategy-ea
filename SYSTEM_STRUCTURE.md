@@ -1403,6 +1403,17 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **`m_tradeLinkedLabels` can double-count one winning trade**: once when the result lands on an unresolved barrier entry, once in `AddTrainingExample` when that entry resolves. Counter's only consumers are a `>= 5` readiness guard and the checkpoint summary, so it is recorded rather than patched.
 - **Deleted in Batch 200 as unreachable rather than unwired**: the closed-trade attribution API (`PopClosedTradeAttribution` and its three backing fields plus both forwarders), `UpdateRegimePerformance` in `CEnterpriseStrategyManager`/`CStrategyPerformanceHealth` (the `CStrategyHealthMonitor` overload of that name is live), `CPortfolioRiskManager`'s event cache hooks and the private mutators only they called (portfolio risk is and was a full scan on the 60s interval), `CTradeExecutor::ExecuteBatch`, `FeedMicrostructureEngines` (a never-called copy of the live `OnTick` VPIN/OFI + Skew Step feed), `ReenableONNXAI`/`CONNXInitManager::Reset`, `GetTotalGridRisk`, `m_preRetrainTimestamp`, `ApplyStrategyWeights`, and `CDiagnosticsManager`'s NN-health check, no-signal-rate getters, duplicate `UpdateTradingPaused` and `m_lastNNHealthLogTime`.
 
+- **The validator quality floor is not a confidence bar, and making it one would tighten admission** (found
+  Batch 220, not changed). `buyDirectionalQuality = sum(voter confidence x registration weight) / buyVotes`
+  (`ConsensusEngine.mqh:890,916`) divides by the *vote count*, not the summed weight, so on the default roster
+  (weights 1.0 Momentum to 2.0 Volatility Breakout, mean about 1.5) the metric runs ~1.5x the committee's mean
+  confidence: `InpValidatorNewBarMinQuality = 0.68`, discounted to 0.612 for a full quorum, is in practice a
+  ~0.41 mean-confidence bar. `confidence = min(0.95, quality x 0.8 + support x 0.2)` inherits the same inflation,
+  which is why it sits at its 0.95 ceiling for high-weight committees. Dividing by the summed weight makes both
+  numbers dimensionally honest and raises the bar everywhere - an operator policy decision, not a cleanup. What
+  shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
+  confidence) beside `quality=`, and the gap between them is the weight inflation.
+
 - **`Core/Utils/LogMacros.mqh` is now only the heartbeat block** (Batch 218). It declared 42 macros and 37
   had no call site: ten duplicated tags the code prints literally, eleven `LOG_JSON_*`/`LOG_PERFORMANCE`/
   `GENERATE_CORR_ID` wrappers, seven named a tag with no emitter and no payload (`[CONSENSUS-ROOT]`,

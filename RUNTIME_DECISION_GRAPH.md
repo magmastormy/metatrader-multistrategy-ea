@@ -339,6 +339,17 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 220: The Quality Floor Is Scale-Contaminated; the Journal Now Shows It (2026-10-17)
+- `directionalQuality` is `sum(voter confidence x registration weight) / vote count`. The denominator is a
+  headcount, so with roster weights of 1.0-2.0 the value is roughly 1.5x the committee's mean confidence, and
+  the validator floor (`InpValidatorNewBarMinQuality = 0.68`, 0.612 after the full-quorum discount) admits on
+  about 0.41 mean confidence. `confidence = min(0.95, quality x 0.8 + support x 0.2)` inherits the inflation.
+- **Not rescaled.** Dividing by the summed weight would raise the bar everywhere at once, which is operator
+  policy; `SYSTEM_STRUCTURE.md` section 4 carries the arithmetic. Same disposition as Batch 217 (volatility
+  targeting), 213 (Kelly) and 201 (participation score).
+- **Shipped:** `filter=quality_gate` refusals print `conviction=` beside `quality=`. Nothing in the comparison
+  moved. Compile 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 219: The Winning Cluster Was Resolved and Then Never Published to Its Readers (2026-10-17)
 - `SConsensusDecisionContext.dominantCluster` had six readers and no writer while the engine resolved the same
   value locally for the contributor publish, passing only its string form. Both behaviour readers were dead:
