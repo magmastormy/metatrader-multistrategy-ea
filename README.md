@@ -609,6 +609,29 @@ row, no enable input, nothing registers it. What actually decides a fast scalp i
 RSI(7) limit and a spread-vs-ATR cost test. The unregistered strategy file stays where it is, listed as something
 you can activate, because switching on a trading path that has never traded is your decision and not a cleanup.
 
+### Batch 217: volatility targeting was measuring a scalar that no lot reads
+
+Four inputs - `InpEnableVolTargeting` (on by default), `InpTargetVol`, `InpVolMinScale`, `InpVolMaxScale` - build a
+genuine volatility model. Per symbol it computes an ATR-based vol and a realised vol, blends them with an EWMA,
+tracks where current vol sits in its own history, and derives a position scalar clamped to your min and max. It
+updates every cycle and prints its answer into the journal once a minute per symbol.
+
+Nothing reads that answer. All five of the engine's getters have zero call sites, and the sizing path's own
+volatility modifier has been switched off since the day it was written: its flag is set to `false` in a struct
+constructor and no code ever assigns it. So a log line showing `scalar=1.480` described a lot size that was not
+happening, and the only thing your target-vol input was controlling was a number in a log.
+
+I did not wire it, and the reason is the direction. With a 15% annual target and FX daily ranges that annualise to
+roughly 8-13%, the formula's output is *above* 1.0 most of the time - around 1.2 to 1.9 on majors, and up to 3.0
+because that is the default maximum. Volatility targeting is meant to shrink positions when markets get rough; this
+default would mostly have grown them, in calm conditions, by a multiple nobody picked. Switching that on under a
+"find the money leaks" mandate would have been choosing your risk policy from a constant.
+
+What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeting=inert(...)` at every start, and
+`[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
+needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
+one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

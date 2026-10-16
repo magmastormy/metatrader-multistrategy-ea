@@ -280,7 +280,7 @@ public:
 
         m_lastBarTime = currentBarTime;
 
-        ThrottledLog(StringFormat("[VOL-TARGET] %s | ewmaVol=%.4f | realizedVol=%.4f | target=%.4f | scalar=%.3f | pctile=%.2f | highVol=%s",
+        ThrottledLog(StringFormat("[VOL-TARGET] %s | ewmaVol=%.4f | realizedVol=%.4f | target=%.4f | scalar=%.3f | pctile=%.2f | highVol=%s | applied=no(no sizing consumer)",
                                    m_symbol,
                                    m_ewmaVol,
                                    realizedVol,
@@ -292,7 +292,8 @@ public:
         return true;
     }
 
-    //--- Get the position scaling factor (multiply base size by this)
+    //--- The scalar below is measured every bar and read by no sizing path: useVolatilityTargeting is never
+    //--- set from any input, so CPositionSizer never registers the modifier. See [SIZING-CHAIN] at init.
     double GetVolScalar() const { return m_lastSnapshot.volScalar; }
 
     double GetScaledSize(double baseSize) const

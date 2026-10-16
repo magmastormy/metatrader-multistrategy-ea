@@ -1365,6 +1365,20 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **`CRiskAdaptiveTuner::m_riskReductionFactor` has readers and no writer, and is left that way on purpose** (found Batch 213). `UnifiedRiskManager::ApplyPnlRiskAdjustment` (:1544, :1570) uses it as the fraction of unrealized profit that frees risk budget, so the credit is the constructor's constant 0.5 forever - including while `[RISK-BUDGET-PNL-ADJUSTED] ... factor=0.5` prints as if it were adaptive. `UpdateAdaptiveRiskLevel` does compute a `reductionFactor` (<=0.35 at critical drawdown, <=0.65 at warning, <=0.60 conservative) and applies it to `targetRisk` only. The two numbers are different quantities that happen to move the same way, so storing one into the other would give a single field two meanings - the shape Batch 203 refused for the neural-net labels. Fixing this needs the operator to say what the profit credit should do in drawdown.
 - **The compounding tier ladder is not monotone, and the number is an operator decision** (flagged Batch 213, not changed). Tier 4 ($500-1,000) risks 1.5% per trade and tier 5 ($1,000-5,000) risks **5.0%** - a 3.3x jump at $1,000 - with an inline comment on the tier-5 line reading "5% risk per trade for <$1K equity", which is tier 1's number in the wrong band. Batch 192's clamp caps the applied value at the approved per-trade risk, so the live effect is "full ceiling from $1,000 up" rather than 5%. What that band *should* risk is a decision about how a growing account behaves; guessing it would silently change the sizing character of every trade above $1,000.
 - **Two sizing modifier duplications, told apart in Batch 213.** `CPositionSizer::Initialize` registered a `CADXLotModifier` unconditionally while the orchestrator added its own configured instance to the same chain, so ADX tiers multiplied twice (1.69x / 2.25x) - the sizer's copy is deleted. Its `m_equityCurveModifier` looks similar but is registered only `if(m_params.useEquityCurveScaling)` and has its own reader at `PositionSizer.mqh:489`, so it stayed: a conditional feature with a consumer, not a duplicate.
+- **Volatility targeting is measured every bar and applied to nothing** (Batch 217, reported not wired). Two
+  independent implementations exist and neither reaches a lot. `InpEnableVolTargeting` / `InpTargetVol` /
+  `InpVolMinScale` / `InpVolMaxScale` build one `CVolatilityTargeting` per symbol in the math hub, `Update()`-d
+  every cycle (`OrchestratorMathEngineHub.mqh:649`), producing an EWMA vol, a percentile and a clamped scalar -
+  and all five getters (`GetVolScalar`, `GetScaledSize`, `GetRealizedVol`, `GetEwmaVol`, `GetVolPercentile`) have
+  zero call sites. Inside the sizer, `CVolatilityTargetingModifier` is registered only
+  `if(m_params.useVolatilityTargeting)`, a field set `false` in `SPositionSizingParams`' constructor and assigned
+  from nothing in the tree, so `CalculateVolatilityTargetSize` has always fallen through to
+  `CalculateFixedRiskSize`. The two also disagree on the ceiling: modifier 0.25-2.0 with a hard-coded 0.15 target,
+  engine the operator's 0.2-3.0. Wiring either as configured would **widen** risk: 0.15 annual against typical FX
+  daily ATR (~8-13% annualised) is a scalar near 1.5, and `InpVolMaxScale` defaults to 3.0. What is wanted is a
+  target vol and a decision about whether a scaler may exceed 1.0 - the operator's call, not a default's. Now
+  stated at runtime: `[SIZING-CHAIN] ... vol_targeting=inert(...)` and `[VOL-TARGET] ... applied=no(no sizing
+  consumer)`.
 - **`CScalpSignalCache::SetPeriods` deleted instead of wired** (Batch 216). It was the only way to change the
   cache's EMA/ATR/RSI periods, and `SScalpConfig`'s are separate literals assigned at
   `EAOrchestrator.mqh:1303` (5/13/14/7). The cache and the config agree today only because neither can move;

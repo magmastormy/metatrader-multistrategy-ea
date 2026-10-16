@@ -339,6 +339,23 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 217: Volatility Targeting Measures a Scalar That No Lot Reads (2026-10-17)
+
+- **Edge unchanged:** `CalculatePositionSizeWithRisk -> fixed-risk size -> [modifiers] -> cap clamp -> risk gate`.
+  The volatility scaler is not in that chain and never has been; the batch makes the journal say so.
+- **Two inert implementations:** the hub's per-symbol `CVolatilityTargeting` (fed every cycle by `Update()`, five
+  getters, zero call sites) and the sizer's `CVolatilityTargetingModifier` (registered behind
+  `m_params.useVolatilityTargeting`, which nothing sets true, so `CalculateVolatilityTargetSize` always returns the
+  fixed-risk size). Their clamps disagree - 0.2-3.0 from the operator versus a hard 0.25-2.0.
+- **New runtime statements:** `[SIZING-CHAIN] ... | vol_targeting=inert(InpEnableVolTargeting feeds a measured
+  scalar no lot reads)` and `[VOL-TARGET] <symbol> | ... | scalar=1.480 | applied=no(no sizing consumer)`.
+- **Not wired, with the number:** at the default 0.15 annual target against typical FX realised vol (~0.08-0.13
+  annualised) the scalar is ~1.2-1.9, and `InpVolMaxScale` allows 3.0 - so switching it on as configured would
+  grow lots in calm markets. Every prior sizing batch moved lots the other way (Batch 213's ADX de-duplication,
+  VPIN re-arming, Batch 190's cap clamp). Choosing a target vol and whether a scaler may exceed 1.0 is risk policy
+  for the operator, recorded in §4.
+- **§3 invariants:** unchanged.
+
 ## Batch 216: The Scalp Cache Stopped Computing Six Series Nobody Reads (2026-10-17)
 
 - **Edge after the change:** `ProcessScalpFastPath -> UpdateOnNewBar(4 CopyBuffer) -> UpdateTickValues(spread

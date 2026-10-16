@@ -1704,6 +1704,36 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 217 A Risk Control That Reports Its Own Numbers To Nobody (2026-10-17)
+
+- **How it was found:** the queue item left open by Batch 213's sizing sweep - "`useVolatilityTargeting` is never
+  set from any input" - read properly this time. Batch 213 noted it in passing while fixing the ADX duplicate and
+  the VPIN filter; the fuller question was what the four operator inputs actually buy, and the answer turned out to
+  be a working volatility model whose output is discarded.
+- **Verified in both directions:** the engine is genuinely fed (`Update()` every cycle at
+  `OrchestratorMathEngineHub.mqh:649`, EWMA + percentile + clamped scalar all computed), and genuinely unread -
+  every one of its five getters grepped to zero call sites outside its own file. Checked for the near-miss trap:
+  `GetVolPercentile()` does exist elsewhere, on `CFourStateRegimeDetector`, which is a different engine with a
+  different snapshot; counting the name would have said "consumed". Same lesson as Batch 215's owner-not-name rule,
+  applied before it could bite.
+- **The second implementation was the more interesting half.** `CVolatilityTargetingModifier` sits in the sizer and
+  is the path a wiring would normally take, gated by `m_params.useVolatilityTargeting`. Tracing that flag: assigned
+  once, in `SPositionSizingParams`' own constructor, to `false`, and never written again anywhere in the tree - so
+  `CalculateVolatilityTargetSize` has always returned `CalculateFixedRiskSize`, and the modifier class has never run.
+  Two features doing one job, both off, with different ceilings (operator 0.2-3.0 versus hard 0.25-2.0) is also a
+  finding in itself: whichever gets wired, the other must be deleted or the EA has two answers to one question
+  (§2's one-authority rule).
+- **Chose reporting over wiring, and the arithmetic is why.** Target 0.15 annual; FX daily ATR runs ~0.5-0.8% of
+  price, which annualises (x sqrt 252) to ~0.08-0.13, so `scalar = target / ewmaVol` lands around 1.2-1.9 in
+  ordinary conditions and up to `InpVolMaxScale = 3.0` in calm ones. Volatility targeting is *supposed* to shrink when vol exceeds target; with
+  this default target it is a lever that pulls the other way most of the time. Shipping that as a "fix" under a
+  money mandate would be exactly the blind-wiring failure mode recorded for participation scoring (Batch 201) and
+  Bayesian Kelly (Batch 213). The safe half - stop the journal implying it works - is what shipped.
+- **What the operator must decide, stated plainly:** the target, and whether a scaler may exceed 1.0 at all. Once
+  those exist, the implementation choice is mechanical: register the modifier and set the flag from an input, or
+  route `GetScaledSize` into `CalculatePositionSizeWithRisk`, then delete the loser.
+- **§3 invariants:** unchanged. No lot, gate or veto moved.
+
 ## Batch 216 A Per-Tick Cache That Nobody Was Reading Most Of (2026-10-17)
 
 - **How it was found:** following Batch 214's RSI finding one step further. Asking "what does the consumer of

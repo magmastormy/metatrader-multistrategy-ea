@@ -8,6 +8,46 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 217: volatility targeting measures a scalar every bar that no lot ever reads
+
+`InpEnableVolTargeting` (true on the live EA), `InpTargetVol` (0.15), `InpVolMinScale` (0.2) and `InpVolMaxScale`
+(3.0) build a real, working volatility model: the math hub creates one `CVolatilityTargeting` per symbol,
+configures it with those three numbers, and calls `Update()` on it every cycle
+(`OrchestratorMathEngineHub.mqh:649`) - ATR-annualised vol, a 100-bar realised vol, an EWMA blend, a rolling
+percentile, and a scalar `target / ewmaVol` clamped to the operator's own `[0.2, 3.0]`. It then prints that
+scalar into the journal once a minute per symbol.
+
+**Nothing reads it.** `GetVolScalar()`, `GetScaledSize()`, `GetRealizedVol()`, `GetEwmaVol()` and
+`GetVolPercentile()` have zero call sites in the repository - the only same-named getters belong to
+`CFourStateRegimeDetector`. So a journal can show `[VOL-TARGET] EURUSD | ... | scalar=1.480 | highVol=false`
+while every lot that symbol trades is sized as if the number did not exist.
+
+There is a second, independent implementation of the same idea, also inert: `CVolatilityTargetingModifier` inside
+`CPositionSizer`, registered only `if(m_params.useVolatilityTargeting)`. That field is set in
+`SPositionSizingParams`' own constructor to `false` and assigned from nothing else in the tree, so the guard has
+never been true, `CalculateVolatilityTargetSize` has always fallen through to `CalculateFixedRiskSize`, and the
+modifier class - which does its own D1 ATR annualisation - has never multiplied a lot. The two implementations
+also disagree on the ceiling: the modifier clamps to 0.25-2.0 with a hard-coded 0.15 target, the engine to the
+operator's 0.2-3.0.
+
+#### Measured, then reported - not wired
+Wiring either one as currently configured is a **risk widening**, which is why this batch changes the reporting
+and not the sizing. An annual target of 0.15 against typical FX daily ATR/price of 0.5-0.8% (annualised ~8-13%)
+gives `scalar = 0.15 / 0.10 = 1.5`, so the first trade the wired path sizes would be half again the lot the risk
+math chose, in calm conditions by design, and up to `3.0x` because `InpVolMaxScale` defaults to 3.0. That is the
+opposite of the direction every earlier sizing batch has moved in (Batch 213's ADX de-duplication and VPIN
+re-arming both reduced lots; Batch 190's clamp caps what ships). Turning a protection into a lever by picking
+constants nobody chose is how a sizing path changes character without anyone deciding it should.
+
+So: `[SIZING-CHAIN] ... | vol_targeting=inert(InpEnableVolTargeting feeds a measured scalar no lot reads)` at
+every start, and `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the snapshot line, so a reader of the
+journal is not left to infer that the number they are watching moves nothing. What the operator wants - target
+vol, and whether the scale should be allowed above 1.0 at all - is recorded in `SYSTEM_STRUCTURE.md` §4 with both
+candidate routes, because choosing the ceiling is a risk-policy decision and the EA now says plainly which way it
+is currently set.
+
+`sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+
 ### Batch 216: the scalp signal cache did 78 buffer reads a minute for numbers nobody reads
 
 `CScalpSignalCache` is the fast path's per-symbol indicator store, and it has exactly one consumer:

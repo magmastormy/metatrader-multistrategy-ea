@@ -1797,7 +1797,7 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
 }
 // Which sizing modifiers can actually change a lot, stated at init: VPIN needs the filters registered
 // above, and Bayesian Kelly needs a trade-result feed it does not have yet.
-PrintFormat("[SIZING-CHAIN] modifiers=%s | vpin_filters=%d | kelly=inert(no UpdateTradeResult caller)",
+PrintFormat("[SIZING-CHAIN] modifiers=%s | vpin_filters=%d | kelly=inert(no UpdateTradeResult caller) | vol_targeting=inert(InpEnableVolTargeting feeds a measured scalar no lot reads)",
             m_positionSizer.DescribeModifiers(),
             m_positionSizer.VPINFilterCount());
 if(m_config.logLevel >= 2)
