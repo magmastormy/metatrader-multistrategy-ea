@@ -8,6 +8,73 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 222: three consensus gates that could never pass, and one veto whose answer was thrown away
+
+Four refusals in the entry path were structurally permanent rather than market-dependent. All four were
+verified against the working tree, and the first two are the unshipped half of findings already recorded in
+`.workbuddy/audit/03-engineer-profitability.md`.
+
+#### Conflict deadband 0.05 demanded unanimity ([PROFIT-02], half-fixed since)
+`conflictRatio = losingVotes / (winningVotes + losingVotes)` under `if(losingVotes > 0)`
+(`ConsensusEngine.mqh:1047-1056`) cannot be smaller than one dissenter over the votes cast: on the default
+roster of 14 indicator and 5 AI rows that floor is `1/19 = 0.0526`, which exceeds `0.05`. Every decision with
+a single dissenting strategy was therefore vetoed and only a unanimous committee could trade - from a
+portfolio deliberately partitioned into `TREND_CLUSTER` and `MEAN_REVERSION_CLUSTER`, which exist to disagree.
+The audit's own remedy was applied to the numerator in an earlier batch and the class default was raised to
+`0.35` under the marker `[PROFIT-02]` (`EntStrategyQuorumConfig.mqh:134`), but `InpConsensusConflictDeadband`
+and `OrchestratorConfig` both still carried `0.05`, which overwrites the class at init, and `[VALIDATION]`
+rejected anything above `0.20` so an operator could not even set the audited value.
+- `InpConsensusConflictDeadband` default `0.05 -> 0.35` in both root EAs, and `OrchestratorConfig` with it.
+- The accepted range is `[0.05, 0.50]` - the interval `SetConflictDeadband`'s clamp can actually honour, and
+  the value below which the gate is arithmetically a unanimity requirement.
+- `[CONSENSUS-VETOED]` now prints `votes=W-L`; `[CONSENSUS-QUORUM]` now prints `conflictDeadband=` and
+  `finestDissent=1/eligibleVoters`, so a deadband below one vote is visible instead of inferred.
+
+#### The ready-weight floor was unreachable whenever the regime snapshot was unconfirmed
+`GetRegimeCategoryMultiplier` returns a flat `0.30` stand-aside for `!snap.valid`
+(`ConsensusEngine.mqh:435-436`), and the ratio it feeds is a weighted mean of
+`confidence x participation x reliability x regimeMult` (`:896, :966`). With `confidence <= 1.0`,
+`participation <= 1.05` and `reliability <= 1.15` that product tops out at `0.36225`, under the operator's
+`InpConsensusMinReadyWeightRatio = 0.40`: such a symbol abstains on every scan and the refusal blames an
+unready committee. Worse, `CRegimeEngine::Update` - the only writer of `snap.valid` - had exactly one live
+call site, inside the pipeline's *optional* RegimeCostGate (`SignalPipelineFilter.mqh:44`, reached only when
+`m_filters.regimeCostGate.enabled`, `UnifiedSignalPipeline.mqh:388/406`). Switch `InpPipelineEnableRegimeCostGate`
+off, or get every voter filtered before that gate, and no snapshot ever turns valid anywhere: zero consensus
+trades, universe-wide.
+- `CEnterpriseStrategyManager::RefreshMarketRegime`, already called at the top of every consensus scan, now
+  calls `Update()` on the first live voter's timeframe when the snapshot is invalid. It cannot disagree with
+  the gate's own reading, and it is a no-op the moment the gate is supplying snapshots.
+- The refusal prints `regime=confirmed` or `regime=UNCONFIRMED(stand-aside 0.30 caps ratio at 0.36)`.
+
+#### The ATR crisis veto answered itself
+`CheckExogenousFilters` set `exogenousPass = false`, printed `[POST-CONSENSUS-FILTER] filter=atr_ratio`, then
+`return true` (`PostConsensusValidator.mqh:276`). The caller vetoes only on a false return and never reads
+`exogenousPass`, so the configured ATR14/ATR50 crisis ceiling (2.0 FX, 2.5 synthetic) has never refused a
+trade, while `AGENTS.md` section 6 cites that tag as evidence of filtering. It returns `false` now. The sibling
+spread-vs-ATR branch was always correct; only this one was inverted.
+
+#### atrRiskScale: a halving no lot ever received, deleted rather than wired
+`result.atrRiskScale = 0.5` in the `atrRatio > 1.5` band had zero readers - `validation.passed` is the only field
+`EAOrchestrator.mqh:3527` consumes - while `[RISK-VOL-GATE] ... action=halve_risk` announced it every time.
+Not wired: `CCandidateBuilder::CalculateStops` sets the stop to `ATR14 x 2.0` (FX) or `x 1.5` (synthetic) at
+`CandidateBuilder.mqh:629-635` and the lot is fixed-fractional over that distance, so a ratio of 1.6 already
+shrinks the lot to about `0.62x`. Multiplying by 0.5 on top would double-count one measurement at `0.31x`.
+The field and its constructor initialiser are gone, the log says `action=none(atr-scaled stop already shrinks
+the lot)`, and the file header no longer claims the validator reduces risk.
+
+#### Recorded, not rewired
+`supportFloor` compares against `winningScore / (winningScore + losingScore)`, which is above 0.50 by
+construction (an exact tie returns earlier as `[CONSENSUS-TIE]`), so no configured floor can refuse anything
+and `InpConsensusSupportFloor*` binds nothing. The `[CONSENSUS-QUORUM]` line now marks it `inert`. Measuring
+support against the whole eligible roster would make it live and would refuse thin-support decisions -
+operator policy, in the same family as the Batch 220 quality-scale and Batch 217 vol-target refusals.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. Consequences to expect in a fresh
+journal, none of which has been observed yet because no journal is newer than 2026-09-23 and the EA is not
+attached this round: fewer `[CONSENSUS-VETOED] Conflict ratio` lines and more `[CONSENSUS-DECISION]`;
+`[CONSENSUS-REJECT] Ready weight ratio` disappearing on symbols whose regime now fills in; and
+`filter=atr_ratio` lines that are no longer followed by a position.
+
 ### Batch 221: fourteen module headers that ran to 9-18 lines now run to 3-7
 
 The tree held 208 comment runs of four or more lines (1,200 lines), and the longest were file headers that

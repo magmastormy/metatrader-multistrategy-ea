@@ -1341,6 +1341,21 @@ void CEnterpriseStrategyManager::RefreshMarketRegime()
 
     SRegimeSnapshot snap = regime.GetSnapshot();
 
+    // CRegimeEngine::Update otherwise runs only inside the pipeline's optional RegimeCostGate, so with
+    // that filter off - or for a symbol whose voters are all dropped before it - no snapshot ever turns
+    // valid, every voter takes the 0.30 stand-aside, and the ready-weight floor becomes unreachable.
+    if(!snap.valid)
+    {
+        for(int i = 0; i < GetStrategyCount(); i++)
+        {
+            if(!IsStrategyEnabled(i) || GetStrategyPtr(i) == NULL || !IsStrategyLiveVotingEnabled(i))
+                continue;
+            if(regime.Update(GetManagedSymbol(), GetStrategyTimeframe(i)))
+                snap = regime.GetSnapshot();
+            break;
+        }
+    }
+
     ENUM_REGIME_STATE st = snap.state;
     ENUM_MARKET_REGIME mapped = MARKET_REGIME_UNKNOWN;
     if(snap.valid && st == REGIME_TREND)     mapped = MARKET_REGIME_TRENDING;

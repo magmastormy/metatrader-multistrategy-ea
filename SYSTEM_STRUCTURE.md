@@ -1414,6 +1414,18 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **Consensus gates must be reachable to count as policy** (Batch 222). Three admission gates on the
+  consensus path were arithmetic dead ends rather than market tests: the conflict deadband (`0.05`) sat below
+  the smallest dissent an integer committee can produce (`1/19`), so unanimity was required; the ready-weight
+  floor (`0.40`) sat above the ceiling the `0.30` regime stand-aside allows (`0.362`), and the snapshot that
+  stand-aside reads had as its only writer an optional pipeline filter; the ATR crisis branch returned the
+  caller's "pass" value after setting its own veto flag. Deadband default and accepted range now match the
+  value the quorum config class was audited to (`0.35`, range `[0.05, 0.50]`), the manager refreshes the
+  regime snapshot when nobody else has, and the crisis veto returns `false`. `supportFloor` is left inert and
+  labelled so in `[CONSENSUS-QUORUM]`: the winner's share of votes cast is always above 0.50, so binding it
+  would mean a different denominator and fewer trades - operator policy, recorded with the arithmetic like
+  the Batch 220 quality scale and the Batch 217 vol target.
+
 - **Module headers state ownership, not inventory** (Batch 221). The satellites of
   `EnterpriseStrategyManager.mqh` and the engine coordinators now carry a header of 3-7 lines: which object
   holds which (by value or by non-const back-pointer), the index lifetimes, the include-order constraint that

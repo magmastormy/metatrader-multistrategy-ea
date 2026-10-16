@@ -168,7 +168,7 @@ input group "Consensus & Quorum";
 input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
 input double   InpQuorumThreshold = 0.60;
 input int      InpMinLiveVoters = 2;
-input double   InpConsensusConflictDeadband = 0.05;
+input double   InpConsensusConflictDeadband = 0.35;
 input double   InpConsensusMinReadyWeightRatio = 0.40;
 input double   InpConsensusSupportFloorNewBar = 0.20;
 input double   InpConsensusSupportFloorIntrabar = 0.15;
@@ -826,9 +826,12 @@ bool ValidateInputs()
         PrintFormat("[VALIDATION] OK: InpQuorumThreshold=%.2f", InpQuorumThreshold);
     }
     
-    if(InpConsensusConflictDeadband < 0.01 || InpConsensusConflictDeadband > 0.2)
+    // Votes are integers, so the smallest non-zero conflict on this roster is 1/eligibleVoters
+    // (~0.05 at 19 rows). A deadband under 0.05 cannot be satisfied by any committee and silently
+    // demands unanimity; [0.05, 0.50] is the range SetConflictDeadband can actually honour.
+    if(InpConsensusConflictDeadband < 0.05 || InpConsensusConflictDeadband > 0.50)
     {
-        PrintFormat("[VALIDATION] ERROR: InpConsensusConflictDeadband=%.2f out of range [0.01, 0.2]", InpConsensusConflictDeadband);
+        PrintFormat("[VALIDATION] ERROR: InpConsensusConflictDeadband=%.2f out of range [0.05, 0.5]", InpConsensusConflictDeadband);
         valid = false;
     }
     else

@@ -756,10 +756,18 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
     buyQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentBuy));
     sellQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentSell));
 
-    PrintFormat("[CONSENSUS-QUORUM] %s | mode=%s | minVoters=%d | supportFloor=%.2f | qualityThresh=%.2f | buyQuorum=%.2f | sellQuorum=%.2f",
+    // Votes are integers: the smallest conflict this gate can ever see is one dissenter out of the
+    // votes cast. Printing it beside the deadband is what tells an operator that a value under
+    // 1/voters demands unanimity, and that supportRatio (winner / votes cast) is above 0.50 by
+    // construction, so a support floor at or below 0.50 refuses nothing.
+    double finestDissent = (eligibleLiveVoterCount > 1) ? (1.0 / eligibleLiveVoterCount) : 1.0;
+    string supportFloorNote = (supportFloor > 0.0 && supportFloor <= 0.50) ? " inert" : "";
+
+    PrintFormat("[CONSENSUS-QUORUM] %s | mode=%s | minVoters=%d | supportFloor=%.2f%s | qualityThresh=%.2f | buyQuorum=%.2f | sellQuorum=%.2f | conflictDeadband=%.2f | finestDissent=%.3f",
                 symbol,
                 (evalMode == EVAL_MODE_INTRABAR ? "INTRABAR" : "NEW_BAR"),
-                effectiveMinVoters, supportFloor, effectiveQualityThreshold, buyQuorum, sellQuorum);
+                effectiveMinVoters, supportFloor, supportFloorNote, effectiveQualityThreshold, buyQuorum, sellQuorum,
+                m_src.GetConflictDeadband(), finestDissent);
 }
 
 ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbol, double &confidence, int &confluence,
@@ -819,6 +827,16 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     int sellContributorIndices[];
     ArrayResize(buyContributorIndices, 0);
     ArrayResize(sellContributorIndices, 0);
+
+    // An unconfirmed regime snapshot stands every voter aside at 0.30, which caps the ready-weight
+    // ratio below any floor above 0.36. Read it once so the refusal can say which of the two it hit.
+    bool regimeSnapshotConfirmed = true;
+    if(pipeline != NULL)
+    {
+        CRegimeEngine* regimeEngine = pipeline.GetRegimeEngine(symbol);
+        if(regimeEngine != NULL)
+            regimeSnapshotConfirmed = regimeEngine.GetSnapshot().valid;
+    }
 
     for(int i = 0; i < strategyCount; i++)
     {
@@ -950,8 +968,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(!readyWeightMet)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Ready weight ratio %.2f < min %.2f",
-                    symbol, readyWeightRatio, m_src.GetMinReadyWeightRatio());
+        PrintFormat("[CONSENSUS-REJECT] %s | Ready weight ratio %.2f < min %.2f | regime=%s",
+                    symbol, readyWeightRatio, m_src.GetMinReadyWeightRatio(),
+                    regimeSnapshotConfirmed ? "confirmed" : "UNCONFIRMED(stand-aside 0.30 caps ratio at 0.36)");
         return TRADE_SIGNAL_NONE;
     }
 
@@ -1030,8 +1049,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         double conflictRatio = (double)losingVotes / (winningVotes + losingVotes);
         if(conflictRatio > m_src.GetConflictDeadband())
         {
-            PrintFormat("[CONSENSUS-VETOED] %s | Conflict ratio %.2f > deadband %.2f",
-                        symbol, conflictRatio, m_src.GetConflictDeadband());
+            PrintFormat("[CONSENSUS-VETOED] %s | Conflict ratio %.2f > deadband %.2f | votes %d-%d",
+                        symbol, conflictRatio, m_src.GetConflictDeadband(), winningVotes, losingVotes);
             return TRADE_SIGNAL_NONE;
         }
     }

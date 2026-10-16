@@ -1705,6 +1705,24 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 222 Refusals That Were Arithmetic, Not Markets (2026-10-17)
+
+- **Admission evidence changed shape.** A `[CONSENSUS-VETOED] Conflict ratio` line is now an actual split
+  above 0.35 rather than the only outcome of any dissent, and its `votes=W-L` field lets the split be read
+  without recomputing it. `[CONSENSUS-QUORUM]` carries `conflictDeadband=` and `finestDissent=`: if the two
+  say the deadband is below one vote, that gate is demanding unanimity again.
+- **A regime data gap is now distinguishable from an unready committee.**
+  `[CONSENSUS-REJECT] ... Ready weight ratio ... regime=UNCONFIRMED(...)` names the missing snapshot; before
+  Batch 222 the same line was the only symptom of a regime engine that had never been driven, because
+  `CRegimeEngine::Update` ran solely from the optional pipeline RegimeCostGate. `[MARKET-REGIME] ... valid=`
+  (Batch 201) is the companion line: it now flips to `valid=true` on symbols where it never had.
+- **`filter=atr_ratio` means a refused entry.** Since Batch 222 it is followed by no position; until then it
+  was printed and the trade shipped anyway. `[RISK-VOL-GATE] ... action=` states whether any lot change
+  happens, and no line claims `halve_risk` any more because nothing consumed it.
+- **Observability kept as-is:** `supportFloor=` still prints, now with `inert`, because refusing to print it
+  would hide a control the operator believes is set.
+
+
 ## Batch 221 Comment Surface Only (2026-10-17)
 - **Lifecycle:** none. Sixteen files, 120 comment lines removed, executable lines proved byte-identical.
 - **Verification:** compile 8 root programs, 0 errors / 0 total warnings.

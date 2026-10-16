@@ -2,10 +2,9 @@
 // cutoff, exogenous (ATR / spread) filters, adaptive quality gate, OFI directional
 // confirmation, VPIN toxicity.
 // Checks that VETO a trade: no_signal, hard_spread_cutoff (spread in points vs
-// m_hardSpreadCutoffPoints), ATR-ratio crisis (ATR14/ATR50), spread too wide vs
-// ATR, insufficient_quality, OFI contradiction. Checks that only scale risk DOWN:
-// ATR ratio > 1.5 halves atrRiskScale, VPIN sets a sizing multiplier. The validator
-// can reduce risk but can never raise it.
+// m_hardSpreadCutoffPoints), ATR-ratio crisis (ATR14/ATR50), spread too wide vs ATR,
+// insufficient_quality, OFI contradiction, VPIN toxicity. The ATR 1.5-2.0 band is measured
+// and logged only; the ATR-derived stop already scales the lot for it.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
@@ -37,7 +36,6 @@ struct SPostConsensusValidation
     string vetoReason;
     double qualityScore;
     double tradeConfidence;
-    double atrRiskScale;
     double spreadScore;
     double atrRatio;
     bool   atrReady;
@@ -45,7 +43,7 @@ struct SPostConsensusValidation
     double atrLongValue;
 
     SPostConsensusValidation() : passed(true), qualityScore(0), tradeConfidence(0),
-                                 atrRiskScale(1.0), spreadScore(0), atrRatio(0),
+                                 spreadScore(0), atrRatio(0),
                                  atrReady(false), atrValue(0), atrLongValue(0) {}
 };
 
@@ -273,12 +271,16 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
                                         result.atrRatio, atrCrisisThreshold, atrValue, atrLongValue, rawAtrRatio);
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=atr_ratio | signal=%s conf=%.2f | %s",
                     symbol, EnumToString(signal), confidence, exogenousReason);
-        return true; // Return true to let caller handle veto
+        // The caller vetoes on this return value only; exogenousPass is not read by it. Returning
+        // true here made the configured crisis ceiling a log line that traded anyway.
+        return false;
     }
     else if(result.atrRatio > 1.5)
     {
-        result.atrRiskScale = 0.5;
-        PrintFormat("[RISK-VOL-GATE] %s | atr_ratio=%.3f | action=halve_risk", symbol, result.atrRatio);
+        // No lot consumer: the ATR-derived stop already widens with this ratio, so fixed-fractional
+        // sizing shrinks the lot by roughly the same factor. Scaling it again here would double-count.
+        PrintFormat("[RISK-VOL-GATE] %s | atr_ratio=%.3f | action=none(atr-scaled stop already shrinks the lot)",
+                    symbol, result.atrRatio);
     }
 
     if(atrValue > 0)

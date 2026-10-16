@@ -339,6 +339,27 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 222: Gates That Refused by Construction on the Consensus Path (2026-10-17)
+
+Path touched: `SignalGenerator::EvaluateSymbol` -> `CConsensusEngine::EvaluateConsensusInternal` ->
+`CPostConsensusValidator::ValidateSignal` -> `CheckExogenousFilters`.
+
+| Gate | Operand | Why it could not pass | Change |
+|---|---|---|---|
+| `ConsensusEngine.mqh:1047` conflict deadband | `conflictRatio = losingVotes / (winningVotes + losingVotes)` | floor is one dissenter over votes cast (`>= 1/19 = 0.0526`); deadband `0.05` => unanimity required | default `0.35` in both EAs and `OrchestratorConfig`; `[VALIDATION]` range `[0.05, 0.50]` |
+| `ConsensusEngine.mqh:967` ready-weight ratio | `buyScore + sellScore / votedWeight`, each score `conf x weight x participation x reliability x regimeMult` | `regimeMult = 0.30` for an unconfirmed snapshot caps the ratio at `0.36225 < 0.40` | `RefreshMarketRegime` now calls `CRegimeEngine::Update` when the snapshot is invalid |
+| `PostConsensusValidator.mqh:276` ATR crisis | `result.atrRatio > GetATRCrisisThreshold(symbol)` | branch set `exogenousPass = false` then `return true`; the caller tests only the return value | `return false` |
+| `PostConsensusValidator.mqh:278` ATR 1.5 band | `result.atrRiskScale = 0.5` | zero readers; `validation.passed` is the only field consumed | field deleted; log says `action=none(...)`, double-count arithmetic recorded |
+
+New log fields: `[CONSENSUS-QUORUM] ... conflictDeadband= finestDissent=` and `supportFloor=... inert`;
+`[CONSENSUS-VETOED] ... votes=W-L`; `[CONSENSUS-REJECT] ... regime=confirmed|UNCONFIRMED(...)`.
+`[RISK-VOL-GATE] ... action=` now reads `none(atr-scaled stop already shrinks the lot)`.
+
+`dominantCluster` (Batch 219), `convictionScore`/`readinessScore`/`contextScore`/`costScore` (Batch 205) and
+the regime vote that became a veto (Batch 204) are the same failure shape: a designed branch whose input
+nobody wrote, or an input whose reachable range the gate ignored.
+
+
 ## Batch 221: Module Header Comments Cut to Their Constraints (2026-10-17)
 - No decision path, log line or executable byte changed. Sixteen files lost 120 comment lines: member and
   include inventories, a parameter glossary above `AssembleHeartbeatStatus`, an ALL-CAPS contract banner, and

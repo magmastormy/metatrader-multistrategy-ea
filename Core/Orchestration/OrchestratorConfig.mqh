@@ -440,7 +440,7 @@ struct SOrchestratorConfig
 
         quorumThreshold = 0.60;
         minLiveVoters = 2;
-        consensusConflictDeadband = 0.05;
+        consensusConflictDeadband = 0.35;
         consensusMinReadyWeightRatio = 0.40;
         consensusSupportFloorNewBar = 0.20;
         consensusSupportFloorIntrabar = 0.15;

@@ -174,7 +174,7 @@ input group "=== CONSENSUS QUORUM SETTINGS ==="
 input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
 input double   InpQuorumThreshold = 0.60;
 input int      InpMinLiveVoters = 2;
-input double   InpConsensusConflictDeadband = 0.05;
+input double   InpConsensusConflictDeadband = 0.35;
 input double   InpConsensusMinReadyWeightRatio = 0.40;
 input double   InpConsensusSupportFloorNewBar = 0.20;
 input double   InpConsensusSupportFloorIntrabar = 0.15;

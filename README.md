@@ -632,6 +632,28 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 222: three consensus gates could never pass, so most committees were being thrown away
+
+`InpConsensusConflictDeadband = 0.05` compared against a vote-count ratio that cannot fall below one dissenter
+out of the votes cast (`1/19 = 0.053` on this roster): any single dissenting strategy vetoed the decision, and
+only a unanimous committee could trade. The default is now `0.35` - the value the quorum config class was
+audited to and marked `[PROFIT-02]`, which the input default had been overwriting - and the accepted range is
+`[0.05, 0.50]`, because the old `[0.01, 0.20]` check refused the audited value outright.
+
+The ready-weight floor was also unreachable, not merely tight: an unconfirmed regime snapshot stands every
+voter aside at `0.30`, which caps that ratio at `0.36` against a `0.40` floor, and the snapshot's only writer
+ran from the *optional* pipeline regime-cost-gate filter. With that filter off, no symbol ever got a valid
+snapshot and the EA opened zero consensus trades. Consensus now refreshes the regime itself when the snapshot
+is missing, and the refusal says which of the two causes it hit.
+
+Two honesty fixes: the ATR14/ATR50 crisis veto set its flag, printed its line and then `return true`, so it
+has never refused a trade while section 6 of `AGENTS.md` cites that tag as proof it does (it returns `false`
+now); and `[RISK-VOL-GATE] ... action=halve_risk` announced a lot halving written into a field with zero
+readers. That one stays unwired with the arithmetic on record - the stop is already `2.0 x ATR14` and the lot
+is fixed-fractional over it, so a 1.6 ratio has shrunk it about `0.62x` already, and halving again would
+double-count. `supportFloor` is documented as inert for the same reason: the winning share of votes cast is
+always above 0.50, so no floor at or below 0.50 can refuse anything, and making it live would cut trades.
+
 ### Batch 221: fourteen module headers cut from 9-18 lines down to 3-7
 
 The longest comments in the tree were file headers that listed the members and includes declared underneath
