@@ -1718,6 +1718,9 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
 
                 // Wire EnterpriseStrategyManager-level engines (consensus gating)
                 m_enterpriseManagers[mi].SetVPINFilter(vpin);
+                // The toxicity shrink reads the hub's filter by symbol: this is the only way a VPIN
+                // measurement reaches a lot, because a filter the modifier created itself never gets fed.
+                m_positionSizer.RegisterVPINFilter(sym, vpin);
                 m_enterpriseManagers[mi].SetOFIEngine(ofi);
 
                 int trendWire = 2;
@@ -1800,6 +1803,11 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
         }
     }
 }
+// Which sizing modifiers can actually change a lot, stated at init: VPIN needs the filters registered
+// above, and Bayesian Kelly needs a trade-result feed it does not have yet.
+PrintFormat("[SIZING-CHAIN] modifiers=%s | vpin_filters=%d | kelly=inert(no UpdateTradeResult caller)",
+            m_positionSizer.DescribeModifiers(),
+            m_positionSizer.VPINFilterCount());
 if(m_config.logLevel >= 2)
 PrintFormat("[MAGIC-RANGE] base=%I64d | symbols=%d | range_max=%I64d | encoding=BASE+assetOffset+symbolIndex*%d for consensus, engine bands below 7000",
 m_config.magicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);

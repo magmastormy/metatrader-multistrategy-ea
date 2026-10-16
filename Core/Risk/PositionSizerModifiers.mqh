@@ -599,124 +599,96 @@ public:
     virtual string GetName() override { return "VolatilityTarget"; }
 };
 
-// Scales the lot by CVPINFilter toxicity; classification mode and bucket-overflow carry live inside the filter
+// Scales the lot by CVPINFilter toxicity; classification mode and bucket-overflow carry live inside the filter.
+// The filters belong to the math hub, which is the only thing that feeds a CVPINFilter ticks. A filter
+// created here would sit at zero completed buckets forever, so IsWarmedUp() would never turn true and the
+// toxicity shrink would never apply.
 class CVPINLotModifier : public CPositionSizerModifier
 {
 private:
-    CVPINFilter* m_vpinFilter;
-    bool         m_ownsFilter;
+    string       m_filterSymbols[];
+    CVPINFilter* m_filters[];
+    string       m_noFilterLogged;
+
+    CVPINFilter* FilterFor(const string symbol)
+    {
+        for(int i = 0; i < ArraySize(m_filterSymbols); i++)
+            if(m_filterSymbols[i] == symbol)
+                return m_filters[i];
+        return NULL;
+    }
 
 public:
-    CVPINLotModifier() :
-        m_vpinFilter(NULL),
-        m_ownsFilter(false),
-        m_defaultSymbol(""),
-        m_defaultBucketVolumeSize(0.0),
-        m_defaultNumBuckets(VPIN_DEFAULT_NUM_BUCKETS),
-        m_defaultExtremeThreshold(VPIN_DEFAULT_EXTREME),
-        m_defaultClassificationMode(VPIN_CLASSIFY_TICK_RULE),
-        m_lazyInitialized(false)
-    {}
+    CVPINLotModifier() : m_noFilterLogged("") {}
 
-    ~CVPINLotModifier()
+    // The hub keeps ownership; this class holds references only.
+    void RegisterFilter(const string symbol, CVPINFilter* filter)
     {
-        if(m_ownsFilter && m_vpinFilter != NULL)
+        if(symbol == "" || filter == NULL)
+            return;
+        for(int i = 0; i < ArraySize(m_filterSymbols); i++)
         {
-            delete m_vpinFilter;
-            m_vpinFilter = NULL;
+            if(m_filterSymbols[i] == symbol)
+            {
+                m_filters[i] = filter;
+                return;
+            }
         }
+        const int n = ArraySize(m_filterSymbols);
+        if(ArrayResize(m_filterSymbols, n + 1) != n + 1 || ArrayResize(m_filters, n + 1) != n + 1)
+        {
+            PrintFormat("[VPIN-MODIFIER] filter table resize failed at %d entries - toxicity sizing stays off for %s",
+                        n, symbol);
+            return;
+        }
+        m_filterSymbols[n] = symbol;
+        m_filters[n] = filter;
     }
+
+    int FilterCount() const { return ArraySize(m_filterSymbols); }
 
     // Parameterless Initialize() for the PositionSizer contract
     bool Initialize()
     {
-        m_defaultSymbol = "";
-        m_defaultBucketVolumeSize = 0.0;
-        m_defaultNumBuckets = VPIN_DEFAULT_NUM_BUCKETS;
-        m_defaultExtremeThreshold = VPIN_DEFAULT_EXTREME;
-        m_defaultClassificationMode = VPIN_CLASSIFY_TICK_RULE;
-        m_lazyInitialized = false;
+        ArrayResize(m_filterSymbols, 0);
+        ArrayResize(m_filters, 0);
+        m_noFilterLogged = "";
         return true;
     }
 
-    bool Initialize(const string symbol, double bucketVolumeSize = 0.0,
-                    int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
-                    double extremeThreshold = VPIN_DEFAULT_EXTREME,
-                    ENUM_VPIN_CLASSIFICATION classificationMode = VPIN_CLASSIFY_TICK_RULE)
-    {
-        m_defaultSymbol = symbol;
-        m_defaultBucketVolumeSize = bucketVolumeSize;
-        m_defaultNumBuckets = numBuckets;
-        m_defaultExtremeThreshold = extremeThreshold;
-        m_defaultClassificationMode = classificationMode;
-        m_lazyInitialized = true;
-        
-        if(symbol != "")
-        {
-            EnsureFilterCreated(symbol);
-        }
-        return true;
-    }
-
-    // Caller keeps ownership of the filter it hands in
-    void SetVPINFilter(CVPINFilter* filter)
-    {
-        if(m_ownsFilter && m_vpinFilter != NULL)
-        {
-            delete m_vpinFilter;
-        }
-        m_vpinFilter = filter;
-        m_ownsFilter = false;
-    }
-
-private:
-    void EnsureFilterCreated(const string symbol)
-    {
-        if(m_vpinFilter == NULL && (m_lazyInitialized || symbol != ""))
-        {
-            string filterSymbol = (symbol != "") ? symbol : m_defaultSymbol;
-            if(filterSymbol != "")
-            {
-                m_vpinFilter = new CVPINFilter(filterSymbol, m_defaultBucketVolumeSize, m_defaultNumBuckets, m_defaultExtremeThreshold, m_defaultClassificationMode);
-                m_ownsFilter = true;
-            }
-        }
-    }
-
-    string m_defaultSymbol;
-    double m_defaultBucketVolumeSize;
-    int    m_defaultNumBuckets;
-    double m_defaultExtremeThreshold;
-    ENUM_VPIN_CLASSIFICATION m_defaultClassificationMode;
-    bool   m_lazyInitialized;
-
-public:
     virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
     {
-        EnsureFilterCreated(symbol);
-        
-        if(m_vpinFilter == NULL)
+        CVPINFilter* filter = FilterFor(symbol);
+        if(filter == NULL)
+        {
+            if(m_noFilterLogged != symbol)
+            {
+                m_noFilterLogged = symbol;
+                PrintFormat("[VPIN-MODIFIER] %s | no hub VPIN filter registered | lot unchanged (%.4f)", symbol, baseLot);
+            }
             return baseLot;
-        
-        double multiplier = m_vpinFilter.GetPositionSizeMultiplier();
-        
+        }
+
         // Not warmed up: lot unchanged
-        if(!m_vpinFilter.IsWarmedUp())
+        if(!filter.IsWarmedUp())
             return baseLot;
-        
+
+        double multiplier = filter.GetPositionSizeMultiplier();
+
         // Confidence blends the multiplier toward 1.0; clamped 0.10-1.00, so VPIN can only shrink the lot
         double effectiveMultiplier = 1.0 + (multiplier - 1.0) * confidence;
         effectiveMultiplier = MathMax(0.1, MathMin(1.0, effectiveMultiplier));
-        
+
         double adjusted = baseLot * effectiveMultiplier;
-        
+
         PrintFormat("[VPIN-MODIFIER] %s | VPIN=%.4f | mult=%.2f | conf=%.2f | lot %.2f->%.2f",
-                    symbol, m_vpinFilter.GetVPIN(), multiplier, confidence, baseLot, adjusted);
-        
+                    symbol, filter.GetVPIN(), multiplier, confidence, baseLot, adjusted);
+
         return adjusted;
     }
 
     virtual string GetName() override { return "VPIN"; }
 };
+
 
 #endif // CORE_RISK_POSITION_SIZER_MODIFIERS_MQH

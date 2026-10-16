@@ -8,6 +8,90 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 213: ADX tiering was multiplied twice, and VPIN toxicity never reached a lot
+
+Two sizing defects found by a read-only sweep of the modifier chain, each verified at its own lines before
+being touched.
+
+#### 1. Two `CADXLotModifier` instances in one chain
+`CPositionSizer::Initialize` registered an ADX modifier **unconditionally** ("ADX modifier is registered
+unconditionally", `PositionSizer.mqh:257`) and `CEAOrchestrator` then added its own configured instance to the
+same chain (`EAOrchestrator.mqh:939-944`). Each instance holds its own iADX handle and applies its tier as a
+multiplier, so the chain multiplied ADX **twice**: `m_strongMultiplier 1.3` shipped 1.69× and
+`m_veryStrongMultiplier 1.5` shipped 2.25× of the lot the risk math had computed, and every `[ADX-MODIFIER]`
+line printed twice per sizing.
+
+Where that landed depended on the caller, and both callers were live: the consensus path
+(`CandidateBuilder.mqh:475`) follows the lot with the per-trade cap clamp at `:506-530`, so the doubled boost
+mostly showed up as `[RISK-GATE-ADJUST] lot A -> B` churn and a ladder permanently saturated at the cap -
+the tier nuance bought nothing and the operator saw adjustment noise. The four engine paths that call the sizer
+directly - `ATRScalpEntry.mqh:89`, `FastScalpSizing.mqh:68`, `GridRecoveryEngine.mqh:320`,
+`SpikeHunterExecutor.mqh:155` - and `SimpleMomentumStrategy.mqh:749` do not run that clamp, so those shipped the
+doubled lot. Fix: the sizer no longer registers ADX at all; the orchestrator's configured instance is the one
+in the chain.
+
+Not the same shape, and left alone: the sizer's `m_equityCurveModifier` is registered only
+`if(m_params.useEquityCurveScaling)` and has its own reader at `PositionSizer.mqh:489`, so it is a conditional
+feature rather than an unconditional duplicate.
+
+#### 2. The VPIN lot modifier read a filter nobody fed
+`CVPINLotModifier` created its **own** `CVPINFilter` lazily (`EnsureFilterCreated`), and nothing ever called
+that filter's tick method: the only live VPIN feed is the math hub's per-symbol filters, throttled inside
+`COrchestratorMathEngineHub` and driven from the orchestrator's tick path (`EAOrchestrator.mqh:2607`).
+`IsWarmedUp()` is `m_completedBuckets >= m_numBuckets`, so it was false forever and `AdjustLotSize` returned
+`baseLot` at the `!IsWarmedUp()` branch with no log. Its injection API `SetVPINFilter` had **zero call sites on
+this class**, and the parameterized `Initialize(symbol, ...)` that would have configured its private filter had
+zero call sites too - only the parameterless contract `Initialize()` was ever called.
+
+Consequence: the designed toxicity protection - a lot shrink of 0.10×-1.00× blended by confidence - has never
+applied. A book with informed-flow toxicity shipped at **full size**, up to ten times the intended risk, and
+three documents said otherwise (`PostConsensusValidator.mqh:396` "CVPINLotModifier applies it",
+`CandidateBuilder.mqh:494`, `VPINFilter.mqh:54`). `[VPIN-MODIFIER]` has never printed in this repository's
+history.
+
+Fix: the modifier now holds a per-symbol table of the hub's filters (`RegisterFilter(symbol, filter)`, references
+only - the hub keeps ownership and the tick feed), `CPositionSizer::RegisterVPINFilter` forwards to it, and the
+orchestrator registers each symbol's filter in the same engine-injection loop that wires the strategies
+(`EAOrchestrator.mqh:1723`). A symbol with no filter returns `baseLot` and says so once. The never-fed private
+filter, `m_ownsFilter`, the five unused `m_default*` fields, `EnsureFilterCreated` and the dead parameterized
+`Initialize` are deleted, and `[SIZING-CHAIN] modifiers=<names in the chain> | vpin_filters=N | kelly=inert(no UpdateTradeResult caller)`
+prints once at init, so a sizing input that reaches no multiplier is visible rather than assumed.
+
+Direction: both fixes **reduce** lots - one by removing a doubled boost, one by re-arming a protection that was
+supposed to shrink toxic trades. Neither widens risk.
+
+#### Checked and deliberately not wired
+- `CRiskAdaptiveTuner::m_riskReductionFactor` is a field with a reader and no writer (`UnifiedRiskManager.mqh:1544`
+  uses it to credit open P/L back against the used-risk budget; the value is the constructor's 0.5 forever).
+  `UpdateAdaptiveRiskLevel` does compute a `reductionFactor` and tightens it to 0.35 in critical drawdown - but
+  that number means "fraction of base risk to trade at", while this field means "fraction of unrealized profit
+  that frees budget". Storing one into the other would put two different quantities in one variable, so the
+  credit stays at its current, constant 0.5 and the naming collision is recorded instead.
+- `CBayesianKellyModifier` is registered from `InpKellyFraction` and returns `baseLot` unchanged because its only
+  input, `UpdateTradeResult`, has no caller. Wiring it naively would be a trap, not a fix: it multiplies a lot
+  that is **already** fixed-risk sized by a fraction of bankroll (`K * 0.25` ≈ 0.02-0.075), which would drop
+  every subsequent trade to roughly 1/13-1/40 of intended size, armed by a single closed trade. The correct form
+  is Kelly setting `riskPercent` before sizing, not scaling the result - a redesign, not a wiring, and
+  `[SIZING-CHAIN]` now says plainly that it is inert.
+- The compounding tier ladder is not monotone: tier 4 ($500-1,000) is 1.5% per trade and tier 5
+  ($1,000-5,000) is **5.0%**, with an inline comment on tier 5 saying "5% risk per trade for <$1K equity" - a
+  3.3x jump at $1,000 that reads like tier 1's numbers copied into the wrong band. Batch 192's clamp caps it at
+  the operator's approved per-trade risk, so the live effect is "full ceiling from $1,000 up" rather than 5%,
+  but which number that band should hold is an operator decision, not a bug to guess at.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Both instances of the ADX double registration read at their creation sites, and the sizer's remaining
+  `m_equityCurveModifier` path checked before concluding it is a different shape.
+- `grep` for `SetVPINFilter`, `EnsureFilterCreated`, the parameterized `Initialize` and `UpdateTradeResult` call
+  sites before deleting anything.
+- No journal evidence exists (newest 2026-09-23), which is why the absence of every `[VPIN-MODIFIER]` line - a
+  tag three documents describe as live - is recorded as reasoning from the code rather than as a log finding.
+  First-run signs: `[SIZING-CHAIN] vpin_filters=N` with N equal to the number of initialized symbols carrying
+  `InpEnableVPINFilter`, at most one `[ADX-MODIFIER]` line per sizing, and `[VPIN-MODIFIER] ... lot A->B`
+  whenever a warmed filter says the flow is toxic.
+
+
 ### Batch 212: the scan cadence controls bind, a parked symbol stops costing other symbols their scan, and the fused entry gate names itself
 
 #### Three controls that reached nothing

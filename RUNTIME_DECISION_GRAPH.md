@@ -336,6 +336,16 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 213: ADX Tiers Multiply Once and VPIN Toxicity Reaches the Lot (2026-10-16)
+
+- **Edge after the fix:** `sizer.CalculatePositionSizeWithRisk -> [modifiers] -> candidate.lotSize -> per-trade cap clamp (consensus only) -> CUnifiedRiskManager gate -> send`. The modifier chain is now `VolatilityTarget?, EquityCurve?, VPIN, Kelly, EquityCurveLot, ADX` - one ADX instance instead of two.
+- **What the duplicate did:** each `CADXLotModifier` holds its own iADX handle and multiplies the lot by its tier, so strong (1.3) and very strong (1.5) shipped 1.69x / 2.25x the computed lot. On the consensus path the cap clamp at `CandidateBuilder.mqh:506-530` pulled it back, which is why the visible symptom there was `[RISK-GATE-ADJUST]` churn and a tier ladder permanently pinned at the ceiling; the five callers that go straight to the sizer (`ATRScalpEntry:89`, `FastScalpSizing:68`, `GridRecoveryEngine:320`, `SpikeHunterExecutor:155`, `SimpleMomentumStrategy:749`) run no such clamp and shipped the doubled lot.
+- **What the unfed VPIN filter did:** `AdjustLotSize` returned `baseLot` at the `!IsWarmedUp()` branch forever, with no log, because the filter it read was one it created itself and nothing feeds ticks to a filter outside the math hub. The toxicity shrink (0.10-1.00x, blended by confidence) has therefore never been applied: `InpEnableVPINFilter` gated the veto and the strategies, never the size. The modifier now reads the hub's per-symbol filter, registered in the engine-injection loop next to the strategies' own `SetVPINFilter`.
+- **Both fixes reduce lots.** Neither widens risk: one removes a doubled boost, the other re-arms a protection whose own documentation claimed it was active.
+- **New init line:** `[SIZING-CHAIN] modifiers=VPIN,Kelly,EquityCurve,ADX | vpin_filters=N | kelly=inert(no UpdateTradeResult caller)` - the chain by name, so a sizing input reaching no multiplier is visible - plus a once-per-symbol `[VPIN-MODIFIER] <symbol> | no hub VPIN filter registered | lot unchanged` so an unfiltered symbol is a stated answer rather than a silent pass-through.
+- **Declined, with the reason recorded in `SYSTEM_STRUCTURE.md`:** wiring `m_riskReductionFactor` (the tuner's drawdown factor and the profit-credit factor are two quantities sharing one field name), and wiring `UpdateTradeResult` into Bayesian Kelly (the modifier multiplies an already risk-sized lot by a bankroll fraction, which would cut every trade to roughly 1/13-1/40 of intended size on one closed trade's evidence).
+- **§3 invariants:** unchanged - every entry still passes `CUnifiedRiskManager` pre-trade gating; only the lot reaching it moved toward what the design intended.
+
 ## Batch 212: The Scan Cadence Controls Bind; a Parked Symbol Costs Nothing but Its Own Scan (2026-10-16)
 
 - **Edge:** `OnTick -> RunSignalEvaluationCycle -> GenerateSignals(EVAL_MODE_NEW_BAR) -> SelectSymbolsForEval(budget) -> EvaluateSymbol[per-bar gate] -> consensus`. Two of those controls were operator-visible but disconnected, and one was a constant wearing an input's name.

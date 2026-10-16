@@ -107,7 +107,6 @@ private:
     
     CEquityCurveLotModifier* m_equityCurveModifier;
     CVolatilityTargetingModifier* m_volatilityTargetingModifier;
-    CADXLotModifier* m_adxModifier;
     CVPINLotModifier* m_vpinModifier;
 
     double CalculateFixedRiskSize(const string symbol, double stopLossPips);
@@ -129,6 +128,9 @@ public:
     bool IsInitialized() const { return m_initialized; }
     
     void SetCorrelationEngine(CCorrelationEngine* engine);
+    void RegisterVPINFilter(const string symbol, CVPINFilter* filter);
+    int  VPINFilterCount() const;
+    string DescribeModifiers() const;
     void SetIndicatorManager(CIndicatorManager* manager);
     void SetErrorHandler(CEnhancedErrorHandler* handler);
     void SetPerformanceAnalytics(CPerformanceAnalytics* analytics);
@@ -194,7 +196,6 @@ CPositionSizer::CPositionSizer() :
     m_atrPeriod(14),
     m_equityCurveModifier(NULL),
     m_volatilityTargetingModifier(NULL),
-    m_adxModifier(NULL),
     m_vpinModifier(NULL),
     m_initialized(false)
 {
@@ -210,7 +211,6 @@ CPositionSizer::~CPositionSizer()
 
     if(m_volatilityTargetingModifier != NULL) { delete m_volatilityTargetingModifier; m_volatilityTargetingModifier = NULL; }
     if(m_equityCurveModifier != NULL) { delete m_equityCurveModifier; m_equityCurveModifier = NULL; }
-    if(m_adxModifier != NULL) { delete m_adxModifier; m_adxModifier = NULL; }
     if(m_vpinModifier != NULL) { delete m_vpinModifier; m_vpinModifier = NULL; }
     
     for(int i = 0; i < m_modifierCount; i++)
@@ -254,12 +254,9 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
         }
     }
     
-    // ADX modifier is registered unconditionally
-    m_adxModifier = new CADXLotModifier();
-    if(m_adxModifier.Initialize())
-    {
-        AddModifier(m_adxModifier);
-    }
+    // ADX is not registered here: CEAOrchestrator adds the configured CADXLotModifier to this
+    // same chain, so a second instance multiplied the tier again - ADX >= 30 shipped 1.69x and
+    // 2.25x the lot the risk math had computed.
     
     m_vpinModifier = new CVPINLotModifier();
     if(m_vpinModifier.Initialize())
@@ -274,6 +271,33 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
     
         return true;
     }
+
+// The per-symbol VPIN filters live in the math hub, which is what feeds them ticks; the lot modifier
+// holds references, so toxicity sizing shrinks a lot it never sized.
+void CPositionSizer::RegisterVPINFilter(const string symbol, CVPINFilter* filter)
+{
+    if(m_vpinModifier != NULL)
+        m_vpinModifier.RegisterFilter(symbol, filter);
+}
+
+int CPositionSizer::VPINFilterCount() const
+{
+    return (m_vpinModifier != NULL) ? m_vpinModifier.FilterCount() : 0;
+}
+
+// Which modifiers actually sit in the chain, by name: the count and the list are the only way an operator
+// can see whether a sizing input reached a multiplier at all.
+string CPositionSizer::DescribeModifiers() const
+{
+    string names = "";
+    for(int i = 0; i < m_modifierCount; i++)
+    {
+        if(m_modifiers[i] == NULL) continue;
+        if(names != "") names += ",";
+        names += m_modifiers[i].GetName();
+    }
+    return names;
+}
 
 void CPositionSizer::SetCorrelationEngine(CCorrelationEngine* engine)
 {
