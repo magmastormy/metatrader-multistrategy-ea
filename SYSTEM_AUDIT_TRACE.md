@@ -1683,6 +1683,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 207 Phantom Strategy Slots Retired (2026-10-15)
+
+- **How it was found:** the strategy-identity census done for Batch 193-195 recorded three slots with no class and no row. The question this batch had to answer was not "are they dead" but "can they be wired" - and the answer is no: there is nothing to create, so the alternative was inventing strategies to justify the slots.
+- **Verified before deleting, per slot:** `grep` for each `SI_*` name returned its enum declaration only; each `STRATEGY_*` type appeared only in the `GetRegimeCategoryMultiplier` ICT case group and its own enum line, so no `GetType()` could reach it; the catalog's `siPolicyIndex` values were listed and none is 3, 5 or 6 - which is what makes the three `InpIntrabarEligibility*` inputs write-only.
+- **A hypothesis checked and rejected on the way:** the positional shape of `strategyIntrabarConfigs[si]` looked like a second index space applied to the wrong strategies (config 3 named "Unified ICT" while catalog row 3 is Candlestick). Reading `AutoRegisterStrategies` showed each row carries its own `siPolicyIndex` and `CatalogPolicySlot(i)` returns it, so the mapping is explicit per row and the arrays align: Momentum 0, Trend 1, Support/Resistance 2, Candlestick 4, Mean Reversion 7, Volatility Breakout 8, Turtle Soup 14 … Statistical Arbitrage 22. The orphaned indices were exactly the phantom trio.
+- **Renumbering deliberately avoided:** deleting the enum names without closing the gaps keeps every surviving slot value, and therefore every stored enable/policy pair and `[CATALOG-AUDIT]` line, identical. Re-numbering would have changed live semantics for no benefit.
+- **Left in place with reasons:** `SI_EXIT_OPTIMIZER` (a real class parked against AGENTS.md §3.3), `AIEngine`'s unicorn/power-of-three name normalisation (Batch 208 removes that classification mechanism by construction), and the testing EA's profile enum (its own vocabulary; the adjacent positional name arrays are where an edit would create a reporting shift).
+- **Verification:** compile 8 programs, 0 errors / 0 total warnings; diff reviewed line by line against the census, 51 deletions and nothing else.
+
 ## Batch 206 An Over-Restriction Sweep, One Fix and Five Rejections (2026-10-15)
 
 - **Method:** two parallel read-only sweeps over the entry-admission pair (`PostConsensusValidator` + `EntStrategyQuorumConfig`) and the sizing pair (`RiskValidationPipeline` + `CandidateBuilder`), looking specifically for refusals caused by measurement error rather than policy. Fourteen findings came back; each was read at its own line before anything was touched.

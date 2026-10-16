@@ -203,10 +203,7 @@ struct SOrchestratorConfig
     ENUM_INTRABAR_POLICY intrabarEligibilityMomentum;
     ENUM_INTRABAR_POLICY intrabarEligibilityTrend;
     ENUM_INTRABAR_POLICY intrabarEligibilitySupportResistance;
-    ENUM_INTRABAR_POLICY intrabarEligibilityUnifiedICT;
     ENUM_INTRABAR_POLICY intrabarEligibilityCandlestick;
-    ENUM_INTRABAR_POLICY intrabarEligibilityUnicornModel;
-    ENUM_INTRABAR_POLICY intrabarEligibilityPowerOfThree;
     ENUM_INTRABAR_POLICY intrabarEligibilityMeanReversion;
     ENUM_INTRABAR_POLICY intrabarEligibilityVolatilityBreakout;
     ENUM_INTRABAR_POLICY intrabarEligibilityNeuralNetworkAI;
@@ -540,10 +537,7 @@ struct SOrchestratorConfig
         intrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
         intrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
         intrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityUnifiedICT = INTRABAR_POLICY_LIVE;
         intrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityUnicornModel = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityPowerOfThree = INTRABAR_POLICY_LIVE;
         intrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
         intrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
         intrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;

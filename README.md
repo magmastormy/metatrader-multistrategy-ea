@@ -457,6 +457,12 @@ They do now: the consensus loop captures each voter's evidence and publishes the
 
 Stop distance, lot size, per-trade risk and every gate are untouched - this changes where a winner is closed, not how big the position is. The sweep that found it checked five other suspected over-restrictions to the line and rejected them: a triple-counted spread term that a policy term dominates, a safe-mode per-symbol cap that cannot go stale because MT5 inputs cannot change mid-run, two quality-threshold arms whose decision classes are never published, a min-lot refusal that is this project's deliberate anti-round-up rule, and a fail-closed portfolio poison that is recomputed every pass by design. One real finding is deferred rather than guessed at: every ATR the EA reads is measured on the timeframe of the chart it sits on, because each per-symbol manager is initialized with that value - choosing a per-symbol operating timeframe is an operator decision.
 
+### Batch 207: three strategy slots that never had a class were deleted
+
+`SI_UNICORN_MODEL`, `SI_POWER_OF_THREE` and `SI_UNIFIED_ICT` named strategies that do not exist - no catalog row, no class, and no `GetType()` that could ever answer them. Their only code presence was three unreachable `case` labels in the regime weighting switch; their only operator presence was three `InpIntrabarEligibility*` inputs whose values landed on config rows 3, 5 and 6, rows no catalog entry selects. So those inputs were written at init and read by nobody: three dead controls in the inputs dialog under names that imply live per-strategy policy. 51 lines removed, with both enums keeping their explicit numeric values so no surviving slot moved.
+
+No entry, exit, lot or risk path changed. `SI_EXIT_OPTIMIZER` was kept on purpose: `CExitOptimizer` is a real component, parked because wiring it would create a second exit authority - a decision about code that exists rather than a phantom identity.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

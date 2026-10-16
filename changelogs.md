@@ -8,6 +8,55 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 207: the three strategy slots that never had a class are gone
+
+#### What they were
+`SI_UNIFIED_ICT`, `SI_UNICORN_MODEL` and `SI_POWER_OF_THREE` are strategy slots this repository inherited with
+no implementation behind them. The census that justified deleting rather than wiring them:
+
+- no `CatalogAdd` row names them, so nothing ever registers, votes or trades;
+- the `SI_*` constants appear in `Core/Utils/Enums.mqh` and nowhere else;
+- `STRATEGY_UNIFIED_ICT` / `STRATEGY_UNICORN_MODEL` / `STRATEGY_POWER_OF_THREE` are referenced only as three
+  fall-through `case` labels in `GetRegimeCategoryMultiplier`'s ICT group - a branch no object can reach,
+  because no `GetType()` returns those values;
+- their three operator inputs (`InpIntrabarEligibilityUnifiedICT` / `UnicornModel` / `PowerOfThree`, in both
+  EAs) flowed to `strategyTimeframeConfigs[3]`, `[5]` and `[6]`, and **no catalog row declares `siPolicyIndex`
+  3, 5 or 6**. `CatalogPolicySlot(i)` only ever returns a row's own slot, so those config entries were written
+  at init and read by nobody - three dead controls in the inputs dialog under names that suggest live
+  per-strategy policy.
+
+#### What was removed (51 lines, each verified against the census)
+The `SI_*` slots and `STRATEGY_*` type values in `Enums.mqh`; the three dead `case` labels; the three config
+fields and their init defaults in `OrchestratorConfig.mqh`; the `StrategyConfigBuilder` rows at indices 3/5/6
+(their `.name` strings included); three inputs plus their config assignments in each of
+`MultiStrategyAutonomousEA.mq5` and `MultiStrategyTestingEA.mq5`. Both enums keep their explicit numeric
+values, so the surviving slots' numbers - and the slot pairs the catalog rows carry - did not move.
+
+#### Deliberately kept
+- **`SI_EXIT_OPTIMIZER` / `STRATEGY_EXIT_OPTIMIZER`.** `CExitOptimizer` exists, is constructed per symbol, and is
+  parked because wiring `Evaluate()` would create a second exit authority against AGENTS.md §3.3. That is a
+  decision about a real component, not a phantom identity, so its input stays with the reason already on
+  record in `SYSTEM_STRUCTURE.md` §4.8.
+- **`AIEngine`'s `"unicorn"` / `"powerofthree"` name normalisation.** Dead after this batch, but Batch 208
+  replaces the whole string-token classification mechanism with the catalog row, which removes such branches
+  by construction rather than by hunting names.
+- **`MultiStrategyTestingEA`'s `TEST_PROFILE_SINGLE_UNICORN` / `_POT` and its `STestFlags` fields.** That is the
+  testing EA's own profile vocabulary; those profiles now select nothing, which is honest, and editing the
+  positional name arrays beside them is how a reporting misalignment gets introduced.
+
+#### Behaviour direction
+None. Nothing read any of these values, so no entry, exit, lot or risk path changed. What changed is the
+operator-facing surface: the inputs dialog no longer offers three controls that reach nothing, and the regime
+category switch no longer implies an ICT family of strategies the catalog does not have (`Liquidity Sweep`,
+`FVG Scalper`, `Breaker Block`, `Turtle Soup` remain and still weight off `ictWeightMult`).
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Diff review confirmed every removed line against the census; no other line in the six files changed.
+- A live run should still show identical `[CATALOG-AUDIT]` slot pairs for the surviving rows, since the
+  deleted slots left gaps rather than renumbering anything.
+
+
 ### Batch 206: the minimum R:R stopped being a maximum take-profit
 
 #### The defect

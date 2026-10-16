@@ -42,15 +42,7 @@ public:
         config.strategyIntrabarConfigs[2].defaultPolicy = config.intrabarEligibilitySupportResistance;
         config.strategyIntrabarConfigs[2].syntheticLeanPrimary = true;
 
-        config.strategyTimeframeConfigs[3].name = "Unified ICT";
-        config.strategyTimeframeConfigs[3].defaultTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[3].intrabarEnabled = (config.intrabarEligibilityUnifiedICT != INTRABAR_POLICY_OFF);
-        config.strategyTimeframeConfigs[3].intrabarTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[3].forceHigherOnM1Synthetic = false;
 
-        config.strategyIntrabarConfigs[3].name = "Unified ICT";
-        config.strategyIntrabarConfigs[3].defaultPolicy = config.intrabarEligibilityUnifiedICT;
-        config.strategyIntrabarConfigs[3].syntheticLeanPrimary = true;
 
         config.strategyTimeframeConfigs[4].name = "Candlestick";
         config.strategyTimeframeConfigs[4].defaultTF = config.candlestickIntrabarTimeframe;
@@ -62,25 +54,9 @@ public:
         config.strategyIntrabarConfigs[4].defaultPolicy = config.intrabarEligibilityCandlestick;
         config.strategyIntrabarConfigs[4].syntheticLeanPrimary = true;
 
-        config.strategyTimeframeConfigs[5].name = "Unicorn Model";
-        config.strategyTimeframeConfigs[5].defaultTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[5].intrabarEnabled = (config.intrabarEligibilityUnicornModel != INTRABAR_POLICY_OFF);
-        config.strategyTimeframeConfigs[5].intrabarTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[5].forceHigherOnM1Synthetic = false;
 
-        config.strategyIntrabarConfigs[5].name = "Unicorn Model";
-        config.strategyIntrabarConfigs[5].defaultPolicy = config.intrabarEligibilityUnicornModel;
-        config.strategyIntrabarConfigs[5].syntheticLeanPrimary = true;
 
-        config.strategyTimeframeConfigs[6].name = "Power of Three";
-        config.strategyTimeframeConfigs[6].defaultTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[6].intrabarEnabled = (config.intrabarEligibilityPowerOfThree != INTRABAR_POLICY_OFF);
-        config.strategyTimeframeConfigs[6].intrabarTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[6].forceHigherOnM1Synthetic = false;
 
-        config.strategyIntrabarConfigs[6].name = "Power of Three";
-        config.strategyIntrabarConfigs[6].defaultPolicy = config.intrabarEligibilityPowerOfThree;
-        config.strategyIntrabarConfigs[6].syntheticLeanPrimary = true;
 
         config.strategyTimeframeConfigs[7].name = "Mean Reversion";
         config.strategyTimeframeConfigs[7].defaultTF = PERIOD_CURRENT;

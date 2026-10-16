@@ -57,7 +57,6 @@ enum ENUM_STRATEGY_TYPE
     // STRATEGY_FIBONACCI = 3 — REMOVED: merged into Support/Resistance as confluence module
     // STRATEGY_ELLIOTT_WAVE = 4 — REMOVED: subjective pattern recognition, unsuitable for automation
     STRATEGY_SUPPORT_RESISTANCE = 5,
-    STRATEGY_UNIFIED_ICT = 6,
     STRATEGY_CANDLESTICK = 7,
     STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy (NEW: Batch 93)
     STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy (NEW: Batch 93 - Week 3)
@@ -67,8 +66,6 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_BREAKER_BLOCK = 13,    // Breaker Block strategy (NEW: Batch 103)
     STRATEGY_NY_OPEN_GAP = 14,      // NY Open Gap strategy (NEW: Batch 103)
     STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
-    STRATEGY_UNICORN_MODEL = 16,    // Unicorn Model strategy (ICT variant)
-    STRATEGY_POWER_OF_THREE = 17,   // Power of Three strategy (ICT variant)
     STRATEGY_LIQUIDITY_SWEEP = 18,
     STRATEGY_RANGE_COMPRESSION = 19,  // Range Compression Breakout strategy
     STRATEGY_EXIT_OPTIMIZER = 20,
@@ -85,7 +82,6 @@ enum ENUM_STRATEGY_INDEX
     SI_MOMENTUM = 0,
     SI_TREND = 1,
     SI_SUPPORT_RESISTANCE = 4,
-    SI_UNIFIED_ICT = 5,
     SI_CANDLESTICK = 6,
     SI_MEAN_REVERSION = 7,
     SI_VOLATILITY_BREAKOUT = 8,
@@ -95,8 +91,6 @@ enum ENUM_STRATEGY_INDEX
     SI_BREAKER_BLOCK = 12,
     SI_NY_OPEN_GAP = 13,
     SI_ASIAN_RANGE_BREAK = 14,
-    SI_UNICORN_MODEL = 15,
-    SI_POWER_OF_THREE = 16,
     SI_LIQUIDITY_SWEEP = 17,
     SI_RANGE_COMPRESSION = 18,
     SI_EXIT_OPTIMIZER = 19,

@@ -448,9 +448,6 @@ double CConsensusEngine::GetRegimeCategoryMultiplier(const string symbol, ENUM_S
         case STRATEGY_MEAN_REVERSION:     catMult = snap.meanRevWeightMult;    break;
         case STRATEGY_VOLATILITY_BREAKOUT:
         case STRATEGY_RANGE_COMPRESSION:  catMult = snap.breakoutWeightMult;   break;
-        case STRATEGY_UNIFIED_ICT:
-        case STRATEGY_UNICORN_MODEL:
-        case STRATEGY_POWER_OF_THREE:
         case STRATEGY_FVG_SCALPER:
         case STRATEGY_BREAKER_BLOCK:
         case STRATEGY_LIQUIDITY_SWEEP:

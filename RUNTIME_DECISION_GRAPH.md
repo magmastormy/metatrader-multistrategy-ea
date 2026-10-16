@@ -336,6 +336,13 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 207: Three Phantom Strategy Slots Removed (2026-10-15)
+
+- **No decision path changed.** `SI_UNIFIED_ICT` / `SI_UNICORN_MODEL` / `SI_POWER_OF_THREE` had no catalog row, so no strategy ever occupied them, no `InpEnable*` flag was ever written to them, and `GetRegimeCategoryMultiplier`'s three corresponding `case` labels were unreachable (no `GetType()` returns those values).
+- **Dead input chain removed:** `InpIntrabarEligibilityUnifiedICT/UnicornModel/PowerOfThree` → `config.intrabarEligibility*` → `strategyTimeframeConfigs[3]/[5]/[6]` + `strategyIntrabarConfigs[3]/[5]/[6]`. A catalog row selects its policy slot through `CatalogPolicySlot(i)`, and no row declares 3, 5 or 6, so those writes had no reader.
+- **Slot numbering deliberately not compacted:** both enums keep explicit values, so `CatalogEnableSlot` / `siPolicyIndex` pairs on surviving rows are unchanged and `[CATALOG-AUDIT]` output should be identical before and after.
+- **Kept:** `SI_EXIT_OPTIMIZER` (real class, parked for the second-exit-authority reason) and the testing EA's profile vocabulary.
+
 ## Batch 206: The Minimum R:R Stops Capping the Take-Profit (2026-10-15)
 
 - **Edge changed:** `CalculateStops` -> `takeProfitPips = MathMax(proposedTP, stopLossPips * minRR)` (was `MathMin`). The TP edge into `CheckExecutionCost`, `TradeExecutor` and the order request is the same edge; its value is now a floor rather than a ceiling.
