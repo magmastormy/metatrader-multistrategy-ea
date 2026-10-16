@@ -1591,6 +1591,15 @@ void InitializeInstitutionalEngines()
                                                    m_managerCount);
 }
 
+// Engine-injection states for the one-line-per-symbol [WIRE-STATUS] report below.
+static string WireStateName(const int st)
+{
+    if(st == 0) return "wired";
+    if(st == 1) return "NO-ENGINE";
+    if(st == 2) return "not-registered";
+    return "CAST-FAILED";
+}
+
 bool InitializeEnterpriseManagers()
 {
     if(m_managerCount <= 0)
@@ -1696,66 +1705,91 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
             int mathIdx = m_mathEngineHub.FindSymbolIndex(sym);
             if(mathIdx >= 0)
             {
-                // Wire EnterpriseStrategyManager-level engines (consensus gating)
-                m_enterpriseManagers[mi].SetVPINFilter(m_mathEngineHub.GetVPINFilter(mathIdx));
-                m_enterpriseManagers[mi].SetOFIEngine(m_mathEngineHub.GetOFIEngine(mathIdx));
-                if(m_config.logLevel >= 3)
-                PrintFormat("[WIRE] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
+                CHurstEngine* hurst = m_mathEngineHub.GetHurstEngine(mathIdx);
+                COrnsteinUhlenbeckEngine* ou = m_mathEngineHub.GetOUEngine(mathIdx);
+                CVPINFilter* vpin = m_mathEngineHub.GetVPINFilter(mathIdx);
+                COrderFlowImbalanceEngine* ofi = m_mathEngineHub.GetOFIEngine(mathIdx);
 
+                // Wire EnterpriseStrategyManager-level engines (consensus gating)
+                m_enterpriseManagers[mi].SetVPINFilter(vpin);
+                m_enterpriseManagers[mi].SetOFIEngine(ofi);
+
+                int trendWire = 2;
                 IStrategy* trendStrat = m_enterpriseManagers[mi].GetStrategyByName("Trend");
                 if(trendStrat != NULL)
                 {
                     CStrategyTrend* trendPtr = dynamic_cast<CStrategyTrend*>(trendStrat);
-                    if(trendPtr != NULL)
+                    if(trendPtr == NULL)
+                        trendWire = 3;
+                    else
                     {
-                        trendPtr.SetHurstEngine(m_mathEngineHub.GetHurstEngine(mathIdx));
-                        trendPtr.SetVPINFilter(m_mathEngineHub.GetVPINFilter(mathIdx));
-                        if(m_config.logLevel >= 3)
-                        PrintFormat("[WIRE] Hurst/VPIN wired to Trend | Symbol=%s", sym);
+                        trendPtr.SetHurstEngine(hurst);
+                        trendPtr.SetVPINFilter(vpin);
+                        trendWire = (hurst != NULL) ? 0 : 1;
                     }
                 }
+
+                int srWire = 2;
                 IStrategy* srStrat = m_enterpriseManagers[mi].GetStrategyByName("Support/Resistance");
                 if(srStrat != NULL)
                 {
                     CStrategySupportResistance* srPtr = dynamic_cast<CStrategySupportResistance*>(srStrat);
-                    if(srPtr != NULL)
+                    if(srPtr == NULL)
+                        srWire = 3;
+                    else
                     {
-                        srPtr.SetHurstEngine(m_mathEngineHub.GetHurstEngine(mathIdx));
-                        srPtr.SetVPINFilter(m_mathEngineHub.GetVPINFilter(mathIdx));
-                        if(m_config.logLevel >= 3)
-                        PrintFormat("[WIRE] Hurst/VPIN wired to S/R | Symbol=%s", sym);
+                        srPtr.SetHurstEngine(hurst);
+                        srPtr.SetVPINFilter(vpin);
+                        srWire = (hurst != NULL) ? 0 : 1;
                     }
                 }
+
                 // Mean Reversion: Hurst engine (regime lockout)
+                int mrWire = 2;
                 IStrategy* mrStrat = m_enterpriseManagers[mi].GetStrategyByName("Mean Reversion");
                 if(mrStrat != NULL)
                 {
                     CMeanReversionStrategy* mrPtr = dynamic_cast<CMeanReversionStrategy*>(mrStrat);
-                    if(mrPtr != NULL)
+                    if(mrPtr == NULL)
+                        mrWire = 3;
+                    else
                     {
-                        mrPtr.SetHurstEngine(m_mathEngineHub.GetHurstEngine(mathIdx));
-                        if(m_config.logLevel >= 3)
-                        PrintFormat("[WIRE] Hurst wired to Mean Reversion | Symbol=%s", sym);
+                        mrPtr.SetHurstEngine(hurst);
+                        mrWire = (hurst != NULL) ? 0 : 1;
                     }
                 }
+
                 // Statistical Arbitrage: OU engine (half-life filter)
+                int saWire = 2;
                 IStrategy* saStrat = m_enterpriseManagers[mi].GetStrategyByName("Statistical Arbitrage");
                 if(saStrat != NULL)
                 {
                     CStatisticalArbitrageStrategy* saPtr = dynamic_cast<CStatisticalArbitrageStrategy*>(saStrat);
-                    if(saPtr != NULL)
+                    if(saPtr == NULL)
+                        saWire = 3;
+                    else
                     {
-                        saPtr.SetOUEngine(m_mathEngineHub.GetOUEngine(mathIdx));
+                        saPtr.SetOUEngine(ou);
                         // The catalog registration path never injects the bridge, so without this
                         // the gate stayed NULL and every signal failed as STATARB_PYTHON_BRIDGE_UNAVAILABLE.
                         CPythonBridge* saBridge = ((g_pythonBridge != NULL && g_pythonBridge.IsConnected())
                                                    ? g_pythonBridge : m_pythonBridge);
                         if(saBridge != NULL)
                             saPtr.SetPythonBridge(saBridge);
-                        if(m_config.logLevel >= 3)
-                        PrintFormat("[WIRE] OU wired to Statistical Arbitrage | Symbol=%s", sym);
+                        saWire = (ou != NULL) ? 0 : 1;
                     }
                 }
+
+                // InpLogLevel defaults to 1, so the four logLevel>=3 [WIRE] lines this replaces had
+                // never printed in a live session; a strategy losing its regime lockout was invisible.
+                PrintFormat("[WIRE-STATUS] %s | Trend=%s S/R=%s MeanRev=%s StatArb=%s | hurst=%s ou=%s vpin=%s ofi=%s",
+                            sym, WireStateName(trendWire), WireStateName(srWire), WireStateName(mrWire),
+                            WireStateName(saWire),
+                            hurst != NULL ? "on" : "OFF", ou != NULL ? "on" : "OFF",
+                            vpin  != NULL ? "on" : "OFF", ofi != NULL ? "on" : "OFF");
+
+                if(trendWire == 3 || srWire == 3 || mrWire == 3 || saWire == 3)
+                    PrintFormat("[WIRE-CAST-FAIL] %s | a registered strategy is not the class its catalog row names, so its engine was not injected", sym);
             }
         }
     }

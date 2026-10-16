@@ -506,6 +506,12 @@ Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimi
 
 So this is deletion, not rewiring: the twelve creators, the struct, the eight assignments the caller made into it, four public helpers with no call site (`IsRegistered`, `GetRegisteredNames`, `GetCount`, and a `BuildConfigFromEA` stub whose comments admitted it returned placeholder values), and fourteen includes. `Create` now takes a name alone, and `[StrategyFactory] Initialized with N strategy creators` reports 5 where it reported 17. A trade path is unchanged; the second, unreachable way to construct a strategy no longer exists to confuse the next reader or half-implement.
 
+### Batch 211: `[WIRE-STATUS]` tells you which strategy actually received its engine
+
+Four strategies get their statistical engines injected after registration - Hurst into Trend, Support/Resistance and Mean Reversion, OU into Statistical Arbitrage, VPIN/OFI onto the manager - and every print describing that injection sat behind `logLevel >= 3`, while `InpLogLevel` defaults to 1. No journal this repository has produced says whether a single engine landed. A failed cast was worse than silent: a registered strategy that is not the class its catalog row names simply kept its engine pointer at NULL, and Mean Reversion's regime lockout returns *true* with no Hurst engine, so band re-entries stay eligible in a confirmed trend with nothing in the log to distinguish that from a properly filtered strategy.
+
+One `[WIRE-STATUS] <symbol> | Trend=wired S/R=wired MeanRev=NO-ENGINE StatArb=not-registered | hurst=OFF ou=on ...` line per symbol now prints at init, and a cast failure prints `[WIRE-CAST-FAIL]`. Nothing was switched on or off: the fix is visibility, and the decision about whether a NULL engine should fail closed is left where it belongs - with the operator who can see it.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

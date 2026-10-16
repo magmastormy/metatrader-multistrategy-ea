@@ -256,8 +256,12 @@ name.
 
 `ConfigureBeforeInit(strategy, name)` remains the live authority for the values a strategy's `Init` reads for
 itself, fed by `SetStrategyConstructionInputs` from the orchestrator's own pass that already sets intrabar
-policies. Anything injected *after* registration (Hurst, OU, VPIN, the Python bridge) stays in
-`WireAndValidateDependencies`. A name the factory does not know prints
+policies. Engines are injected after registration, in `InitializeEnterpriseManagers`: Hurst (+VPIN) into Trend,
+Hurst (+VPIN) into Support/Resistance, Hurst into Mean Reversion, OU (+Python bridge) into Statistical
+Arbitrage, and VPIN/OFI onto the manager - reported per symbol by `[WIRE-STATUS]` since Batch 211.
+(`WireAndValidateDependencies` wires the orchestrator's own sub-objects - candidate builder, trade executor,
+risk/position managers - not strategies; §2.2.3 said otherwise until this batch corrected it.)
+A name the factory does not know prints
 `[StrategyFactory] ERROR: Unknown strategy '<name>'`, so an indicator pointed at the factory fails loudly instead
 of producing a second, unconfigured instance.
 

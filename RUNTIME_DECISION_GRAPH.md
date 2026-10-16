@@ -336,6 +336,14 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 211: Engine Injection Reports Per Symbol at Init (2026-10-16)
+
+- **Edge unchanged:** `InitializeEnterpriseManagers -> GetStrategyByName(row name) -> dynamic_cast -> SetHurstEngine / SetVPINFilter / SetOUEngine / SetPythonBridge`, then the strategy's own regime gate reads the pointer. Same setters, same order, same pointers.
+- **What was invisible:** all five `[WIRE]` prints sat behind `m_config.logLevel >= 3` while `InpLogLevel` defaults to 1, so no journal has ever confirmed that a strategy received its engine. A failed `dynamic_cast` was indistinguishable from "not on this roster": the strategy registers, votes and trades with `m_hurstEngine == NULL`, and `MeanRevertingRegime()` answers **true** on a NULL engine (`MeanReversionStrategy.mqh:492`), i.e. Mean Reversion keeps its band entries in a confirmed trend with no lockout and no output.
+- **New output:** `[WIRE-STATUS] <symbol> | Trend=… S/R=… MeanRev=… StatArb=… | hurst=… ou=… vpin=… ofi=…` once per symbol, unconditional, with `wired` / `NO-ENGINE` / `not-registered` / `CAST-FAILED` per strategy and `on` / `OFF` per engine, plus `[WIRE-CAST-FAIL] <symbol> | ...` when a registered strategy is not the class its row names.
+- **Read it as:** `NO-ENGINE` means an operator input switched the engine off (the strategy runs its unfiltered branch by design); `CAST-FAILED` means the catalog row and the class disagree, which is the §4.4 identity contract failing at the injection path.
+- **§3 invariants:** unchanged. No gate, veto, size or exit moved.
+
 ## Batch 210: The Factory Builds AI Adapters Only; the Unreachable Indicator Path Is Deleted (2026-10-16)
 
 - **Edge unchanged:** `CAT_KIND_AI rows -> CStrategyFactory::Create(factoryName) -> PrepareCatalogAIAdapter(k, adapter, symbol, tf) -> RegisterCatalogAIAdapter(symbol::name)`, and `CAT_KIND_INDICATOR rows -> g_strategyCatalogCreators[i]() -> ConfigureBeforeInit -> Init`. What changed is that the first edge no longer has a dead branch pointing at indicator classes.

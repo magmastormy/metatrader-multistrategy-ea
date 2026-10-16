@@ -8,6 +8,54 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 211: engine injection says out loud which strategy actually got its engine
+
+#### The gap
+Four strategies take their statistical engines by injection after registration, in
+`InitializeEnterpriseManagers`: Hurst (+VPIN) into `Trend`, Hurst (+VPIN) into `Support/Resistance`, Hurst into
+`Mean Reversion` (its regime lockout) and OU (+Python bridge) into `Statistical Arbitrage`, plus VPIN/OFI onto
+the manager itself. Every one of those five prints was behind `m_config.logLevel >= 3`, and `InpLogLevel`
+defaults to **1** (`MultiStrategyAutonomousEA.mq5:386`). No live journal this repository has ever produced says
+whether a single engine landed.
+
+The second silence was worse: a failed `dynamic_cast` was treated the same as "strategy not on this roster". If a
+catalog row names a class its creator did not build, the strategy registers, votes and trades - without its
+engine - and nothing distinguishes that from a clean wire. Batch 194 gave the *construction* path a
+`[STRATEGY-CONFIG] <row> did not yield a CStrategy...` line for exactly this shape; the injection path kept the
+silence.
+
+#### What that silence hides, in money terms
+`CMeanReversionStrategy::MeanRevertingRegime()` returns **true** when `m_hurstEngine == NULL`
+(`MeanReversionStrategy.mqh:492`): no engine means no regime lockout, so band re-entries stay eligible in a
+confirmed trend. With `InpEnableHurstEngine = false` - or a cast failure - that is what runs, and the operator
+reading the journal cannot tell it apart from a filtered strategy. Trend and S/R lose their Hurst/VPIN filters
+the same way, and `InpEnableOUProcess = false` leaves Statistical Arbitrage without the half-life filter its
+signals are supposed to clear.
+
+#### The change
+- One `[WIRE-STATUS] <symbol> | Trend=… S/R=… MeanRev=… StatArb=… | hurst=… ou=… vpin=… ofi=…` line per symbol at
+  init, printed unconditionally. Each strategy reads `wired`, `NO-ENGINE`, `not-registered` or `CAST-FAILED`;
+  each engine reads `on` or `OFF`, so an input switched off and a roster without the strategy are two different
+  answers.
+- `[WIRE-CAST-FAIL] <symbol> | a registered strategy is not the class its catalog row names, so its engine was
+  not injected` when a cast fails - the case that used to look like success.
+- Each engine pointer is now fetched once per symbol instead of once per strategy block (four redundant
+  `GetHurstEngine` / `GetVPINFilter` calls).
+
+#### Behaviour direction
+None. The same setters run with the same pointers, in the same order, and the wire states are computed from what
+actually happened rather than asserted. Only output is added.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- `InpLogLevel = 1` default and the five `logLevel >= 3` guards read before removing them; the `NULL -> true`
+  Hurst behaviour confirmed at `MeanReversionStrategy.mqh:490-498` rather than assumed.
+- No journal evidence exists (newest 2026-09-23). First-run sign: one `[WIRE-STATUS]` line per initialized
+  symbol. Expected states on the live defaults are `wired` for Trend / S/R / Mean Reversion, `not-registered`
+  for Statistical Arbitrage (its input defaults to false and it needs the Python bridge), and no
+  `[WIRE-CAST-FAIL]` line at all.
+
+
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
 #### What was there
