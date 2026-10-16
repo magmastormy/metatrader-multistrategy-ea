@@ -339,6 +339,15 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 221: Module Header Comments Cut to Their Constraints (2026-10-17)
+- No decision path, log line or executable byte changed. Sixteen files lost 120 comment lines: member and
+  include inventories, a parameter glossary above `AssembleHeartbeatStatus`, an ALL-CAPS contract banner, and
+  a four-line include caveat repeated across seven `EnterpriseStrategyManager` satellites.
+- Kept per file: holder direction (by value vs non-const back-pointer), index lifetime, the include-order
+  constraint on `SPositionState`, and the reason the atomic quorum setters stayed in the manager.
+- Verification: executable lines compared against a pre-edit snapshot, then compile 8 root programs at
+  0 errors / 0 warnings.
+
 ## Batch 220: The Quality Floor Is Scale-Contaminated; the Journal Now Shows It (2026-10-17)
 - `directionalQuality` is `sum(voter confidence x registration weight) / vote count`. The denominator is a
   headcount, so with roster weights of 1.0-2.0 the value is roughly 1.5x the committee's mean confidence, and

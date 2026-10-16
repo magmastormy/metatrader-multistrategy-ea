@@ -1,20 +1,9 @@
-// Owns the last-decided-signal bookkeeping and the cycle/lifetime signal counters
-// that used to be loose members of CEnterpriseStrategyManager.
-// BEHAVIOUR NOTE: before Batch 199 the contributor fields had no writer at all, so every
-// reader (attribution, authority learning, candidate role/cluster tags, strategy health)
-// saw an empty list. SetContributors is now called from the consensus decision.
-// The funnel counters still keep their construction values; nothing writes them.
-// m_currentMarketRegime is written by CEnterpriseStrategyManager::RefreshMarketRegime().
-// The module owns NO back-pointer. The only collaborator it needs
-// is the attribution delegator's JoinContributors() (a read-only
-// helper it does not own), which is therefore passed in by const
-// reference exactly like CStrategyMgrRoster takes the health
-// monitor. This avoids reaching into the manager's PRIVATE
-// JoinContributors() and keeps the module a leaf value object.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Last-decided-signal bookkeeping and the cycle/lifetime signal counters, formerly loose members of
+// CEnterpriseStrategyManager. Leaf value object: no back-pointer, and JoinContributors() is passed in because
+// the attribution delegator owns it. Before Batch 199 the contributor fields had no writer, so attribution,
+// authority learning, role/cluster tags and strategy health all read an empty list. The funnel counters still
+// hold their construction values - nothing writes them.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef ENT_STRATEGY_SIGNAL_CONTEXT_MQH
 #define ENT_STRATEGY_SIGNAL_CONTEXT_MQH
 

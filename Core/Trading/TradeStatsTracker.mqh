@@ -1,21 +1,7 @@
-// Aggregate trade statistics extracted from CTradeManager
-// Phase D, batch T2b. This module OWNS the counters that used to
-// live in CTradeManager::m_stats:
-// - RecordTrade           (the single ingest point, carved out
-// of CTradeManager::UpdatePerformanceMetrics)
-// - GetTradeStatistics    (total / successful / failed / rate)
-// - ResetStatistics       (zeroes the block)
-// - narrow field getters used by CTradeManager to refresh its
-// legacy mirror members.
-// STATE OWNERSHIP: CTradeManager holds this class BY VALUE and
-// keeps thin forwarders with the original public signatures.
-// DELIBERATELY NOT MOVED: CTradeManager::m_totalTrades /
-// m_successfulTrades / m_failedTrades / m_lastTradeTime. Those are
-// legacy backward-compatibility mirrors that remain owned by the
-// manager; it re-reads them from this module via the getters below
-// immediately after every RecordTrade call, exactly as before.
-// NO BACK-POINTER: everything RecordTrade needs arrives as a
-// parameter, so this module has no dependency on CTradeManager.
+// Aggregate trade statistics, extracted from CTradeManager (Phase D). Held BY VALUE with thin forwarders, and
+// no back-pointer: everything RecordTrade needs arrives as a parameter. CTradeManager keeps its own
+// m_totalTrades / m_successfulTrades / m_failedTrades / m_lastTradeTime mirrors and re-reads them here after
+// every RecordTrade - those are compatibility mirrors, not this module's state.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict

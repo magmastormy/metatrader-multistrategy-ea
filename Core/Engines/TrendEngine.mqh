@@ -1,13 +1,6 @@
-// Trend Detection Engine - Enterprise Grade
-// Unified trend analysis for all strategies
-// Coordinator only. The heavy lifting lives in focused modules:
-// TrendTypes.mqh      - shared value types
-// TrendMath.mqh       - ATR/EMA fallbacks, momentum, angle
-// TrendStrength.mqh   - 0-100 strength scoring
-// TrendRegime.mqh     - regime classification + label predicates
-// TrendMTF.mqh        - multi-timeframe alignment / consensus
-// TrendADX.mqh        - ADX acquisition + health state machine
-// TrendReadiness.mqh  - readiness snapshot + last-good reuse
+// Unified trend analysis for all strategies. Coordinator only: the work lives in TrendTypes (value types),
+// TrendMath (ATR/EMA fallbacks, momentum, angle), TrendStrength, TrendRegime, TrendMTF, TrendADX and
+// TrendReadiness.
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict

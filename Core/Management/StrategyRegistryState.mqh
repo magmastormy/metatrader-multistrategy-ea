@@ -1,14 +1,9 @@
-// Registry bookkeeping and per-strategy enable state: the registration sequence (registry
-// gate, capacity gate, strategy Init / AI init / risk-injection validation, entry append,
-// health-monitor enrolment, registration log), the name -> index lookups, the live-voter query.
-// MUTATES the manager, so the back-pointer is non-const and every write goes through the
-// manager's narrow per-field accessors. It mirrors no injected pointer, so it needs no re-sync
-// on Deinit or after the injection setters.
-// Stayed in EnterpriseStrategyManager.mqh, on purpose: SyncEnabledWithRegistry() reconciles
-// against the shared CStrategyRegistry and is called from EAOrchestrator; the weight /
-// confidence-threshold setters and the 35-field entry initialiser would each need a write
-// accessor per struct field; and the consensus core calls IsStrategyLiveVoter() by name, so the
-// manager keeps a same-signature forwarder.
+// Registry bookkeeping and per-strategy enable state: the registration sequence, the name -> index lookups
+// and the live-voter query. MUTATES the manager, so the back-pointer is non-const and every write goes
+// through its narrow per-field accessors; it mirrors no injected pointer, so nothing needs re-syncing.
+// Stayed in the manager on purpose: SyncEnabledWithRegistry() reconciles the shared CStrategyRegistry from
+// EAOrchestrator, the 35-field entry initialiser would need a write accessor per field, and the consensus
+// core calls IsStrategyLiveVoter() by name.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_REGISTRY_STATE_MQH
 #define STRATEGY_REGISTRY_STATE_MQH

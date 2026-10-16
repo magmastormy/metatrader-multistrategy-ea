@@ -1,13 +1,7 @@
-// Extracted from PositionManager.mqh (Phase I decomposition)
-// STATEFUL module: owns the SPositionState registry that maps
-// broker position tickets to strategy metadata, prediction IDs and
-// AI prediction snapshots. Method bodies are copied verbatim from
-// CPositionManager - zero behaviour change.
-// NOTE: 'SPositionState' intentionally remains a TOP-LEVEL struct
-// (exactly as it was declared in PositionManager.mqh) so that any
-// translation unit including PositionManager.mqh keeps seeing it.
-// It must stay declared AFTER Core/Trading/TradeManager.mqh is
-// pulled in, which PositionManager.mqh guarantees by include order.
+// The SPositionState registry: broker tickets to strategy metadata, prediction IDs and AI snapshots. Bodies
+// copied verbatim from CPositionManager, zero behaviour change.
+// SPositionState stays a TOP-LEVEL struct so every translation unit that includes PositionManager.mqh keeps
+// seeing it, and it must stay declared after Core/Trading/TradeManager.mqh - include order there guarantees it.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MGR_STATE_STORE_MQH

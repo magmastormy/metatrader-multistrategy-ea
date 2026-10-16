@@ -1,20 +1,9 @@
-// Composite weight computation and quorum preset profiles extracted from CEnterpriseStrategyManager.
-// Unlike the Slice 1 collaborators this module MUTATES the manager,
-// so it holds a NON-const back-pointer. It writes exclusively
-// through the manager's existing public mutators
-// (UpdateStrategyWeightByName / SetMinQuorum / SetQuorumThreshold /
-// SetSupportFloors / SetIntrabarDynamicQuorumEnabled) plus one
-// narrow raw setter, so the resulting state is identical.
-// DELIBERATELY NOT MOVED: the atomic consensus config setters
-// (SetMinQuorum, SetConflictDeadband, SetMinReadyWeightRatio, ...)
-// stay in the manager because they own mirrored fields that the
-// DO-NOT-PIECEMEAL C9 consensus core (EvaluateConsensusInternal)
-// reads directly (m_conflictDeadband, m_minReadyWeightRatio).
-// Relocating those fields would require editing a C9 body.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Composite weight computation and quorum presets, extracted from CEnterpriseStrategyManager. Unlike the other
+// satellites this module MUTATES the manager, so it holds a non-const back-pointer and writes only through the
+// manager's public mutators. The atomic quorum setters (SetMinQuorum, SetConflictDeadband,
+// SetMinReadyWeightRatio) stay in the manager: the consensus core reads those mirrored fields directly, so
+// moving them would mean editing a hot consensus body.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef CONSENSUS_WEIGHTING_CONFIG_MQH
 #define CONSENSUS_WEIGHTING_CONFIG_MQH
 

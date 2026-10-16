@@ -1,15 +1,7 @@
-// Owns the EA magic-number ownership window (m_managedMagic / m_managedMagicRangeMax)
-// and the trade-outcome feedback loop: the ownership predicate, the partial-close
-// guard and OnTradeTransaction (deal -> attribution -> performance).
-// *** BEHAVIOUR CONTRACT ***
-// Bodies were relocated byte-for-byte from the original manager; manager-member reads
-// go through the manager's public accessors. Batch 199 added one deliberate exception:
-// the engine-book filter in OnTradeTransaction, which the attribution path needed once
-// the contributor context started being written.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Owns the EA magic-number ownership window (m_managedMagic / m_managedMagicRangeMax) and the trade-outcome
+// feedback loop: ownership predicate, partial-close guard, and OnTradeTransaction (deal -> attribution ->
+// performance). Bodies relocated byte-for-byte, manager reads through public accessors; Batch 199 added the
+// one deliberate exception - the engine-book filter OnTradeTransaction needed for attribution.
 #ifndef STRATEGY_MGR_TRADE_FEEDBACK_MQH
 #define STRATEGY_MGR_TRADE_FEEDBACK_MQH
 

@@ -1705,6 +1705,10 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 221 Comment Surface Only (2026-10-17)
+- **Lifecycle:** none. Sixteen files, 120 comment lines removed, executable lines proved byte-identical.
+- **Verification:** compile 8 root programs, 0 errors / 0 total warnings.
+
 ## Batch 220 A Quality Threshold Read Against the Wrong Scale (2026-10-17)
 - **Decision path:** unchanged. No threshold, comparison or admission rule moved.
 - **Observability:** `[POST-CONSENSUS-FILTER] filter=quality_gate` now carries `conviction=` beside `quality=`.

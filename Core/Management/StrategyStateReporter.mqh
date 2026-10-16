@@ -3,10 +3,7 @@
 // state exclusively through the manager's minimal const accessor
 // surface, so every emitted string is byte-for-byte identical to
 // the original implementation.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_STATE_REPORTER_MQH
 #define STRATEGY_STATE_REPORTER_MQH
 

@@ -1,13 +1,7 @@
-// Owns the trade-execution collaborators and counters:
-// m_baseMagic, m_positionSizer, m_riskManager, m_tradeManager,
-// m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened
-// Per-symbol state reads/writes are routed through the detector
-// pointer (symbol, ATR, confluence, cooldown stamps) so the state
-// stays single-owned by CSpikeHunterDetector. Every threshold,
-// literal, log tag and short-circuit order is reproduced verbatim.
-// The includes below mirror SpikeHunterEngine.mqh exactly so this
-// module sees the identical set of collaborator definitions the
-// original class body saw.
+// Trade-execution collaborators and counters for the spike hunter. Per-symbol state is read and written
+// through the detector pointer, so CSpikeHunterDetector stays the single owner of it. Thresholds, literals,
+// log tags and short-circuit order are verbatim; the includes mirror SpikeHunterEngine.mqh so this module
+// sees the same collaborator definitions the original class body saw.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_EXECUTOR_MQH

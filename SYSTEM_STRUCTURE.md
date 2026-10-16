@@ -1414,6 +1414,13 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **Module headers state ownership, not inventory** (Batch 221). The satellites of
+  `EnterpriseStrategyManager.mqh` and the engine coordinators now carry a header of 3-7 lines: which object
+  holds which (by value or by non-const back-pointer), the index lifetimes, the include-order constraint that
+  keeps `SPositionState` visible, and the specific reason a piece of logic could not move with its neighbours
+  (the consensus core reads the mirrored quorum fields directly). Member lists, module maps that duplicate the
+  `#include` block, parameter glossaries and the repeated include caveat are gone.
+
 - **`Core/Utils/LogMacros.mqh` is now only the heartbeat block** (Batch 218). It declared 42 macros and 37
   had no call site: ten duplicated tags the code prints literally, eleven `LOG_JSON_*`/`LOG_PERFORMANCE`/
   `GENERATE_CORR_ID` wrappers, seven named a tag with no emitter and no payload (`[CONSENSUS-ROOT]`,

@@ -1,16 +1,8 @@
-// Per-strategy performance accounting, rolling-window statistics and health/quality
-// scoring: trade outcome accounting, the 20-trade rolling ring buffer, rolling win
-// rate / Sharpe, derived metrics, the disable / re-enable governance predicates and
-// the AI accuracy -> health blend.
-// This module MUTATES the manager: non-const back-pointer, every read and write through
-// the manager's narrow per-field accessors.
-// Deliberately NOT moved:
-// - The health / participation reads the consensus core calls on its hottest
-//   per-strategy loop (EvaluateConsensusInternal, EvaluateConsensusProbeOnlyInternal,
-//   TryFallbackSoloSignalInternal) - no extra indirection added there.
-// - CStrategyHealthMonitor itself: this module only mirrors manager state and delegates.
-// NOTE: implementation detail of EnterpriseStrategyManager.mqh, included from there
-// (after the shared free helpers, before the manager class). Not for standalone include.
+// Per-strategy performance accounting, rolling statistics and health scoring; mutates the manager through
+// narrow per-field accessors. Deliberately NOT moved: the health/participation reads inside
+// EvaluateConsensusInternal and its two siblings (the hottest per-strategy loop), and CStrategyHealthMonitor
+// itself, which this module only mirrors and delegates to.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_PERFORMANCE_HEALTH_MQH
 #define STRATEGY_PERFORMANCE_HEALTH_MQH
 

@@ -1,16 +1,8 @@
-// Owns the registered-strategy roster (entry array, live entry count, the hard capacity
-// of 25), the narrow per-field accessors the manager forwarders call, the 35-field append
-// block and the teardown loops.
-// BEHAVIOUR CONTRACT: every body here is the manager's original inline body, bounds
-// checks and fallback return values included. Only two signature additions exist:
-// GetStrategyTimeframe() takes the manager's base timeframe as `fallback`, and
-// health-monitor work takes the monitor as an argument (the roster does not own it).
-// Neither is observable - the manager's forwarders pass what the original read.
-// Leaf value object: held BY VALUE, no back-pointer, never reads manager state.
-// Index rule: m_strategies[] only ever grows by append, so a roster index stays valid
-// until ClearRoster()/Deinit resets it - never cache an index across those.
-// NOTE: implementation detail of EnterpriseStrategyManager.mqh, included from there
-// (after the shared free helpers, before the manager class). Not for standalone include.
+// The registered-strategy roster (entry array, live count, capacity 25) with the append and teardown blocks.
+// Every body is the manager's original inline one, bounds checks and fallback returns included; only two
+// signatures grew - GetStrategyTimeframe takes the base timeframe as `fallback`, health work takes the monitor
+// as an argument. Held BY VALUE, no back-pointer. A roster index stays valid until ClearRoster()/Deinit.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_MGR_ROSTER_MQH
 #define STRATEGY_MGR_ROSTER_MQH
 

@@ -632,6 +632,16 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 221: fourteen module headers cut from 9-18 lines down to 3-7
+
+The longest comments in the tree were file headers that listed the members and includes declared underneath
+them, glossaried parameters the signature already names, or repeated one four-line include caveat across seven
+`EnterpriseStrategyManager` satellites. Sixteen files lost 120 comment lines; what remains in each is the
+ownership fact and the exception a reader cannot recover from the code - by-value holders and back-pointer
+direction, index lifetimes, the include-order constraint that keeps `SPositionState` visible, and why the
+atomic quorum setters could not follow their siblings out of the manager. Executable lines proved
+byte-identical against a pre-edit snapshot; compile 8 root programs, 0 errors / 0 warnings.
+
 ### Batch 220: the quality floor has been measuring strategy weight as well as conviction
 
 `directionalQuality` accumulates `voter confidence x registration weight` and divides by the number of voters,

@@ -1,13 +1,6 @@
-// Spike hunting engine for synthetic CFD indices
-// Detects pre-spike conditions and opens trades IN the spike
-// direction, independent of existing long-term positions
-// CSpikeHunterEngine is a thin coordinator: every public method is a signature-identical forwarder into a focused SpikeHunter* module - no behaviour, threshold or log tag changed.
-// SpikeHunterTypes.mqh      SSpikeHunterConfig + state structs
-// SpikeHunterOverrides.mqh  Batch-102 family override table
-// SpikeHunterDirection.mqh  PainX/GainX/Boom/Crash direction map
-// SpikeHunterDetector.mqh   symbol registry + 3 detection layers
-// SpikeHunterAlerts.mqh     throttled push notifications
-// SpikeHunterExecutor.mqh   spike trade gating + execution
+// Spike hunting for synthetic CFD indices: detects pre-spike conditions and opens trades in the spike
+// direction, independent of existing long positions. A thin coordinator - each signature-identical forwarder
+// lands in a SpikeHunter* module (types, overrides, direction, detector, alerts, executor).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"

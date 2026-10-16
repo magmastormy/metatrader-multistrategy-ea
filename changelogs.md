@@ -8,6 +8,29 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 221: fourteen module headers that ran to 9-18 lines now run to 3-7
+
+The tree held 208 comment runs of four or more lines (1,200 lines), and the longest were file headers that
+enumerated the members or includes declared a few lines below, listed a function's parameters one per line
+after the signature already named them, or repeated the same four-line include caveat verbatim across seven
+`EnterpriseStrategyManager` satellites. Mandate: keep what a reader cannot recover from the code.
+
+#### Compressed, with the constraint kept
+Sixteen files. What survives in each is the ownership fact and the exception, not the inventory: that
+`CTradeStatsTracker` is held by value with no back-pointer while `CTradeManager` keeps its own legacy mirrors
+and re-reads them after every `RecordTrade`; that `CConsensusWeightingConfig` mutates the manager through
+public mutators and why the atomic quorum setters could not move with it (the consensus core reads the mirrored
+fields directly); that a roster index stays valid only until `ClearRoster()`/`Deinit`; that `SPositionState`
+must remain a top-level struct declared after `TradeManager.mqh` because include order is what makes it
+visible; that the status reporter's per-cycle counters are arguments because MQL5 cannot capture a volatile
+local by pointer. Dropped: member lists, the `PyBridge*`/`Trend*`/`SpikeHunter*` module maps (they are the
+`#include` lines), the parameter glossary above `AssembleHeartbeatStatus`, the `*** BEHAVIOUR CONTRACT ***
+banner`, and the include caveat collapsed to one line in all seven files.
+
+**Verification:** 120 comment lines removed (runs of 8+ lines: 31 -> 17), executable lines proved
+byte-identical per file against a pre-edit snapshot, and compile 8 root programs at 0 errors / 0 total
+warnings. No code, no behaviour, no log text changed.
+
 ### Batch 220: the consensus quality floor measures registration weight as well as confidence
 
 `buyDirectionalQuality += stratConf * weight` (`ConsensusEngine.mqh:890`) divided by `buyVotes` (:916) is not

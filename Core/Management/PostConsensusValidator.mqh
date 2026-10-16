@@ -6,9 +6,7 @@
 // ATR, insufficient_quality, OFI contradiction. Checks that only scale risk DOWN:
 // ATR ratio > 1.5 halves atrRiskScale, VPIN sets a sizing multiplier. The validator
 // can reduce risk but can never raise it.
-// NOTE: this header is an implementation detail of EnterpriseStrategyManager.mqh and
-// is included from there (after the shared free helpers, before the manager class).
-// It is not intended to be included standalone.
+// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
 

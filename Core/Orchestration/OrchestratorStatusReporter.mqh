@@ -1,13 +1,6 @@
-// Read-only status-text aggregation for the EA orchestrator
-// Extracted verbatim from CEAOrchestrator::GetStatusReport(). The
-// method is pure string assembly over collaborator status text: it
-// reads no orchestrator state it does not receive, mutates nothing,
-// and is only consumed by the heartbeat log
-// Wiring: the orchestrator injects its collaborators once, from
-// WireAndValidateDependencies(). The volatile per-cycle counters
-// (call count, live position count, ...) cannot be captured by
-// pointer in MQL5, so they are passed per call - the assembled
-// string is therefore identical to the original, line for line.
+// Read-only status-text aggregation, extracted verbatim from CEAOrchestrator::GetStatusReport(). It reads no
+// orchestrator state it does not receive and mutates nothing. The volatile per-cycle counters (call count,
+// live position count) cannot be captured by pointer in MQL5, so they arrive per call.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_STATUS_REPORTER_MQH
@@ -94,22 +87,9 @@ public:
                 m_positionManager    != NULL);
     }
 
-// Assembles the heartbeat status text. Body moved verbatim from
-// CEAOrchestrator::GetStatusReport(); the only change is that
-// the value members it used to read directly are now borrowed
-// pointers (hence the NULL guards on the two formerly
-// unconditional lines) and the per-cycle counters arrive as
-// arguments.
-// systemInitialized - orchestrator init flag
-// tradingEnabled    - orchestrator trading flag
-// managerCount      - number of enterprise managers
-// callCount         - orchestrator cycle counter
-// scansAttempted    - heartbeat telemetry: scans attempted
-// signalsValidated  - heartbeat telemetry: signals validated
-// signalsSent       - heartbeat telemetry: signals sent
-// eaPositionCount   - live EA-owned position count
-// maxPositionsTotal - configured position cap
-// returns           - the assembled multi-line status report
+// Assembles the heartbeat status text. Body moved verbatim from CEAOrchestrator::GetStatusReport(); the value
+// members it read directly are borrowed pointers now, hence the NULL guards on two formerly unconditional
+// lines, and the per-cycle counters arrive as arguments.
     string GetStatusReport(const bool  systemInitialized,
                            const bool  tradingEnabled,
                            const int   managerCount,

@@ -9,16 +9,9 @@
 #include "Enums.mqh"
 #include "ErrorHandling.mqh"
 
-// Thin coordinator: aggregates the extracted PyBridge* modules so every symbol
-// previously declared here stays available to any translation unit including
-// this file, and forwards each public call to the owning module.
-// PyBridgeTypes.mqh     - ENUM_PYTHON_BRIDGE_STATE and the SPythonBridge* structs
-// PyBridgeProtocol.mqh  - stateless message framing: JSON escape, scalar extraction,
-//                         response parsing, request building, version validation
-// PyBridgeTransport.mqh - connection/session state, HTTP transport, bridge-state logging
-// PyBridgeHealth.mqh    - heartbeat, reconnect backoff, server version negotiation,
-//                         log throttling
-// PyBridgeRequests.mqh  - prediction and correlation dispatch
+// Thin coordinator: aggregates the extracted PyBridge* modules (types, protocol framing, transport, health,
+// request dispatch) and forwards each public call, so every symbol previously declared here stays available
+// to any translation unit including this file.
 #include "PyBridgeTypes.mqh"
 #include "PyBridgeProtocol.mqh"
 #include "PyBridgeTransport.mqh"
