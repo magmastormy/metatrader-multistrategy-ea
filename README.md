@@ -178,19 +178,40 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpEnableSupportResistance` | true | S/R with Fibonacci confluence |
 | `InpEnableCandlestick` | true | Candlestick patterns |
 | `InpEnableVolatilityBreakout` | true | Volatility breakout |
-| `InpEnableUnifiedICT` | true | ICT/SMC structure |
 | `InpEnableFVGScalper` | true | FVG gap scalper |
 | `InpEnableTurtleSoup` | true | Liquidity sweep (Turtle Soup) |
 | `InpEnableBreakerBlock` | true | Breaker block entries |
 | `InpEnableNYOpenGap` | true | NY open gap fade |
 | `InpEnableAsianRangeBreak` | true | Asian range breakout |
-| `InpEnablePowerOfThree` | true | Power of Three |
-| `InpEnableUnicornModel` | true | Unicorn model |
-| `InpEnableStatArb` | true | Statistical arbitrage |
+| `InpEnableStatisticalArbitrage` | false | Statistical arbitrage (also needs the Python bridge) |
+| `InpEnableLiquiditySweep` | true | Liquidity Sweep strategy |
+| `InpEnableRangeCompression` | true | Range Compression Breakout |
+
+`InpEnableExitOptimizer` is not one of these: the Exit Optimizer is a math engine registered by
+`COrchestratorMathEngineHub`, never a consensus voter, and it has owned an enable-flag slot until Batch 209
+deleted that slot as unread.
+
+**Under `InpUseCuratedStrategySet = true` (the live default) a false input does not switch a curated strategy
+off.** Which rows are curated is catalog data (`SStrategyDefinition::curatedEnable`), not a list in the flag
+builder: today that is all twelve except Candlestick and Statistical Arbitrage, so those two inputs bind.
 
 ### Strategy Slot Scheme (semantic-only, Batch 147)
 
-The per-strategy enable flags (`strategyFlags[]`) are written by a single producer (`COrchestratorStrategyFlagBuilder::BuildStrategyFlags`) at **semantic `SI_*`** slots, and `CEnterpriseStrategyManager::AutoRegisterStrategies` reads them back through `CatalogEnableSlot(i)` — so reader and writer always agree. The legacy literal slot scheme that Batch 146 shipped dormant was **removed entirely in Batch 147**; there is no mode switch.
+The per-strategy enable flags (`strategyFlags[]`) are written by a single producer,
+`COrchestratorStrategyFlagBuilder::BuildStrategyFlags`, which since Batch 209 loops the catalog's indicator
+rows: each row's `siIndex` is the slot, `ConfigEnableForSlot` is the one switch from slot to operator input,
+and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input`.
+`CEnterpriseStrategyManager::AutoRegisterStrategies` reads the same slots back through `CatalogEnableSlot(i)`,
+so writer and reader cannot disagree. The legacy literal slot scheme that Batch 146 shipped dormant was
+**removed entirely in Batch 147**; there is no mode switch.
+
+| Slot | Resolved by | Notes |
+|---|---|---|
+| Enable flag | `SI_*` (`ENUM_STRATEGY_INDEX`), via `CatalogEnableSlot(i)` | `-1` = always on |
+| Intrabar policy | own `StrategyConfigBuilder` row, via `CatalogPolicySlot(i)` | `-1` = use `fixedPolicy` |
+
+`ENUM_STRATEGY_INDEX` and `ENUM_STRATEGY_TYPE` share no numbering, so nothing may cast a flag slot to a
+strategy type. Roster naming and roster counting go through the catalog rows for that reason.
 
 | Slot | Resolved by | Notes |
 |---|---|---|
@@ -203,27 +224,27 @@ Registration prints a `[CATALOG-AUDIT]` block on every boot confirming `slot_sch
 
 ## Strategy Roster
 
-### Indicator-Based Strategies (15 Active)
+### Indicator-Based Strategies (14 catalog rows)
 
-| Strategy | Tier | Cluster | Weight | Description |
-|----------|:----:|---------|:------:|-------------|
-| Momentum | 3 | TREND | 1.0 | Simplified 4-indicator momentum with scalp mode |
-| Trend | 2 | TREND | 1.2 | EMA crossover + ADX + multi-TF alignment |
-| Support/Resistance | 2 | MEAN_REVERSION | 1.5 | S/R with Fibonacci confluence + Hurst filter |
-| Candlestick | 2 | STRUCTURE | 1.5 | Engulfing, pin bar, Doji patterns |
-| UnifiedICT | 2 | STRUCTURE | 1.5 | ICT/SMC structure with order blocks and FVG |
-| Unicorn Model | 1 | STRUCTURE | 2.4 | Unicorn pattern (OB + FVG confluence) |
-| Power of Three | 1 | STRUCTURE | 2.3 | Accumulation/Manipulation/Distribution |
-| Mean Reversion | 2 | MEAN_REVERSION | 1.8 | Bollinger band reversion with z-score |
-| Volatility Breakout | 1 | TREND | 2.0 | ATR compression breakout |
-| Statistical Arbitrage* | 2 | MEAN_REVERSION | 1.8 | Pair correlation / spread reversion (Python bridge required) |
-| FVG Scalper | 2 | STRUCTURE | 1.8 | Fair Value Gap scalper with structure alignment |
-| Turtle Soup | 2 | STRUCTURE | 1.6 | Liquidity sweep detection + confirmation |
-| Breaker Block | 2 | STRUCTURE | 1.7 | Failed OB → breaker retest entries |
-| NY Open Gap | 3 | STRUCTURE | 1.3 | NY session open gap fade |
-| Asian Range Break | 3 | STRUCTURE | 1.3 | Asian range breakout at London open |
+| Strategy | Tier | Cluster | Weight | Curated | Description |
+|----------|:----:|---------|:------:|:-------:|-------------|
+| Momentum | 3 | TREND | 1.0 | yes | Simplified 4-indicator momentum with scalp mode |
+| Trend | 2 | TREND | 1.2 | yes | EMA crossover + ADX + multi-TF alignment |
+| Support/Resistance | 2 | MEAN_REVERSION | 1.5 | yes | S/R with Fibonacci confluence + Hurst filter |
+| Candlestick | 2 | STRUCTURE | 1.5 | **no** | Engulfing, pin bar, Doji patterns |
+| Mean Reversion | 2 | MEAN_REVERSION | 1.8 | yes | Bollinger band reversion with z-score |
+| Volatility Breakout | 1 | TREND | 2.0 | yes | ATR compression breakout |
+| Statistical Arbitrage* | 2 | MEAN_REVERSION | 1.8 | **no** | Pair correlation / spread reversion (Python bridge required) |
+| FVG Scalper | 2 | STRUCTURE | 1.8 | yes | Fair Value Gap scalper with structure alignment |
+| Turtle Soup | 2 | STRUCTURE | 1.6 | yes | Liquidity sweep detection + confirmation |
+| Breaker Block | 2 | STRUCTURE | 1.7 | yes | Failed OB → breaker retest entries |
+| NY Open Gap | 3 | STRUCTURE | 1.3 | yes | NY session open gap fade |
+| Asian Range Break | 3 | STRUCTURE | 1.3 | yes | Asian range breakout at London open |
+| Liquidity Sweep | 2 | STRUCTURE | 1.5 | yes | Sweep-and-reclaim entries |
+| Range Compression | 2 | TREND | 1.6 | yes | Compression break with trend cluster |
 
-*Statistical Arbitrage is only registered when Python Bridge is connected.
+*Statistical Arbitrage is only registered when Python Bridge is connected. Unified ICT, Unicorn Model and Power
+of Three left this table in Batch 207: they had no class, so nothing could ever register them.
 
 ### AI Adapters (5 Registered)
 
@@ -470,6 +491,14 @@ Five predicates in the candidate builder decided whether a trade had an indicato
 That was not a reporting problem. The authority score that picks the lot multiplier awards a `+0.20` `INDICATOR` term, so those strategies' trades sat a rung low; the lower 0.55 confidence bar applies only to indicator-backed decisions, so a purely indicator trade from those rows was judged against the 0.65 standard meant for an unproven neural net; and Python Bridge AI, unrecognized as AI, never entered the bootstrap cap that holds an adapter with no track record - it took full size while earning no AI credit. Classification now comes from the row's own `kind` / `aiKind`, so a correctly added strategy is correctly classified and there is no fifth list anyone can forget to update.
 
 Expect more and larger consensus trades from the six indicator rows, correct bootstrap capping for Python Bridge, and mixed AI-plus-indicator decisions no longer treated as AI-standalone. The vetoes, the refusal shape, the promotion thresholds and the risk gates are unchanged.
+
+### Batch 209: the enable roster is written from the catalog, and `[CURATION]` names the strategies it means
+
+`BuildStrategyFlags` hand-wrote fifteen slot assignments and twelve curated force-enables, and the two places that reported the roster back to the operator were both wrong. `[CURATION] Effective strategy set for X:` cast a flag-array index to `ENUM_STRATEGY_TYPE` - the two enums share no numbering, so Mean Reversion printed as `STRATEGY_CANDLESTICK`, Volatility Breakout as `STRATEGY_MEAN_REVERSION`, Liquidity Sweep as the bare number `17`, and Momentum as `0`. `CountEffectiveIndicatorStrategiesForSymbol` then subtracted four literal "AI slots" (17-20) that are actually Liquidity Sweep, Range Compression and Exit Optimizer, so the enabled-indicator count ran two low on the default roster - the Exit Optimizer's spurious `+1` cancelled its own `-1`, leaving Liquidity Sweep and Range Compression charged against themselves.
+
+The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
+
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1624` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ## AI Integration
 

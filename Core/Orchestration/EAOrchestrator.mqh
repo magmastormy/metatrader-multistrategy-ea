@@ -89,13 +89,6 @@
 
 #define STRATEGY_COUNT 21  // Number of indicator strategies in flags array (0-20, max enum value is STRATEGY_EXIT_OPTIMIZER=20)
 
-// AI Strategy types (registered separately via AI adapters)
-#define STRATEGY_NEURAL_NETWORK_AI 17
-#define STRATEGY_TRANSFORMER_AI 18
-#define STRATEGY_ENSEMBLE_AI 19
-#define STRATEGY_ONNX_AI 20
-#define STRATEGY_PYTHON_BRIDGE_AI 21
-
 #define CRASH_RECOVERY_STATE_FILE "CrashRecoveryState.json"
 
 #include "OrchestratorConfig.mqh"

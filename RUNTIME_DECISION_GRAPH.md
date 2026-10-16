@@ -336,6 +336,15 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 209: The Enable Roster Comes From the Catalog Row (2026-10-16)
+
+- **Edge rewritten:** `g_strategyCatalog indicator rows -> (CatalogEnableSlot + ConfigEnableForSlot switch + curatedEnable) -> strategyFlags[] -> {AutoRegisterStrategies, BuildStrategyRegistry, BuildEnabledStrategyList, CountEffectiveIndicatorStrategiesForSymbol}`. Before it, the writer was fifteen hand-written assignments and the two reporting paths read the array by raw index.
+- **The `[CURATION]` edge was broken, not the gate.** `BuildEnabledStrategyList` cast each set flag index to `ENUM_STRATEGY_TYPE`; the two enums number the same strategies differently and the type enum has gaps, so Mean Reversion printed as `STRATEGY_CANDLESTICK`, Liquidity Sweep as `17`, Momentum as `0`. The decision itself was correct - only the evidence line was wrong, which is what makes it worth fixing on a live book.
+- **The skip guard's number was low.** `CountEffectiveIndicatorStrategiesForSymbol` summed all set flags then subtracted flag slots `17/18/19/20` as "AI", which are Liquidity Sweep, Range Compression and Exit Optimizer; no AI adapter owns a flag slot. `EAOrchestrator.mqh:1624` tests that count against zero before it gives a symbol a manager, and the corrected count is two *higher* on the default roster (its `+1` Exit Optimizer entry cancelled its own `-1`), so the guard got looser, not stricter.
+- **`SI_EXIT_OPTIMIZER` deleted.** Its only readers were that decrement and the `[CURATION]` cast. `InpEnableExitOptimizer` still gates the math engine at `OrchestratorMathEngineHub.mqh:272,440`, which is where it always worked.
+- **New loud failure:** a catalog row whose `siIndex` has no `ConfigEnableForSlot` case prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated`. Previously such a row would have been written by nobody and registered by nobody with no output at all.
+- **Unchanged:** every flag value for the fourteen existing rows, the curated set (twelve rows, now marked in the row rather than listed in the builder), per-symbol suppression in `BuildStrategyFlagsForSymbol`, registration, weights, intrabar policies, consensus, authority and risk gates.
+
 ## Batch 208: Contributor Kind Comes From the Catalog Row (2026-10-15)
 
 - **Edge rewritten:** `consensus contributors (row names) -> CatalogContributorIsIndicator / IsAI / IsAIKind (g_strategyCatalog[].kind, .aiKind) -> candidate.hasIndicatorContributor / indicatorContributorCount / hasAIContributor / hasONNXContributor / hasNeuralNetContributor -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult -> lot`, plus `hasNeuralNetContributor -> Batch 203's label reservation`.
@@ -691,7 +700,7 @@ Before Batch 146 the intrabar policy slot was resolved from the catalog's legacy
 
 Resolution order:
 
-1. `BuildStrategyFlags` writes `strategyFlags[]` at `SI_*` slots (sole producer — unchanged).
+1. `BuildStrategyFlags` writes `strategyFlags[]` at `SI_*` slots (sole producer; since Batch 209 it walks the catalog's indicator rows instead of naming strategies, and `ConfigEnableForSlot` is the one slot -> operator-input switch).
 2. The policy loop pushes `strategyIntrabarConfigs[0..22]` into `CIntrabarPolicy::m_policyConfig` (32 slots).
 3. `AutoRegisterStrategies` resolves each row's enable slot via `CatalogEnableSlot(i)` (→ `SI_*`) and its policy slot via `CatalogPolicySlot(i)` (→ the strategy's own `siPolicyIndex`). Both are unconditional.
 4. `CIntrabarPolicy::GetIntrabarPolicyHelper(idx)` returns the configured policy if it is not `OFF`; otherwise it applies the always-LIVE fallback for the Mean Reversion / Volatility Breakout pair at fixed semantic slots `7/8`.

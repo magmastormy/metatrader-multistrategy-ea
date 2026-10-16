@@ -6,21 +6,7 @@
 #define CORE_ORCHESTRATION_ORCHESTRATOR_SYMBOL_CLASSIFIER_MQH
 
 #include "OrchestratorConfig.mqh"
-
-// Mirrored from EAOrchestrator.mqh and #ifndef-guarded so the indices stay single-sourced
-// whatever the include order.
-#ifndef STRATEGY_NEURAL_NETWORK_AI
-#define STRATEGY_NEURAL_NETWORK_AI 17
-#endif
-#ifndef STRATEGY_TRANSFORMER_AI
-#define STRATEGY_TRANSFORMER_AI 18
-#endif
-#ifndef STRATEGY_ENSEMBLE_AI
-#define STRATEGY_ENSEMBLE_AI 19
-#endif
-#ifndef STRATEGY_ONNX_AI
-#define STRATEGY_ONNX_AI 20
-#endif
+#include "../Strategy/StrategyCatalog.mqh"
 
 class COrchestratorSymbolClassifier
 {
@@ -85,32 +71,39 @@ public:
         return config.useSymbolClassProfiles && IsSyntheticIndexSymbolName(symbol);
     }
 
+    // Indicator rows only: AI adapters are registered by the orchestrator and own no enable slot, so
+    // there is nothing to subtract. The literal AI indices this used to subtract were flag-array slots
+    // 17-20, which belong to Liquidity Sweep, Range Compression and Exit Optimizer.
     static int CountEffectiveIndicatorStrategiesForSymbol(const bool &symbolFlags[])
     {
+        const int size = ArraySize(symbolFlags);
         int count = 0;
-        for(int i = 0; i < ArraySize(symbolFlags); i++)
+        BuildStrategyCatalog();
+        for(int i = 0; i < g_strategyCatalogCount; i++)
         {
-            if(symbolFlags[i])
-            count++;
+            if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
+                continue;
+            const int si = CatalogEnableSlot(i);
+            if(si >= 0 && si < size && symbolFlags[si])
+                count++;
         }
-        // Exclude AI strategies from this count
-        if(symbolFlags[STRATEGY_NEURAL_NETWORK_AI]) count--;
-        if(symbolFlags[STRATEGY_TRANSFORMER_AI]) count--;
-        if(symbolFlags[STRATEGY_ENSEMBLE_AI]) count--;
-        if(symbolFlags[STRATEGY_ONNX_AI]) count--;
         return count;
     }
 
     static string BuildEnabledStrategyList(const bool &strategyFlags[])
     {
+        const int size = ArraySize(strategyFlags);
         string list = "";
-        for(int i = 0; i < ArraySize(strategyFlags); i++)
+        BuildStrategyCatalog();
+        for(int i = 0; i < g_strategyCatalogCount; i++)
         {
-            if(strategyFlags[i])
-            {
-                if(list != "") list += ", ";
-                list += EnumToString((ENUM_STRATEGY_TYPE)i);
-            }
+            if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
+                continue;
+            const int si = CatalogEnableSlot(i);
+            if(si < 0 || si >= size || !strategyFlags[si])
+                continue;
+            if(list != "") list += ", ";
+            list += g_strategyCatalog[i].name;
         }
         return list;
     }

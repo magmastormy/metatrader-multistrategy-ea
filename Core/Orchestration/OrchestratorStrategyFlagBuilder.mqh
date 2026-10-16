@@ -8,6 +8,7 @@
 
 #include "OrchestratorConfig.mqh"
 #include "OrchestratorSymbolClassifier.mqh"
+#include "../Strategy/StrategyCatalog.mqh"
 
 // Mirrored from EAOrchestrator.mqh; #ifndef-guarded so the value stays single-sourced.
 #ifndef STRATEGY_COUNT
@@ -17,42 +18,57 @@
 class COrchestratorStrategyFlagBuilder
 {
 public:
+    // The operator's enable input for one flag slot. A slot with no case here has no input, and the
+    // caller prints which row that leaves switched off.
+    static bool ConfigEnableForSlot(const SOrchestratorConfig &config, const int si, bool &hasInput)
+    {
+        hasInput = true;
+        switch(si)
+        {
+            case SI_MOMENTUM:               return config.enableMomentum;
+            case SI_TREND:                  return config.enableTrend;
+            case SI_SUPPORT_RESISTANCE:     return config.enableSupportResistance;
+            case SI_CANDLESTICK:            return config.enableCandlestick;
+            case SI_MEAN_REVERSION:         return config.enableMeanReversion;
+            case SI_VOLATILITY_BREAKOUT:    return config.enableVolatilityBreakout;
+            case SI_STATISTICAL_ARBITRAGE:  return config.enableStatisticalArbitrage;
+            case SI_FVG_SCALPER:            return config.enableFVGScalper;
+            case SI_TURTLE_SOUP:            return config.enableTurtleSoup;
+            case SI_BREAKER_BLOCK:          return config.enableBreakerBlock;
+            case SI_NY_OPEN_GAP:            return config.enableNYOpenGap;
+            case SI_ASIAN_RANGE_BREAK:      return config.enableAsianRangeBreak;
+            case SI_LIQUIDITY_SWEEP:        return config.enableLiquiditySweep;
+            case SI_RANGE_COMPRESSION:      return config.enableRangeCompression;
+        }
+        hasInput = false;
+        return false;
+    }
+
     static bool BuildStrategyFlags(const SOrchestratorConfig &config, bool &flags[])
     {
         ArrayResize(flags, STRATEGY_COUNT);
         ArrayInitialize(flags, false);
 
-        flags[SI_MOMENTUM] = config.enableMomentum;
-        flags[SI_TREND] = config.enableTrend;
-        flags[SI_SUPPORT_RESISTANCE] = config.enableSupportResistance;
-        flags[SI_CANDLESTICK] = config.enableCandlestick;
-        flags[SI_MEAN_REVERSION] = config.enableMeanReversion;
-        flags[SI_VOLATILITY_BREAKOUT] = config.enableVolatilityBreakout;
-        flags[SI_FVG_SCALPER] = config.enableFVGScalper;
-        flags[SI_TURTLE_SOUP] = config.enableTurtleSoup;
-        flags[SI_BREAKER_BLOCK] = config.enableBreakerBlock;
-        flags[SI_NY_OPEN_GAP] = config.enableNYOpenGap;
-        flags[SI_ASIAN_RANGE_BREAK] = config.enableAsianRangeBreak;
-        flags[SI_STATISTICAL_ARBITRAGE] = config.enableStatisticalArbitrage;
-        flags[SI_LIQUIDITY_SWEEP] = config.enableLiquiditySweep;
-        flags[SI_RANGE_COMPRESSION] = config.enableRangeCompression;
-        flags[SI_EXIT_OPTIMIZER] = config.enableExitOptimizer;
-
-        if(config.useCuratedStrategySet)
+        BuildStrategyCatalog();
+        for(int i = 0; i < g_strategyCatalogCount; i++)
         {
-            // Curated mode force-enables every strategy below; a false enableX input does not switch it off.
-            if(!config.enableMomentum) flags[SI_MOMENTUM] = true;
-            if(!config.enableTrend) flags[SI_TREND] = true;
-            if(!config.enableSupportResistance) flags[SI_SUPPORT_RESISTANCE] = true;
-            if(!config.enableMeanReversion) flags[SI_MEAN_REVERSION] = true;
-            if(!config.enableVolatilityBreakout) flags[SI_VOLATILITY_BREAKOUT] = true;
-            if(!config.enableFVGScalper) flags[SI_FVG_SCALPER] = true;
-            if(!config.enableTurtleSoup) flags[SI_TURTLE_SOUP] = true;
-            if(!config.enableBreakerBlock) flags[SI_BREAKER_BLOCK] = true;
-            if(!config.enableNYOpenGap) flags[SI_NY_OPEN_GAP] = true;
-            if(!config.enableAsianRangeBreak) flags[SI_ASIAN_RANGE_BREAK] = true;
-            if(!config.enableLiquiditySweep) flags[SI_LIQUIDITY_SWEEP] = true;
-            if(!config.enableRangeCompression) flags[SI_RANGE_COMPRESSION] = true;
+            if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
+                continue;
+            const int si = CatalogEnableSlot(i);
+            if(si < 0 || si >= STRATEGY_COUNT)
+                continue;
+
+            bool hasInput = false;
+            const bool on = ConfigEnableForSlot(config, si, hasInput);
+            if(!hasInput)
+            {
+                PrintFormat("[CATALOG] %s | enable slot %d has no operator input - it stays off unless curated",
+                            g_strategyCatalog[i].name, si);
+                continue;
+            }
+            flags[si] = on;
+            // Curated mode force-enables the rows marked curatedEnable; a false enableX input does not switch those off.
+            if(config.useCuratedStrategySet && CatalogCuratedEnable(i)) flags[si] = true;
         }
 
         return true;
@@ -67,7 +83,6 @@ public:
         ArrayResize(symbolFlags, ArraySize(globalFlags));
         ArrayCopy(symbolFlags, globalFlags);
 
-        string symbolClass = COrchestratorSymbolClassifier::GetInstrumentExecutionProfileName(symbol);
         bool isSynthetic = COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol);
 
         if(config.useSymbolClassProfiles)

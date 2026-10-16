@@ -8,6 +8,78 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 209: the enable roster is written from the catalog, and the two paths that report it stop lying
+
+#### The defect
+`COrchestratorStrategyFlagBuilder::BuildStrategyFlags` hand-wrote fifteen `flags[SI_*] = config.enableX`
+assignments plus twelve curated force-enables, and both consumers of that array reported it wrongly:
+
+- `COrchestratorSymbolClassifier::BuildEnabledStrategyList` printed
+  `EnumToString((ENUM_STRATEGY_TYPE)i)` for every set flag index `i`. `ENUM_STRATEGY_INDEX` (the flag slots)
+  and `ENUM_STRATEGY_TYPE` (the registry types) share no numbering, so the `[CURATION] Effective strategy set`
+  line - one of the validation logs in `AGENTS.md` §6 - named the wrong strategy for nearly every row:
+
+  | Set flag slot | True owner | What `[CURATION]` printed |
+  |---|---|---|
+  | 0 | Momentum | `0` (no such enum member) |
+  | 1 | Trend | `STRATEGY_MOMENTUM` |
+  | 4 | Support/Resistance | `4` (gap) |
+  | 6 | Candlestick | `6` (gap) |
+  | 7 | Mean Reversion | `STRATEGY_CANDLESTICK` |
+  | 8 | Volatility Breakout | `STRATEGY_MEAN_REVERSION` |
+  | 14 | Asian Range Break | `STRATEGY_NY_OPEN_GAP` |
+  | 17 | Liquidity Sweep | `17` (gap) |
+  | 18 | Range Compression | `STRATEGY_LIQUIDITY_SWEEP` |
+
+- `CountEffectiveIndicatorStrategiesForSymbol` summed every set flag and then subtracted four `#define`d "AI
+  slots" `17/18/19/20`. No AI adapter owns a flag slot (all five rows carry `siIndex = -1`), while those four
+  numbers are Liquidity Sweep, Range Compression, Exit Optimizer and `SI_MAX`. On the default live roster that
+  is 14 set flags minus 3 = **11**, where the true indicator count is **13**: the Exit Optimizer's `+1` in the
+  sum cancelled its own `-1`, so the two curated structure rows were charged against themselves. 11 is the
+  number the `[ENTERPRISE] Skipping <symbol>` guard at `EAOrchestrator.mqh:1624` tests against zero.
+
+- `flags[SI_EXIT_OPTIMIZER] = config.enableExitOptimizer` wrote a slot nothing read as a strategy. The Exit
+  Optimizer is a math engine, gated live at `OrchestratorMathEngineHub.mqh:272,440` through the same config
+  field, and never a consensus voter.
+
+#### Why it matters for plug-and-play
+Batch 208 moved vote classification onto the catalog row. Enablement was the last place a new strategy still
+had to be written by hand a second time - and the `[CURATION]` line is how an operator confirms which roster a
+symbol actually got, so a log that misnames it makes a correct deployment look unverified.
+
+#### The fix
+- `SStrategyDefinition` gained `curatedEnable`; the twelve curated rows say `true` and Candlestick, Statistical
+  Arbitrage and all five AI rows say `false`, which is exactly the set the old `if(!config.enableX)` ladder
+  force-enabled.
+- `BuildStrategyFlags` loops the catalog's indicator rows: `CatalogEnableSlot(i)` is the slot,
+  `ConfigEnableForSlot(config, si, hasInput)` is the single slot -> operator-input switch, and a row whose slot
+  has no case prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated`
+  instead of being silently off.
+- `BuildEnabledStrategyList` and `CountEffectiveIndicatorStrategiesForSymbol` walk the rows, so the roster is
+  named and counted by the same data registration uses.
+- Deleted: the `SI_EXIT_OPTIMIZER` slot, the eight `STRATEGY_*_AI 17..20` literals (five in
+  `EAOrchestrator.mqh`, four guarded copies in the classifier), and the `ENUM_STRATEGY_TYPE` cast.
+- Docs contract: `README.md`'s roster table still carried Unified ICT / Unicorn Model / Power of Three (deleted
+  in Batch 207) and omitted Liquidity Sweep, Range Compression and `InpEnableStatisticalArbitrage`'s real
+  default of `false`. Both tables are now the fourteen rows, with a Curated column.
+
+#### Behaviour direction
+Nothing moves a vote, a weight, a policy or a risk gate: the flag array holds the same fourteen values it did
+before for every existing row. `[CURATION]` output changes text (real names, no Exit Optimizer), and the
+effective-indicator count rises by two on any roster where Liquidity Sweep and Range Compression are enabled (the curated mode guarantees both), which only makes the skip guard harder to trip -
+no symbol that traded before stops trading. A strategy added without an `enable` input now announces itself
+instead of being unreachable.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Curated set parity checked row by row against the deleted ladder (12 true, Candlestick + StatArb false).
+- `grep` confirmed `SI_EXIT_OPTIMIZER` had exactly two references (its declaration and the deleted write) and
+  the `STRATEGY_*_AI` literals had no reader outside the deleted decrements before either was removed.
+- No journal evidence exists (newest 2026-09-23). First-run signs to look for: `[CURATION] Effective strategy
+  set for X: Momentum, Trend, ...` naming rows rather than enum numbers, and no
+  `[CATALOG] ... has no operator input` line for the fourteen current rows.
+
+
 ### Batch 208: contributor kinds are read from the catalog row, not from a copy of its names
 
 #### The defect
