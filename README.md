@@ -452,7 +452,7 @@ Two nearby findings were **not** wired, each for a stated reason: participation 
 
 ### Batch 202: the heartbeat `paused` field reports a real pause
 
-`m_tradingPaused` printed in every `[HEARTBEAT]` line while its only writers had no callers, so it read `false` even when the synthetic-spike monitor had paused new positions. `CHeartbeatTelemetry::Emit` now takes the state and pushes it through `SetTradingPaused` before the counter snapshot, fed by `m_spikeMonitor.IsPaused()` at the existing emit site. No decision reads that field, so nothing but the log changed - but a pause is now visible in a journal, which is how the operator learns the monitor acted at all.
+`m_tradingPaused` fed the heartbeat `pause_active=` field while its only writers had no callers, so it read `false` even when the synthetic-spike monitor had paused new positions (and the heartbeat block reached only the JSON log until Batch 218 put it in the journal). `CHeartbeatTelemetry::Emit` now takes the state and pushes it through `SetTradingPaused` before the counter snapshot, fed by `m_spikeMonitor.IsPaused()` at the existing emit site. No decision reads that field, so nothing but the log changed - but a pause is now visible, which is how the operator learns the monitor acted at all.
 
 ### Batch 203: the neural net now learns from its own trades
 
@@ -631,6 +631,21 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 218: the heartbeat the checklist tells you to verify had no printer
+
+AGENTS.md section 6 asks for `[HEARTBEAT]` after any strategy, risk or execution change. Eight of the
+heartbeat tags - `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`,
+`[RISK-BUDGET]`, `[HEARTBEAT-POSITIONS]`, `[HEARTBEAT-ASSET-CLASS]`, `[HEARTBEAT-FAMILY]` - had no `Print`
+call site at all: `CDiagMgrHeartbeat` computed every field and sent it to the JSON log file, and the format
+strings sat unused in `Core/Utils/LogMacros.mqh` (42 macros, 37 with no caller). Operational effect: the
+journal could not show a scan loop running and producing nothing, which is the one thing the heartbeat exists
+to show. They print now, from the values the JSON record already uses, and `[RISK-FAMILY-POS]` prints at the
+per-family position cap - the only risk gate that refused through JSON alone. The other 29 macros are gone:
+ten were duplicate copies of tags the code prints literally, eleven were unused JSON wrappers, seven named a
+tag with neither emitter nor payload. The documents were swept too - about 250 lines corrected, including two
+sections that described classes and files not in this repository and two engine behaviours (OFI weight
+adjustment, VPIN weight reduction) that were designed in 2026-08 and never built.
 
 ## AI Integration
 

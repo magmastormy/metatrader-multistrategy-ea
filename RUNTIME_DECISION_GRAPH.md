@@ -339,6 +339,29 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 218: The Heartbeat Block Gets a Journal Printer, and the Tag Lists Get Checked (2026-10-17)
+- `CDiagMgrHeartbeat` computed the heartbeat, funnel, conversion-rate, no-signal-alert, risk-budget and
+  position-count payloads every interval and wrote them to `CJsonLogger` only. The matching `FMT_*` macros in
+  `Core/Utils/LogMacros.mqh` had no call site, so eight tags - `[HEARTBEAT]` first among them, the one
+  AGENTS.md section 6 asks for first - could not appear in a journal whatever the runtime did. Each now prints
+  from the same values at the same call site; the two per-symbol profile lines stay behind `ShouldLogVerbose()`.
+- `[RISK-FAMILY-POS]` prints at the per-family position cap (`RiskValidationPipeline.mqh:629`). That gate
+  already refused the entry and released its virtual reservation, but through the JSON log alone, so a capped
+  family was indistinguishable from a strategy that had stopped voting.
+- 29 macros with no call site are deleted: ten duplicate format strings for tags the code prints literally,
+  eleven `LOG_JSON_*`/`LOG_PERFORMANCE`/`GENERATE_CORR_ID` wrappers, and seven names with neither emitter nor
+  computed payload (`[CONSENSUS-ROOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`,
+  `[FAMILY-WEIGHT-VOL]`, `[NN-HEALTH]`, `[AI-VOTE-MISSING]`). `[AI-VOTE-MISSING]` is the one left unprinted on
+  purpose: staleness is tested per symbol per adapter type, so wiring it prints up to 52 lines a minute.
+- **Decision-path corrections from the document sweep:** OFI applies no weight adjustment
+  (`GetImbalanceDirection()` has no consumer) - it vetoes post-consensus at `|ofi_z| >= 1.0`
+  (`[POST-CONSENSUS-FILTER] filter=ofi_contradiction`). VPIN applies no weight reduction - EXTREME is refused
+  after consensus and HIGH/MEDIUM shrink the lot through `[VPIN-MODIFIER]`. `CPartialCloseManager` and
+  `CTimeframeConfluence` are not in this repository; partial closes are `[PARTIAL-PROFIT]`,
+  `[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`, and timeframe consistency is
+  `CTimeframeConsistency` printing `[TimeframeConsistency]`.
+- **No risk, sizing, cadence or exit change.** No input moved. Compile 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 217: Volatility Targeting Measures a Scalar That No Lot Reads (2026-10-17)
 
 - **Edge unchanged:** `CalculatePositionSizeWithRisk -> fixed-risk size -> [modifiers] -> cap clamp -> risk gate`.
@@ -876,7 +899,11 @@ Enable-flag resolution: `CatalogEnableSlot(i)` returns the strategy's `SI_*` slo
   - FX: balanced roster, full trend filter, default higher-timeframe mapping
   - synthetics: structure-first roster, no ADX-dependent trend engine path, lighter higher-timeframe mapping for ICT/Elliott alignment, and a narrower intrabar live roster to keep M1 synthetic quorum from becoming a 7-strategy noise funnel
 
-## Strategy Intelligence (Batch 97)
+
+**Everything under this heading down to the Batch 100-103 signature list is the 2026-08 design record, not a
+current decision path.** Where it names a tag the code does not print or a class the repository does not
+contain, Batch 218 marks it in place. The tags the runtime actually emits, by subsystem, are inventoried at
+"Batch 100/101/102/103 log signatures, corrected against the tree in Batch 218".
 
 ### Advanced Mathematical Engines (Batch 101)
 
@@ -1018,13 +1045,17 @@ CAsianRangeBreakStrategy::GetSignal()
 
 - Log: `[ASIANRB]`
 
-#### Partial Close Manager Lifecycle (Batch 103 cont.)
+#### Partial Close Manager Lifecycle (Batch 103 cont.) - class not in this repository
+
+`CPartialCloseManager`, `SPartialCloseState` and `Strategies/UnifiedICTFiles/PartialCloseManager.mqh` are not in this
+repository. Partial closes are real but owned per engine: `[PARTIAL-PROFIT]` (`PosLifecycleExit.mqh:134`),
+`[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`. The flow below is the 2026-08 design note.
 
 ```
 CPartialCloseManager::ManagePosition(ticket)
   ├─ Find or auto-register position in SPartialCloseState[]
   ├─ Step 1: profit ≥ 1R → close 50% volume (respect SYMBOL_VOLUME_MIN/STEP)
-  │   └─ Log [PARTIAL-CLOSE] with ticket, volume, profit
+  |   +- Log [PARTIAL-PROFIT] / [SCALP-PARTIAL] / [ATR-SCALP-PARTIAL] with ticket, closed volume, profit
   ├─ Step 2: after 1R hit → move SL to entry + 0.1% buffer
   │   └─ Validate against SYMBOL_TRADE_STOPS_LEVEL
   └─ Step 3: profit ≥ 2R → trail SL at 1.5×ATR(M5,14) from price
@@ -1033,7 +1064,11 @@ CPartialCloseManager::ManagePosition(ticket)
 
 - Periodic cleanup: every 5 minutes, compact closed positions from state array (max 50 tracked)
 
-#### Timeframe Confluence Scoring (Batch 103 cont.)
+#### Timeframe Confluence Scoring (Batch 103 cont.) - class not in this repository
+
+`CTimeframeConfluence` and `STFAlignmentCache` are not in this repository, and `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`
+does not exist. The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), which prints
+`[TimeframeConsistency]` and feeds the post-quorum veto. The scoring below is the 2026-08 design note.
 
 ```
 CTimeframeConfluence::GetAlignmentScore(direction)
@@ -1064,7 +1099,7 @@ CStrategyMeanReversion::GetSignal()
 ```
 
 - Engine injection: `SetHurstEngine()` wired in EA OnInit via `GetStrategyByName("Mean Reversion")` + `dynamic_cast<CStrategyMeanReversion*>`
-- Log: `[MR-HURST-NOT-MEAN-REVERTING]`, `[MR-STOCH-NOT-EXTREME]`, `[MR-BB-WIDTH-HIGH]`, `[MR-DIVERGENCE-DETECTED]`
+- Log: rejections print under `[MEANREV]` (trending / low confidence) and `[MEANREV-VOL]`; the dotted `[MR-*]` names were never tags.
 
 #### Statistical Arbitrage Signal Path (Batch 103 cont.)
 
@@ -1104,7 +1139,7 @@ CStrategyCandlestick::GetSignal()
   └─ Signal output → consensus pipeline (NONE cluster, weight 1.0)
 ```
 
-- Log: `[CANDLE_CONFLUENCE]`
+- Log: `[CANDLE-PATTERN] <symbol> | <pattern> | Score=N/100`; `[CANDLE_CONFLUENCE]` was never a tag.
 
 #### Volatility Breakout v2.0 Signal Path (Batch 103 cont.)
 
@@ -1123,7 +1158,7 @@ CVolatilityBreakoutStrategy::GetSignal()
   └─ Signal output → consensus pipeline (SCALP_CLUSTER, weight 1.3)
 ```
 
-- Log: `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]`, `[BREAKOUT_FAILURE_REVERSAL]`
+- Log: `[VOLBREAK]`, `[VOLBREAK-SIGNAL]`, `[VOLBREAK-SQUEEZE]`, `[VOLBREAK-FALLBACK]`; `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]` and `[BREAKOUT_FAILURE_REVERSAL]` were never tags.
 
 #### Momentum v2.0 Signal Path (Batch 103 cont.)
 
@@ -1145,34 +1180,28 @@ CSimpleMomentumStrategy::GetSignal()
 ```
 CEnterpriseStrategyManager::EvaluateConsensus()
   ├─ ... existing quorum evaluation ...
-  ├─ VPIN toxicity check (after quorum, before final consensus):
-  │   ├─ VPIN_EXTREME → BLOCK all entries (consensus veto)
-  │   │   └─ Log [VPIN-BLOCK] with VPIN value and toxicity level
-  │   ├─ VPIN_HIGH → reduce all strategy weights by 50%
-  │   │   └─ Log [VPIN-HIGH] with adjusted weights
-  │   └─ VPIN_MEDIUM → reduce all strategy weights by 25%
-  │       └─ Log [VPIN-MEDIUM] with adjusted weights
-  └─ Continue to consensus scoring
+  |- VPIN is not read in this path (the design note below was never built into EvaluateConsensus):
+  |   |- VPIN_EXTREME -> refused after consensus: [POST-CONSENSUS-FILTER] filter=vpin_extreme (Batch 174)
+  |   |- VPIN_HIGH / VPIN_MEDIUM -> the lot shrinks: [VPIN-MODIFIER] VPIN= mult= conf= lot A->B (Batch 213)
+  |- Continue to consensus scoring
 ```
 
 - VPIN toxicity levels from `CVPINFilter::GetToxicityLevel()`: `VPIN_LOW`, `VPIN_MEDIUM`, `VPIN_HIGH`, `VPIN_EXTREME`
-- Applied per-symbol in the consensus evaluation path
+- Applied twice, and not to weights: the post-consensus validator refuses at `InpVPINExtremeThreshold` (`[POST-CONSENSUS-FILTER] filter=vpin_extreme`) and the sizing modifier shrinks the lot (`[VPIN-MODIFIER]`, Batch 213).
 
-#### OFI Regime Weight Adjustment (Batch 103 cont.)
+#### OFI Regime Weight Adjustment (Batch 103 cont.) - never built
 
 ```
-CEnterpriseStrategyManager::ApplyRegimeCategoryWeights()
-  ├─ Get regime category multiplier from CRegimeEngine::GetRegimeCategoryMultiplier()
-  ├─ OFI alignment check:
-  │   ├─ OFI direction aligned with regime category → 1.2× boost
-  │   │   └─ Log [OFI-REGIME-BOOST] with direction and multiplier
-  │   └─ OFI direction contradicts regime category → 0.7× penalty
-  │       └─ Log [OFI-REGIME-PENALTY] with direction and multiplier
-  └─ Apply adjusted multiplier to strategy weights
+CPostConsensusValidator::Validate(candidate)
+  ├─ m_enableOFIProxy off, engine NULL or not warmed up -> pass through (no veto, no log)
+  ├─ ofiSignal == consensus signal -> pass
+  └─ ofiSignal != consensus signal
+      ├─ |ofi_z| >= 1.0 -> refuse: [POST-CONSENSUS-FILTER] filter=ofi_contradiction
+      │                              + [SIGNAL-REJECTED] reason=ofi_contradiction
+      └─ milder divergence -> pass: [POST-CONSENSUS-FILTER] filter=ofi_mild_contradiction_allowed
 ```
 
-- OFI direction from `COrderFlowImbalanceEngine::GetImbalanceDirection()`
-- Applied after regime weight wiring, before consensus scoring
+- OFI direction reaches no weight: `COrderFlowImbalanceEngine::GetImbalanceDirection()` has no consumer. The engine acts post-consensus as a directional veto.
 
 #### 0-100 Consensus Scoring (Batch 103 cont.)
 
@@ -1184,7 +1213,7 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
   │   ├─ 60-70: marginal consensus (position sizing × 0.75)
   │   ├─ 70-85: standard consensus (position sizing × 1.0)
   │   └─ 85+: strong consensus (position sizing × 1.0, priority ranking boost)
-  ├─ Log [CONSENSUS-SCORE] with raw score, quality, support, and tier
+  |- Log [CONSENSUS-DECISION] <symbol> | side | class= | conf= | confluence= | votes= | support= | quorum=
   └─ Pass/fail replaces binary quorum threshold
 ```
 
@@ -1204,7 +1233,7 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
 - `CEnterpriseStrategyManager::ApplyFamilyEngineWeights()` adjusts strategy weights based on family profile
 - `CUnifiedRiskManager` applies `SSymbolRiskOverride` per-family risk/drawdown scaling during pre-trade validation
 - `CTradeManager` applies `SSymbolMagicOffset` per-family magic offset for position tracking
-- Emit `[PROFILER-DETECT]` with detected family and enabled engines
+- Emit `[DERIV-PROFILER] <symbol> family=<name> -> ...` per override applied and `[MULTI-ASSET-PROFILER] <symbol> class=<name> -> risk= maxDD= magic=`; `[PROFILER-DETECT]` was never a tag.
 
 #### Grid Recovery Activation Flow (Batch 102)
 
@@ -1219,7 +1248,7 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
 - Per-level SL = ATR × 1.5, TP = 0.5 × grid spacing
 - Max 8 levels with 15% drawdown cap per family
 - 30-second cooldown between grid entries
-- Emit `[GRID-RECOVERY-ENTRY]`, `[GRID-RECOVERY-LEVEL]`, `[GRID-RECOVERY-CLOSE]`, `[GRID-RECOVERY-DRAWDOWN]`
+- Emit `[GRID-RECOVERY]` with `-DIAG` / `-DEBUG` / `-MARGIN` / `-FAILED` and `[GRID-RESTART]` at init; `[GRID-RECOVERY-ENTRY]`, `-LEVEL`, `-CLOSE` and `-DRAWDOWN` were never tags. The engine is parked (Batch 178).
 
 #### ATR Scalping Spike Window Avoidance (Batch 102)
 
@@ -1227,12 +1256,12 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
   1. `CSpikeHunterEngine` detects spikes and calls `CATRScalpingEngine::NotifySpikeDetected(symbol)`
   2. `CATRScalpingEngine` learns spike intervals: `SetSpikeInterval(symbol, intervalSec)`
   3. Before each scalp entry, engine checks if current time is within `spikeWindowAvoidMinutes` (5) of expected next spike
-  4. If within spike window: skip entry, emit `[ATR-SCALP-SPIKE-WINDOW]`
+  4. If within spike window: skip the entry; the avoidance is visible as no `[ATR-SCALP]` line for that symbol, not as its own tag
   5. If outside spike window: evaluate entry conditions (EMA trend + RSI + spread filter)
 - Entry: EMA fast > slow (BUY) or fast < slow (SELL) + RSI 30-70 + spread < 0.3×ATR
 - SL=1.5×ATR, TP=2.0×ATR
 - Max 3 concurrent positions per symbol, 30-second cooldown
-- Emit `[ATR-SCALP-ENTRY]`, `[ATR-SCALP-EXIT]`, `[ATR-SCALP-COOLDOWN]`
+- Emit `[ATR-SCALP]` with `[ATR-SCALP-DIAG]` / `-FAILED` / `-PARTIAL` / `-BREAKEVEN`; `[ATR-SCALP-ENTRY]`, `-EXIT`, `-COOLDOWN` and `-SPIKE-WINDOW` were never tags. The engine is parked (Batch 178), so none of these reaches a live journal.
 
 #### SpikeHunter Family Override Decision Path (Batch 102)
 
@@ -1276,7 +1305,7 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
 #### VPIN Toxicity Filter
 - `CVPINFilter` computes Volume-Synchronized Probability of Informed Trading (VPIN) to detect toxic order flow
 - Two decision points in the execution path:
-  1. **Pre-risk VPIN block**: if VPIN exceeds extreme toxicity threshold, new positions are blocked entirely — logged as `[VPIN-BLOCK]`
+  1. **Post-consensus VPIN veto**: at `InpVPINExtremeThreshold` the validator refuses the entry as `[POST-CONSENSUS-FILTER] ... filter=vpin_extreme` (Batch 174)
   2. **Post-sizing VPIN multiplier**: position size is scaled by VPIN-based multiplier (1.0 at low toxicity → 0.0 at extreme toxicity), applied after position sizing and before margin limit check
 
 ### Regime-Aware Strategy Weighting
@@ -1406,8 +1435,8 @@ No decision path or ownership boundary changed: strategies still vote through `C
   - **Statistics dashboard**: Integrated drawing statistics into `VisualDashboard` showing global/per-strategy counts, alert level
 
 - **Telemetry additions**:
-  - `[DRAWING-STATS]`: Periodic drawing statistics logging
-  - `[DRAW-COORD]`: Drawing coordinator telemetry
+  - `[HEARTBEAT-POSITIONS]` counts EA grid-recovery and ATR-scalp positions every heartbeat.
+  - Drawing diagnostics (`[DRAW-LEVELS]`, `[LEVEL-DETAILS]`, `[DRAW-RESULT]`) go through `CSubsystemLogger::Log` to the SupportResistance log file, not the terminal journal.
   - Drawing statistics panel on VisualDashboard
 
 ## Risk Hardening
@@ -1481,9 +1510,9 @@ No decision path or ownership boundary changed: strategies still vote through `C
 - Position lifecycle management is magic-filtered so `CTradeManager::ManageAllPositions(...)` does not modify unrelated manual or external positions.
 - SELL breakeven moves to normalized entry price instead of above entry, and trailing stops require meaningful profit before tightening.
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
-- The runtime no longer executes the first valid symbol blindly; it stages `[SCAN-CANDIDATE]` entries, sorts them, and emits ranked `[SCAN-DECISION]` attempts up to `InpMaxTradeSendsPerCycle`.
-- `TradeManager` emits `[EXECUTION-RECEIPT]` with requested/fill size, retcode, request id, and retries; partial fills emit `[FILL-DIFF]`.
-- `TradeManager` also emits `[EXECUTION-TELEMETRY]` with broker request/fill price, slippage points, and round-trip latency; the EA mirrors that into `[TRADE-EXECUTION]`.
+- The runtime no longer executes the first valid symbol blindly; candidates are ranked against `InpMaxTradeSendsPerCycle`, each attempt prints its own `[CONSENSUS-DECISION]` or refusal, and `[SCAN-BUDGET]` carries the cycle totals.
+- `TradeManager` emits `[EXECUTION-RECEIPT]` with requested/fill size, retcode, request id, and retries; a partial fill emits `[PARTIAL-FILL]` and `[PARTIAL-FILL-LEDGER]`.
+- `TradeManager` also emits `[EXECUTION-TELEMETRY]` with broker request/fill price, slippage points, and round-trip latency.
 - `UnifiedRiskManager` registers executed risk using fill ratio so daily risk usage matches actual exposure.
 
 ## Diagnostics
@@ -1510,11 +1539,11 @@ reader searching a journal for an answer that cannot exist.
   - `filtered_out`
   - `quorum_failed`
   - `intrabar_not_eligible`
-- Startup execution posture emitted as `[EXECUTION-MODE]`.
-- Confirmed deal lifecycle emitted as `[TRADE-CONFIRMED]`.
-- Entry-suppressed approved signals emitted as `[ENTERPRISE-BLOCKED]`.
-- Consensus dominant-cause attribution emitted as `[CONSENSUS-ROOT]`.
-- Strategy-level none-reason attribution emitted as `[CONSENSUS-STRATEGY]`.
+- Startup margin-mode posture emitted as `[TRADE-MGR] Account margin mode: ...`.
+- Confirmed deal lifecycle emitted as `[EXECUTION-CONFIRMED]` / `[EXECUTION-CONFIRMED-BY-POSITION]`.
+- Post-quorum nullification emitted as `[CONSENSUS-VETOED]`.
+- Consensus dominant-cause attribution has no `[CONSENSUS-ROOT]` line: that was a format macro with no call site, deleted in Batch 218. The reason counters are `[CONSENSUS-DIAG]`.
+- Strategy-level none-reason attribution has no `[CONSENSUS-STRATEGY]` line (same unused macro); `[STRATEGY-REJECTS]` at DEBUG verbosity is the real one.
 - Heartbeat aggregate consensus snapshots emitted as `[CONSENSUS-SNAPSHOT]`.
 - **Detailed veto diagnostics** (Batch 41): consensus veto messages now explain the exact failure reason with concrete values:
   - `no_voters`: "No strategies produced votes in this evaluation cycle"
@@ -1535,22 +1564,21 @@ reader searching a journal for an answer that cannot exist.
 - Regime transient-fault reuse and repeated-fault reset are emitted under `[REGIME-STATE]`.
 - No-vote scans now preserve aggregate readiness/context/cost from the ready live pool instead of zeroing those fields after consensus has already measured them.
 - Trend indicator mature-series readiness faults and bounded set reinitialization are emitted under `[TrendEngine][READINESS-FAULT]`.
-- Strategy-governance telemetry emitted as `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, and heartbeat `[ROLE-CLUSTER]`.
+- Strategy-governance telemetry emitted as heartbeat `[ROLE-CLUSTER]` (DEBUG verbosity); `[CONSENSUS-ROLE]` and `[CONSENSUS-CLUSTER]` were unused macros and are deleted (Batch 218).
 - Cluster risk telemetry emitted as `[RISK-CLUSTER]` and `[RISK-MUTEX-BLOCK]`.
 - Risk budget decomposition: `[RISK-BUDGET]`
 - Unprotected remediation lifecycle: `[RISK-UNPROTECTED]`
-- External position capacity blocks: `[CAPACITY-EXTERNAL]`
-- Execution receipt telemetry: `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
-- Execution latency/slippage telemetry: `[EXECUTION-TELEMETRY]`, `[TRADE-EXECUTION]`
-- Per-scan no-trade attribution: `[SCAN-NO-TRADE]`
-- Risk-budget sizing caps: `[RISK-CAP]`
-- `[SIGNAL-VALIDATED]` now reports `exogenous_quality` separately from consensus confidence so logs distinguish manager admission from validator market-sanity pass.
+- Positions the EA did not open, and the risk they consume: `[RISK-UNPROTECTED]`
+- Execution receipt telemetry: `[EXECUTION-RECEIPT]`, `[PARTIAL-FILL]`
+- Execution latency/slippage telemetry: `[EXECUTION-TELEMETRY]`, `[EXECUTION-SLIPPAGE-EXCESS]`
+- Per-scan no-trade attribution: `[CONSENSUS-DIAG]` reason counters with `[SCAN-BUDGET]` totals
+- Risk-budget sizing caps: `[RISK-DAILY-CAP]`, `[RISK-CLUSTER-CAP]`, `[RISK-TIER-FLOOR-CAP]`
 - Execution preflight and ambiguous broker responses: `[EXECUTION-BLOCKED]`, `[EXECUTION-UNCONFIRMED]`
 - `[COST-GATE]` now prints both raw spread/ATR values and the ratio so tiny non-zero spread conditions are distinguishable from true zero-cost states.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths; manager/runtime logs are the authoritative observability surface.
 - **Batch 99 log signatures:**
   - `[S/R-LOT-DEFERRED]` — S/R lot validation deferred to risk manager
-  - `[CONSENSUS-TREND-BIAS]` — Trend bias raising quorum
+  - `[SAFE-MODE]` / `[SAFE-MODE-DIAG]` - conservative-tier posture and its gates
   - `[ONNX-CPU-FALLBACK]` — ONNX using CPU instead of CUDA
   - `[AI-CALIBRATION-WARNING]` — Degenerate AI model detected
   - `[SCALP-LOT-CAPPED]` — Scalp lot capped by margin
@@ -1563,54 +1591,48 @@ reader searching a journal for an answer that cannot exist.
   - `[KELLY-ADJUSTMENT]` — Bayesian Kelly lot adjustment
   - `[EQUITY-CURVE-BELOW]` — Equity below EMA
   - `[EQUITY-CURVE-ABOVE]` — Equity above EMA
-  - `[CVAR-RECORD]` — Trade return recorded for CVaR
+  - `[CVAR]` / `[CVAR-CHECK]` - the portfolio CVaR line and the per-entry limit decision
   - `[CVAR-CHECK]` — CVaR limit check
   - `[ASYNC-TRADE-SENT]` — Async trade submitted
   - `[ASYNC-TRADE-CONFIRMED]` — Async trade confirmed
   - `[ASYNC-TRADE-TIMEOUT]` — Async trade timed out
-  - **Batch 100 log signatures:**
-  - `[SPIKE-HUNT-DETECTED]` — 3-layer spike confluence detected on synthetic symbol
-  - `[SPIKE-HUNT-TRADE]` — Spike trade opened with independent magic number
-  - `[SPIKE-HUNT-SKIP]` — Spike detection failed confluence threshold
-  - `[SPIKE-HUNT-ALERT]` — Push notification sent for spike detection
-  - `[SPIKE-HUNT-ALERT-THROTTLED]` — Push alert suppressed by 120s throttle
-  - `[SPIKE-COOLDOWN]` — Long-term entry delayed by spike cooldown
-  - `[SPIKE-HUNTER-STATS]` — Periodic spike hunter statistics
-  - `[SPIKE-HUNT-ENGINE]` — Spike hunter engine lifecycle events
-  - **Batch 101 log signatures:**
-    - `[SIGNAL-REJECTED] reason=ofi_contradiction` — OFI signal contradicts consensus direction
-    - `[VPIN-BLOCK]` — VPIN extreme toxicity blocking new position
-    - `[HURST-WEIGHT]` — Hurst weight modifier applied to strategy weights
-    - `[OU-ZSCORE]` — OU-adjusted z-score blended in StatisticalArbitrageStrategy
-    - `[OFI-SIGNAL]` — OFI proxy engine signal output
-  - **Batch 102 log signatures:**
-    - `[PROFILER-DETECT]` — Deriv family auto-detection result per symbol
-    - `[GRID-RECOVERY-ENTRY]` — Grid recovery level entry
-    - `[GRID-RECOVERY-LEVEL]` — Grid level progression detail
-    - `[GRID-RECOVERY-CLOSE]` — Grid recovery position close
-    - `[GRID-RECOVERY-DRAWDOWN]` — Grid drawdown cap reached
-    - `[ATR-SCALP-ENTRY]` — ATR scalp trade entry
-    - `[ATR-SCALP-EXIT]` — ATR scalp trade exit
-    - `[ATR-SCALP-SPIKE-WINDOW]` — ATR scalp skipped due to spike window
-    - `[ATR-SCALP-COOLDOWN]` — ATR scalp cooldown active
-    - `[HEARTBEAT-FAMILY]` — Per-family engine status in heartbeat
-  - **Batch 102 Python ML Stack log signatures:**
-    - `[PYTHON-BRIDGE-DASHBOARD]` — Bridge state with family routing info (existing, now includes family_id when available)
-  - **Batch 103 Enterprise Vision log signatures:**
-    - `[CANDLE_CONFLUENCE]` — Candlestick confluence score details
-    - `[MR-HURST-NOT-MEAN-REVERTING]` — Mean Reversion rejected (Hurst < 0.45)
-    - `[MR-STOCH-NOT-EXTREME]` — Mean Reversion rejected (Stochastic not at extreme)
-    - `[MR-BB-WIDTH-HIGH]` — Mean Reversion rejected (BB width above 20th percentile)
-    - `[MR-DIVERGENCE-DETECTED]` — Mean Reversion rejected (price/indicator divergence)
-    - `[STATARB]` — Statistical Arbitrage signal details
-    - `[TTM_SQUEEZE]` — TTM Squeeze detection status
-    - `[BREAKOUT_RETEST]` — Breakout retest entry confirmation
-    - `[BREAKOUT_FAILURE_REVERSAL]` — Failed breakout reversal signal
-    - `[CONSENSUS-SCORE]` — 0-100 consensus scoring result
-    - `[VPIN-HIGH]` — VPIN high toxicity reducing strategy weights
-    - `[VPIN-MEDIUM]` — VPIN medium toxicity reducing strategy weights
-    - `[OFI-REGIME-BOOST]` — OFI aligned with regime, weight boost applied
-    - `[OFI-REGIME-PENALTY]` — OFI contradicts regime, weight penalty applied
+  - **Batch 100/101/102/103 log signatures, corrected against the tree in Batch 218.** These four lists were a
+    tag inventory; most names in them are misnames of what the code actually prints, and a search for the name as
+    written returns nothing. Real tags, by subsystem:
+    - Spike hunter: `[SPIKE-HUNT-DETECT]` (not `[SPIKE-HUNT-DETECTED]`), `[SPIKE-HUNT]`, `[SPIKE-HUNT-TRADE]`,
+      `[SPIKE-HUNT-TRADE-FAILED]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`,
+      `[SPIKE-HUNT-ALERT-FAILED]`, `[SPIKE-HUNT-ENGINE]`, `[SPIKE-HUNT-DIAG]`, `[SPIKE-HUNT-FAMILY]`,
+      `[SPIKE-HUNTER-DIAG]`, `[SPIKE-HUNTER-CONFIG]`, `[SYNTHETIC-SPIKE]`, `[SPIKE-PAUSE]`, `[SPIKE-ALARM]`.
+      `[SPIKE-COOLDOWN]` and `[SPIKE-HUNTER-STATS]` are printed by nothing - the cooldown state is `[SPIKE-PAUSE]`.
+      The spike engine is **parked** (Batch 178: `Init`/`AddSymbol`/`Deinit` only, no tick caller), so none of these
+      appears in a live journal whatever the names say.
+    - OFI / VPIN / Hurst / OU: `[OFI]` (not `[OFI-SIGNAL]`, and there is no `[OFI-REGIME-BOOST]`/`[-PENALTY]`),
+      `[VPIN]` and `[VPIN-MODIFIER]` (no `[VPIN-BLOCK]`, `[VPIN-HIGH]` or `[VPIN-MEDIUM]`: EXTREME toxicity is a
+      `[POST-CONSENSUS-FILTER] filter=vpin_extreme` refusal since Batch 174, and the lot effect is `[VPIN-MODIFIER]`),
+      `[HURST]` (no `[HURST-WEIGHT]`/`[HURST-ENGINE]`; the regime effect on a vote is `[CONSENSUS-REGIME-VETO]` and
+      `[CONSENSUS-DIAG]`), `[STATARB]`/`[STATARB-OU]`/`[STATARB-SIGNAL]`/`[KALMAN-MR]` (no `[OU-ZSCORE]`),
+      `[GRID-HURST-BRIDGE]`.
+    - Profiler: `[DERIV-PROFILER]`, `[MULTI-ASSET-PROFILER]`, `[SYMBOL-PROFILE]`, `[ASSET-CLASS-WEIGHT]` (no
+      `[PROFILER-DETECT]`).
+    - Grid recovery: `[GRID-RECOVERY]`, `[GRID-RECOVERY-DIAG]`, `[GRID-RECOVERY-DEBUG]`, `[GRID-RECOVERY-MARGIN]`,
+      `[GRID-RECOVERY-FAILED]`, `[GRID-RECOVERY-ERROR]`, `[GRID-RECOVERY-CLOSE-FAILED]`, `[GRID-RESTART]` - the four
+      `[GRID-RECOVERY-ENTRY|-LEVEL|-CLOSE|-DRAWDOWN]` names are not in the tree, and the engine is parked.
+    - ATR scalp: `[ATR-SCALP]`, `[ATR-SCALP-ENGINE]`, `[ATR-SCALP-DIAG]`, `[ATR-SCALP-FAILED]`,
+      `[ATR-SCALP-PARTIAL]`, `[ATR-SCALP-BREAKEVEN]`, `[ATR-SCALP-RSI-FIX]`, `[ATR-VALIDATE]` - not
+      `[ATR-SCALP-ENTRY|-EXIT|-COOLDOWN|-SPIKE-WINDOW]`; also parked.
+    - Candlestick / mean reversion / breakout: `[CANDLE-PATTERN]`, `[CANDLESTICK]`, `[MEANREV]`, `[MEANREV-SIGNAL]`,
+      `[MEANREV-VOL]`, `[MEANREV-SYN]`, `[VOLBREAK]`, `[VOLBREAK-SIGNAL]`, `[VOLBREAK-SQUEEZE]`,
+      `[VOLBREAK-FALLBACK]`, `[COMPRESSION]`, `[FOUR-STATE]`. The dotted rejection names (`[MR-HURST-NOT-MEAN-REVERTING]`,
+      `[MR-STOCH-NOT-EXTREME]`, `[MR-BB-WIDTH-HIGH]`, `[MR-DIVERGENCE-DETECTED]`, `[CANDLE_CONFLUENCE]`,
+      `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]`, `[BREAKOUT_FAILURE_REVERSAL]`) were never tags - they are reasons inside
+      `[MEANREV-SIGNAL]` / `[CANDLE-PATTERN]` / `[VOLBREAK-SIGNAL]` lines and the pipeline's
+      `[SIGNAL-REJECTED] reason=` field.
+    - Consensus scoring: there is no `[CONSENSUS-SCORE]`; the scored result is `[CONSENSUS-DECISION]` with
+    - The heartbeat block (`[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`,
+      `[RISK-BUDGET]`, `[HEARTBEAT-POSITIONS]`, `[HEARTBEAT-ASSET-CLASS]`, `[HEARTBEAT-FAMILY]`) printed nothing
+      before Batch 218: the payload was computed every heartbeat and written only to the CJsonLogger file while
+      the format strings sat unused in `Core/Utils/LogMacros.mqh`. They print now, so the first verification
+      item in AGENTS.md section 6 is answerable from the journal. `[PYTHON-BRIDGE-DASHBOARD]` printed all along.
 
 ## Batch 102 Python ML Stack: Family-Aware Prediction Routing
 
@@ -1682,7 +1704,7 @@ For each family_id (0-17):
 ## 2026-04-01 Default Runtime Efficiency Path
 - Baseline interpretation step:
   - `default.log` proved that saved MT5 runtime state can diverge from source defaults
-  - operators should confirm `[EXECUTION-MODE]` and `[CADENCE-CONFIG]` before treating a run as a default baseline
+  - operators should confirm `[TRADE-MGR] Account margin mode`, `[ENTERPRISE-CONFIG]` and `[SCAN-POLICY]` before treating a run as a default baseline
 - Trend-readiness path:
   - indicator handles available
   - ATR buffer read succeeds => normal trend/regime evidence
@@ -1727,18 +1749,18 @@ For each family_id (0-17):
 - Unified ICT runtime labeling is normalized (no legacy `Unified ICT/SMC` path labels).
 
 ## Fast Debug Read Order
-1. `[ACCOUNT-CAPACITY]` / `[TRADE-STATE]`
+1. `[SYMBOL-UNIVERSE]` / `[ENTERPRISE-CONFIG]` / `[RISK-UNIFIED] Initialized`
 2. `[HEARTBEAT]`
 3. `[HEARTBEAT-FUNNEL]` / `[CONVERSION-RATES]`
-4. `[CONSENSUS-QUORUM]` / `[CONSENSUS-VETO]` / `[CONSENSUS-DIAG]` / `[CONSENSUS-ROOT]` / `[CONSENSUS-STRATEGY]`
+4. `[CONSENSUS-QUORUM]` / `[CONSENSUS-VETOED]` / `[CONSENSUS-REGIME-VETO]` / `[CONSENSUS-DIAG]`
 5. `[CONSENSUS-SNAPSHOT]` / `[STRATEGY-REJECTS]`
 6. `[PIPELINE-THRESHOLD]` / `[REGIME-STATE]` / `[TrendEngine][READINESS-FAULT]`
 7. `[SIGNAL-REJECTED]`
 8. `[RISK-BUDGET]`
-9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]` / `[RISK-VIRTUAL]`
+9. `[RISK-UNPROTECTED]` / `[RISK-VIRTUAL]`
 10. `[AI-VOTE]`
 11. `[NO-SIGNAL-ALERT]`
-12. `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or `[TRADE-SUCCESS]/[TRADE-ERROR]` plus `[TRADE-EXECUTION]` / `[EXECUTION-TELEMETRY]` for live-send broker details
+12. `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or `[TRADE-ERROR]` plus `[EXECUTION-RECEIPT]` / `[EXECUTION-TELEMETRY]` for live-send broker details
 
 ## 2026-04-01 Strategy Registry + AI Runtime Flow
 - Startup now includes a registry-resolution stage before manager bootstrap:
@@ -1749,7 +1771,7 @@ For each family_id (0-17):
 - Manager bootstrap now registers strategies from the registry roster instead of separate indicator vs AI branches.
 - Candidate path now includes a mode-admission checkpoint between consensus and risk:
   - invalid mode/family combinations are rejected before risk sizing
-  - `AI_ASSISTED` can add `[AI-MODE-BONUS]` to aligned indicator-primary candidates
+  - invalid combinations are refused by `[SIGNAL-REJECTED]` before risk sizing; no AI mode bonus exists in the code
 - Hybrid cadence now has a bounded keepalive branch when primary intrabar scheduling yields zero selected symbols:
   - `[SCAN-BUDGET] ... intrabar_keepalive=true`
 - Trend readiness path now distinguishes:

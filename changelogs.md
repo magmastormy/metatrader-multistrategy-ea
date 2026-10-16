@@ -8,6 +8,78 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 218: the heartbeat block had no printer, and every log tag in the five documents got checked against the tree
+
+AGENTS.md section 6 opens with "verify `[HEARTBEAT]`". No `Print` call site in this repository produced that
+line, or `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]`,
+`[HEARTBEAT-POSITIONS]`, `[HEARTBEAT-ASSET-CLASS]` or `[HEARTBEAT-FAMILY]`. `CDiagMgrHeartbeat` computed
+every field of all eight - scans, intrabar, no_signal, validator_reject, risk_reject, trades_opened,
+spike_events, `pause_active` - and passed them to `CJsonLogger::LogInfo`, which appends to a file under
+`MQL5/Files`. The format strings sat in `Core/Utils/LogMacros.mqh` unused: 42 macros declared, 37 with no
+call site. The heartbeat is the only aggregate the operator has for "is the scan loop running and producing
+nothing", so a session could sit at 100% no-signal and the journal would show steady `[SCAN-BUDGET]` lines
+and no stall evidence.
+
+#### Emitted from the same values the JSON record already uses
+All eight now `PrintFormat` the existing macro at the same call site as the JSON write, so no field is
+measured twice, no value can diverge between the two sinks, and no decision path changed. The verbose
+per-symbol lines stay behind the existing `ShouldLogVerbose()` gate. `[RISK-FAMILY-POS]` also prints now: the
+per-family position cap (`RiskValidationPipeline.mqh:629`) was the only gate return that refused through
+JSON alone, so a family capped at 2 of 2 open positions looked identical to a strategy that had stopped
+voting.
+
+#### The remaining 29 macros are deleted
+Ten duplicated tags the code already prints as literals (`[SIGNAL-REJECTED]`, `[AI-VOTE]`, `[CONSENSUS-DIAG]`,
+`[AUTHORITY-REJECT]`, `[AUTHORITY-REDUCED]`, `[CANDIDATE-BUILDER]`, `[COMPOUNDING-TIER-MILESTONE]`,
+`[ADX-MODIFIER]`, `[RISK-ADAPT]`, `[MOMENTUM-SCALE]`) - the tag is live, the macro was a second copy of it.
+Eleven were `LOG_JSON_*` / `LOG_PERFORMANCE` / `GENERATE_CORR_ID` wrappers around direct calls nobody routed
+through them. Seven named a tag with no emitter and nothing computing a payload: `[CONSENSUS-ROOT]`,
+`[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[FAMILY-WEIGHT-VOL]`, `[NN-HEALTH]`, and
+`[AI-VOTE-MISSING]`. The last of those was the only judgment call: the staleness test is per symbol per
+adapter type, so wiring it would print up to 52 lines a minute on a fully-stale AI configuration. The JSON
+`AIVoteMissing` record stays, and `[AI-VOTE]` absence for a symbol is itself the journal signal.
+
+#### The document sweep
+Batch 215 swept the tags and corrected the two sections it was editing. This batch swept all five documents
+against a corrected evidence rule - a tag counts as printed when a `Print`, `PrintFormat`, `Alert`, `LOG_IF*`,
+`CJsonLogger::Log*` or `CSubsystemLogger::Log` call reaches it, searched over a three-line window because the
+format string often sits below its `PrintFormat(`. Roughly 250 lines corrected. Four findings are worth
+keeping:
+
+- Two whole design sections named classes and files that do not exist: `CPartialCloseManager` +
+  `Strategies/UnifiedICTFiles/PartialCloseManager.mqh` and `CTimeframeConfluence` +
+  `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`. A reader would have opened a nonexistent path. The
+  live owners are `[PARTIAL-PROFIT]` / `[SAFE-MODE-PARTIAL]` / `[SCALP-PARTIAL]` / `[ATR-SCALP-PARTIAL]` and
+  `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`, prints `[TimeframeConsistency]`).
+- OFI never adjusted a strategy weight. `COrderFlowImbalanceEngine::GetImbalanceDirection()` has no consumer;
+  the 1.2x boost / 0.7x penalty recorded in three documents was designed and never built. OFI acts
+  post-consensus as a directional veto (`[POST-CONSENSUS-FILTER] filter=ofi_contradiction` at `|ofi_z| >= 1.0`,
+  `filter=ofi_mild_contradiction_allowed` below it).
+- VPIN never reduced strategy weights either. EXTREME refuses after consensus and HIGH/MEDIUM shrink the lot
+  through `[VPIN-MODIFIER]` (Batch 213); the `[VPIN-HIGH]`/`[VPIN-MEDIUM]`/`[VPIN-BLOCK]` lines cited as
+  evidence print nowhere.
+- `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[AI-TOPOLOGY]`, `[SIGNAL-VALIDATED]`, `[CAPACITY-EXTERNAL]`,
+  `[RISK-CAP]`, `[SCAN-NO-TRADE]`, `[AI-MODE-BONUS]`, `[TERMINATION-SNAPSHOT]`, `[SPREAD-COST]`,
+  `[SMART-ROUTING]`, `[AUTO-MODE]`, `[DAILY-LOSS-HALT]`, `[RR-REJECTED]`, `[BATCH103]`, `[SIGNAL]`,
+  `[DBG-RET0]`, `[DRAWING-STATS]`, `[DRAW-COORD]`, `[SCALP-COST-VETO]`, `[SCALP-SIGNAL]`, `[SCALP-EXEC]`,
+  `[TRADE-SUCCESS]`, `[TRADE-STATE]`, `[TRADE-CONFIRMED]`, `[TRADE-EXECUTION]`, `[FILL-DIFF]`,
+  `[SHADOW-TRADE]`, `[PROFILER-DETECT]`, `[HURST-ENGINE]`, `[OU-ENGINE]`, `[OFI-ENGINE]`, `[VPIN-FILTER]`,
+  `[SPIKE-HUNT-DETECTED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, the four `[GRID-RECOVERY-ENTRY|
+  LEVEL|CLOSE|DRAWDOWN]` names, the four `[ATR-SCALP-ENTRY|EXIT|COOLDOWN|SPIKE-WINDOW]` names and the dotted
+  `[MR-*]`/`[TTM_SQUEEZE]`/`[BREAKOUT_RETEST]`/`[CANDLE_CONFLUENCE]` rejection names all print nowhere; each
+  document line now names the tag that exists instead, or says plainly that none does.
+
+#### Method note for the next audit
+`git log -S"[TAG]"` is not usable evidence in this repository: git-lfs is configured as the content filter, so
+pickaxe hits come back for strings that never existed in a checkout and a "this tag was removed" story can be
+built out of filter noise. Every claim in this batch rests on the current tree - `Print`/`LOG_IF`/logger call
+sites over all `.mq5`/`.mqh` files - and the documents say "prints nowhere" rather than "never existed" where
+only the tree can be proved.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. No input, no threshold, no lot, no
+gate and no exit changed; the diff is eight new `PrintFormat` calls, one new refusal print, 29 deleted macro
+declarations, and document corrections.
+
 ### Batch 217: volatility targeting measures a scalar every bar that no lot ever reads
 
 `InpEnableVolTargeting` (true on the live EA), `InpTargetVol` (0.15), `InpVolMinScale` (0.2) and `InpVolMaxScale`

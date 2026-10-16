@@ -52,12 +52,16 @@ public:
                               const ulong signalsSent,
                               const string corrId)
     {
+        string pauseFlag = tradingPaused ? "true" : "false";
+        PrintFormat(FMT_HEARTBEAT, scansAttempted, intrabarScansExecuted, noSignalCount,
+                    validatorRejects, riskRejects, tradesOpened, syntheticSpikeEvents, pauseFlag);
         CJsonLogger::LogInfo("Heartbeat",
             StringFormat("scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s",
                     scansAttempted, intrabarScansExecuted, noSignalCount,
-                    validatorRejects, riskRejects, tradesOpened, syntheticSpikeEvents,
-                    tradingPaused ? "true" : "false"), corrId);
+                    validatorRejects, riskRejects, tradesOpened, syntheticSpikeEvents, pauseFlag), corrId);
 
+        PrintFormat(FMT_HEARTBEAT_FUNNEL, signalsGenerated, signalsAfterPipeline, signalsAfterQuorum,
+                    signalsValidated, signalsRiskApproved, signalsSent);
         CJsonLogger::LogInfo("HeartbeatFunnel",
             StringFormat("signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u",
             signalsGenerated, signalsAfterPipeline, signalsAfterQuorum,
@@ -125,6 +129,11 @@ public:
                 {
                     string assetClassName = multiAssetProfiler.GetAssetClassName(symbols[i]);
                     SAssetProfile profile = multiAssetProfiler.GetProfile(symbols[i]);
+                    PrintFormat(FMT_HEARTBEAT_ASSET_CLASS, symbols[i], assetClassName,
+                        profile.atrMultiplierSL, profile.atrMultiplierTP, profile.riskPerTrade,
+                        profile.enableScalpEngine ? "Y" : "N",
+                        profile.enableGridRecovery ? "Y" : "N",
+                        profile.enableBreakoutEngine ? "Y" : "N");
                     CJsonLogger::LogDebug("HeartbeatAssetClass",
                         StringFormat("symbol=%s | class=%s | atrSL=%.2f | atrTP=%.2f | risk=%.2f%% | scalp=%s | grid=%s | breakout=%s",
                             symbols[i], assetClassName,
@@ -140,6 +149,7 @@ public:
                 string familyName = derivProfiler.GetFamilyName(symbols[i]);
                 if(logVerbose)
                 {
+                    PrintFormat(FMT_HEARTBEAT_FAMILY, symbols[i], familyName);
                     CJsonLogger::LogDebug("HeartbeatFamily",
                         StringFormat("symbol=%s | family=%s", symbols[i], familyName), corrId);
                 }
@@ -164,6 +174,7 @@ public:
             if(StringFind(comment, "ATR-SCALP") >= 0)
                 atrScalpCount++;
         }
+        PrintFormat(FMT_HEARTBEAT_POSITIONS, totalPositions, gridRecoveryCount, atrScalpCount);
         CJsonLogger::LogInfo("HeartbeatPositions",
             StringFormat("total=%d | grid_recovery=%d | atr_scalp=%d",
                 totalPositions, gridRecoveryCount, atrScalpCount), corrId);
@@ -179,6 +190,8 @@ public:
                                     const double noSignalRate,
                                     const string corrId)
     {
+        PrintFormat(FMT_CONVERSION_RATES, windowScans, windowGenerated,
+            rateAfterPipeline, rateAfterQuorum, rateValidated, rateRiskApproved, rateSent, noSignalRate);
         CJsonLogger::LogInfo("ConversionRates",
             StringFormat("window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
                 windowScans, windowGenerated,
@@ -196,6 +209,8 @@ public:
                                   const ulong quietMissingManager,
                                   const string corrId)
     {
+        PrintFormat(FMT_NO_SIGNAL_ALERT, windowScans, windowNoSignal, noSignalRate,
+            quietNoNewBar, quietCadenceHold, quietMissingManager);
         CJsonLogger::LogWarning("NoSignalAlert",
             StringFormat("window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u",
                 windowScans, windowNoSignal, noSignalRate,
@@ -207,6 +222,11 @@ public:
         if(riskManager != NULL)
         {
             SUnifiedRiskSnapshot heartbeatRisk = riskManager.GetSnapshot();
+            PrintFormat(FMT_RISK_BUDGET, heartbeatRisk.dailyRiskUsedPercent, heartbeatRisk.maxDailyRiskPercent,
+                heartbeatRisk.dailyEntryRiskUsedPercent, heartbeatRisk.dailyMarkToMarketLossPercent,
+                heartbeatRisk.openExposureRiskPercent,
+                heartbeatRisk.conservativeMode ? "true" : "false",
+                heartbeatRisk.emergencyMode ? "true" : "false");
             CJsonLogger::LogInfo("RiskBudget",
                 StringFormat("effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
                     heartbeatRisk.dailyRiskUsedPercent,

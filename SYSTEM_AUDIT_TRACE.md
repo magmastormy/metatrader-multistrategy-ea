@@ -192,9 +192,9 @@
   - **B1 — Regime Weight Wiring:** CEnterpriseStrategyManager reads CRegimeEngine weight multipliers via GetRegimeCategoryMultiplier(). Regime category weights applied to strategy weights before consensus quorum. File: `Core/Management/EnterpriseStrategyManager.mqh`.
   - **B2 — VPIN Toxicity Integration:** VPIN toxicity gating in consensus: VPIN_EXTREME blocks all entries (consensus veto), VPIN_HIGH reduces strategy weights by 50%, VPIN_MEDIUM reduces strategy weights by 25%. File: `Core/Management/EnterpriseStrategyManager.mqh`.
   - **B3 — 0-100 Consensus Scoring:** rawConsensusScore = directionalQuality × supportRatio × 100, threshold = 60/100. Graduated scoring: 60-70 marginal (×0.75 sizing), 70-85 standard, 85+ strong (priority ranking boost). File: `Core/Management/EnterpriseStrategyManager.mqh`.
-  - **B4 — OFI Regime Integration:** OFI confirms/contradicts regime category weights: aligned → 1.2× boost, contradicts → 0.7× penalty. Applied after regime weight wiring, before consensus scoring. File: `Core/Management/EnterpriseStrategyManager.mqh`.
+- **B4 — OFI Regime Integration:** designed as aligned 1.2x boost / contradiction 0.7x penalty on regime category weights. Never built: `COrderFlowImbalanceEngine::GetImbalanceDirection()` has no consumer. OFI acts post-consensus as a directional veto (`[POST-CONSENSUS-FILTER] filter=ofi_contradiction`).
   - **Engine Wiring:** EnterpriseStrategyManager VPIN/OFI wired from EA per-symbol loop. MeanReversion Hurst engine wired (pointer-based, migrated from index-based). StatisticalArbitrage OU engine wired from EA per-symbol loop. A5 registration with Python Bridge check. File: `MultiStrategyAutonomousEA.mq5`.
-  - **New log signatures:** `[CANDLE_CONFLUENCE]`, `[MR-HURST-NOT-MEAN-REVERTING]`, `[MR-STOCH-NOT-EXTREME]`, `[MR-BB-WIDTH-HIGH]`, `[MR-DIVERGENCE-DETECTED]`, `[STATARB]`, `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]`, `[BREAKOUT_FAILURE_REVERSAL]`, `[CONSENSUS-SCORE]`, `[VPIN-HIGH]`, `[VPIN-MEDIUM]`, `[OFI-REGIME-BOOST]`, `[OFI-REGIME-PENALTY]`.
+- **New log signatures:** the real per-strategy lines are `[CANDLE-PATTERN]`, `[MEANREV]`/`[MEANREV-SIGNAL]`/`[MEANREV-VOL]`, `[STATARB]`/`[STATARB-OU]`, `[VOLBREAK]`/`[VOLBREAK-SIGNAL]`/`[VOLBREAK-SQUEEZE]`, `[CONSENSUS-DECISION]`, `[VPIN]`/`[VPIN-MODIFIER]`, `[OFI]`. The dotted rejection names and `[CONSENSUS-SCORE]`/`[VPIN-HIGH]`/`[VPIN-MEDIUM]`/`[OFI-REGIME-BOOST]`/`[OFI-REGIME-PENALTY]` in the original record print nowhere.
   - **Files Changed:** `Strategies/StrategyCandlestick.mqh`, `Strategies/CandlestickFiles/DojiDetector.mqh`, `HammerDetector.mqh`, `StarDetector.mqh`, `HaramiDetector.mqh`, `ThreeSoldiersDetector.mqh`, `PiercingDetector.mqh`, `CandleConfluenceScorer.mqh` (new), `Strategies/SimpleMomentumStrategy.mqh`, `Strategies/VolatilityBreakoutStrategy.mqh`, `Strategies/MeanReversionStrategy.mqh`, `Strategies/StatisticalArbitrageStrategy.mqh` (new), `Core/Management/EnterpriseStrategyManager.mqh`, `MultiStrategyAutonomousEA.mq5`.
   - **Compilation:** 0 errors, 0 warnings.
 
@@ -221,7 +221,7 @@
   - **CADXPositionSizing::InitForAssetClass()**: Per-class ADX thresholds (Forex/Metals: 20/25/30/35, Deriv: 15/20/25/30, Indices: 18/23/28/33).
   - **CEnterpriseStrategyManager::GetStrategyByName()**: Returns `IStrategy*` by name. Used for `dynamic_cast` wiring.
   - **EA Wiring** (`MultiStrategyAutonomousEA.mq5`): Batch 103 block — iterates `g_mathEngineSymbols[]`, `GetStrategyByName()` + `dynamic_cast`, injects Hurst/VPIN. Emits `[BATCH103]`.
-  - **New log signatures:** `[BATCH103]`, `TREND_HURST_MEAN_REVERTING`, `TREND_VPIN_TOXIC`, `SR_HURST_TRENDING_NO_BOUNCE`, `SR_VPIN_TOXIC`.
+- **New log signatures:** none of `[BATCH103]`, `TREND_HURST_MEAN_REVERTING`, `TREND_VPIN_TOXIC`, `SR_HURST_TRENDING_NO_BOUNCE` or `SR_VPIN_TOXIC` prints in this repository. The engine-injection evidence is `[HURST]`, `[VPIN]` and `[ENGINE-STATUS]`.
   - **Compilation:** MQL5 0 errors, 0 warnings.
 
 - **ICT/SMC Strategy Overhaul (Batch 103 cont.):** Five new ICT/Smart Money Concepts strategies, two utility classes, and three component upgrades:
@@ -230,15 +230,15 @@
   - **CBreakerBlockStrategy** in `Strategies/BreakerBlockStrategy.mqh`: Failed OB → breaker conversion + price retest + opposing FVG + CISD displacement + structure alignment. Scans for unmitigated breaker OBs (OB_BREAKER_BULL/OB_BREAKER_BEAR). Confidence: base 0.55 + freshness > 0.7 (+0.08) + FVG (+0.10) + CISD (+0.05) + structure (+0.07), capped 0.95. SL 0.5×ATR beyond breaker boundary, TP 2R. Tier 2, STRUCTURE_CLUSTER, weight 1.7. Owned: `CMarketStructureAnalyzer(swings=3)`, `CAdvancedOrderBlockDetector`, `CImbalanceDetector`. Log: `[BREAKER-BLOCK]`. Enum: `STRATEGY_BREAKER_BLOCK=13`.
   - **CNYOpenGapStrategy** in `Strategies/NYOpenGapStrategy.mqh`: NY session open gap (NDOG) fade during 13:30-14:00 UTC. Gap size > 0.5×ATR(14,D1). Fades gap direction. Confidence: base 0.50 + FVG (+0.10) + large gap >1.0×ATR (+0.08) + near gap level (+0.07), capped 0.95. SL beyond gap extreme + 0.5×ATR, TP at previous close. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: skips Volatility/Boom/Crash/Jump/Step. Owned: `CSessionGapDetector(PERIOD_D1)`, `CImbalanceDetector`. Log: `[NYGAP]`. Enum: `STRATEGY_NY_OPEN_GAP=14`.
   - **CAsianRangeBreakStrategy** in `Strategies/AsianRangeBreakStrategy.mqh`: Asian session range (00:00-06:00 UTC) breakout during London open (07:00-07:30 UTC). Requires tight range < 0.8×ATR. Confidence: base 0.50 + range compression < 0.5×ATR (+0.10) + structure (+0.08) + fast CHOCH (+0.07), capped 0.95. SL at opposite range boundary, TP 2× range size. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: same as NY Open Gap. Owned: `CICTKillZones(sessionCount=2, autoDetect=true)`, `CMarketStructureAnalyzer(swings=3)`. Log: `[ASIANRB]`. Enum: `STRATEGY_ASIAN_RANGE_BREAK=15`.
-  - **CPartialCloseManager** in `Strategies/UnifiedICTFiles/PartialCloseManager.mqh`: 3-step exit management — 50% close at 1R, breakeven move after 1R (SL → entry + 0.1% buffer, validates SYMBOL_TRADE_STOPS_LEVEL), ATR trailing after 2R (1.5×ATR(M5,14) from price, only moves favorably). Max 50 tracked positions with periodic compaction. Internal: `SPartialCloseState` per position. Log: `[PARTIAL-CLOSE]`.
-  - **CTimeframeConfluence** in `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`: Multi-TF alignment scorer with 3 `CMarketStructureAnalyzer` instances (H1, M15, M5). Scoring: H1=40pts, M15=30pts, M5=30pts (max 100). `IsMajorityAligned()` requires ≥2/3 timeframes. Per-bar caching via `STFAlignmentCache`. Log: `[TF-CONF]`.
+- **NOT IN THIS REPOSITORY** - `CPartialCloseManager` in `Strategies/UnifiedICTFiles/PartialCloseManager.mqh`: the file does not exist (Batch 218 check). Partial closes are owned per engine: `[PARTIAL-PROFIT]` (`PosLifecycleExit.mqh:134`), `[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`.
+- **NOT IN THIS REPOSITORY** - `CTimeframeConfluence` in `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`: the file does not exist (Batch 218 check). The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), which prints `[TimeframeConsistency]` and feeds the post-quorum veto; its 40/30/30 multi-TF scoring never shipped.
   - **AdvancedOrderBlocks.mqh** upgrade: `GetFreshness(int obIndex)` returns 0.0-1.0 freshness decay for order blocks. Used by BreakerBlockStrategy.
   - **MarketStructureAnalyzer.mqh** upgrade: 5 fast structure detection methods — `DetectFastCHOCH()`, `DetectWickBOS()`, `DetectCISDDisplacement()`, `GetSwingHighLevel()`, `GetSwingLowLevel()`. Used by FVGScalper, TurtleSoup, BreakerBlock, AsianRangeBreak.
   - **LiquidityDetector.mqh** upgrade: `SExternalLiquidityPool` struct + `DetectExternalSwingLiquidity()` for swing-based external liquidity detection. Used by TurtleSoupStrategy.
   - **EnterpriseStrategyManager.mqh** extensions: `m_maxStrategies` 20→25, `GetStrategyByName(const string name)` returning `IStrategy*`, 5 new `RegisterStrategy()` calls.
   - **Enums.mqh** additions: `STRATEGY_FVG_SCALPER=11`, `STRATEGY_TURTLE_SOUP=12`, `STRATEGY_BREAKER_BLOCK=13`, `STRATEGY_NY_OPEN_GAP=14`, `STRATEGY_ASIAN_RANGE_BREAK=15`.
   - **MultiStrategyAutonomousEA.mq5** additions: 5 new input parameters (`InpEnableFVGScalper`, `InpEnableTurtleSoup`, `InpEnableBreakerBlock`, `InpEnableNYOpenGap`, `InpEnableAsianRangeBreak`), `BuildStrategyFlags()` indices 12-16.
-  - **New log signatures:** `[FVG-SCALPER]`, `[TURTLE-SOUP]`, `[BREAKER-BLOCK]`, `[NYGAP]`, `[ASIANRB]`, `[PARTIAL-CLOSE]`, `[TF-CONF]`.
+- **New log signatures:** `[FVG-SCALPER]`, `[TURTLE-SOUP]`, `[BREAKER-BLOCK]`, `[NYGAP]`, `[ASIANRB]`. `[PARTIAL-CLOSE]` and `[TF-CONF]` print nowhere - see the two entries above.
   - **Compilation:** MQL5 0 errors, 0 warnings.
 
 - **Deriv Asset Profiler & Family-Specific Engines (Batch 102):** Complete 18-family Deriv synthetic index auto-detection and per-family engine optimization system:
@@ -282,7 +282,7 @@
     | RangeBreak | 1.20% | 12% | ✓ | | |
 
   - **OnInit Integration Trace:**
-    1. If `InpDerivProfilerEnabled`: profiler auto-detects family for each managed symbol, logs `[PROFILER-DETECT]`
+    1. If `InpDerivProfilerEnabled`: profiler auto-detects family for each managed symbol, logs `[DERIV-PROFILER]`
     2. If `InpGridRecoveryEnabled` and symbol is synthetic: initialize `CGridRecoveryEngine` with default config, add family-enabled symbols with `SetFamilyConfig()` from profiler profiles, set Hurst regime from `CHurstEngine`
     3. If `InpATRScalpingEnabled` and symbol is synthetic: initialize `CATRScalpingEngine` with default config, add Jump/DEX/Hybrid symbols with spike intervals from `CSpikeHunterEngine`
     4. Pass profiler reference to `CEnterpriseStrategyManager::SetDerivProfiler()` for family-weight adjustment
@@ -330,7 +330,7 @@
   - **Independent Spike Trades:** Separate magic numbers using offset 9000 from base EA magic, allowing independent position tracking and risk management for spike-specific entries.
   - **Push Notification Alerts:** Mobile push notifications on spike detection, throttled at 120-second minimum interval to prevent alert spam during sustained volatile conditions.
   - **Long-Term Entry Cooldown:** 60-second cooldown after spike trade prevents re-entry into fading spikes, protecting against whipsaw losses in post-spike consolidation.
-  - **Log Signatures:** `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]`.
+- **Log Signatures:** `[SPIKE-HUNT-DETECT]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-PAUSE]`, `[SPIKE-HUNT-ENGINE]`. `[SPIKE-HUNT-DETECTED]`, `[SPIKE-COOLDOWN]` and `[SPIKE-HUNTER-STATS]` print nowhere.
 
 - **Log-Evidence-Driven Fixes + Research Solutions (Batch 99):** Comprehensive fix of 7 critical/high/medium issues identified from live 2026-06-11 log analysis (33,800+ lines), plus 5 research-driven enhancements:
   - **L1 — S/R Lot Validation Fix (Critical):** StrategySupportResistance used hardcoded `lotSize = 0.01` which was rejected by CRiskValidationGate on PainX 400 (min lot 0.100) before CPositionSizer could round up. Fixed by using `SYMBOL_VOLUME_MIN` as the request lot size, deferring actual sizing to the risk manager's post-size phase. Unblocked 79 SELL signals at 95% confidence.
@@ -349,7 +349,7 @@
 - **Monolith Decomposition & Risk Framework Completion (Batch 98):** Architectural refactoring completing the EA Overhaul Blueprint R6/R7 items and extracting 7 focused manager classes from the main EA monolith:
   - **R7 — Stateless Position Sizer:** `CPositionSizer::CalculateSize()` refactored to use `CalculateOptimalPositionSizeCore()` with explicit `riskPercent` parameter, eliminating the save/restore hack that temporarily mutated `m_params.riskPercent`. `CalculateBasePositionSizeWithRisk()` added to thread risk percent through to `CalculateRiskBasedSize()`. Zero shared-state mutation in the `CalculateSize()` path.
   - **R6a — CPositionLifecycleManager:** Extracted from `ManageOpenPositionsIfNeeded()` (~140 lines). `CheckSignalReversalExit()` implements SRE with breathing room, last-stand zone, and profit guard. `ManageBreakevenAndTrailing()` delegates to `CTradeManager::ManageAllPositions()` and applies safe mode partial profit for conservative tier. Configurable via `ConfigureSRE()` and `ConfigureLifecycle()`. `SetManagers()` takes parallel manager + symbol arrays.
-  - **R6b — CDiagnosticsManager:** Extracted from heartbeat block (~215 lines). `EmitHeartbeat()` produces `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]` log lines. `EmitConsensusDiagnostics()` produces `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT-CONSENSUS]`. Counter values passed via `UpdateCounters()`. `GetAggregatedConsensusDiagnostics()`, `GetAggregatedRoleClusterDiagnostics()`, `GetDominantConsensusCause()` moved from main EA into class.
+- **R6b — CDiagnosticsManager:** Extracted from heartbeat block (~215 lines). `EmitHeartbeat()` produces `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]` and `[RISK-BUDGET]` - in the JSON log from that refactor until Batch 218, and in the journal as well from Batch 218.
   - **CUnprotectedPositionTracker:** Extracted from `AttemptUnprotectedPositionRemediation()` + 6 helpers (~220 lines). 3-attempt SL escalation: Escalation-1 (3x ATR), Escalation-2 (broker min distance via `SYMBOL_TRADE_STOPS_LEVEL`/`SYMBOL_TRADE_FREEZE_LEVEL`), Escalation-3 (unconditional close). Tracker arrays and last-attempt timestamp encapsulated.
   - **CSyntheticSpikeMonitor:** Extracted from spike alarm + trading pause + emergency drawdown functions (~190 lines). 7 global variables → class members. `ProcessTickSafety()`, `EvaluateSpike()`, `ActivatePause()`, `ReleasePauseIfExpired()`, `IsPaused()`, `HandleEmergencyDrawdown()`.
   - **CTradeAttributionManager:** Extracted from 27+ prediction/attribution/NN functions (~370 lines). Prediction position mapping, AI prediction mapping, AI pending request mapping, pending close profit tracking, NN diagnostics, cluster code utilities. Also integrated into `CExecutionOrchestrator`.
@@ -566,18 +566,18 @@
 ### 1. OnInit
 - Validate terminal and trading permissions.
 - Initialize mandatory execution/risk/runtime systems.
-- Emit explicit `[EXECUTION-MODE]` startup telemetry for shadow vs live posture.
+- Startup posture is `[TRADE-MGR] Account margin mode: ...`; there is no `[EXECUTION-MODE]` line and this EA has no shadow mode to distinguish (AGENTS.md section 3.4: live only).
 - Start from live-capable authority-gated defaults: AI/ONNX enabled, global live execution allowed, high-confidence AI/ONNX warm-start enabled, two-voter ordinary quorum, and sparse one-voter intrabar admission disabled.
 - Reject unsupported non-hedging account models before runtime ownership is established.
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
 - Apply hard execution-cost controls (max pre-send spread and max signal-price drift) before trade-manager bootstrap.
 - Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
-- Emit `[AI-TOPOLOGY]` so MT5-native voters, ONNX live voting, Python bridge expectations, and external LLM reasoning posture are visible from init logs.
+- AI topology has no `[AI-TOPOLOGY]` line: `[AI-MODE]` states ONNX availability and retries, `[ENGINE-STATUS]` names engines with no tick caller, and `[AI-VOTE]` is the participation evidence.
 - Emit `[RUNTIME-FINGERPRINT]` with requested and effective EA mode so active logs can distinguish `AI_ONLY` mode filtering from real indicator/hybrid underperformance.
 - Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
 - Load ONNX scaler parameters from Common files when available so runtime normalization stays aligned with Python training.
 - Initialize performance analytics before unified-risk bootstrap.
-- Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
+- Validate active symbols at startup (`[SYMBOL-UNIVERSE]`, `[SYMBOL-VALIDATION]`). An `[ACCOUNT-CAPACITY]` affordability dump was never built; a symbol that cannot be sized inside the cap refuses as `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` when the trade is attempted.
 - Reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles.
 - Build the active-only strategy registry, then create per-symbol managers and register only enabled strategies and enabled AI adapters.
 - Resolve strategy-specific registration timeframes during manager bootstrap so configured scalp/intrabar modules can evaluate a lower timeframe than the attached chart when appropriate.
@@ -587,7 +587,7 @@
 - Emit `[HEALTH-CHECK]` telemetry for each validated component and return `INIT_FAILED` if critical components fail.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
 - Registered AI strategies (Neural Network, Transformer, Ensemble, ONNX) now receive non-zero weights from `InpAIWeightMultiplier` during registry bootstrap, ensuring they can participate in live voting when enabled instead of being suppressed by zero weight.
-- Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
+- Reconstruct cooldown timing from EA-owned history and open positions: `[RISK-MUTEX-COOLDOWN]` for the opposing-position mutex and `[GRID-RESTART]` for inherited grid levels. `[TRADE-STATE]` prints nowhere.
 - Initialize `CTieredSignalValidator` and manager-side AI voting surfaces for multi-tier signal hierarchy.
 - Prime one pending new-bar scan per validated symbol so startup cannot produce a fully idle manager fleet with zero first-pass evaluations.
 
@@ -674,7 +674,7 @@
 - Strategy overrides that bypass base-class `GetSignal(...)` now emit explicit decision tags, and manager defensively downgrades any remaining placeholder abstentions so they cannot silently dilute ready-live quorum math.
 - `Momentum` can now be configured for scalp-continuation signals via `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; `InpMomentumScalpTimeframe` can register it on a lower timeframe than the attached chart. `InpCandlestickIntrabarTimeframe` provides the same lower-timeframe registration control for intrabar candlestick participation. These controls change only signal production cadence and leave risk ownership, execution ownership, and lifecycle ownership unchanged.
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
-- Live authority is applied per candidate before live send: `[LIVE-AUTHORITY]` decides live vs candidate-level shadow and scales risk; `[AUTHORITY-TRIAL]` records forward evidence; `[AUTHORITY-RESULT]` updates AI/ONNX/indicator/Elliott family statistics for promotion or demotion.
+- Live authority is applied per candidate before live send and prints as `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` (with the five measured bonuses in `reason=` since Batch 205). `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` appear in no source file; per-family demotion and trial tracking were never built.
 - Final validator ATR acquisition now resolves from the shared indicator handle first and then a raw-rate ATR fallback, preventing transient copy misses from forcing `Invalid ATR: 0.00000` vetoes on otherwise-valid packets.
 - Final EA admission also applies ATR-ratio crisis gating (`ATR14/ATR50`) so volatility shocks can reject or down-scale otherwise valid entries before risk sizing.
 - AI vote generation is same-bar cached:
@@ -684,7 +684,7 @@
 - AI adapters now emit explicit decision reason tags on disabled, abstain, feature-fault, inference-fault, and signal paths, removing the old `UNTAGGED_NO_SIGNAL` blind spot from AI-enabled consensus traces.
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator, and the system now respects `InpAIConfidenceThreshold` as the authoritative floor across all modes, eliminating legacy hardcoded confidence caps.
 - AI_ONLY mode is now strict: indicator strategies are filtered out at the strategy registry level, ensuring no indicator-based votes participate when the EA is in AI-primary posture.
-- When configured indicator families are filtered out by `AI_ONLY`, runtime now emits `[MODE-MASK]` so those sessions are not misread as "indicator strategies voted badly."
+- When configured indicator families are filtered out by `AI_ONLY`, the roster that survives is visible from `[CATALOG]`, `[STRATEGY-REGISTRY]` and `[CURATION] Effective strategy set`. The `[MODE-MASK]` line named here has no printer (Batch 215).
 - Python-side AI semantics are now explicitly separated in runtime docs and logs:
   - ONNX is the only Python-trained live-voter path currently wired into manager consensus
   - Python bridge endpoint inputs are telemetry/expectation surfaces only
@@ -752,7 +752,7 @@
 - Tick safety / synthetic spike telemetry and trading-pause lifecycle logs are emitted outside the heavy scan path.
 - Periodic telemetry logs, including `[AI-FEEDBACK]` performance summaries for adaptive-training health.
 - Indicator cache release policy.
-- Shutdown now emits `[TERMINATION-SNAPSHOT]` with final heartbeat counters before deinit cleanup.
+- Shutdown is bracketed by `[DEINIT-START]` and `[DEINIT-COMPLETE]`; there is no `[TERMINATION-SNAPSHOT]` counter line - the final counters are the last `[HEARTBEAT]` of the session.
 
 ### 6. OnDeinit
 - Release managers and dynamic strategy allocations.
@@ -777,9 +777,10 @@ tags that have never existed in the repository (`[EXECUTION-MODE]`, `[ACCOUNT-CA
 a search index for the next audit: an operator searching a journal for `[SCHEDULER-STATE]` finds nothing and
 concludes the scheduler is quiet, when it does not exist.
 
-- Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[CONSENSUS-DECISION]` (exogenous quality is a
-  `[POST-CONSENSUS-FILTER] filter=` reason, not a separate tag)
-- Multi-Tier: `[CONSENSUS-QUORUM]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[CONSENSUS-REGIME-VETO]`
+- Decision: `[SIGNAL-REJECTED]`, `[CONSENSUS-DECISION]` (exogenous quality is a
+  `[POST-CONSENSUS-FILTER] filter=` reason, not a separate tag). `[SIGNAL]` prints nowhere.
+- Multi-Tier: `[CONSENSUS-QUORUM]`, `[CONSENSUS-REGIME-VETO]`. `[CONSENSUS-ROLE]` and
+  `[CONSENSUS-CLUSTER]` were format macros with no call site and are deleted (Batch 218).
 - System telemetry: `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`,
   `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[AUTHORITY-GATE]`, `[AUTHORITY-REDUCED]`, `[AUTHORITY-REJECT]`,
   `[AUTHORITY-LEARN]`, `[ENGINE-STATUS]`, `[CATALOG]`, `[CURATION]`, `[MAGIC-LAYOUT]`, `[SIZING-CHAIN]`,
@@ -875,14 +876,14 @@ No new log signatures added (existing `[PYRAMID]`, `[SAFE-MODE]` telemetry cover
 - No breaking interface changes (all Deinit() methods are new, non-virtual)
 - Callback mechanism uses standard C-style function pointers compatible with MQL5
 - DestroyInstance() uses standard MQL5 delete on singleton instance
-- Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
-- **Batch 87 Execution Quality:** `[EXECUTION-QUALITY]`, `[EXECUTION-REPORT]`, `[SPREAD-COST]`, `[SMART-ROUTING]`
+- Trade: `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[EXECUTION-CONFIRMED]`, `[PARTIAL-FILL]`, `[TRADE-ERROR]`, `[TRADE-FAILED]`; `[SHADOW-TRADE]` was superseded by `[AUTHORITY-REJECT]`, and `[TRADE-SUCCESS]`, `[TRADE-EXECUTION]`, `[FILL-DIFF]` print nowhere
+- **Batch 87 Execution Quality:** `[EXECUTION-QUALITY]`, `[EXECUTION-REPORT]`; `[SPREAD-COST]` and `[SMART-ROUTING]` print nowhere - spread refusal is `[POST-CONSENSUS-FILTER] filter=hard_spread_cutoff` and `[SCALP-COST-REJECTED]`
 - **Batch 90 Visualization:** Drawing statistics dashboard on VisualDashboard
-- Scalp: `[SCALP-SIGNAL]`, `[SCALP-EXEC]`, `[SCALP-ASYNC]`, `[SCALP-CACHE]`
-- Auto mode: `[AUTO-MODE]`
+- Scalp: `[SCALP-ENTRY]`, `[SCALP-REJECTED]`, `[SCALP-SIGNAL-REJECT]` (Batch 214), `[SCALP-GATE]`, `[SCALP-ASYNC]`, `[SCALP-CACHE]`; `[SCALP-SIGNAL]` and `[SCALP-EXEC]` print nowhere
+- Mode degradation: `[MODE-DEGRADE]`; `[AUTO-MODE]` prints nowhere
 - Profit target: `[PROFIT-TARGET]`
-- Daily loss halt: `[DAILY-LOSS-HALT]`
-- R:R rejection: `[RR-REJECTED]`
+- Daily loss halt: `[RISK-DAILY-LOSS]`; `[DAILY-LOSS-HALT]` prints nowhere
+- R:R rejection: `[CANDIDATE-BUILDER]` (stop pinned to the floor) and `[SIGNAL-REJECTED] reason=`; `[RR-REJECTED]` prints nowhere
 
 ## Layer 8: JsonLogger & TradeManager Deinit Fixes (Batch 135)
 
@@ -1138,15 +1139,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## 2026-02-24 Throughput-Recovery Trace
 - Added intrabar dynamic quorum controls and single-voter confidence floor controls in `EnterpriseStrategyManager`.
 - Added explicit strategy-level intrabar eligibility assignment path for curated core contributors.
-- Added manager-level consensus funnel snapshots and dominant-cause diagnostics (`[CONSENSUS-ROOT]`).
-- Added per-strategy reject attribution counters and heartbeat aggregation (`[CONSENSUS-STRATEGY]`, `[STRATEGY-REJECTS]`).
+- Manager-level consensus funnel snapshots (`[CONSENSUS-SNAPSHOT]`, DEBUG verbosity). `[CONSENSUS-ROOT]` was a format macro with no call site and is deleted (Batch 218).
+- Per-strategy reject attribution (`[STRATEGY-REJECTS]`, DEBUG verbosity). `[CONSENSUS-STRATEGY]` was a format macro with no call site and is deleted (Batch 218).
 - Hardened `TrendEngine` ADX handling with readiness checks, value-domain sanitation, neutral degrade, and bounded ADX handle reinit.
 - Extended pipeline confidence filtering with bounded weak-regime intrabar threshold cap plus source-tag logging.
 - Extended heartbeat with conversion funnel counters/rates and no-signal dominance alerting tied to consensus diagnostics.
 
 ## 2026-03-07 No-Trade Recovery Trace
 - Refined `EnterpriseStrategyManager` intrabar dynamic quorum so it now keys off actual live contributors in the current cycle rather than the entire eligible live pool.
-- Added explicit `[EXECUTION-MODE]` startup telemetry in `MultiStrategyAutonomousEA.mq5` to prevent shadow-mode sessions from being mistaken for execution failures.
+- The `[EXECUTION-MODE]` startup telemetry named here never landed - no source file prints it. `[TRADE-MGR] Account margin mode: ...` is the line that states the posture the executor runs under.
 - Initialized `PerformanceAnalytics` explicitly before `CUnifiedRiskManager` bootstrap to remove cold-start ambiguity in adaptive-risk wiring.
 - Split non-AI signal confidence policy away from `InpAIConfidenceThreshold` by introducing dedicated pipeline and validator confidence floors in `MultiStrategyAutonomousEA.mq5`.
 - Rewired `CUnifiedSignalPipeline` threshold adaptation to use `CRegimeEngine` snapshot state rather than `TrendEngine` neutral/warmup output.
@@ -1170,7 +1171,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 
 ## 2026-03-24 Startup State Recovery + Capacity Diagnostics + Regime Fault Resilience Trace
 - Added startup reconstruction of `g_lastTradeTime` in `MultiStrategyAutonomousEA.mq5` using EA-owned history and open positions so inherited positions preserve cooldown state after restart/re-attach.
-- Added `[ACCOUNT-CAPACITY]` startup diagnostics that compare free margin with estimated minimum-lot margin for each active symbol and warn when live mode cannot afford any configured symbol.
+- `[ACCOUNT-CAPACITY]` startup diagnostics were planned and never landed: no source file prints that tag. What the startup actually shows is `[SYMBOL-UNIVERSE]` (per-symbol tradeability and market mode) and, where affordability really bites, `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` and `[RISK-LOT-FLOOR]`.
 - Hardened `Core/Engines/RegimeEngine.mqh` to reuse recent valid snapshots on transient warmup / buffer-copy / handle-init faults and to emit bounded `[REGIME-STATE] HANDLE_RESET` self-heal telemetry after repeated data faults.
 
 ## 2026-03-24 Entry Gate Decoupling Trace
@@ -1196,8 +1197,8 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   - `Core/Engines/RegimeEngine.mqh` now clears spread-shock cooldown state on symbol/timeframe switches
 - Aligned sizing lifecycle with shared indicators by routing `Core/Risk/PositionSizer.mqh` ATR reads through `IndicatorManager` when available.
 - Extended the scan lifecycle with cycle-scoped attribution:
-  - `[SCAN-NO-TRADE]`
-  - `[RISK-CAP]`
+  - `[CONSENSUS-DIAG]` reason counters (per-scan attribution)
+  - `[RISK-DAILY-CAP]` / `[RISK-CLUSTER-CAP]` / `[RISK-TIER-FLOOR-CAP]` (budget caps that bit)
   - expanded `[QUIET-REASONS]`
 - Tightened execution lifecycle in `Core/Trading/TradeManager.mqh`:
   - preflight viability check before send
@@ -1262,7 +1263,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - Post-consensus audit trail now includes mode-specific admission:
   - candidate can be rejected for `hybrid_mode_alignment_missing`
   - candidate can be rejected for `indicator_confirmation_missing`
-  - candidate can receive `[AI-MODE-BONUS]`
+  - there is no AI mode bonus: no `[AI-MODE-BONUS]` exists in the code and no candidate is scored by mode alignment
 - Scheduler audit trail now includes bounded intrabar keepalive recovery so default hybrid cadence cannot permanently collapse to `intrabar_selected=0`.
 - `CTrendEngine` audit trail now includes bounded MA fallback in addition to ATR fallback, keeping readiness degradation explicit without forcing repetitive full reinitialization.
 
@@ -1459,7 +1460,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   - Restored 15x min-lot round-up tolerance (reverted L5-002 1x clamp) in three places: URM config default `minLotRiskMultiplier = 15.0`, `CPositionSizer` hard cap `if(riskRatio > 15.0)`, and `CPositionSizer::SetMinLotRiskMultiplier` setter `MathMin(MathMax(1.0, multiplier), 15.0)`.
   - EA inputs: `InpAllowMinLotRoundUp = true`, `InpMinLotRiskMultiplier = 15.0`.
 - **Phase 7.4 — Error Handling Logging:**
-  - Added 38 `PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, __LINE__, __FUNCTION__)` debug lines to `return 0.0` paths across `UnifiedRiskManager.mqh` (16), `TradeManager.mqh` (14), `PositionSizer.mqh` (5), `PythonBridge.mqh` (3).
+  - Added 38 `PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, __LINE__, __FUNCTION__)` debug lines to `return 0.0` paths across `UnifiedRiskManager.mqh` (16), `TradeManager.mqh` (14), `PositionSizer.mqh` (5), `PythonBridge.mqh` (3). Those lines are gone from the tree, so `[DBG-RET0]` prints nowhere today and a journal search for it is not evidence of anything.
   - Unbraced multi-line control statements are braced around the `return` so logging executes only on the real return path. Documented valid returns (hedging-mode, already-braced inline) skipped to avoid noise.
   - Resolves the `return 0.0` ambiguity (valid zero result vs. error) for faster diagnosis during user testing. Behavior unchanged.
 - **Lifecycle impact:** No ownership transfer. 6.2 removes a duplicated validation branch (PositionSizer remains the min-lot authority). 7.4 is logging-only — zero behavioral change.
@@ -1703,6 +1704,29 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:156`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 218 Log Tags Checked Against the Tree, and the Heartbeat Block Given a Printer (2026-10-17)
+- **Lifecycle:** unchanged. The batch moves no decision, no gate and no ownership.
+- **Observability surface:** eight heartbeat tags that existed only as unused `FMT_*` macros now print -
+  `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]`,
+  `[HEARTBEAT-POSITIONS]` always at the heartbeat interval (>=30s, default 60s),
+  `[HEARTBEAT-ASSET-CLASS]` and `[HEARTBEAT-FAMILY]` under verbose. Before this batch those payloads reached
+  only `MQL5/Files` through `CJsonLogger`, so AGENTS.md section 6's first item could not be satisfied from a
+  journal for any build.
+- **A refusal that was silent:** the per-family position cap refused through JSON alone; it now prints
+  `[RISK-FAMILY-POS] <symbol> | family= | positions=n/m | entry refused` at the same return.
+- **Dead surface removed:** 29 of `Core/Utils/LogMacros.mqh`'s 42 macros had no call site. Ten duplicated
+  tags the code prints literally, eleven were unused JSON wrappers, seven named a tag with nothing computing
+  a payload. `[AI-VOTE-MISSING]` stays unprinted by choice: 13 symbols x 4 adapter types per heartbeat.
+- **Document corrections:** ~250 lines across the five root documents. Two sections of
+  `RUNTIME_DECISION_GRAPH.md` and one bullet each in `SYSTEM_STRUCTURE.md` / this file described classes and
+  files that are not in the repository (`CPartialCloseManager`, `CTimeframeConfluence`); OFI weight adjustment
+  and VPIN weight reduction were designed and never built; roughly 40 tag names cited as operator evidence
+  print nowhere and each line now names the real tag or says plainly that none exists.
+- **Method:** `git log -S` is unusable here (git-lfs is the configured content filter, so pickaxe reports
+  strings no checkout contains). Evidence is the current tree only, and a tag counts as printed when a
+  `Print`/`PrintFormat`/`Alert`/`LOG_IF*`/`CJsonLogger::Log*`/`CSubsystemLogger::Log` call reaches it within a
+  three-line window.
 
 ## Batch 217 A Risk Control That Reports Its Own Numbers To Nobody (2026-10-17)
 

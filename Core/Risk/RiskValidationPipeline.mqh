@@ -632,6 +632,8 @@ public:
                             result.severity = ERROR_LEVEL_WARNING;
                             result.message = StringFormat("Family position limit reached: %d/%d positions in same family",
                                                           familyPositionCount, maxFamilyPositions);
+                            PrintFormat("[RISK-FAMILY-POS] %s | family=%s | positions=%d/%d | entry refused",
+                                        request.symbol, EnumToString(reqFamily), familyPositionCount, maxFamilyPositions);
                             CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "FAMILY_POSITION_LIMIT",
                                 StringFormat("Family %s positions %d/%d", EnumToString(reqFamily), familyPositionCount, maxFamilyPositions),
                                 (double)familyPositionCount, (double)maxFamilyPositions, corrId);
