@@ -21,7 +21,6 @@
 #include "../Registry/NeuralNetRegistry.mqh"
 #include "../Registry/DrawingManagerRegistry.mqh"
 #include "../Registry/ScanSchedulerRegistry.mqh"
-#include "../Registry/SymbolStateTracker.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
 // Aggregates the status text of the orchestrator's collaborators.
@@ -156,9 +155,6 @@ public:
         CScanSchedulerRegistry* scanRegReport = m_registryAggregator.GetScanRegistry();
         if(scanRegReport != NULL)
         report += scanRegReport.GetStatusReport();
-        CSymbolStateTracker* trackerReport = m_registryAggregator.GetSymbolStateTracker();
-        if(trackerReport != NULL)
-        report += trackerReport.GetStatusReport();
 
         return report;
     }

@@ -249,7 +249,6 @@ input bool     InpRunNNAttributionSelfTest = false;
 
 input group "=== RUNTIME CADENCE & INTRABAR ==="
 input bool     InpEnableHybridCadence = true;
-input int      InpIntrabarScanSeconds = 5;
 input bool     InpIntrabarChartSymbolOnly = false;
 input bool     InpIntrabarDynamicQuorumEnabled = true;
 input double   InpPipelineMinConfidence = 0.55;
@@ -282,9 +281,7 @@ input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLI
 input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
 input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
 input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
-input int      InpMaxIntrabarSymbolsPerCycle = 6;
 input int      InpMaxSignalEvaluationsPerCycle = 8;
-input int      InpIntrabarBackoffMaxSeconds = 60;
 input int      InpReadinessReuseTtlSeconds = 60;
 input bool     InpEnableNNOnlineTraining = true;
 input bool     InpEnableNNWeightMutation = false;
@@ -1195,7 +1192,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
 
     // Runtime Cadence
     config.enableHybridCadence = InpEnableHybridCadence;
-    config.intrabarScanSeconds = InpIntrabarScanSeconds;
     config.intrabarChartSymbolOnly = InpIntrabarChartSymbolOnly;
     config.intrabarDynamicQuorumEnabled = InpIntrabarDynamicQuorumEnabled;
     config.pipelineMinConfidence = InpPipelineMinConfidence;
@@ -1228,9 +1224,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.intrabarEligibilityTransformerAI = InpIntrabarEligibilityTransformerAI;
     config.intrabarEligibilityEnsembleAI = InpIntrabarEligibilityEnsembleAI;
     config.intrabarEligibilityOnnxAI = InpIntrabarEligibilityOnnxAI;
-    config.maxIntrabarSymbolsPerCycle = InpMaxIntrabarSymbolsPerCycle;
     config.maxSignalEvaluationsPerCycle = InpMaxSignalEvaluationsPerCycle;
-    config.intrabarBackoffMaxSeconds = InpIntrabarBackoffMaxSeconds;
     config.readinessReuseTtlSeconds = InpReadinessReuseTtlSeconds;
     config.enableNNOnlineTraining = InpEnableNNOnlineTraining;
     config.enableNNWeightMutation = InpEnableNNWeightMutation;

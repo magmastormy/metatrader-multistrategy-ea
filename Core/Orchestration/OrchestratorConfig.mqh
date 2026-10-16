@@ -177,7 +177,6 @@ struct SOrchestratorConfig
 
     // Runtime cadence
     bool    enableHybridCadence;
-    int     intrabarScanSeconds;
     bool    intrabarChartSymbolOnly;
     bool    intrabarDynamicQuorumEnabled;
     double  pipelineMinConfidence;
@@ -211,9 +210,7 @@ struct SOrchestratorConfig
     ENUM_INTRABAR_POLICY intrabarEligibilityEnsembleAI;
     ENUM_INTRABAR_POLICY intrabarEligibilityOnnxAI;
     ENUM_INTRABAR_POLICY intrabarEligibilityPythonBridgeAI;
-    int     maxIntrabarSymbolsPerCycle;
     int     maxSignalEvaluationsPerCycle;
-    int     intrabarBackoffMaxSeconds;
     int     readinessReuseTtlSeconds;
     bool    enableNNOnlineTraining;
     bool    enableNNWeightMutation;
@@ -512,7 +509,6 @@ struct SOrchestratorConfig
         runNNAttributionSelfTest = false;
 
         enableHybridCadence = true;
-        intrabarScanSeconds = 5;
         intrabarChartSymbolOnly = false;
         intrabarDynamicQuorumEnabled = true;
         pipelineMinConfidence = 0.55;
@@ -546,9 +542,7 @@ struct SOrchestratorConfig
         intrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
         intrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
         intrabarEligibilityPythonBridgeAI = INTRABAR_POLICY_LIVE;
-        maxIntrabarSymbolsPerCycle = 6;
         maxSignalEvaluationsPerCycle = 8;
-        intrabarBackoffMaxSeconds = 60;
         readinessReuseTtlSeconds = 60;
         enableNNOnlineTraining = true;
         enableNNWeightMutation = false;

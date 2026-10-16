@@ -15,7 +15,6 @@
 #include "../../Core/Registry/NeuralNetRegistry.mqh"
 #include "../../Core/Registry/DrawingManagerRegistry.mqh"
 #include "../../Core/Registry/ScanSchedulerRegistry.mqh"
-#include "../../Core/Registry/SymbolStateTracker.mqh"
 #include "../../Core/Management/EnterpriseStrategyManager.mqh"
 #include "../../Core/Risk/UnifiedRiskManager.mqh"
 #include "../../Core/Risk/PositionSizer.mqh"
@@ -27,7 +26,6 @@
 #include "../../Core/Risk/FullMarginMode.mqh"
 #include "../../Core/Processing/TickSafetyMonitor.mqh"
 #include "../../Core/Processing/SyntheticSpikeMonitor.mqh"
-#include "../../Core/Processing/SymbolScanScheduler.mqh"
 #include "../../Core/Trading/TradeAttributionManager.mqh"
 #include "../../Core/Engines/AIEngine.mqh"
 #include "../../Core/AI/AIPerformanceFeedback.mqh"
@@ -1569,10 +1567,6 @@ CDrawingManagerRegistry* drawReg = m_registryAggregator.GetDrawingRegistry();
 if(drawReg != NULL)
 drawReg.RegisterAll(m_drawingManagers, m_drawingManagerSymbols,
 ArraySize(m_drawingManagers));
-
-CSymbolStateTracker* tracker = m_registryAggregator.GetSymbolStateTracker();
-if(tracker != NULL)
-    tracker.Initialize(m_enterpriseManagerSymbols, m_managerCount);
 
 // Do NOT call CStrategyRegistry::Initialize()/Reset() here: it wipes the descriptors populated
 // by BuildStrategyRegistry(), orphans every manager's view and leaves all strategies disabled.

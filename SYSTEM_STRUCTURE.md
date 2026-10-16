@@ -66,6 +66,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - Removed `SCALP_BLACKLIST_THRESHOLD` constant from main EA
     - Dormancy tracking now fully encapsulated in `CSymbolScanScheduler` / `CScanSchedulerRegistry`
     - Scalp blacklist tracking now fully encapsulated in `CScanSchedulerRegistry` / `CSymbolStateTracker`
+    - **(Both lines above are superseded by Batch 215.)** Neither class ever held state: `CSymbolScanScheduler`
+      was never instantiated and `CSymbolStateTracker`'s seven record/test methods had no caller, so the globals
+      this batch moved out of the main EA simply landed in fields nothing wrote to. `CSignalGenerator`'s own
+      dormancy counters - made configurable in Batch 212 and printed as `[DORMANT-COOLDOWN]` - are the live
+      implementation, and `CScanSchedulerRegistry` keeps only the per-symbol bar stamp.
     - `CSignalGenerator` implements dormancy warning logic for signal evaluation
   - **Batch 150 ownership corrections (2026-08-23)**: `CSignalGenerator` owns per-symbol new-bar gating (`m_lastEvalBar[]`) and stores results by manager index; `CScanSchedulerRegistry::CheckNewBar` is the single bar-rollover authority consumed by `EAOrchestrator::ProcessNewBars`; `CTradeRetcodeClassifier` no longer retries UNKNOWN-state retcodes (TIMEOUT/CONNECTION); `CPosLifecycleExit` owns the once-per-ticket partial-close marker.
   - **Documentation Updates**: Updated `README.md`, `changelogs.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md`
@@ -119,7 +124,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - **Testing EA entry point:** `MultiStrategyTestingEA.mq5` — standalone testing EA with Complete Test Profile System (45 predefined profiles). See [README.md#standalone-testing-ea](README.md#standalone-testing-ea) for details.
 - Responsibilities (EAOrchestrator):
   - initialize all owned subsystems (risk, trade, position, signal, AI, registry aggregator) in deterministic order
-  - initialize `CRegistryAggregator` as unified registry access point for mathematical, institutional, neural net, drawing, scan, symbol state, and strategy registries
+  - initialize `CRegistryAggregator` as unified registry access point for mathematical, institutional, neural net, drawing, scan and strategy registries (the symbol-state registry it also used to own was deleted in Batch 215 - nothing wrote to it). It now exposes only getters with callers: Batch 215 also removed the nine per-symbol `Get*(symbol)` conveniences, `GetScanScheduler`, `GetTotalRegisteredCount` and six `Is*Ready()` probes, all of which had zero call sites on this class - the same-named getters callers use belong to `CUnifiedSignalPipeline`, `COrchestratorMathEngineHub` and the manager's infra struct.
   - initialize per-symbol `CEnterpriseStrategyManager` instances with injected strategy registry
   - wire mathematical engines (Hurst, OU, OFI, VPIN, Kalman, CPD, Four-State, VolTarget, ExitOpt, LiqSweep, RangeComp) and institutional engines (VWAP, VP, CVD) to registries
   - initialize AI subsystems (NextGenStrategyBrain, AIEngine, NeuralNetwork adapters via StrategyFactory) with clear ownership (adapters own NNs)
@@ -129,7 +134,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - delegate unprotected position tracking and SL remediation to `CUnprotectedPositionTracker` (3-attempt escalation)
   - delegate synthetic tick spike monitoring and trading pause to `CSyntheticSpikeMonitor`
   - delegate trade attribution and NN prediction mapping to `CTradeAttributionManager`
-  - delegate symbol scan scheduling and intrabar scoring to `CScanSchedulerRegistry`
+  - hold per-symbol bar-rollover state in `CScanSchedulerRegistry`; it does no intrabar scoring - the scheduler that would have is deleted in Batch 215
   - budget heavy signal evaluations across both new-bar and intrabar paths via config
   - budget intrabar scans by symbol yield instead of blindly scanning the whole intrabar universe every cycle
   - apply per-symbol intrabar backoff after repeated low-yield or readiness-faulted scans
@@ -320,14 +325,19 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   - NN diagnostics logging and self-test
   - Cluster code utilities and trade comment building
 
-#### CSymbolScanScheduler
+#### CScanSchedulerRegistry
 
-- File: `Core/Processing/SymbolScanScheduler.mqh`
+- File: `Core/Registry/ScanSchedulerRegistry.mqh`
 - Responsibilities:
-  - Symbol scan state management (new-bar, intrabar, pending)
-  - Intrabar scoring and backoff logic
-  - Symbol scheduler state alignment and rebuild
-  - Evaluation budget tracking and symbol rotation
+  - Per-symbol bar-rollover memory (`symbol` + `lastBarTime`), consumed by `EAOrchestrator::ProcessNewBars`
+    through `CheckNewBar` - the single new-bar authority for the tick path
+  - Shutdown status report of which bar each symbol was last seen on
+- Deleted in Batch 215: `CSymbolScanScheduler` (`Core/Processing/SymbolScanScheduler.mqh`) was never
+  instantiated - `new CSymbolScanScheduler` appears nowhere and its only access route,
+  `CRegistryAggregator::GetScanScheduler`, returned `NULL` and had no caller - and with it went the dormancy,
+  scalp-blacklist, intrabar-timer and pending-new-bar fields of `CScanSchedulerRegistry`, whose accessors had no
+  caller either. `CSymbolStateTracker` was deleted on the same evidence: allocated, initialised, printed in the
+  shutdown report, and written by nobody.
 
 ### 2.4 Pipeline domain
 
@@ -1215,7 +1225,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Heavy evaluation work is cycle-budgeted: pending new-bar symbols are selected first, deferred cleanly when the cycle budget is exhausted, and only the remaining budget may be spent on intrabar work.
 - Startup/runtime symbol-state priming now seeds one pending new-bar evaluation per validated symbol, preventing cold-start idle loops where managers exist but no symbol is ever admitted into the first scan.
 - Cadence, stated as it actually is (Batch 212): the consensus entry scan runs once per tick and `CSignalGenerator::EvaluateSymbol` gates **each symbol to one evaluation per bar of the chart's timeframe**. There is no new-bar-only switch - `InpSignalScanOnNewBarOnly` wrote a config field that no code read, and the `[CADENCE-WARNING]` line three documents cited has never existed in the repository. Both are deleted; `EVAL_MODE_INTRABAR` is not passed on the entry path at all, so between-bar consensus *entries* do not happen (see `RUNTIME_DECISION_GRAPH.md`, Batch 212). What is settable now: `InpMaxSignalEvaluationsPerCycle` (the cycle budget the generator used to hardcode at 8), `InpDormancyStrikeBars`, `InpDormancyCooldownMinutes`, reported once by `[SCAN-POLICY]`.
-- Default intrabar breadth is slightly widened for live verification (`InpMaxIntrabarSymbolsPerCycle=4`) so restored timer cadence spends its budget on more than a minimal subset of the managed symbol universe.
+- **Superseded by Batch 215:** this line described `InpMaxIntrabarSymbolsPerCycle` and quoted a default of 4 where the code said 6. The input wrote a config field that no code read, and the scheduler it fed was never instantiated; the input, the field and the scheduler are deleted. Per-cycle evaluation breadth is `InpMaxSignalEvaluationsPerCycle`, live since Batch 212.
 - Symbol evaluation start index rotates each cycle to reduce deterministic first-symbol concentration.
 - Intrabar symbol selection is yield-aware: recent near-miss symbols, recent generators, and readiness-healthy symbols are prioritized first.
 - Per-symbol intrabar backoff tiers escalate from base cadence to `30s`, then `60s`, then suspension until a new bar resets the symbol.

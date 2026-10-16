@@ -30,7 +30,6 @@ class CMathematicalEngineRegistry;
 class CInstitutionalEngineRegistry;
 class CDrawingManagerRegistry;
 class CScanSchedulerRegistry;
-class CSymbolStateTracker;
 class CNeuralNetRegistry;
 class CFamilyStrategyWeightMatrix;
 class CFourStateRegimeDetector;
@@ -40,7 +39,6 @@ class CVPINFilter;
 class COrderFlowImbalanceEngine;
 class CChartDrawingManager;
 class CSessionWeightManager;
-class CSymbolScanScheduler;
 
 // Engines
 class CTrendEngine;

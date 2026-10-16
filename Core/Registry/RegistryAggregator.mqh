@@ -12,14 +12,12 @@
 #include "NeuralNetRegistry.mqh"
 #include "DrawingManagerRegistry.mqh"
 #include "ScanSchedulerRegistry.mqh"
-#include "SymbolStateTracker.mqh"
 #include "../Strategy/StrategyRegistry.mqh"
 
 class CMathematicalEngineRegistry;
 class CInstitutionalEngineRegistry;
 class CDrawingManagerRegistry;
 class CScanSchedulerRegistry;
-class CSymbolStateTracker;
 class CNeuralNetRegistry;
 class CStrategyRegistry;
 
@@ -36,7 +34,6 @@ private:
     
     CScanSchedulerRegistry* m_scanRegistry;
     
-        CSymbolStateTracker* m_symbolStateTracker;
     
         CStrategyRegistry* m_strategyRegistry;
 
@@ -47,7 +44,6 @@ private:
         m_neuralNetRegistry(NULL),
         m_drawingRegistry(NULL),
         m_scanRegistry(NULL),
-        m_symbolStateTracker(NULL),
         m_strategyRegistry(NULL)
     {
     }
@@ -72,34 +68,9 @@ private:
     
     CScanSchedulerRegistry* GetScanRegistry() const { return m_scanRegistry; }
     
-        CSymbolStateTracker* GetSymbolStateTracker() const { return m_symbolStateTracker; }
     
         CStrategyRegistry* GetStrategyRegistry() const { return m_strategyRegistry; }
-    
-        // Dead surface: no caller in this repo uses the nine Get*(symbol) conveniences below, GetScanScheduler,
-        // GetTotalRegisteredCount or any Is*Ready() probe. Live consumers take the whole registry instead —
-        // GetMathRegistry()/GetInstitutionalRegistry()/GetDrawingRegistry() feed UnifiedSignalPipeline and
-        // OrchestratorMathEngineHub, GetStrategyRegistry() feeds the symbol managers.
-    CTrendEngine* GetTrendEngine(const string symbol) const;
-    CStructureEngine* GetStructureEngine(const string symbol) const;
-    CLiquidityEngine* GetLiquidityEngine(const string symbol) const;
-    CVolatilityEngine* GetVolatilityEngine(const string symbol) const;
-    CRegimeEngine* GetRegimeEngine(const string symbol) const;
-    COrderFlowImbalanceEngine* GetOFIEngine(const string symbol) const;
-    CVPINFilter* GetVPINFilter(const string symbol) const;
-    CChartDrawingManager* GetDrawingManager(const string symbol) const;
-    CSymbolScanScheduler* GetScanScheduler(const string symbol) const;
-    
-    bool IsMathRegistryReady() const { return m_mathRegistry != NULL; }
-    bool IsInstitutionalRegistryReady() const { return m_institutionalRegistry != NULL; }
-    bool IsNeuralNetRegistryReady() const { return m_neuralNetRegistry != NULL; }
-    bool IsDrawingRegistryReady() const { return m_drawingRegistry != NULL; }
-    bool IsScanRegistryReady() const { return m_scanRegistry != NULL; }
-    bool IsSymbolStateTrackerReady() const { return m_symbolStateTracker != NULL; }
-    
-    // Not "all registries": it sums six of the seven and leaves m_strategyRegistry out entirely.
-    int GetTotalRegisteredCount() const;
-    
+
     void ClearAll();
 
 private:
@@ -154,13 +125,6 @@ bool CRegistryAggregator::Initialize()
         ok = false;
     }
     
-    m_symbolStateTracker = new CSymbolStateTracker();
-    if(m_symbolStateTracker == NULL)
-    {
-        Print("[RegistryAggregator] ERROR: Failed to allocate SymbolStateTracker");
-        ok = false;
-    }
-    
     m_strategyRegistry = new CStrategyRegistry();
     if(m_strategyRegistry == NULL)
     {
@@ -210,11 +174,6 @@ void CRegistryAggregator::Deinitialize()
         m_scanRegistry = NULL;
     }
     
-    if(m_symbolStateTracker != NULL)
-        {
-            delete m_symbolStateTracker;
-            m_symbolStateTracker = NULL;
-        }
     
         if(m_strategyRegistry != NULL)
         {
@@ -223,82 +182,6 @@ void CRegistryAggregator::Deinitialize()
         }
     
         Print("[RegistryAggregator] All registries deinitialized");
-}
-
-CTrendEngine* CRegistryAggregator::GetTrendEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetTrend(symbol);
-    return NULL;
-}
-
-CStructureEngine* CRegistryAggregator::GetStructureEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetStructure(symbol);
-    return NULL;
-}
-
-CLiquidityEngine* CRegistryAggregator::GetLiquidityEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetLiquidity(symbol);
-    return NULL;
-}
-
-CVolatilityEngine* CRegistryAggregator::GetVolatilityEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-            return m_mathRegistry.GetVolatility(symbol);
-        return NULL;
-    }
-
-CRegimeEngine* CRegistryAggregator::GetRegimeEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetRegime(symbol);
-    return NULL;
-}
-
-COrderFlowImbalanceEngine* CRegistryAggregator::GetOFIEngine(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetOFI(symbol);
-    return NULL;
-}
-
-CVPINFilter* CRegistryAggregator::GetVPINFilter(const string symbol) const
-{
-    if(m_mathRegistry != NULL)
-        return m_mathRegistry.GetVPIN(symbol);
-    return NULL;
-}
-
-CChartDrawingManager* CRegistryAggregator::GetDrawingManager(const string symbol) const
-{
-    if(m_drawingRegistry != NULL)
-        return m_drawingRegistry.GetManager(symbol);
-    return NULL;
-}
-
-// Always NULL, and no caller in this repo: CScanSchedulerRegistry holds scan state per symbol rather than
-// scheduler objects. ProcessNewBars reads that state via CScanSchedulerRegistry::CheckNewBar directly
-// (EAOrchestrator.mqh:3404).
-CSymbolScanScheduler* CRegistryAggregator::GetScanScheduler(const string symbol) const
-{
-    return NULL;
-}
-
-int CRegistryAggregator::GetTotalRegisteredCount() const
-{
-    int total = 0;
-    if(m_mathRegistry != NULL) total += m_mathRegistry.Count();
-    if(m_institutionalRegistry != NULL) total += m_institutionalRegistry.Count();
-    if(m_neuralNetRegistry != NULL) total += m_neuralNetRegistry.GetActiveCount();
-    if(m_drawingRegistry != NULL) total += m_drawingRegistry.GetTotalObjectCount();
-    if(m_scanRegistry != NULL) total += m_scanRegistry.GetPendingNewBarCount();
-    if(m_symbolStateTracker != NULL) total += m_symbolStateTracker.Count();
-    return total;
 }
 
 void CRegistryAggregator::TickNeuralNetOnlineLearning() const
@@ -314,7 +197,6 @@ void CRegistryAggregator::ClearAll()
     if(m_neuralNetRegistry != NULL) m_neuralNetRegistry.Clear();
     if(m_drawingRegistry != NULL) m_drawingRegistry.Clear();
     if(m_scanRegistry != NULL) m_scanRegistry.Clear();
-    if(m_symbolStateTracker != NULL) m_symbolStateTracker.Clear();
     if(m_strategyRegistry != NULL) m_strategyRegistry.Reset();
 }
 

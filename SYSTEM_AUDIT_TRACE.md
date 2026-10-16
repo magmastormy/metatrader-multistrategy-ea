@@ -765,11 +765,32 @@
 - **Layer 8 (Batch 134)**: `ReleaseEnterpriseManagers()` now calls `Deinit()` on each enterprise manager before deletion, ensuring proper strategy/component cleanup order. `CEnhancedErrorHandler::DestroyInstance()` properly deletes the singleton instance and resets all static state members. Enterprise managers added `Deinit()` method calling strategy `Deinit()` before component deletion.
 
 ## Observability Surface
-- Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
-- Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[EXECUTION-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`, `[PYTHON-BRIDGE-DASHBOARD]`, `[DRAWING-STATS]`, `[DRAW-COORD]`
-- Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
-- AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
+
+Not an exhaustive index - these are the tags that shape a decision, verified against the
+`Print`/`PrintFormat` call sites in Batch 215. The five lines below used to name 25
+tags that have never existed in the repository (`[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`,
+`[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`,
+`[ATR-FALLBACK]`, `[ENTERPRISE-BLOCKED]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`,
+`[MODE-MASK]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`, `[DRAWING-STATS]`, `[DRAW-COORD]`,
+`[SIGNAL-VALIDATED]`, `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`, `[CAPACITY-EXTERNAL]`,
+`[NN-MUTATION]`) and two with the wrong name (`[CONSENSUS-VETOED]`, `[ASYNC-TRADE-CONFIRMED]`). A tag list is
+a search index for the next audit: an operator searching a journal for `[SCHEDULER-STATE]` finds nothing and
+concludes the scheduler is quiet, when it does not exist.
+
+- Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[CONSENSUS-DECISION]` (exogenous quality is a
+  `[POST-CONSENSUS-FILTER] filter=` reason, not a separate tag)
+- Multi-Tier: `[CONSENSUS-QUORUM]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[CONSENSUS-REGIME-VETO]`
+- System telemetry: `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`,
+  `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[AUTHORITY-GATE]`, `[AUTHORITY-REDUCED]`, `[AUTHORITY-REJECT]`,
+  `[AUTHORITY-LEARN]`, `[ENGINE-STATUS]`, `[CATALOG]`, `[CURATION]`, `[MAGIC-LAYOUT]`, `[SIZING-CHAIN]`,
+  `[VPIN-MODIFIER]`, `[WIRE-STATUS]`, `[SCAN-POLICY]`, `[ENTRY-GATE]`, `[DORMANT-COOLDOWN]`, `[MARKET-REGIME]`
+- Risk remediation: `[RISK-UNPROTECTED]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`, `[RISK-GATE-REJECT]`,
+  `[RISK-GATE-ADJUST]`, `[FULL-MARGIN]`
+- Scalp: `[SCALP-ENGINE]`, `[SCALP-GATE]`, `[SCALP-SIGNAL-REJECT]`, `[SCALP-SIZING]`, `[SCALP-COST-REJECTED]`,
+  `[SCALP-ENTRY]`, `[SCALP-EXIT]`, `[SCALP-FASTPATH]`, `[SCALP-REJECTED]`, `[SCALP-RISK-ADJUSTED]`,
+  `[SCALP-LOT-MIN]`, `[SCALP-BLACKLIST]` (that last one has no printer any more - see Batch 215)
+- AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-LABEL]`, `[NN-TRAINING]`, `[AI-FEEDBACK]`, `[EXT-LLM]`,
+  `[PYTHON-BRIDGE-DASHBOARD]`
 
 ---
 
@@ -1682,6 +1703,50 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:156`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 215 A Log Tag Is a Search Index, and 92 of Them Point at Nothing (2026-10-17)
+
+- **How it was found:** the standing method - read the docs a batch touches - applied at scale instead of
+  line by line. After Batch 214 I extracted every backticked `[TAG]` from the five root documents and diffed them
+  against the bracketed tokens that appear anywhere in the tree. Ninety-two had no printer, and two more named a
+  real tag slightly wrong; about two thirds of the 92 sit in sentences that say the runtime emits them. That is a larger fiction surface than any single earlier batch reported, because each
+  phantom had been copied forward: `[CADENCE-WARNING]` appeared in three documents, and Batch 212's own record
+  says so.
+- **Why it mattered enough to do first:** AGENTS.md §6 is the checklist a session works from, and a tag list is
+  how you search a journal. An operator who looks for `[SCHEDULER-STATE]` and finds silence concludes the
+  cadence repair ran quietly; the truth is that no repair routine exists. The list was pointing readers at
+  evidence that cannot be produced, which is worse than no list.
+- **The deletion followed from the sweep, not the other way round:** `[SCALP-BLACKLIST]`, `[DORMANT-COOLDOWN]`
+  (the registry's copy) and `[SCHEDULER-STATE]` were traced to their printers to see whether the tags were
+  stale or the code was, and that is what surfaced `CSymbolStateTracker`'s seven uncalled state methods and
+  `CSymbolScanScheduler`'s absence of any `new` site. A tag that never prints is either a dead feature or a dead
+  class, and both are worth knowing which.
+- **Verified before deleting (the shape of this repository's one-way latch):** `pendingNewBarScan` was set
+  `true` inside the live `CheckNewBar` and cleared only by `SetPendingNewBar`, which has no caller. So it was not
+  merely unread, it was *monotone* - the status report's `pending=Y` was guaranteed after the first bar of every
+  symbol. Checked the same way for `scalpBlacklistDay`'s day-rollover reset: it sat inside `IsScalpBlacklisted`,
+  which nothing calls, so the reset could never run either. An accessor that resets state as a side effect is not
+  a reader, it is a writer that requires someone else to knock.
+- **Rejected: wiring the three intrabar inputs.** `InpIntrabarScanSeconds` / `InpMaxIntrabarSymbolsPerCycle` /
+  `InpIntrabarBackoffMaxSeconds` have live-looking names and a whole scheduler class behind them, so the obvious
+  "fix" is to instantiate the scheduler and bind them. That would create a second cadence authority next to
+  `CSignalGenerator`'s bar gate and `CScanSchedulerRegistry::CheckNewBar`, which is the one-authority-per-domain
+  rule AGENTS.md §2 states, and Batch 212 already declined sub-bar entry evaluation with reasons. Deleted.
+- **Rejected: keeping `CSymbolStateTracker` as a diagnostics home.** Its report is the only thing it produced,
+  and the report was a constant. Retaining a class to print `false` forever is the artifact, not the fix; the
+  numbers an operator wants - dormancy strikes and cooldown expiry - are printed live by `CSignalGenerator` and
+  were made configurable in Batch 212.
+- **My own error, caught before it shipped, and it is the instructive one:** `RegistryAggregator` carried a
+  comment saying the nine `Get*(symbol)` conveniences were dead. Grepping each bare method name returned hits, so
+  I judged the comment itself the error, rewrote it as "live delegation", and put that in the changelog. Every one
+  of those hits was on a *different* object - `pipeline.GetRegimeEngine(symbol)`,
+  `m_mathEngineHub.GetVPINFilter(mathIdx)`, `m_infra.GetDrawingManager()` - none on the aggregator. Enumerating
+  the receivers actually used (`grep -o 'm_registryAggregator\.[A-Za-z_]*'` gives nine names, and none of them is a
+  `Get*Engine`) proved the original comment right. So the comment is restored in force by deleting the code it
+  described: eight conveniences (declarations and bodies) plus `GetScanScheduler`, which left the class exposing
+  exactly the getters callers use. Method note: a reference count on a method *name* is not a call-site count on a
+  method *owner* - the same mistake as counting a field's mentions instead of its writers.
+- **§3 invariants:** unchanged - the deletion touched no risk, execution or lifecycle path.
 
 ## Batch 214 A Refusal That Could Not Be Seen Hid a Cross-Symbol Data Swap (2026-10-17)
 

@@ -233,12 +233,9 @@ input double   InpNonAIPromotedRiskMultiplier = 0.65;
 
 input group "Hybrid Cadence & Intrabar Scan";
 input bool     InpEnableHybridCadence = true;
-input int      InpIntrabarScanSeconds = 5;
 input bool     InpIntrabarChartSymbolOnly = false;
 input bool     InpIntrabarDynamicQuorumEnabled = true;
-input int      InpMaxIntrabarSymbolsPerCycle = 6;
 input int      InpMaxSignalEvaluationsPerCycle = 8;
-input int      InpIntrabarBackoffMaxSeconds = 60;
 input int      InpReadinessReuseTtlSeconds = 60;
 
 input group "Intrabar Eligibility Policies";
@@ -536,7 +533,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     
     // Runtime cadence
     config.enableHybridCadence = InpEnableHybridCadence;
-    config.intrabarScanSeconds = InpIntrabarScanSeconds;
     config.intrabarChartSymbolOnly = InpIntrabarChartSymbolOnly;
     config.intrabarDynamicQuorumEnabled = InpIntrabarDynamicQuorumEnabled;
     config.pipelineMinConfidence = InpPipelineMinConfidence;
@@ -569,9 +565,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.intrabarEligibilityTransformerAI = InpIntrabarEligibilityTransformerAI;
     config.intrabarEligibilityEnsembleAI = InpIntrabarEligibilityEnsembleAI;
     config.intrabarEligibilityOnnxAI = InpIntrabarEligibilityOnnxAI;
-    config.maxIntrabarSymbolsPerCycle = InpMaxIntrabarSymbolsPerCycle;
     config.maxSignalEvaluationsPerCycle = InpMaxSignalEvaluationsPerCycle;
-    config.intrabarBackoffMaxSeconds = InpIntrabarBackoffMaxSeconds;
     config.readinessReuseTtlSeconds = InpReadinessReuseTtlSeconds;
     config.enableNNOnlineTraining = InpEnableNNOnlineTraining;
     config.enableNNWeightMutation = InpEnableNNWeightMutation;

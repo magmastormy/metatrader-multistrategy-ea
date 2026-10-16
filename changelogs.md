@@ -8,6 +8,71 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 215: two symbol-state classes nothing wrote to, three inputs nothing read, and 92 log tags no code prints
+
+A deletion batch, plus the documentation sweep that found it. No decision path changed shape: every removal is
+state or surface that a reader could not exist for.
+
+#### 1. `CSymbolStateTracker` and `CSymbolScanScheduler`: held, initialised, never written
+`CSymbolStateTracker` was allocated by `CRegistryAggregator`, `Initialize`-d by the orchestrator with the symbol
+list, and its `GetStatusReport()` appended to the shutdown report. Nothing else: `RecordScalpCostFailure`,
+`RecordDormantWarning`, `ClearDormantCooldownOnNewBar`, `IsScalpBlacklisted`, `IsInDormantCooldown`,
+`UpdateLastActivity` and `GetLastActivity` had no caller in the repository. So its `[SCALP-BLACKLIST]` and
+`[DORMANT-COOLDOWN]` printers could never run, and the report it contributed asserted
+`scalpBlacklisted=false, dormant=none` for all thirteen symbols, forever, from a class that had no way to learn
+otherwise. The dormancy state that actually gates evaluation is `CSignalGenerator`'s own (Batch 212 made that
+one configurable).
+
+`CSymbolScanScheduler` was never instantiated at all: `new CSymbolScanScheduler` appears nowhere, and the only
+route to it, `CRegistryAggregator::GetScanScheduler`, was a function that returns `NULL` and had no caller - the
+code said so in its own comment. Its whole file is deleted, along with the dead `pendingNewBarScan`,
+`lastIntrabarScanTime`, `intrabarBackoffSeconds`, `dormancyWarningCount`, `dormantCooldownUntil`,
+`scalpBlacklist*` and `externalCapacityLogThrottle` fields of `CScanSchedulerRegistry`, whose accessor methods
+likewise had no caller. `CScanSchedulerRegistry` now keeps what `ProcessNewBars` uses: one
+`symbol + lastBarTime` slot per symbol, and `pendingNewBarScan` is gone with them - it was set `true` by
+`CheckNewBar` and cleared by nothing, so the status report said `pending=Y` for every symbol after its first
+bar.
+
+`GetTotalRegisteredCount` (uncalled, and it summed six of seven registries while its comment claimed seven) and
+the six `Is*Ready()` probes go too, along with the nine per-symbol `Get*(symbol)` conveniences the class's own
+comment had already named dead. That comment was right and I nearly overruled it: grepping each bare method name
+returned call sites, but every one was on a different owner (`pipeline.GetRegimeEngine`,
+`m_mathEngineHub.GetVPINFilter`, `m_infra.GetDrawingManager`). Counting the receivers actually used
+(`m_registryAggregator.<name>`) gives nine names, none of them a `Get*Engine`. A reference count on a method name
+is not a call-site count on a method owner - the same error as counting a field's mentions instead of its writers.
+
+#### 2. Three operator inputs bound nothing
+`InpIntrabarScanSeconds`, `InpMaxIntrabarSymbolsPerCycle` and `InpIntrabarBackoffMaxSeconds` each wrote a
+`SOrchestratorConfig` field that no code read - the only consumer was the dead scheduler's `SetInputParams`,
+which itself had no caller. They are removed from both `.mq5` files and from the config struct, rather than
+wired: their values fed a scheduler that was never built, and building it now would be a new cadence authority
+(Batch 212 already established that consensus runs once per chart bar and left sub-bar evaluation to the
+operator).
+
+#### 3. The log-tag sweep: 92 bracketed names in the docs, no code prints them
+Extracting every backticked `[TAG]` from the five root documents and diffing it against the set of bracketed
+tokens that appear anywhere in the `.mqh`/`.mq5` tree left **92 names with no printer**, and about two thirds of
+them sit in sentences saying the runtime emits or prints them. A sample of what the documents promise a journal
+contains: `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[AI-TOPOLOGY]`, `[ACCOUNT-CAPACITY]`,
+`[TRADE-STATE]`, `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-VETO]`,
+`[CONSENSUS-ACTIVE]`, `[CONSENSUS-SPARSE]`, `[CONSENSUS-NEARMISS]`, `[INTRABAR-BACKOFF]`, `[SCAN-PRIME]`,
+`[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`, `[ATR-FALLBACK]`, `[ENTERPRISE-BLOCKED]`,
+`[CAPACITY-EXTERNAL]`, `[NN-MUTATION]`, `[SCALP-BLACKLIST]`, `[SPIKE-HUNT-DETECTED]`, `[VPIN-HIGH]`,
+`[HURST-ENGINE]`, `[OU-ENGINE]`, `[SHADOW-TRADE]`, `[EXECUTION-MODE]`, `[SIGNAL-VALIDATED]`, `[TIERED-VOTE]`,
+`[SETUP-QUALITY]` - plus two misnames of real tags (`[CONSENSUS-VETO]` for `[CONSENSUS-VETOED]`,
+`[TRADE-CONFIRMED]` for `[ASYNC-TRADE-CONFIRMED]`).
+
+This is not cosmetic. AGENTS.md section 6 is the checklist a session works from, and a tag list is a search
+index: a reader who greps a journal for `[SCHEDULER-STATE]` gets silence and concludes the cadence repair ran
+quietly, when there is no cadence repair. `RUNTIME_DECISION_GRAPH.md`'s Diagnostics section and
+`SYSTEM_AUDIT_TRACE.md`'s Observability Surface are now restricted to tags verified present in the tree, each
+annotated with what it prints, and the phantom names are kept in one dated sentence so a later reader does not
+re-add them. The remaining mentions elsewhere in the four documents are recorded as an open task rather than
+deleted blind: some of those 92 are pattern or enum identifiers quoted in prose (`[TTM_SQUEEZE]`,
+`[BREAKOUT_RETEST]`, `[MR-STOCH-NOT-EXTREME]`) and need reading, not removal.
+
+`sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings. Net -740 lines.
+
 ### Batch 214: the fast-scalp indicator cache commits per symbol, and every scalp refusal names its gate
 
 One money defect and one observability defect in the same three lines of code, found together because the

@@ -556,6 +556,35 @@ Nothing about the scalp gate *policy* changed: same thresholds, same cooldown, s
 `CUnifiedRiskManager` call on the lot actually sent. What changed is which numbers those gates are given, and
 whether you can see them refuse.
 
+### Batch 215: three inputs you could set that reached nothing, and 92 log tags this EA never prints
+
+Two classes existed to hold symbol state and were never written to. `CSymbolStateTracker` was allocated,
+initialised with your symbol list and printed into the shutdown report; none of its seven record-or-test methods
+had a caller, so `[SCALP-BLACKLIST]` has never printed here and the report it contributed asserted
+`scalpBlacklisted=false, dormant=none` from a class with no way to learn otherwise. `CSymbolScanScheduler` was
+never created at all - its one access route returned `NULL` and nobody called it. Both are deleted, together with
+the matching dead fields in `CScanSchedulerRegistry`, which now keeps the one thing the code uses: which bar each
+symbol was last seen on. That registry's `pendingNewBarScan` flag was set true and cleared by nothing, so its
+report said `pending=Y` for every symbol after the first bar.
+
+Three inputs go with them: `InpIntrabarScanSeconds`, `InpMaxIntrabarSymbolsPerCycle` and
+`InpIntrabarBackoffMaxSeconds`. Each wrote a config field read only by the never-built scheduler's own
+`SetInputParams`, which had no caller. They are removed rather than wired, because instantiating that scheduler
+would put a second cadence authority next to the bar gate that already decides when a symbol is evaluated. If you
+had set them, nothing you chose was in effect; the cadence you can actually set is
+`InpMaxSignalEvaluationsPerCycle`, `InpDormancyStrikeBars` and `InpDormancyCooldownMinutes`.
+
+The larger finding is in the documentation. Diffing every bracketed log tag the five root documents name against
+the tags the code can print left **92 with no printer**, about two thirds of them in sentences saying the runtime
+emits them - `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[AI-TOPOLOGY]`, `[ACCOUNT-CAPACITY]`,
+`[TRADE-STATE]`, `[LIVE-AUTHORITY]`, `[SCALP-BLACKLIST]`, `[CONSENSUS-ACTIVE]` among them, plus two misnames
+(`[CONSENSUS-VETO]` for `[CONSENSUS-VETOED]`, `[TRADE-CONFIRMED]` for `[ASYNC-TRADE-CONFIRMED]`). A tag list is how
+you search a journal, so a phantom name produces a wrong conclusion rather than a missing one: silence where no
+line can ever appear reads as "that routine ran quietly". The Diagnostics and Observability sections are now
+restricted to tags verified in the tree, and the phantom names are recorded so nobody re-adds them.
+
+No decision path changed: nothing deleted was reachable by a trade.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

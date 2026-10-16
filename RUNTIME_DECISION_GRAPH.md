@@ -293,18 +293,12 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Cold-start cadence is now deterministic:
   - validate active symbols and emit startup account-capacity diagnostics before live execution
   - build the active-only strategy registry and register only enabled strategies and enabled AI adapters, ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap to allow live participation
-  - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
+  - **Corrected in Batch 215:** there is no cadence-scheduler rebuild routine and `[SCHEDULER-STATE]` has never been printed. Per-symbol bar state is one `CScanSchedulerRegistry` slot per symbol (`symbol` + `lastBarTime`), advanced by `CheckNewBar` from `ProcessNewBars`; the `CSymbolScanScheduler` class this bullet described was never instantiated, and it and its duplicate `CSymbolStateTracker` are deleted in this batch. Intrabar timers, pending-new-bar flags and scan backoff were fields of those two classes with no caller and no reader.
 - Per-symbol manager profiles now branch by instrument class before registration: synthetic symbols can use a lean structure-heavy roster and lighter context engines, while FX symbols retain the broader balanced roster.
 - `[RUNTIME-FINGERPRINT]` now reports both `RequestedMode` and effective `EAMode`; `20260515.log` / `20260516.log` style `AI_ONLY` sessions should not be read as indicator or hybrid evidence. `20260517.log` confirms actual `INDICATOR_ONLY` and `AI_ASSISTED` participation, but those sessions died after pipeline/quorum rather than from missing registration.
 - `EA_MODE_HYBRID` is indicator-led for ordinary packets, but high-confidence AI-only packets can pass through `InpAllowHybridAIStandalone` and then must satisfy the live-authority gate.
 - `EA_MODE_AI_ONLY` is now strict execution mode when AI adapters are enabled: indicator-based strategies are filtered out of the strategy registry, and AI adapters are the sole tradable family on both new-bar and timed intrabar paths.
-- When `EA_MODE_AI_ONLY` filters configured indicator families out of the active registry, runtime now emits `[MODE-MASK]` so operators can distinguish "inactive by mode" from "active but underperforming."
-- Runtime startup now emits `[AI-TOPOLOGY]` to distinguish:
-  - MT5-native live voters (`Neural Network AI`, `Transformer AI`, `Ensemble AI`)
-  - Python-trained live voting via `ONNX AI`
-  - `CNextGenStrategyBrain` as local feature/dashboard context only
-  - Python bridge endpoint inputs as operator telemetry only
-  - external LLM reasoning as non-voting adaptation support
+- **Documentation error, corrected in Batch 215:** neither `[MODE-MASK]` nor `[AI-TOPOLOGY]` has ever been printed by this repository - both strings appear in no source file. The two bullets above them are true of the code (AI-only mode filters indicator families out of the registry, and the AI families differ in what they vote on), but the operator-facing evidence they promised does not exist. What actually shows the same facts at init: `[CATALOG]` rows and `[STRATEGY-REGISTRY]` for who was registered, `[ENGINE-STATUS]` for engines with no tick caller, and `[CURATION] Effective strategy set` for the roster consensus will read.
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - The effective AI runtime floor is now clamped to at least `0.70`, and transformer/ensemble defaults start disabled until intentionally retrained/re-enabled.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
@@ -340,6 +334,37 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 215: Two Symbol-State Holders With No Writer, Three Inputs With No Reader, and the Tag Sweep That Found Them (2026-10-17)
+
+- **Edge after the change:** none. `ProcessNewBars -> CScanSchedulerRegistry::CheckNewBar` still decides which
+  symbols get a new-bar pass, and `CSignalGenerator` still owns dormancy. What changed is that the two classes
+  which claimed to hold that state no longer exist to be mistaken for it.
+- **`CSymbolStateTracker`:** allocated, `Initialize`-d, printed in the shutdown report - and its seven state
+  methods had zero callers, so `[SCALP-BLACKLIST]` could never print and its report asserted
+  `scalpBlacklisted=false, dormant=none` for every symbol from a class with no way to learn otherwise.
+- **`CSymbolScanScheduler`:** never instantiated (`new` appears nowhere); the only path to it,
+  `GetScanScheduler`, returned `NULL` and had no caller. Whole file deleted, with the eight accessor-backed
+  fields of `CScanSchedulerRegistry` it duplicated. The registry now holds `symbol + lastBarTime` only.
+- **`pendingNewBarScan` was a one-way latch:** `CheckNewBar` set it `true` and nothing cleared it, so the status
+  report printed `pending=Y` for every symbol after its first bar. Deleted with its readers.
+- **Three inputs stop lying about the EA:** `InpIntrabarScanSeconds`, `InpMaxIntrabarSymbolsPerCycle`,
+  `InpIntrabarBackoffMaxSeconds` wrote config fields read only by the dead scheduler's uncalled
+  `SetInputParams`. They are removed rather than wired - wiring them would build a second cadence authority, and
+  Batch 212 already settled that consensus runs once per chart bar.
+- **`GetTotalRegisteredCount`**, the six `Is*Ready()` probes and the nine per-symbol `Get*(symbol)` conveniences
+  deleted. The aggregator's own comment had already named those conveniences dead; a bare-name grep appeared to
+  contradict it until each hit was traced to its owner (`pipeline.`, `m_mathEngineHub.`, `m_infra.` - never the
+  aggregator), so the comment was correct and the code it described is gone. The class now exposes only getters
+  that have callers.
+- **Documentation:** the Diagnostics and Observability sections are now restricted to tags verified against
+  `Print`/`PrintFormat` call sites. `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[AI-TOPOLOGY]`,
+  `[CONSENSUS-ACTIVE]`, `[CONSENSUS-SPARSE]`, `[CONSENSUS-NEARMISS]`, `[INTRABAR-BACKOFF]`, `[SCAN-PRIME]`,
+  `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`,
+  `[NN-MUTATION]` and the rest of the set never existed; two more (`[CONSENSUS-VETO]`, `[TRADE-CONFIRMED]`)
+  were misnames of `[CONSENSUS-VETOED]` and `[ASYNC-TRADE-CONFIRMED]`.
+- **§3 invariants:** unchanged. Pre-trade gating, `CTradeManager` ownership, EA-loop lifecycle, symbol-scoped
+  consensus and `DestroyInstance()` on deinit are untouched by a deletion of unreachable state.
 
 ## Batch 214: The Scalp Indicator Cache Commits Per Symbol and Each Refusal Names Its Gate (2026-10-17)
 
@@ -1417,22 +1442,23 @@ No decision path or ownership boundary changed: strategies still vote through `C
 - `UnifiedRiskManager` registers executed risk using fill ratio so daily risk usage matches actual exposure.
 
 ## Diagnostics
-- Startup affordability emitted as `[ACCOUNT-CAPACITY]`.
-- Startup cooldown recovery emitted as `[TRADE-STATE]`.
-- Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
-- Post-quorum nullification emitted as `[CONSENSUS-VETO]` when timeframe consistency or intrabar single-voter safety clears a candidate.
-- Per-evaluation contributor trace emitted as `[CONSENSUS-ACTIVE]`, listing active, voted, raw-none, filtered, and suppressed strategies for the current symbol evaluation.
-- Sparse-admission success emitted as `[CONSENSUS-SPARSE]`; near-miss sparse/full-quorum failures emitted as `[CONSENSUS-NEARMISS]`.
-- Scheduler budget and per-symbol backoff are emitted as `[SCAN-BUDGET]` and `[INTRABAR-BACKOFF]`.
-- `[SCAN-BUDGET]` now includes `pending_newbar`, `selected_newbar`, `deferred_newbar`, `eval_budget`, and `intrabar_budget` so deferred-work pressure is visible from the log.
-- Startup/runtime priming emits `[SCAN-PRIME]`, and cadence overrides emit `[CADENCE-WARNING]` when global new-bar-only mode suppresses otherwise-live intrabar policy.
-- Scheduler repair emits `[SCHEDULER-STATE]` so silent cadence-array drift is visible immediately in the runtime log.
-- Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
-- Ranked cycle execution attempts emitted as `[SCAN-DECISION]`; per-cycle totals emitted as `[SCAN-DECISION-SUMMARY]`.
-- Mode-filtered indicator absence emitted as `[MODE-MASK]`.
-- External LLM lifecycle and reasoning emitted as `[EXT-LLM]`.
-- Adaptive-training summary emitted as `[AI-FEEDBACK]`.
-- Neural online-learning mutation gate state emitted as `[NN-MUTATION]`.
+
+Each line below was checked against a `Print`/`PrintFormat` call site in Batch 215. The tags this section used
+to name that do not exist in the repository - `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[CONSENSUS-VETO]`,
+`[CONSENSUS-ACTIVE]`, `[CONSENSUS-SPARSE]`, `[CONSENSUS-NEARMISS]`, `[INTRABAR-BACKOFF]`, `[SCAN-PRIME]`,
+`[SCHEDULER-STATE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[SCAN-DECISION-SUMMARY]`, `[MODE-MASK]`,
+`[NN-MUTATION]`, `[CADENCE-WARNING]` - are gone, because a documented tag that no code prints sends the next
+reader searching a journal for an answer that cannot exist.
+
+- Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`; a vetoed or emptied vote surfaces as
+  `[CONSENSUS-VETOED]`, `[CONSENSUS-REGIME-VETO]` (Batch 204) or `[CONSENSUS-ABSTAIN]`.
+- Selection and rejection detail: `[CONSENSUS-REJECT]`, `[CONSENSUS-TIE]`, `[CONSENSUS-SOLO-SELECT]`,
+  `[CONSENSUS-SOLO-SKIP]`, `[CONSENSUS-FILTERED]`, `[CONSENSUS-PROBE]` / `[CONSENSUS-PROBE-DECISION]` /
+  `[CONSENSUS-PROBE-REJECT]`, `[CONSENSUS-DECISION]`.
+- Scan cadence: `[SCAN-POLICY]` once at init (Batch 212) and `[SCAN-BUDGET] mode= | evalBudget= | evaluations= |
+  signalsGenerated= | pending=`, throttled inside `CSignalGenerator`. There is no intrabar budget split to log.
+- Dormancy: `[DORMANT-COOLDOWN]` on the park and on its expiry, `[DORMANT-REMOVED]` when a symbol leaves the list.
+- External LLM lifecycle and reasoning emitted as `[EXT-LLM]`; adaptive-training summary as `[AI-FEEDBACK]`.
 - Pre-cap pressure-based risk reduction emitted as `[RISK-THROTTLE]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
   - `raw_none`
