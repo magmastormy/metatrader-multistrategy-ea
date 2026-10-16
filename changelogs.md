@@ -8,6 +8,58 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 210: the strategy factory builds AI adapters and nothing else
+
+#### What was there
+`CStrategyFactory` registered **twelve indicator creators** (`CreateMomentum` .. `CreateAsianRangeBreak`)
+alongside the five AI adapters, and carried a `SStrategyConfig` of seventeen fields - symbol, timeframe, weight,
+tier, role, cluster, plus `momentumScalpingEnabled`, `candlestickRequireTrend`, `meanReversionSyntheticMode`,
+`statArbUsePythonBridge` and three engine pointers (`pythonBridge`, `ouEngine`, `hurstEngine`) - which those
+creators applied with `SetScalpingMode` / `SetADXThresholds` / `SetRequireTrendAlignment` / `SetSyntheticMode` /
+`SetHurstEngine` / `SetPythonBridge` / `SetOUEngine`.
+
+#### Why none of it ran
+`Create` has exactly one call site, `EAOrchestrator.mqh:2475`, inside the loop that starts with
+`if(g_strategyCatalog[i].kind != CAT_KIND_AI) continue;` and passes `g_strategyCatalog[i].factoryName` - a field
+that is `""` for every indicator row. So no indicator name could ever reach a creator, and the configuration
+calls were unreachable. That is the state `SYSTEM_STRUCTURE.md` §2.2.3 records as "two construction authorities,
+and only one of them runs", and the Batch 194 audit entry deferred removing it as "a larger, separate decision".
+This batch is that decision.
+
+The struct was decoration too: **none of the five AI creators reads a single `cfg` field.** The adapter's real
+per-symbol setup is the very next call, `PrepareCatalogAIAdapter(k, adapter, symbol, timeframe)`, which sets the
+neural net's online-training / weight-mutation / confidence-threshold and calls `nn.Initialize(symbol, tf)`; the
+ONNX and Python Bridge adapters take the globals `g_onnxModel` / `g_pythonBridge`. So the eight `cfg.*`
+assignments at the call site (`cfg.symbol = symbol;` and friends) set values that were then ignored - the same
+"configuration applied on an abandoned construction path" defect class as Batches 193 and 194.
+
+#### The removal
+- Twelve indicator creators and their twelve `RegisterInternal` lines.
+- `SStrategyConfig` and the `CreatorFunc` parameter: `Create(const string name)`, `IStrategy* (*CreatorFunc)()`.
+- The eight-line `cfg` setup at the call site.
+- Four public helpers with zero call sites anywhere: `IsRegistered`, `GetRegisteredNames`, `GetCount`, and
+  `BuildConfigFromEA` - a stub whose own comments said "These would be filled from EA inputs in actual usage /
+  For now, return base config - caller should override".
+- Fourteen includes the deleted code was the only reason for: the twelve indicator strategy classes plus
+  `OrnsteinUhlenbeckEngine.mqh` and `HurstEngine.mqh`.
+
+#### Behaviour direction
+Identical at runtime: the same five adapters are created, configured by the same `PrepareCatalogAIAdapter`, and
+registered under the same names. `[StrategyFactory] Initialized with N strategy creators` now reports **5**
+where it reported 17 - the fourteen it never used. If a future row ever points `factoryName` at an indicator,
+`Create` prints `[StrategyFactory] ERROR: Unknown strategy '<name>'` instead of quietly building a second,
+unconfigured copy of a strategy the catalog already owns.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Call-site census before deleting: `grep -rn "CStrategyFactory::"` across every `.mqh`/`.mq5` returned two
+  lines (the `SStrategyConfig` declaration and `Create`) plus the include; `BuildConfigFromEA`, `IsRegistered`,
+  `GetRegisteredNames` and `GetCount` returned zero outside the file.
+- Registration parity checked name by name against the catalog's five `CAT_KIND_AI` rows' `factoryName` values.
+- No journal evidence exists (newest 2026-09-23). First-run sign: `[StrategyFactory] Initialized with 5 strategy
+  creators`, and no `[StrategyFactory] ERROR: Unknown strategy` line.
+
+
 ### Batch 209: the enable roster is written from the catalog, and the two paths that report it stop lying
 
 #### The defect

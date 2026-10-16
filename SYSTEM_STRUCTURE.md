@@ -238,14 +238,28 @@ Curated membership is row data since Batch 209 (`SStrategyDefinition::curatedEna
 
 Contributor classification is derived from the same row since Batch 208: `CatalogContributorIsIndicator`, `CatalogContributorIsAI` and `CatalogContributorIsAIKind` answer from `kind` / `aiKind`, and `CandidateBuilder`'s `hasIndicatorContributor`, `indicatorContributorCount`, `hasAIContributor`, `hasONNXContributor` and `hasNeuralNetContributor` - which the live-authority ladder and the neural-net label gate read - are built from them. Before that, those five were substring tests against a hand-copied list of the row names, and the copy had drifted (six indicator rows and Python Bridge AI matched nothing). The precondition is the one this section already states: the registered name is `g_strategyCatalog[i].name`, at both `RegisterStrategy` and `RegisterCatalogAIAdapter`.
 
-#### 2.2.3 Strategy construction has two authorities, and only one of them runs (Batch 194)
+#### 2.2.3 Strategy construction has one authority per kind (Batch 194, closed by Batch 210)
 
 | Path | Builds | Applies operator inputs | Live? |
 |---|---|---|---|
-| `CStrategyFactory::Create(name, cfg)` | AI adapters, keyed by `SStrategyDefinition.factoryName` | yes, from `SStrategyConfig` | yes, AI rows only |
-| `g_strategyCatalogCreators[i]()` | every indicator strategy | no — bare `new ClassName()` | yes |
+| `CStrategyFactory::Create(name)` | the five AI adapters, keyed by `SStrategyDefinition.factoryName` | no — the adapter is configured by `PrepareCatalogAIAdapter`, and the ONNX buffer / Python bridge are globals | yes, AI rows only |
+| `g_strategyCatalogCreators[i]()` | every indicator strategy | bare `new ClassName()`, then `CEnterpriseStrategyManager::ConfigureBeforeInit(strategy, name)` | yes |
 
-The factory still registers fourteen indicator creators and their `CreateMomentum` / `CreateCandlestick` / `CreateMeanReversion` bodies still call `SetScalpingMode` / `SetRequireTrendAlignment` / `SetSyntheticMode`, but no indicator row carries a `factoryName`, so those calls never ran and the inputs behind them were inert. `CEnterpriseStrategyManager::ConfigureBeforeInit(strategy, name)` is the live authority for the values a strategy's `Init` reads for itself, fed by `SetStrategyConstructionInputs` from the orchestrator's own pass that already sets intrabar policies. Anything injected *after* registration (Hurst, OU, VPIN, the Python bridge) stays in `WireAndValidateDependencies`.
+Until Batch 210 the factory also registered **twelve** indicator creators (the section said fourteen; the
+registry held 12 indicator + 5 AI = 17 entries) whose bodies called `SetScalpingMode` /
+`SetRequireTrendAlignment` / `SetSyntheticMode` / `SetHurstEngine` / `SetPythonBridge` / `SetOUEngine`. No
+indicator row carries a `factoryName`, `Create` is reached only from the `CAT_KIND_AI` loop, and none of the five
+surviving creators ever read a field of `SStrategyConfig` — so those calls could not run, and the struct's
+seventeen fields, the eight assignments the call site made into them, and four uncalled public helpers
+(`IsRegistered`, `GetRegisteredNames`, `GetCount`, `BuildConfigFromEA`) are deleted. `Create` now takes only a
+name.
+
+`ConfigureBeforeInit(strategy, name)` remains the live authority for the values a strategy's `Init` reads for
+itself, fed by `SetStrategyConstructionInputs` from the orchestrator's own pass that already sets intrabar
+policies. Anything injected *after* registration (Hurst, OU, VPIN, the Python bridge) stays in
+`WireAndValidateDependencies`. A name the factory does not know prints
+`[StrategyFactory] ERROR: Unknown strategy '<name>'`, so an indicator pointed at the factory fails loudly instead
+of producing a second, unconfigured instance.
 
 Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic` from `IsSyntheticIndexSymbolName(symbol)`, because the branch is a property of the symbol and its config field exists in no `SOrchestratorConfig` and no root `.mq5`.
 

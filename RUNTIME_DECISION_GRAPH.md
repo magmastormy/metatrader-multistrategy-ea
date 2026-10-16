@@ -336,6 +336,15 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 210: The Factory Builds AI Adapters Only; the Unreachable Indicator Path Is Deleted (2026-10-16)
+
+- **Edge unchanged:** `CAT_KIND_AI rows -> CStrategyFactory::Create(factoryName) -> PrepareCatalogAIAdapter(k, adapter, symbol, tf) -> RegisterCatalogAIAdapter(symbol::name)`, and `CAT_KIND_INDICATOR rows -> g_strategyCatalogCreators[i]() -> ConfigureBeforeInit -> Init`. What changed is that the first edge no longer has a dead branch pointing at indicator classes.
+- **Deleted, all unreachable:** twelve indicator creators and their `RegisterInternal` lines; `SStrategyConfig` (seventeen fields, read by nobody among the five surviving creators); the eight `cfg.*` assignments at the only call site; `IsRegistered` / `GetRegisteredNames` / `GetCount` / `BuildConfigFromEA` (zero call sites); fourteen includes.
+- **Signature:** `Create(const string name)`, `typedef IStrategy* (*CreatorFunc)()`.
+- **Log change operators will see:** `[StrategyFactory] Initialized with 5 strategy creators` (was 17).
+- **Failure mode added by removal:** pointing a `factoryName` at an indicator now prints `[StrategyFactory] ERROR: Unknown strategy '<name>'` rather than building a second instance with none of the `ConfigureBeforeInit` inputs applied - the exact half-wiring Batch 194 had to work around.
+- **§3 invariants:** unchanged. No entry, sizing, risk or lifecycle path moved.
+
 ## Batch 209: The Enable Roster Comes From the Catalog Row (2026-10-16)
 
 - **Edge rewritten:** `g_strategyCatalog indicator rows -> (CatalogEnableSlot + ConfigEnableForSlot switch + curatedEnable) -> strategyFlags[] -> {AutoRegisterStrategies, BuildStrategyRegistry, BuildEnabledStrategyList, CountEffectiveIndicatorStrategiesForSymbol}`. Before it, the writer was fifteen hand-written assignments and the two reporting paths read the array by raw index.

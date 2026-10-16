@@ -2470,18 +2470,9 @@ void ReleaseNeuralNetStrategies()
                 continue;
             }
 
-            // The adapter owns its model; created through the strategy factory.
-            CStrategyFactory::SStrategyConfig cfg;
-            cfg.symbol            = symbol;
-            cfg.timeframe         = timeframe;
-            cfg.weight            = 1.0;
-            cfg.tier              = STRATEGY_TIER_2;
-            cfg.intrabarEligible  = false;
-            cfg.liveVotingEnabled = true;
-            cfg.role              = PRIMARY_ALPHA;
-            cfg.cluster           = STRATEGY_CLUSTER_NONE;
-
-            IStrategy* adapter = CStrategyFactory::Create(g_strategyCatalog[i].factoryName, cfg);
+            // The adapter owns its model; created through the strategy factory, then configured by
+            // PrepareCatalogAIAdapter with this symbol's timeframe.
+            IStrategy* adapter = CStrategyFactory::Create(g_strategyCatalog[i].factoryName);
             if(adapter == NULL)
             {
                 Print("[AI-MODE] Failed to create ", g_strategyCatalog[i].name, " adapter for ", symbol);
