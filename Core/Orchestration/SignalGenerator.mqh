@@ -19,7 +19,6 @@ private:
     CConsensusCache* m_consensusCache;
 
     int m_evalBudgetPerCycle;
-    int m_intrabarBudgetPerCycle;
     
     // Pending symbols queue (when budget exceeded)
     string m_pendingSymbols[];
@@ -31,11 +30,8 @@ private:
     // Last evaluated bar time per manager index (new-bar cadence gate)
     datetime m_lastEvalBar[];
 
-    enum
-    {
-        DORMANT_THRESHOLD = 3,
-        DORMANT_COOLDOWN_MIN = 30
-    };
+    int m_dormancyStrikeBars;
+    int m_dormancyCooldownMinutes;
     int m_dormantWarningCount[];
     datetime m_dormantCooldownUntil[];
     string m_dormantSymbols[];
@@ -55,12 +51,24 @@ public:
     };
     
     CSignalGenerator() : m_managerCount(0), m_consensusCache(NULL),
-                             m_evalBudgetPerCycle(8), m_intrabarBudgetPerCycle(3),
-                             m_pendingCount(0), m_dormantCount(0), m_evalStartIndex(0)
+                             m_evalBudgetPerCycle(8),
+                             m_pendingCount(0), m_dormantCount(0), m_evalStartIndex(0),
+                             m_dormancyStrikeBars(3), m_dormancyCooldownMinutes(30)
         {
         }
     
     ~CSignalGenerator() {}
+
+    // The scan budget is InpMaxSignalEvaluationsPerCycle; the dormancy park is the operator's, because a
+    // 30-minute evaluation blackout is 30 bars of an M1 chart and half a bar of an H1 one.
+    void SetScanPolicy(const int evalBudgetPerCycle, const int dormancyStrikeBars, const int dormancyCooldownMinutes)
+    {
+        if(evalBudgetPerCycle > 0)         m_evalBudgetPerCycle = evalBudgetPerCycle;
+        if(dormancyStrikeBars > 0)         m_dormancyStrikeBars = dormancyStrikeBars;
+        if(dormancyCooldownMinutes > 0)    m_dormancyCooldownMinutes = dormancyCooldownMinutes;
+        PrintFormat("[SCAN-POLICY] evalBudget=%d per cycle | dormancy: %d no-signal bars -> %d min park",
+                    m_evalBudgetPerCycle, m_dormancyStrikeBars, m_dormancyCooldownMinutes);
+    }
     
     void Initialize(CEnterpriseStrategyManager* &managers[], string &symbols[], int count, CConsensusCache* cache)
     {
@@ -79,8 +87,6 @@ public:
         Print("[SignalGenerator] Initialized with ", count, " symbol managers");
     }
     
-    // Eval budget is config-driven only; there is no runtime setter.
-
                 bool GenerateSignals(ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], const string corrId = "")
                 {
                     ulong startTime = GetMicrosecondCount();
@@ -100,7 +106,9 @@ public:
                 int signalsGenerated = 0;
                 int evaluationsUsed = 0;
 
-                int evalBudget = (evalMode == EVAL_MODE_NEW_BAR) ? m_evalBudgetPerCycle : m_intrabarBudgetPerCycle;
+                // Only EVAL_MODE_NEW_BAR is ever passed on this path: EvaluateSymbol gates each symbol
+                // to one evaluation per bar, so a between-bar (intrabar) consensus scan does not happen.
+                int evalBudget = m_evalBudgetPerCycle;
                 int selectedCount = 0;
 
                 bool selected[];
@@ -176,34 +184,25 @@ public:
     void SelectSymbolsForEval(ENUM_SIGNAL_EVAL_MODE evalMode, int budget, bool &selected[], int &selectedCount)
         {
             selectedCount = 0;
-        
+
             // Fair rotation: start from m_evalStartIndex and wrap around
             int startIdx = m_evalStartIndex;
-        
-            if(evalMode == EVAL_MODE_NEW_BAR)
+            int scanned = 0;
+
+            // A parked symbol takes no slot: selection used to spend budget positions on symbols the
+            // evaluation loop then skipped, so a park cost other symbols their scan of the cycle.
+            for(int i = 0; i < m_managerCount && selectedCount < budget; i++)
             {
-                int count = 0;
-                for(int i = 0; i < m_managerCount && count < budget; i++)
-                {
-                    int idx = (startIdx + i) % m_managerCount;
-                    selected[idx] = true;
-                    selectedCount++;
-                    count++;
-                }
+                int idx = (startIdx + i) % m_managerCount;
+                scanned++;
+                if(IsInDormantCooldown(m_symbols[idx])) continue;
+                selected[idx] = true;
+                selectedCount++;
             }
-            else
-            {
-                int count = 0;
-                for(int i = 0; i < m_managerCount && count < budget; i++)
-                {
-                    int idx = (startIdx + i) % m_managerCount;
-                    selected[idx] = true;
-                    selectedCount++;
-                    count++;
-                }
-            }
-        
-            m_evalStartIndex = (m_evalStartIndex + budget) % m_managerCount;
+
+            // Advance by what was looked at, not by the budget, or the rotation skips symbols whenever
+            // fewer than budget slots were available.
+            m_evalStartIndex = (m_evalStartIndex + scanned) % m_managerCount;
         }
     
     void RecordDormancyWarning(const string symbol)
@@ -222,11 +221,11 @@ public:
         }
         
         m_dormantWarningCount[idx]++;
-        if(m_dormantWarningCount[idx] >= DORMANT_THRESHOLD)
+        if(m_dormantWarningCount[idx] >= m_dormancyStrikeBars)
         {
-            m_dormantCooldownUntil[idx] = TimeCurrent() + DORMANT_COOLDOWN_MIN * 60;
+            m_dormantCooldownUntil[idx] = TimeCurrent() + m_dormancyCooldownMinutes * 60;
             PrintFormat("[DORMANT-COOLDOWN] %s | %d consecutive no-signal cycles | cooling down %d min",
-                        symbol, m_dormantWarningCount[idx], DORMANT_COOLDOWN_MIN);
+                        symbol, m_dormantWarningCount[idx], m_dormancyCooldownMinutes);
         }
     }
     
@@ -248,7 +247,7 @@ public:
         datetime now = TimeCurrent();
         for(int i = m_dormantCount - 1; i >= 0; i--)
         {
-            if(m_dormantCooldownUntil[i] > 0 && now > m_dormantCooldownUntil[i] + DORMANT_COOLDOWN_MIN * 120)
+            if(m_dormantCooldownUntil[i] > 0 && now > m_dormantCooldownUntil[i] + m_dormancyCooldownMinutes * 120)
             {
                 RemoveDormantEntry(m_dormantSymbols[i]);
             }

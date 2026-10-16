@@ -512,6 +512,12 @@ Four strategies get their statistical engines injected after registration - Hurs
 
 One `[WIRE-STATUS] <symbol> | Trend=wired S/R=wired MeanRev=NO-ENGINE StatArb=not-registered | hurst=OFF ou=on ...` line per symbol now prints at init, and a cast failure prints `[WIRE-CAST-FAIL]`. Nothing was switched on or off: the fix is visibility, and the decision about whether a NULL engine should fail closed is left where it belongs - with the operator who can see it.
 
+### Batch 212: the scan cadence controls bind, and a parked symbol no longer costs another symbol its scan
+
+Three numbers decide how often this EA looks for a trade, and none of them was yours. `InpMaxSignalEvaluationsPerCycle` wrote a config field that no code read while the generator capped each cycle with its own literal 8 - under a comment claiming the budget was "config-driven only". `InpSignalScanOnNewBarOnly` wrote a field with no reader either, and the documents around it described a `[CADENCE-WARNING]` startup line and a "hard global override" that have never existed in the repository: `EvaluateSymbol` gates every symbol to one evaluation per bar of the chart's timeframe, unconditionally, so both states of the input described the same EA. It is deleted. The dormancy park - three no-signal bars earning a 30-minute evaluation blackout - was two anonymous constants, mixing bars and minutes: three quiet minutes on an M1 chart bought 30 minutes of not being looked at, ten times the entry chances lost, and there was no way to change it.
+
+Now `InpDormancyStrikeBars` (3) and `InpDormancyCooldownMinutes` (30) exist, the cycle budget comes from the input, and `[SCAN-POLICY]` prints the posture once so it is in the journal instead of in a source file. Selection skips parked symbols, so a park costs only its own symbol, and the rotation advances by symbols examined rather than by the budget, which used to step past symbols whenever fewer than the budget were selectable. `[ENTRY-GATE] entries held this cycle | refused by=trade_cooldown position_limit unprotected_positions spike_pause profit_guard_halt basket_equity_halt` names the six holds that used to be fused into one silent `continue`. Every default equals the number already in the code, and no threshold, veto or lot moved.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

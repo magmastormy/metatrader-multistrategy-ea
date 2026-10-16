@@ -330,11 +330,21 @@ The main EA delegates to the following extracted managers instead of inline logi
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
-- `InpSignalScanOnNewBarOnly=false` is now the default cadence posture so timed intrabar scheduling stays active during live synthetic verification; setting it back to `true` still acts as a hard global override that disables timed intrabar scheduling even when manager governance shows strategies as intrabar `LIVE`.
-- Total heavy evaluations are bounded by `InpMaxSignalEvaluationsPerCycle`; new-bar selections consume the budget first and intrabar only uses the remainder.
+- Each symbol is evaluated at most once per bar of the chart's timeframe (`SignalGenerator.mqh:352-357`, unconditional since it was written). `InpSignalScanOnNewBarOnly` and the `[CADENCE-WARNING]` line documented around it are **removed in Batch 212**: the input reached no reader, and between-bar consensus evaluation was never implemented, so both its values described the same EA.
+- Total heavy evaluations per cycle are bounded by `InpMaxSignalEvaluationsPerCycle` - **from Batch 212 onward**; before it, `CSignalGenerator` used its own literal 8 and the input bound nothing. There is no new-bar/intrabar budget split any more because only one mode is ever run.
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 212: The Scan Cadence Controls Bind; a Parked Symbol Costs Nothing but Its Own Scan (2026-10-16)
+
+- **Edge:** `OnTick -> RunSignalEvaluationCycle -> GenerateSignals(EVAL_MODE_NEW_BAR) -> SelectSymbolsForEval(budget) -> EvaluateSymbol[per-bar gate] -> consensus`. Two of those controls were operator-visible but disconnected, and one was a constant wearing an input's name.
+- **Budget:** `evalBudget` is now `config.maxSignalEvaluationsPerCycle` (`InpMaxSignalEvaluationsPerCycle`, default 8 = the old private literal). Before it, the input wrote a config field with no reader and `SYSTEM_STRUCTURE.md` said the value capped evaluations.
+- **Dormancy:** `DORMANT_THRESHOLD`/`DORMANT_COOLDOWN_MIN` (3 bars / 30 minutes) became `InpDormancyStrikeBars` / `InpDormancyCooldownMinutes` with the same defaults. The park is a *time* penalty earned in *bars of the chart timeframe*: 3 quiet minutes on M1 bought a 30-minute evaluation blackout, which is 10x the entry chances lost, while the same numbers on H1 are a mild backoff. It is now the operator's number, and `[SCAN-POLICY]` prints it once.
+- **Selection:** parked symbols are skipped during selection instead of holding a slot the scan loop then passed over, so a cycle reaches its budget of *scannable* symbols; the rotation advances by symbols examined, not by `budget`, which used to step past symbols whenever fewer than `budget` were selectable.
+- **Deleted:** `InpSignalScanOnNewBarOnly` + `config.signalScanOnNewBarOnly` (no reader; both values described the same EA), `m_intrabarBudgetPerCycle`, and the duplicated `EVAL_MODE_NEW_BAR`/else branches in `SelectSymbolsForEval`.
+- **New refusal log:** `[ENTRY-GATE] entries held this cycle | refused by=trade_cooldown position_limit unprotected_positions spike_pause profit_guard_halt basket_equity_halt | eaPositions=n/m | secondsSinceLastTrade=n`, throttled to 15s. Six independent holds were fused into one `continue` with no output.
+- **Left alone, on purpose:** `EVAL_MODE_INTRABAR` still binds only on the exit side (`PositionLifecycleManager.mqh:261-264`), because passing it on the entry path would move admission two ways at once (solo confidence 0.70 over 0.65, quality floor 0.68 under 0.70, plus the `eligibleLiveVoterCount < 3` gate) with no journal newer than 2026-09-23 to judge it, and because sub-bar evaluation would let one quiet bar earn dormancy strikes several times over and park symbols by the minute.
 
 ## Batch 211: Engine Injection Reports Per Symbol at Init (2026-10-16)
 

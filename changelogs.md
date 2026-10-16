@@ -8,6 +8,76 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 212: the scan cadence controls bind, a parked symbol stops costing other symbols their scan, and the fused entry gate names itself
+
+#### Three controls that reached nothing
+- `InpMaxSignalEvaluationsPerCycle` (default 8) wrote `config.maxSignalEvaluationsPerCycle`, which had **no
+  reader anywhere**. The number that actually bounded each scan cycle was `CSignalGenerator`'s private
+  `m_evalBudgetPerCycle(8)`, next to a comment claiming "Eval budget is config-driven only; there is no runtime
+  setter". Setting the input to 3 or 20 changed nothing; `SYSTEM_STRUCTURE.md` states the opposite.
+- `InpSignalScanOnNewBarOnly` (default false) wrote `config.signalScanOnNewBarOnly`, also with no reader. Its
+  documented behaviour - "setting it back to true still acts as a hard global override that disables timed
+  intrabar scheduling" - describes machinery no entry path runs: `EvaluateSymbol` gates every symbol to one
+  evaluation per bar **unconditionally**, and `EVAL_MODE_INTRABAR` is never passed on the scan path at all.
+  Both states of the input produced the same EA. Deleted, per the Batch 207 rule for inputs that bind nothing.
+- The dormancy park itself: `DORMANT_THRESHOLD = 3` and `DORMANT_COOLDOWN_MIN = 30` were anonymous enum
+  constants inside the generator. Three consecutive no-signal **bars of the chart's timeframe** earn a
+  **30-minute** evaluation blackout. On an H1 chart that is a mild backoff; on an M1 chart it is 3 minutes of
+  quiet buying 30 minutes of not being looked at - ten times the entry chances lost, on a book where most
+  symbols are quiet most of the time. A strike count in bars and a cooldown in minutes are two units that never
+  belonged together, and neither number was settable.
+
+#### What changed
+- `CSignalGenerator::SetScanPolicy(evalBudgetPerCycle, dormancyStrikeBars, dormancyCooldownMinutes)` is called
+  right after its `Initialize`, fed from `config.maxSignalEvaluationsPerCycle` and two new inputs
+  `InpDormancyStrikeBars` (3) / `InpDormancyCooldownMinutes` (30). Every default equals the number that was
+  already in the code, so today's behaviour is unchanged - the difference is that the operator can now move
+  them, and `[SCAN-POLICY] evalBudget=… | dormancy: … no-signal bars -> … min park` prints once so the posture
+  is in the journal instead of in a source file.
+- `SelectSymbolsForEval` no longer spends selection slots on parked symbols, and the rotation advances by the
+  number of symbols examined rather than by the budget. The old `m_evalStartIndex += budget` could step past
+  symbols whenever fewer than `budget` were selectable, so a symbol could wait longer than one rotation to be
+  looked at; and a parked symbol held a slot that the scan loop then skipped, which cost the cycle scans it
+  never performed. A cycle now evaluates up to `budget` **scannable** symbols. Strictly more scanning, same
+  thresholds.
+- `m_intrabarBudgetPerCycle` and the byte-identical `EVAL_MODE_NEW_BAR` / else branches in
+  `SelectSymbolsForEval` are gone: they were the same code twice, and only one mode is ever passed.
+- `[ENTRY-GATE] entries held this cycle | refused by=trade_cooldown position_limit unprotected_positions
+  spike_pause profit_guard_halt basket_equity_halt | eaPositions=n/m | secondsSinceLastTrade=n` when the fused
+  `canOpenNewTrades` flag is false - the six individual refusals were computed three lines earlier and then
+  collapsed into one silent `continue` at the send. Throttled to one line per 15s so a held book cannot flood
+  the journal.
+
+#### Behaviour direction
+Neutral at defaults for the three controls; strictly non-worse for scan coverage (a parked symbol can no longer
+consume another symbol's slot, and the rotation cannot skip); the only new output is two log lines. No
+threshold, veto, weight, lot or exit path moved.
+
+#### Deliberately not done, with the reason
+`EVAL_MODE_INTRABAR` does bind - on the **exit** side, where `CPositionLifecycleManager.mqh:261-264` reads
+consensus in that mode, so the intrabar quorum/solo-confidence/quality values decide whether a trend
+invalidation fires. Making the **entry** scan use it would let between-bar entries be judged by the intrabar
+threshold set (`minSoloConfidence` 0.70 instead of 0.65, quality floor 0.68 instead of 0.70, plus the
+`eligibleLiveVoterCount < 3` gate at `ConsensusEngine.mqh:1051`). That is a real change in admission on a live
+book, in both directions at once, and there is no journal newer than 2026-09-23 to measure it against. It is
+recorded in `SYSTEM_STRUCTURE.md` as the next candidate, not guessed at here. Sub-bar evaluation also has a
+trap attached: `RecordDormancyWarning` counts evaluations, so allowing several evaluations per bar would let a
+quiet symbol earn three strikes in seconds and park for 30 minutes - which is the reason the once-per-bar gate
+is written the way it is.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Each dead field confirmed by repo-wide grep for the identifier (readers outside `OrchestratorConfig.mqh` and
+  the two root `.mq5` assignments: none) before anything was wired or deleted.
+- Defaults compared value by value: `InpMaxSignalEvaluationsPerCycle = 8` vs `m_evalBudgetPerCycle(8)`,
+  `InpDormancyStrikeBars = 3` vs `DORMANT_THRESHOLD`, `InpDormancyCooldownMinutes = 30` vs
+  `DORMANT_COOLDOWN_MIN`.
+- No journal evidence exists (newest 2026-09-23). First-run signs: one `[SCAN-POLICY]` line, `[DORMANT-COOLDOWN]`
+  parks with the configured minute value, `[DORMANCY-COOLDOWN] ... cooldown expired, strikes reset` recoveries,
+  and `[ENTRY-GATE]` lines whenever the book is held - a session with no `[ENTRY-GATE]` line and no trades means
+  the strategies found nothing, which is now a distinguishable answer.
+
+
 ### Batch 211: engine injection says out loud which strategy actually got its engine
 
 #### The gap

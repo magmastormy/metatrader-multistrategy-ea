@@ -368,7 +368,8 @@ input double   InpMinTrendStrength = 50.0;
 input double   InpMaxVolatility = 3.0;
 input bool     InpEnableStructureFilter = true;
 input bool     InpEnableLiquidityFilter = true;
-input bool     InpSignalScanOnNewBarOnly = false;
+input int      InpDormancyStrikeBars = 3;
+input int      InpDormancyCooldownMinutes = 30;
 
 input group "Cluster Risk Governance";
 input bool     InpEnableClusterRiskGovernance = true;
@@ -682,7 +683,8 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.maxVolatility = InpMaxVolatility;
     config.enableStructureFilter = InpEnableStructureFilter;
     config.enableLiquidityFilter = InpEnableLiquidityFilter;
-    config.signalScanOnNewBarOnly = InpSignalScanOnNewBarOnly;
+    config.dormancyStrikeBars = MathMax(1, InpDormancyStrikeBars);
+    config.dormancyCooldownMinutes = MathMax(1, InpDormancyCooldownMinutes);
     config.portfolioMaxPositionsPerSymbol = InpPortfolioMaxPositionsPerSymbol;
     config.maxPositionsSameBase = InpMaxPositionsSameBase;
     config.enableClusterRiskGovernance = InpEnableClusterRiskGovernance;

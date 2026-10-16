@@ -1481,6 +1481,12 @@ public:
 bool InitializeComponents()
 {
     m_signalGenerator.Initialize(m_enterpriseManagers, m_enterpriseManagerSymbols, m_managerCount, &m_consensusCache);
+    // Both numbers were constants the operator had no way to set: the scan budget duplicated the
+    // literal 8 while InpMaxSignalEvaluationsPerCycle reached nothing, and the dormancy park was a
+    // fixed 30-minute blackout earned by three bars of whatever timeframe the chart runs on.
+    m_signalGenerator.SetScanPolicy(m_config.maxSignalEvaluationsPerCycle,
+                                    m_config.dormancyStrikeBars,
+                                    m_config.dormancyCooldownMinutes);
     Print("[INIT] SignalGenerator initialized");
 
     if(!m_candidateBuilder.Initialize(&m_positionSizer, &m_unifiedRiskManager, &m_riskTierManager,
@@ -3463,6 +3469,26 @@ void GenerateAndProcessSignals(const string cycleCorrId)
     bool spikePaused = m_spikeMonitor.IsPaused();
 
     bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted() || m_basketEquityStop.IsHaltActive());
+
+    // Six independent refusals fused into one flag, and the only sign of any of them used to be the absence
+    // of a trade. The blocking flag now names itself, throttled so a held cycle cannot flood the journal.
+    if(!canOpenNewTrades)
+    {
+        static datetime s_lastGateLog = 0;
+        if(TimeCurrent() - s_lastGateLog >= 15)
+        {
+            s_lastGateLog = TimeCurrent();
+            string gate = "";
+            if(cooldownBlocked)                            gate += "trade_cooldown ";
+            if(positionLimitBlocked)                       gate += "position_limit ";
+            if(unprotectedBlocked)                         gate += "unprotected_positions ";
+            if(spikePaused)                                gate += "spike_pause ";
+            if(m_profitGuard.IsTradingHalted())            gate += "profit_guard_halt ";
+            if(m_basketEquityStop.IsHaltActive())          gate += "basket_equity_halt ";
+            PrintFormat("[ENTRY-GATE] entries held this cycle | refused by=%s| eaPositions=%d/%d | secondsSinceLastTrade=%d",
+                        gate, eaPositions, m_config.maxPositionsTotal, secondsSinceLastTrade);
+        }
+    }
 
         ulong startSignalGen = GetMicrosecondCount();
         CSignalGenerator::SSignalResult newBarSignals[];

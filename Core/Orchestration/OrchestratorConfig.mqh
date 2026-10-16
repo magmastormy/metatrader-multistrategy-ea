@@ -329,7 +329,8 @@ struct SOrchestratorConfig
     double  maxVolatility;
     bool    enableStructureFilter;
     bool    enableLiquidityFilter;
-    bool    signalScanOnNewBarOnly;
+    int     dormancyStrikeBars;
+    int     dormancyCooldownMinutes;
     int     portfolioMaxPositionsPerSymbol;
     int     maxPositionsSameBase;
     bool    enableClusterRiskGovernance;
@@ -654,7 +655,8 @@ struct SOrchestratorConfig
         maxVolatility = 3.0;
         enableStructureFilter = true;
         enableLiquidityFilter = true;
-        signalScanOnNewBarOnly = false;
+        dormancyStrikeBars = 3;
+        dormancyCooldownMinutes = 30;
         portfolioMaxPositionsPerSymbol = 3;
         maxPositionsSameBase = 3;
         enableClusterRiskGovernance = true;
