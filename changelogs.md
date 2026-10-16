@@ -8,6 +8,81 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 214: the fast-scalp indicator cache commits per symbol, and every scalp refusal names its gate
+
+One money defect and one observability defect in the same three lines of code, found together because the
+first was unloggable without the second.
+
+#### 1. A failed indicator refresh left symbol B's numbers tagged as symbol A
+`CFastScalpIndicators::RefreshIndicators` read ATR, fast EMA, slow EMA and RSI in sequence and wrote each
+**member** as its own read succeeded, restamping `m_cachedSymbol` / `m_cachedBarTime` only at the end. So an
+`INVALID_HANDLE` or a short `CopyBuffer` partway through returned `false` with the *new* symbol's ATR (and
+possibly its EMAs) already in the cache while the cache still *named the previous symbol*.
+
+That is reachable on every tick, because one `CFastScalpEngine` instance is held by value in the orchestrator
+and driven through the whole symbol universe in one pass (`EAOrchestrator.mqh` `ProcessScalpFastPath` loops
+`m_managerCount`). The next call for the old symbol hit the new-bar test
+(`barTime == m_cachedBarTime && symbol == m_cachedSymbol && m_cachedATR > 0.0`) - now true with a foreign
+ATR in it - and was served **another instrument's M1 ATR for the rest of its bar**. Four decisions read it:
+
+- `IsSpreadAcceptable` compares this symbol's spread against `0.30 * that ATR`. XAUUSD's M1 ATR is several
+  times EURUSD's in price terms, so an FX scalp's cost gate saw a cheap spread and passed. The EA then took
+  trades whose spread is a real share of a 5-pip TP - the exact cost the gate exists to refuse.
+- `IsMomentumBurst` divides the M1 body by the same foreign ATR, so bursts appeared and vanished by the luck
+  of which refresh had failed last.
+- `CalculateConfidence` adds 0.10 when `spread/ATR < 0.15`, so the lot was scored against the wrong scale.
+- `IsRSIConfirmed` read `m_cachedRSI` with **no symbol argument at all**: the overbought/oversold gate could
+  be answered by a different instrument's RSI.
+
+And none of it was visible: the `false` return was never printed, and `EvaluateSlowPath` turned it into
+`TRADE_SIGNAL_NONE`, which is the same output as "no crossover this bar".
+
+Fix: the four reads land in locals and the members (including the tag) are written only after the last one
+succeeds, so a failure leaves the cache exactly as it was - stale but truthful, and the new-bar test cannot
+pass for a symbol the cache does not name.
+
+#### 2. An unread RSI in the signal cache confirmed BUYs and refused SELLs
+`CScalpSignalCache::UpdateOnNewBar` zeroes every field whose `CopyBuffer` fails, and only
+`emaFast / emaSlow / atrValue` gate `isValid` (`ScalpSignalCache.mqh:431`) - a failed RSI read is explicitly
+"non-critical". `EvaluateFromCache` then tested that zero as a reading: `rsiValue >= 70` is false, so a BUY
+crossover passed its confirmation with no RSI behind it, while `rsiValue <= 30` is true, so the same missing
+value refused every SELL. One unread number therefore opened one direction and closed the other. The slow
+path already failed closed on it (`IsRSIConfirmed` returns false at `m_cachedRSI <= 0.0`), so the two paths
+disagreed about the same missing data. Fix: `EvaluateFromCache` refuses at `rsiValue <= 0.0` with
+`gate=rsi_unavailable`, so both paths now answer a missing RSI the same way - no trade.
+
+#### 3. The refusals now say which gate refused
+`CFastScalpSignal::EvaluateFromCache` and `EvaluateSlowPath` take `string &gateReject`, and
+`ShouldEnterScalp` prints it under a per-symbol throttle:
+`[SCALP-SIGNAL-REJECT] <symbol> | gate=spread_vs_atr | rsi_overbought | rsi_oversold | rsi_unavailable |
+indicator_refresh_failed | ema_handles_failed | no_atr_or_point`, plus
+`[SCALP-SIZING] <symbol> | sizer returned lot 0.0000 | signal refused before the risk gate` for the lot that
+`CPositionSizer` refused to produce. **An absent crossover leaves the reason empty and prints nothing** - that
+is the normal state of the market on a given tick, not a refusal, and 13 symbols per second of it would bury
+the journal.
+
+The `[SCALP-GATE]` line itself was throttled by one EA-wide `static datetime`, so the first symbol refused
+inside a 60 s window muted the other twelve. It is now `RefusalLogDue(symbol, 60)`, keyed by a per-symbol
+array bounded by the symbol universe. The three lines share one slot per symbol, so a symbol yields at most
+one refusal per minute - whichever gate refused first - which keeps the journal bounded at 13 lines.
+
+#### 4. Dead state the fix made visible
+Six `GetCached*` accessors had no caller anywhere in the repository, and the two fields they exposed
+(`m_cachedFastEMA`, `m_cachedSlowEMA`) had no reader either: a crossover needs *two* bars, which a one-slot
+cache cannot supply, so `GetEMACrossover` reads its own pair statelessly. Both fields, both ctor initialisers
+and the two matching `SetCachedValues` parameters are deleted, which also takes two `CopyBuffer` calls out of
+every refresh. The `StringFind(symbol, "Vol")` condition written twice in `IsSyntheticSymbol` is now once.
+
+#### Deliberately not changed
+`m_lastScalpTime` and `CFastScalpRiskBudget` are also single slots shared by every symbol, so a scalp on one
+symbol cools down all thirteen and the budget is account-wide. That is a design choice - one fast-scalp
+position stream for the whole EA - not a bug, so it stands; the refusal line names the symbol it is refusing
+and its `usedRisk` / `cooldownLeftMs` are honestly engine-wide numbers. `IsSyntheticSymbol` still carries
+`"SFX Vol"` / `"FX Vol"` conditions that the earlier `"Vol"` test already covers - harmless, and trimming an
+asset-classifier name list is a strategy decision rather than dead-code removal.
+
+`sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+
 ### Batch 213: ADX tiering was multiplied twice, and VPIN toxicity never reached a lot
 
 Two sizing defects found by a read-only sweep of the modifier chain, each verified at its own lines before

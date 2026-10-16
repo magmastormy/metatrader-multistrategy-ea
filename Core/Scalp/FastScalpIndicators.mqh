@@ -1,8 +1,7 @@
 // Owns the per-symbol cached M1 indicator state for the scalp fast path.
-// The engine now holds one CFastScalpIndicators BY VALUE and
-// forwards to it with one-line forwarders keeping the exact
-// original private signatures. Config values that were read from
-// m_config are passed in as a const SScalpConfig reference.
+// The engine holds one of these by value; one cache slot is shared by
+// every symbol, so a refresh only commits when both reads succeed.
+// The EMAs are not cached: GetEMACrossover needs two bars, which a one-slot cache cannot give it.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_INDICATORS_MQH
@@ -18,37 +17,21 @@ private:
    string                    m_cachedSymbol;
    datetime                  m_cachedBarTime;
    double                    m_cachedATR;
-   double                    m_cachedFastEMA;
-   double                    m_cachedSlowEMA;
    double                    m_cachedRSI;
 
 public:
-// Constructor — reproduces the original CFastScalpEngine ctor list
    CFastScalpIndicators() :
       m_cachedSymbol(""),
       m_cachedBarTime(0),
       m_cachedATR(0.0),
-      m_cachedFastEMA(0.0),
-      m_cachedSlowEMA(0.0),
       m_cachedRSI(0.0)
    {
    }
 
-   string   GetCachedSymbol()  const { return m_cachedSymbol; }
-   datetime GetCachedBarTime() const { return m_cachedBarTime; }
-   double   GetCachedATR()     const { return m_cachedATR; }
-   double   GetCachedFastEMA() const { return m_cachedFastEMA; }
-   double   GetCachedSlowEMA() const { return m_cachedSlowEMA; }
-   double   GetCachedRSI()     const { return m_cachedRSI; }
-
 // Overwrite the cache from an external source (signal cache path)
-// Assignment order matches the original EvaluateScalpSignal block.
-   void SetCachedValues(const string symbol, datetime barTime, double atr,
-                        double fastEMA, double slowEMA, double rsi)
+   void SetCachedValues(const string symbol, datetime barTime, double atr, double rsi)
    {
       m_cachedATR     = atr;
-      m_cachedFastEMA = fastEMA;
-      m_cachedSlowEMA = slowEMA;
       m_cachedRSI     = rsi;
       m_cachedSymbol  = symbol;
       m_cachedBarTime = barTime;
@@ -65,46 +48,28 @@ public:
       if(indMgr == NULL)
          return false;
 
-      // ATR(14) on M1
+      double atrBuf[];
+      double rsiBuf[];
+
+      // Reads land in locals: the cache is one slot shared by every symbol, so writing a member before a
+      // later read fails would leave this symbol's numbers tagged as the previous symbol - and the
+      // new-bar test above would then hand them back to that symbol for the rest of its bar.
       int atrHandle = indMgr.GetATRHandle(symbol, PERIOD_M1, 14);
       if(atrHandle == INVALID_HANDLE)
          return false;
-      double atrBuf[];
       ArraySetAsSeries(atrBuf, true);
       if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) <= 0)
          return false;
-      m_cachedATR = atrBuf[0];
 
-      // Fast EMA(5) on M1
-      int fastHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, config.fastEMA, 0, MODE_EMA, PRICE_CLOSE);
-      if(fastHandle == INVALID_HANDLE)
-         return false;
-      double fastBuf[];
-      ArraySetAsSeries(fastBuf, true);
-      if(CopyBuffer(fastHandle, 0, 0, 2, fastBuf) < 2)
-         return false;
-      m_cachedFastEMA = fastBuf[0];
-
-      // Slow EMA(13) on M1
-      int slowHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, config.slowEMA, 0, MODE_EMA, PRICE_CLOSE);
-      if(slowHandle == INVALID_HANDLE)
-         return false;
-      double slowBuf[];
-      ArraySetAsSeries(slowBuf, true);
-      if(CopyBuffer(slowHandle, 0, 0, 2, slowBuf) < 2)
-         return false;
-      m_cachedSlowEMA = slowBuf[0];
-
-      // RSI(7) on M1
       int rsiHandle = indMgr.GetRSIHandle(symbol, PERIOD_M1, config.rsiPeriod, PRICE_CLOSE);
       if(rsiHandle == INVALID_HANDLE)
          return false;
-      double rsiBuf[];
       ArraySetAsSeries(rsiBuf, true);
       if(CopyBuffer(rsiHandle, 0, 0, 1, rsiBuf) <= 0)
          return false;
-      m_cachedRSI = rsiBuf[0];
 
+      m_cachedATR = atrBuf[0];
+      m_cachedRSI = rsiBuf[0];
       m_cachedSymbol = symbol;
       m_cachedBarTime = barTime;
       return true;

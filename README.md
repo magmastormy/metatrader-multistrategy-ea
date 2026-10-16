@@ -378,7 +378,7 @@ No risk ceiling moved in this batch. Each item was a control that did not behave
 - **Statistical Arbitrage can now be enabled.** It had an input, a flag slot, a catalog row and a working class, but no `RegisterDefinition` line — the only one of fourteen strategies missing from a hand-written block. The registry now builds indicator definitions by looping the catalog, so adding a strategy is one catalog row plus its input, and a row missing its `registryType` says so at init instead of silently never trading.
 - **`InpWeight*` inputs decide voting weight.** They used to reach only the registry descriptor, which nothing reads for indicators; the catalog literal was the real authority. The resolved input is now written into the row before the managers register, and every row that moves prints `[CATALOG] <name> | registration weight A -> B from operator input`. Five defaults differ from the literal, so relative influence between voters shifts on the first session.
 - **The dormancy cooldown stopped re-arming itself.** A symbol parked after three quiet evaluations stayed parked indefinitely, because the strike count that caused the park was never cleared on expiry — roughly one evaluated bar per half hour per quiet symbol. Expiry now resets the strikes and prints `[DORMANT-COOLDOWN] ... strikes reset`.
-- **A 0% scalp tier no longer latches the engine off for the session.** The budget was read once at init and a 0% tier zeroed `maxScalpPositions`; when the tier raised the budget the engine still refused everything. It is re-read every cycle now, and refusals print `[SCALP-GATE]` with used risk, budget, cap and remaining cooldown (one line per minute).
+- **A 0% scalp tier no longer latches the engine off for the session.** The budget was read once at init and a 0% tier zeroed `maxScalpPositions`; when the tier raised the budget the engine still refused everything. It is re-read every cycle now, and refusals print `[SCALP-GATE]` with used risk, budget, cap and remaining cooldown (one line per minute per symbol since Batch 214 — the throttle used to be one EA-wide slot).
 - **Momentum keeps the next bar's crossover.** Its cooldown was a full bar measured from when the signal fired, so a mid-bar signal ate the following bar's edge. It is half a bar; the same-bar guard still caps it at one signal per bar.
 - **Stops follow volatility instead of a percentage cap, and the cost gate stopped being circular.** The 0.3%-of-price stop ceiling (1% on synthetics) could sit below the `3 x spread` floor, which made take-profit a function of the spread alone — the cost ratio became a constant, and every candidate on it was vetoed for a reason that had nothing to do with the market. The ceiling is now `max(price cap, 3 x ATR)`, TP is an R-multiple of the stop actually taken, and when the floor still binds, `[CANDIDATE-BUILDER] ... stop pinned to floor | designed= floor= spread= tp= costRatio= limit=` says so at the point it becomes known.
 
@@ -525,6 +525,36 @@ Now `InpDormancyStrikeBars` (3) and `InpDormancyCooldownMinutes` (30) exist, the
 `CVPINLotModifier` was the mirror-image defect: it read a `CVPINFilter` it had created itself, and nothing feeds ticks to a filter outside the math hub, so its warm-up test never passed and the designed 0.10-1.00x toxicity shrink never applied. A book with informed flow sized every trade at full size, `[VPIN-MODIFIER]` has never printed in this repository's history, and three documents said the modifier was applying it. The modifier now holds references to the hub's per-symbol filters, registered in the same loop that hands that pointer to Trend, S/R and the manager, and `[SIZING-CHAIN] modifiers=VPIN,Kelly,EquityCurve,ADX | vpin_filters=N | kelly=inert(...)` names the chain at every start, so a sizing input that reaches no multiplier is visible instead of assumed.
 
 Both fixes reduce lot sizes; neither widens risk. Bayesian Kelly is left inert on purpose and says so - wiring it as written would multiply an already risk-sized lot by a fraction of bankroll and cut trades to roughly 1/13-1/40 of intended size on one closed trade's evidence. The compounding ladder's 5.0% band for $1,000-5,000 (after 1.5% for $500-1,000, with a comment on that line saying "<$1K") is flagged for you rather than guessed at: Batch 192's clamp caps it at your approved per-trade risk today, but the number itself is your call.
+
+### Batch 214: a fast-scalp gate could be answered by another instrument's numbers
+
+One `CFastScalpEngine` serves the whole symbol universe, and its fallback indicator cache is a single slot:
+one symbol tag, one bar time, one ATR, one RSI. `RefreshIndicators` wrote each value as its own read
+succeeded and restamped the tag only at the end, so when a handle went invalid or `CopyBuffer` came back
+short, the cache held **the new symbol's ATR under the previous symbol's name**. The next lookup for that
+previous symbol matched on the tag and was served the foreign number for the rest of its bar. Four decisions
+read it: the spread-vs-ATR cost gate, the momentum-burst body test, the confidence bonus for a tight spread,
+and through confidence the lot itself. Gold's M1 ATR is several times an FX pair's, so an EURUSD scalp could
+clear the gate whose whole job is refusing trades whose spread consumes the take-profit. The RSI confirmation
+took no symbol argument at all.
+
+The same "missing data read as a number" mistake sat in the per-symbol signal cache. A failed RSI copy is
+marked non-critical and left at `0.0`, and `0 >= 70` is false while `0 <= 30` is true — so the overbought
+check admitted every BUY on no data, and the oversold check refused every SELL on that same missing value.
+Both paths now fail closed on a number they cannot read, the way the slow path already did.
+
+Reads land in locals and commit only when all of them succeed, so a failure leaves the cache stale but
+truthful instead of mixed. And the refusals speak: `[SCALP-SIGNAL-REJECT] EURUSD | gate=spread_vs_atr` (or
+`rsi_overbought`, `rsi_oversold`, `rsi_unavailable`, `indicator_refresh_failed`, `ema_handles_failed`,
+`no_atr_or_point`) and `[SCALP-SIZING] ... sizer returned lot 0.0000`. A bar with no EMA crossover is the
+market's normal state, not a refusal, so it stays silent. `[SCALP-GATE]` was throttled by one EA-wide slot,
+meaning the first symbol refused in a minute muted the other twelve; the throttle is per symbol now. Six
+`GetCached*` accessors with no caller and the two EMA fields behind them are deleted — a crossover needs two
+bars, which a one-slot cache can never supply, so nothing could have read them.
+
+Nothing about the scalp gate *policy* changed: same thresholds, same cooldown, same single
+`CUnifiedRiskManager` call on the lot actually sent. What changed is which numbers those gates are given, and
+whether you can see them refuse.
 
 ## AI Integration
 

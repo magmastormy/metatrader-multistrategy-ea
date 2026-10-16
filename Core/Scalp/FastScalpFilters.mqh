@@ -93,8 +93,7 @@ public:
       }
 
       // Fallback to string matching if profiler not available
-      if(StringFind(symbol, "Vol") >= 0  ||
-         StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+      if(StringFind(symbol, "Vol") >= 0 ||      // Vol 10, Vol 25, Vol 50, plus the SFX/FX Vol variants
          StringFind(symbol, "Step") >= 0 ||      // Step Index variants
          StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
          StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500

@@ -1683,6 +1683,64 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 214 A Refusal That Could Not Be Seen Hid a Cross-Symbol Data Swap (2026-10-17)
+
+- **How it was found:** the wrong way round, which is worth recording. Batch 213's sweep left one finding
+  un acted - `[SCALP-GATE]` throttled by a single EA-wide `static datetime` - so this batch started as an
+  observability fix. To route that line I had to read what `RefreshIndicators` returns `false` *with*, and the
+  tagging bug was sitting in those six lines. A silent refusal is not only a reporting gap: it hides the state
+  the refusal leaves behind. The method that found Batches 199-205 (read the writers of anything a decision
+  consumes) applies to a function's failure path as much as its success path.
+- **Verified before calling it cross-symbol:** three facts had to hold together, and each was read at its own
+  lines. (1) `RefreshIndicators` writes `m_cachedATR` / `m_cachedFastEMA` / `m_cachedSlowEMA` / `m_cachedRSI`
+  immediately after each read and only stamps `m_cachedSymbol` / `m_cachedBarTime` after the last. (2) One
+  `CFastScalpEngine` is held **by value** in the orchestrator (`EAOrchestrator.mqh:175`) and driven across
+  `m_managerCount` symbols in a single pass (`ProcessScalpFastPath`), so a foreign tag is always one call away.
+  (3) The re-entry test is `barTime == m_cachedBarTime && symbol == m_cachedSymbol && m_cachedATR > 0.0` - the
+  symbol check compares the *stale* tag, so it passes, and the ATR check passes on a number from another
+  instrument. Then `GetATRCached` returns that number with no key check, and `IsRSIConfirmed` never takes a
+  symbol argument at all.
+- **Why it is money and not tidiness:** the ATR arrives at four decisions on one path - the spread/ATR cost
+  gate, the momentum-burst body test, the `spread/ATR < 0.15` confidence bonus, and through confidence into
+  the lot. Gold's M1 ATR is several times FX's in price terms, so an EURUSD scalp measured against XAUUSD's
+  number clears a gate whose entire job is refusing trades whose spread consumes the TP. The direction of the
+  error depends on which refresh failed last, which is why no backtest-shaped pattern would show it.
+- **The second finding came from one comment:** `UpdateOnNewBar` marks the RSI copy "Non-critical - don't set
+  anyFailed", so a failed read leaves `0.0`, and `isValid` covers only emaFast/emaSlow/atrValue. Asking what a
+  consumer does with that zero answered it: `rsiValue >= 70` is false, so BUYs were confirmed by missing data;
+  `rsiValue <= 30` is true, so SELLs were refused by it. Same struct, same tick, opposite directions. The slow
+  path had already failed closed - `IsRSIConfirmed` returns false at `m_cachedRSI <= 0.0` - so the two paths
+  disagreed about identical missing input, which is how this class of defect stays alive: the bug is only
+  visible when you read both consumers of one field.
+- **Rejected fix (per-symbol cache):** making `CFastScalpIndicators` an array keyed by symbol looks like the
+  direct answer to a shared slot, but `CScalpSignalCache` *is* the per-symbol store and is already wired
+  (`SetSignalCache`, `UpdateOnNewBar` + `UpdateTickValues` each tick). Duplicating it inside the engine would
+  add a second cache to keep in step for no change in behaviour. Atomic commit makes the one slot truthful,
+  and a symbol switch costs one refresh it was already paying.
+- **Rejected fix (symbol argument on `IsRSIConfirmed`):** after the commit is atomic the tag cannot lie, and
+  `EvaluateSlowPath` refreshes for that symbol on the line before it is called. A parameter check would be
+  arithmetic on an invariant that now holds. Recorded because "state read without its key" is precisely the
+  shape of the defect and a reader would reasonably expect the signature to change.
+- **Deleted rather than wired:** six `GetCached*` accessors with zero call sites, and the two fields they
+  exposed (`m_cachedFastEMA`, `m_cachedSlowEMA`) which had zero readers - a crossover needs two bars, and
+  `GetEMACrossover` reads its own pair statelessly, so the cache could not serve the thing the cache was for.
+  Two `CopyBuffer` calls per refresh and two `SetCachedValues` parameters go with them. Not revived later:
+  a cache of one bar of a two-bar comparison is a field that can never answer its question.
+- **Left alone, with the reason:** `m_lastScalpTime` and the scalp risk budget are also one slot for the whole
+  universe - a scalp on any symbol cools down every symbol, and the budget is account-wide. That is the
+  engine's design (one fast-scalp stream for the EA), not a measurement error, so the fix was to make the
+  refusal line name the symbol it refuses and keep its numbers honestly engine-wide. `IsSyntheticSymbol` still
+  carries `"SFX Vol"` / `"FX Vol"` tests the earlier `"Vol"` already covers; the literal duplicate `StringFind(symbol,
+  "Vol") ||  StringFind(symbol, "Vol")` was collapsed, but trimming an asset-classifier's name list is a
+  strategy decision. The RSI/ADX asymmetry in `UpdateOnNewBar` was fixed at the consumer, not by widening
+  `isValid`, because ADX/BB/volume in that struct have no reader on the entry path at all - a separate finding.
+- **§3 invariants:** unchanged. The scalp path still calls `ValidateTradeRequest` exactly once, on the lot it
+  ships (Batch 192's shape preserved).
+- **Verification:** compile 8 root programs, 0 errors / 0 total warnings. First-run signs: `[SCALP-SIGNAL-REJECT]
+  ... gate=` lines appearing where the journal previously showed only `[SCALP-FASTPATH-FAILED]`, one
+  `[SCALP-GATE]` per refused symbol rather than one per window, and a `gate=rsi_unavailable` refusal on a SELL
+  crossover where the same missing number used to admit the BUY.
+
 ## Batch 213 The Lot Was Doubled by a Modifier Nobody Owned and Shrunk by One Nobody Fed (2026-10-16)
 
 - **How it was found:** a read-only sweep of `PositionSizer` + `PositionSizerModifiers` + the scalp gates, run after Batch 212 shipped, looking specifically for refusals and size changes caused by measurement error rather than policy. Six findings came back; each was read at its own lines before anything moved, and five survived. This is the same method that produced Batches 199-205, applied to the sizing pair no earlier batch had opened.

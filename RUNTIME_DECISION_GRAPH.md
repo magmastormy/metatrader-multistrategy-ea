@@ -268,6 +268,11 @@ The main EA delegates to the following extracted managers instead of inline logi
 - `UpdateOnNewBar()`: CopyBuffer path (runs only on new bar formation)
 - `UpdateTickValues()`: SymbolInfoDouble-only path (runs every tick, minimal computation)
 - All handles sourced from `CIndicatorManager::Instance()` singleton
+- `isValid` covers only `emaFast / emaSlow / atrValue`, so a failed RSI or ADX copy leaves `0.0` in a field a
+  consumer may test as a reading. Since Batch 214 the BUY/SELL RSI check refuses at `rsiValue <= 0.0` rather
+  than reading "no data" as "not overbought".
+- `CFastScalpIndicators` (the slow path's one-slot ATR/RSI cache) commits only after all its reads succeed:
+  a partial write would leave one symbol's values tagged as another's, and the new-bar test cannot tell.
 
 ### Async Order Execution
 - `InpScalpAsyncMode`: enables `OrderSendAsync()` for scalp entries
@@ -335,6 +340,36 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 214: The Scalp Indicator Cache Commits Per Symbol and Each Refusal Names Its Gate (2026-10-17)
+
+- **Edge after the fix:** `ProcessScalpFastPath -> ShouldEnterScalp -> [entry gates] -> EvaluateScalpSignal
+  (cache fast path, else RefreshIndicators slow path) -> confidence -> lot -> cost gate -> CUnifiedRiskManager
+  -> send`. The signal step now also returns *which* gate refused.
+- **The money defect:** `RefreshIndicators` wrote each member as its own read succeeded and restamped the
+  symbol/bar tag only at the end, so a mid-sequence `INVALID_HANDLE` or short `CopyBuffer` left the **new**
+  symbol's ATR/EMAs/RSI in a cache that still **named the previous symbol**. One engine instance is driven
+  across the whole universe in one pass, so the new-bar test then served those foreign numbers back to the
+  previous symbol for the rest of its bar - into the spread/ATR cost gate, the momentum-burst body test, the
+  `spread/ATR < 0.15` confidence bonus and (with no symbol argument at all) the RSI OB/OS confirmation. An
+  FX scalp could thus clear a gold-denominated ATR test and take a trade whose spread eats its TP. Reads now
+  land in locals and commit only when every one succeeds; a failure leaves the cache stale but truthful.
+- **The asymmetric gate:** `UpdateOnNewBar` zeroes a field whose copy fails and keeps RSI out of `isValid`,
+  and `EvaluateFromCache` tested that zero as a reading - `0 >= 70` false admits every BUY, `0 <= 30` true
+  refuses every SELL. It now refuses at `rsiValue <= 0.0` like the slow path already did, so one missing
+  number no longer means one direction.
+- **New refusals:** `[SCALP-SIGNAL-REJECT] <symbol> | gate=spread_vs_atr | rsi_overbought | rsi_oversold |
+  rsi_unavailable | indicator_refresh_failed | ema_handles_failed | no_atr_or_point` and
+  `[SCALP-SIZING] <symbol> | sizer returned lot 0.0000 | ...`. `gate=` is empty for "no crossover this bar",
+  which stays silent on purpose - it is the market's normal state, not a refusal.
+- **`[SCALP-GATE]` is now per symbol.** Its throttle was one EA-wide `static datetime`, so the first symbol
+  refused in a 60 s window muted the other twelve; its `usedRisk`/`cooldownLeftMs` were always engine-wide.
+- **Deleted:** six `GetCached*` accessors with no caller, and `m_cachedFastEMA` / `m_cachedSlowEMA`, which
+  had no reader because a crossover needs two bars and `GetEMACrossover` reads its pair statelessly. Two
+  `CopyBuffer` calls per refresh go with them, and `SetCachedValues` loses the matching parameters.
+- **Unchanged by choice:** the shared `m_lastScalpTime` and scalp risk budget (one scalp stream for the whole
+  EA is the design, not a bug), and the `"SFX Vol"`/`"FX Vol"` conditions that `"Vol"` already covers.
+- **§3 invariants:** unchanged - the scalp path still runs `ValidateTradeRequest` once on the lot it ships.
 
 ## Batch 213: ADX Tiers Multiply Once and VPIN Toxicity Reaches the Lot (2026-10-16)
 

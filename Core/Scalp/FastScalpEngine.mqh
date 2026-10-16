@@ -55,7 +55,32 @@ private:
    long                      m_magicNumber;          // EA magic number for pending orders — Batch 125: changed from uint to long
    bool                      m_initialized;
 
-   CFastScalpIndicators      m_indicators;      // was m_cached{Symbol,BarTime,ATR,FastEMA,SlowEMA,RSI}
+   string                    m_refusalLogSymbols[];   // per-symbol refusal-log throttle
+   datetime                  m_refusalLogTimes[];
+
+// True once per `seconds` per symbol. A single static slot would let the first symbol refused in the
+// window mute the other twelve and print a cooldown that belongs to whoever spoke first.
+   bool RefusalLogDue(const string symbol, const int seconds)
+   {
+      datetime now = TimeCurrent();
+      for(int i = 0; i < ArraySize(m_refusalLogSymbols); i++)
+      {
+         if(m_refusalLogSymbols[i] != symbol)
+            continue;
+         if(now - m_refusalLogTimes[i] < seconds)
+            return false;
+         m_refusalLogTimes[i] = now;
+         return true;
+      }
+      int n = ArraySize(m_refusalLogSymbols);
+      if(ArrayResize(m_refusalLogSymbols, n + 1) != n + 1 || ArrayResize(m_refusalLogTimes, n + 1) != n + 1)
+         return false;
+      m_refusalLogSymbols[n] = symbol;
+      m_refusalLogTimes[n] = now;
+      return true;
+   }
+
+   CFastScalpIndicators      m_indicators;      // one slot: symbol tag + bar time + ATR + RSI
    CFastScalpRiskBudget      m_riskBudget;      // was m_usedScalpRiskPct
    CFastScalpPositionTracker m_posTracker;      // was m_scalpPositions[20] / m_scalpPositionCount
    CFastScalpPendingOrders   m_pendingBook;     // was m_pendingOrders[10] / m_pendingOrderCount / m_tradeObj
@@ -186,8 +211,9 @@ public:
 
 // Gates (SScalpConfig defaults, overridable by the orchestrator): EMA 5/13 crossover on M1, M1 bar body
 // > 0.80*ATR for a burst, spread > 0.30*ATR rejects, RSI(7) must not be at its OB/OS limits.
-   ENUM_TRADE_SIGNAL EvaluateScalpSignal(string symbol)
+   ENUM_TRADE_SIGNAL EvaluateScalpSignal(string symbol, string &gateReject)
    {
+      gateReject = "";
       if(!m_initialized)
          return TRADE_SIGNAL_NONE;
 
@@ -197,14 +223,13 @@ public:
          if(m_signalCache.GetCache(symbol, cache) && cache.isValid)
          {
             ENUM_TRADE_SIGNAL cachedSignal =
-               CFastScalpSignal::EvaluateFromCache(symbol, m_config, cache);
+               CFastScalpSignal::EvaluateFromCache(symbol, m_config, cache, gateReject);
 
             if(cachedSignal == TRADE_SIGNAL_NONE)
                return TRADE_SIGNAL_NONE;
 
             // Cache the indicator values for ShouldEnterScalp's confidence calculation
-            m_indicators.SetCachedValues(symbol, cache.lastBarTime, cache.atrValue,
-                                         cache.emaFast, cache.emaSlow, cache.rsiValue);
+            m_indicators.SetCachedValues(symbol, cache.lastBarTime, cache.atrValue, cache.rsiValue);
 
             return cachedSignal;
          }
@@ -213,7 +238,7 @@ public:
       // Slow path: RefreshIndicators does its own CopyBuffer reads. Reached from the same 1 s-throttled
       // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry — there
       // is no timer caller for this engine.
-      return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators);
+      return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators, gateReject);
    }
 
 // Gate order (each one is a hard refusal): cooldown since last entry (scalpCooldownMs, default 5000 ms) ->
@@ -234,31 +259,37 @@ public:
 
       if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get()))
       {
-         static datetime s_lastGateLog = 0;
-         if(TimeCurrent() - s_lastGateLog >= 60)
-         {
-            s_lastGateLog = TimeCurrent();
+         if(RefusalLogDue(symbol, 60))
             PrintFormat("[SCALP-GATE] %s | entry refused | usedRisk=%.2f%% of budget=%.2f%% | maxPos=%d | cooldownLeftMs=%d",
                         symbol, m_riskBudget.Get(), m_config.scalpRiskPct, m_config.maxScalpPositions,
                         m_lastScalpTime > 0 ? (m_config.scalpCooldownMs - (int)((TimeCurrent() - m_lastScalpTime) * 1000)) : 0);
-         }
          return false;
       }
 
-      signal = EvaluateScalpSignal(symbol);
+      string gateReject = "";
+      signal = EvaluateScalpSignal(symbol, gateReject);
       if(signal == TRADE_SIGNAL_NONE)
+      {
+         if(gateReject != "" && RefusalLogDue(symbol, 60))
+            PrintFormat("[SCALP-SIGNAL-REJECT] %s | gate=%s", symbol, gateReject);
          return false;
+      }
 
       bool momentumBurst = IsMomentumBurst(symbol);
       double atr = GetATRCached(symbol);
       confidence = CFastScalpSizing::CalculateConfidence(symbol, atr, momentumBurst);
 
       // Lot from CPositionSizer::CalculatePositionSize when it is initialised; otherwise the sizer is
-      // bypassed and the lot falls back to SYMBOL_VOLUME_MIN (FastScalpSizing.mqh:72).
+      // bypassed and the lot falls back to SYMBOL_VOLUME_MIN.
       lotSize = CFastScalpSizing::ResolveBaseLotSize(symbol, m_config, confidence, m_positionSizer);
 
       if(lotSize <= 0.0)
+      {
+         if(RefusalLogDue(symbol, 60))
+            PrintFormat("[SCALP-SIZING] %s | sizer returned lot %.4f | signal refused before the risk gate",
+                        symbol, lotSize);
          return false;
+      }
 
       // Cost gate: spread + estimated round-trip commission (points) rejects when breakeven WR > 70% or cost >
       // 25% of TP; synthetics get 85% / 60%. Commission comes from the TICK_VALUE_PROFIT/_LOSS asymmetry.
