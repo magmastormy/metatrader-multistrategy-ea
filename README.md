@@ -463,6 +463,14 @@ Stop distance, lot size, per-trade risk and every gate are untouched - this chan
 
 No entry, exit, lot or risk path changed. `SI_EXIT_OPTIMIZER` was kept on purpose: `CExitOptimizer` is a real component, parked because wiring it would create a second exit authority - a decision about code that exists rather than a phantom identity.
 
+### Batch 208: who voted a trade is read from the strategy catalog, not from a copy of its names
+
+Five predicates in the candidate builder decided whether a trade had an indicator, an AI adapter, an ONNX model or the neural net behind it by searching contributor names for hard-coded substrings. Contributor names *are* the catalog row names, and the token lists had drifted: `MeanReversion` never matched the row `Mean Reversion`, `StatArb` never matched `Statistical Arbitrage`, `NYOpen` never matched `NY Open Gap`, `AsianRange` never matched `Asian Range Break`, and `Liquidity Sweep`, `Range Compression` and `Python Bridge AI` were absent from the lists entirely. Six of fourteen indicator strategies and one of five AI adapters were invisible to the live-authority gate.
+
+That was not a reporting problem. The authority score that picks the lot multiplier awards a `+0.20` `INDICATOR` term, so those strategies' trades sat a rung low; the lower 0.55 confidence bar applies only to indicator-backed decisions, so a purely indicator trade from those rows was judged against the 0.65 standard meant for an unproven neural net; and Python Bridge AI, unrecognized as AI, never entered the bootstrap cap that holds an adapter with no track record - it took full size while earning no AI credit. Classification now comes from the row's own `kind` / `aiKind`, so a correctly added strategy is correctly classified and there is no fifth list anyone can forget to update.
+
+Expect more and larger consensus trades from the six indicator rows, correct bootstrap capping for Python Bridge, and mixed AI-plus-indicator decisions no longer treated as AI-standalone. The vetoes, the refusal shape, the promotion thresholds and the risk gates are unchanged.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

@@ -100,18 +100,8 @@ private:
     bool ContributorsIncludeIndicator(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
-        {
-            string c = contributors[i];
-            if(StringFind(c, "Momentum") >= 0 || StringFind(c, "Trend") >= 0 ||
-               StringFind(c, "Support") >= 0 || StringFind(c, "Resistance") >= 0 ||
-               StringFind(c, "ICT") >= 0 || StringFind(c, "Candlestick") >= 0 ||
-               StringFind(c, "Unicorn") >= 0 || StringFind(c, "PowerOfThree") >= 0 ||
-               StringFind(c, "MeanReversion") >= 0 || StringFind(c, "Volatility") >= 0 ||
-               StringFind(c, "StatArb") >= 0 || StringFind(c, "FVG") >= 0 ||
-               StringFind(c, "Turtle") >= 0 || StringFind(c, "Breaker") >= 0 ||
-               StringFind(c, "NYOpen") >= 0 || StringFind(c, "AsianRange") >= 0)
+            if(CatalogContributorIsIndicator(contributors[i]))
                 return true;
-        }
         return false;
     }
     
@@ -119,18 +109,8 @@ private:
     {
         int count = 0;
         for(int i = 0; i < ArraySize(contributors); i++)
-        {
-            string c = contributors[i];
-            if(StringFind(c, "Momentum") >= 0 || StringFind(c, "Trend") >= 0 ||
-               StringFind(c, "Support") >= 0 || StringFind(c, "Resistance") >= 0 ||
-               StringFind(c, "ICT") >= 0 || StringFind(c, "Candlestick") >= 0 ||
-               StringFind(c, "Unicorn") >= 0 || StringFind(c, "PowerOfThree") >= 0 ||
-               StringFind(c, "MeanReversion") >= 0 || StringFind(c, "Volatility") >= 0 ||
-               StringFind(c, "StatArb") >= 0 || StringFind(c, "FVG") >= 0 ||
-               StringFind(c, "Turtle") >= 0 || StringFind(c, "Breaker") >= 0 ||
-               StringFind(c, "NYOpen") >= 0 || StringFind(c, "AsianRange") >= 0)
+            if(CatalogContributorIsIndicator(contributors[i]))
                 count++;
-        }
         return count;
     }
 
@@ -835,19 +815,14 @@ public:
     bool ContributorsIncludeAI(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
-        {
-            string c = contributors[i];
-            if(StringFind(c, "Neural") >= 0 || StringFind(c, "Transformer") >= 0 ||
-               StringFind(c, "Ensemble") >= 0 || StringFind(c, "ONNX") >= 0)
-                return true;
-        }
+            if(CatalogContributorIsAI(contributors[i])) return true;
         return false;
     }
     
     bool ContributorsIncludeONNX(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
-            if(StringFind(contributors[i], "ONNX") >= 0) return true;
+            if(CatalogContributorIsAIKind(contributors[i], CAT_AI_ONNX)) return true;
         return false;
     }
 
@@ -856,7 +831,7 @@ public:
     bool ContributorsIncludeNeuralNet(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
-            if(StringFind(contributors[i], "Neural") >= 0) return true;
+            if(CatalogContributorIsAIKind(contributors[i], CAT_AI_NEURAL_NET)) return true;
         return false;
     }
     

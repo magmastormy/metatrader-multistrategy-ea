@@ -336,6 +336,23 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 208: Contributor Kind Comes From the Catalog Row (2026-10-15)
+
+- **Edge rewritten:** `consensus contributors (row names) -> CatalogContributorIsIndicator / IsAI / IsAIKind (g_strategyCatalog[].kind, .aiKind) -> candidate.hasIndicatorContributor / indicatorContributorCount / hasAIContributor / hasONNXContributor / hasNeuralNetContributor -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult -> lot`, plus `hasNeuralNetContributor -> Batch 203's label reservation`.
+- **What the replaced substrings did:** `MeanReversion`, `StatArb`, `NYOpen`, `AsianRange` never matched the row names `Mean Reversion`, `Statistical Arbitrage`, `NY Open Gap`, `Asian Range Break`; `Liquidity Sweep`, `Range Compression` and `Python Bridge AI` had no token at all. Six of fourteen indicator rows and one of five AI adapters were not counted.
+- **Gate-by-gate direction:**
+
+| Consumer | Before | After |
+|---|---|---|
+| `authorityScore += 0.20 * min(1, count/2)` | those six rows' trades earned nothing | earned when an indicator actually voted |
+| `minConfidence = 0.55` with indicator support | AI-standalone 0.65 applied to indicator-only decisions | the indicator bar applies where it is designed to |
+| `hasAIContributor && !hasIndicatorContributor` bootstrap cap | Python Bridge AI never entered it | capped until it proves out, and it now earns the `+0.25` AI term |
+| `hasONNXContributor` (`+0.30`) | matched on `"ONNX"` | matched on `aiKind == CAT_AI_ONNX` |
+| `hasNeuralNetContributor` (label gate, Batch 203) | matched on `"Neural"` | matched on `aiKind == CAT_AI_NEURAL_NET` |
+
+- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:844`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2409`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
+- **Plug-and-play effect:** a new row is classified correctly without touching `CandidateBuilder`, which removes the fifth hand-maintained per-strategy list.
+
 ## Batch 207: Three Phantom Strategy Slots Removed (2026-10-15)
 
 - **No decision path changed.** `SI_UNIFIED_ICT` / `SI_UNICORN_MODEL` / `SI_POWER_OF_THREE` had no catalog row, so no strategy ever occupied them, no `InpEnable*` flag was ever written to them, and `GetRegimeCategoryMultiplier`'s three corresponding `case` labels were unreachable (no `GetType()` returns those values).

@@ -242,6 +242,37 @@ int CatalogPolicySlot(const int i)
     return g_strategyCatalog[i].siPolicyIndex;
 }
 
+// Contributor strings come from CStrategyMgrRoster::GetStrategyName(), which is the row name, so a
+// contributor's class is a fact about its row. Token lists copied from those names drift the moment a
+// row is added or renamed - six indicator rows and one AI row were unreadable that way.
+int CatalogRowOfContributor(const string contributorName)
+{
+    if(contributorName == "")
+        return -1;
+    for(int i = 0; i < g_strategyCatalogCount; i++)
+        if(StringFind(contributorName, g_strategyCatalog[i].name) >= 0)
+            return i;
+    return -1;
+}
+
+bool CatalogContributorIsIndicator(const string contributorName)
+{
+    int row = CatalogRowOfContributor(contributorName);
+    return (row >= 0 && g_strategyCatalog[row].kind == CAT_KIND_INDICATOR);
+}
+
+bool CatalogContributorIsAI(const string contributorName)
+{
+    int row = CatalogRowOfContributor(contributorName);
+    return (row >= 0 && g_strategyCatalog[row].kind == CAT_KIND_AI);
+}
+
+bool CatalogContributorIsAIKind(const string contributorName, const ENUM_CATALOG_AI aiKind)
+{
+    int row = CatalogRowOfContributor(contributorName);
+    return (row >= 0 && g_strategyCatalog[row].aiKind == aiKind);
+}
+
 
 // Report-only audit: prints the resolved slot pair for each indicator row.
 void CatalogLogIndexAudit()

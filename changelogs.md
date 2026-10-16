@@ -8,6 +8,72 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 208: contributor kinds are read from the catalog row, not from a copy of its names
+
+#### The defect
+Five predicates in `CandidateBuilder` classified who voted a trade by substring-matching the contributor
+names against hand-written token lists. The names are the catalog row names (`RegisterStrategy` is called with
+`g_strategyCatalog[i].name` for indicator rows at `EnterpriseStrategyManager.mqh:844` and
+`RegisterCatalogAIAdapter` does the same for AI rows at `EAOrchestrator.mqh:2409`), but the tokens had drifted
+away from them:
+
+| Contributor | Token tested | Row name | Result |
+|---|---|---|---|
+| Mean Reversion | `MeanReversion` | `Mean Reversion` | never matched |
+| Statistical Arbitrage | `StatArb` | `Statistical Arbitrage` | never matched |
+| NY Open Gap | `NYOpen` | `NY Open Gap` | never matched |
+| Asian Range Break | `AsianRange` | `Asian Range Break` | never matched |
+| Liquidity Sweep | absent | `Liquidity Sweep` | never matched |
+| Range Compression | absent | `Range Compression` | never matched |
+| Python Bridge AI | absent | `Python Bridge AI` | never matched |
+
+Six of the fourteen indicator rows, and one of the five AI adapters, were invisible to
+`ContributorsIncludeIndicator` / `CountIndicatorContributors` / `ContributorsIncludeAI`.
+
+#### Why that is a sizing and admission bug, not cosmetics
+`CLiveAuthorityResolver::Resolve` branches on exactly those three flags:
+- `authorityScore += 0.20 * min(1, indicatorContributorCount / 2)`, the `INDICATOR` term of the ladder that
+  Batch 205 just made measurable. A trade voted only by Mean Reversion and NY Open Gap earned **none** of it and
+  therefore sat a rung lower on the `riskMult` scale.
+- `minConfidence = 0.55` **only** when `hasIndicatorContributor`; otherwise the AI-standalone floor
+  (`InpAIStandaloneMinConfidence`, 0.65) applies. So a purely indicator-driven decision from those six
+  strategies was judged by the standard for an unproven neural net, and `[AUTHORITY-REJECT] LOW_CONFIDENCE`
+  refused trades that met the indicator bar.
+- `hasAIContributor && !hasIndicatorContributor` selects the BOOTSTRAP / PROVEN_AI path. Python Bridge AI -
+  absent from the AI tokens - never entered it, so an unproven adapter escaped the bootstrap cap while also
+  never earning its AI bonus. It now does both correctly.
+- `candidate.hasNeuralNetContributor` (Batch 203's label gate) used the `Neural` substring; same set today,
+  one row-name drift away from breaking tomorrow.
+
+#### The fix
+`StrategyCatalog.mqh` gained `CatalogRowOfContributor` plus `CatalogContributorIsIndicator`,
+`CatalogContributorIsAI` and `CatalogContributorIsAIKind`, and the five predicates became loops over them. Kind
+and AI subtype are row fields (`kind`, `aiKind`), so the classification now follows the catalog: a strategy
+added correctly is classified correctly, with no fifth place to remember. Dead tokens (`ICT`, `Unicorn`,
+`PowerOfThree`) went with the phantom slots in Batch 207.
+
+Matching is `StringFind(contributor, row.name)`, which tolerates a qualified `symbol::name` string. No row name
+is a substring of another row name, so first-match-wins cannot misattribute a contributor.
+
+#### Behaviour direction
+Indicator-only consensus trades from Mean Reversion, Statistical Arbitrage, NY Open Gap, Asian Range Break,
+Liquidity Sweep and Range Compression now earn the `INDICATOR` authority term and face the 0.55 confidence bar
+instead of 0.65 - more entries, and larger ones, where the voters genuinely are indicators. Python Bridge AI
+trades gain the `AI` bonus but are now correctly bootstrap-capped until they prove out. Mixed AI + indicator
+decisions stop being treated as AI-standalone. Nothing else about the ladder moved: the vetoes, the
+`LOW_CONFIDENCE` refusal shape, the bootstrap and promotion thresholds, the risk gates and the lot math are
+unchanged.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- Name source verified at both registration sites above before replacing the tokens, because a containment
+  test on the wrong spelling would have silently *reduced* classification rather than fixed it.
+- No journal evidence exists (newest 2026-09-23). Expected first-run signs: `[AUTHORITY-...]` reason strings
+  containing `INDICATOR` for trades the six strategies voted, fewer `[AUTHORITY-REJECT] ... LOW_CONFIDENCE` on
+  those symbols, and `[TRADE-ATTRIBUTION] contributors=` naming Mean Reversion / Liquidity Sweep rows the old
+  tokens could not see.
+
+
 ### Batch 207: the three strategy slots that never had a class are gone
 
 #### What they were
