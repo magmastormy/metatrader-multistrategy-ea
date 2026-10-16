@@ -386,7 +386,7 @@
   - **Multi-Timeframe Confluence:** `GetNextHigherTF()` resolves next timeframe in MT5 hierarchy. `IsAlignedWithHigherTF()` checks EMA50 alignment on next higher timeframe. Counter-trend entries filtered when higher-TF momentum opposes. Applied in `GetSignal()`.
   - **Cross-Cluster Conflict Resolution:** `CEnterpriseStrategyManager` adds per-cluster conviction tracking (trendClusterBuyConviction/SellConviction, meanRevClusterBuyConviction/SellConviction). Cross-cluster conflict detection subtracts weaker cluster conviction (regime-weighted). `MathMax(0.0, ...)` guards prevent negative conviction.
   - **Mandatory SL Gate:** `CTradeManager::ExecuteMarketOrder()` now rejects trades with `stopLossPips <= 0.0` before any execution attempt.
-  - **Min R:R Enforcement:** Default minimum R:R of 1:2 applied in `MultiStrategyAutonomousEA.mq5`; MEAN_REVERSION_CLUSTER uses 1:5 minimum. Signals below threshold rejected before risk sizing.
+Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" was the literal misread). Both branches became reachable in Batch 219, when `dominantCluster` finally got a writer
   - **Portfolio Profit Target:** `InpDailyProfitTargetPercent` and `InpProfitTrailFactor` inputs. `g_dailyProfitTargetReached`, `g_dailyProfitPeakPct`, `g_trailingProfitFloor`, `g_dailyTradingHalt` state variables. `CalculateDailyPnLPercent()` computes current P&L. Once target reached, new entries halt while existing positions remain managed.
   - **Auto Mode Switching:** `InpEnableAutoModeSwitch` input. `ENUM_AUTO_SWITCH_MODE` enum (CONSERVATIVE/AGGRESSIVE/EMERGENCY). `DetermineTradingMode()` switches based on drawdown and win streak. `CountConsecutiveWins()` tracks streak. `InpConservativeBaseRiskPct`, `InpAggressiveBaseRiskPct`, `InpModeSwitchDrawdownPct`, `InpModeSwitchWinStreak` configurable thresholds.
   - **Scalping Engine — ScalpSignalCache:** New file `Core/Scalp/ScalpSignalCache.mqh`. `SScalpIndicatorCache` struct with 13 indicator values + tick-level bid/ask/spread + state tracking + 7 handle references. `CScalpSignalCache` class with fixed-size array `m_cache[20]`. `Initialize()`, `UpdateOnNewBar()` (CopyBuffer path), `UpdateTickValues()` (SymbolInfoDouble only), `GetCache()`, `HasNewBar()`, `SetScalpSetup()`, `Cleanup()`. All handles from `CIndicatorManager::Instance()`.
@@ -1704,6 +1704,20 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:156`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 219 A Resolved Value With Six Readers And No Writer (2026-10-17)
+- **Lifecycle:** `[STRUCTURAL-EXIT]` is reachable for the first time. It fires inside the existing
+  opposing-signal branch when the current scan reached consensus on `STRUCTURE_CLUSTER` with confidence
+  >= 0.45, the position is not in the last-stand zone and is old enough to be reversed out of. Ownership stays
+  with `CTradeManager::ClosePosition` through the EA loop (AGENTS.md section 3.3).
+- **Sizing:** the mean-reversion R:R floor (1.5) now applies instead of the general 2.0 for
+  mean-reversion-dominant decisions. The floor only ever raises TP, so lots and stops are unchanged; a shorter
+  TP raises `spread / TP` and can produce execution-cost refusals that did not exist before.
+- **Root cause:** the engine resolved the cluster and published the string, never the enum, so
+  `SConsensusDecisionContext.dominantCluster` kept its default for every reader - the Batch 201/205 shape
+  (a value with readers and no writer) in a place the earlier sweeps did not look.
+- **Docs:** three "1:5 mean-reversion" claims corrected to the code's 1.5.
+- **Verification:** compile 8 root programs, 0 errors / 0 total warnings.
 
 ## Batch 218 Log Tags Checked Against the Tree, and the Heartbeat Block Given a Printer (2026-10-17)
 - **Lifecycle:** unchanged. The batch moves no decision, no gate and no ownership.

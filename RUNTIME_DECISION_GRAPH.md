@@ -339,6 +339,22 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 219: The Winning Cluster Was Resolved and Then Never Published to Its Readers (2026-10-17)
+- `SConsensusDecisionContext.dominantCluster` had six readers and no writer while the engine resolved the same
+  value locally for the contributor publish, passing only its string form. Both behaviour readers were dead:
+  `CalculateStops` never took the mean-reversion 1.5 R:R floor (every mean-reversion-dominant entry got the
+  general 2.0 floor stretched onto its take-profit), and the `STRUCTURE_CLUSTER` structural-invalidation exit
+  in `PositionLifecycleManager` could never fire even though `InpEnableStructuralInvalidation` defaults true.
+- The context now carries the resolved enum. Stop distance, lot and per-trade risk are untouched: the floor
+  only raises TP, so mean-reversion entries keep their own target when it sits between 1.5R and 2R.
+  `costRatio = spread / TP` is measured against that shorter TP, so a spread that cannot be covered at 1.5R
+  now refuses as a cost veto.
+- The newly reachable exit may not overrule the abstains above it: `[SRE-LAST-STAND]` (hard SL decides) and a
+  position younger than `InpSignalReversalMinTimeSec` both hold structural invalidation off. The profit guard
+  is not in that list, because its own comment hands the decision to structural invalidation.
+- **Documentation:** three files claimed the mean-reversion floor was `1:5`; the literal is 1.5.
+- **No risk gate, stop, lot or ownership change.** Compile 8 root programs, 0 errors / 0 warnings.
+
 ## Batch 218: The Heartbeat Block Gets a Journal Printer, and the Tag Lists Get Checked (2026-10-17)
 - `CDiagMgrHeartbeat` computed the heartbeat, funnel, conversion-rate, no-signal-alert, risk-budget and
   position-count payloads every interval and wrote them to `CJsonLogger` only. The matching `FMT_*` macros in
@@ -1486,7 +1502,7 @@ No decision path or ownership boundary changed: strategies still vote through `C
 
 ### Min R:R Enforcement
 - Default minimum R:R of 1:2 applied to all clusters
-- MEAN_REVERSION_CLUSTER uses 1:5 minimum
+- MEAN_REVERSION_CLUSTER uses a 1.5 minimum (not 1:5); the branch was unreachable until Batch 219 wrote `dominantCluster`
 - Signals below threshold rejected before risk sizing
 
 ### Portfolio Profit Target

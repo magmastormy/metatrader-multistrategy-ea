@@ -632,6 +632,19 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 219: a resolved value with six readers and no writer
+
+Every consensus decision that reaches consensus resolves its winning cluster
+(`ResolveDominantCluster(winningContributors)`) and publishes the string for attribution. The enum field on
+the decision context had no writer, so its six readers saw the default forever. Two of them are behaviour:
+mean-reversion-dominant entries never got their own 1.5 minimum R:R floor (they were stretched to the general
+2.0 - lots and stops untouched, only the take-profit), and the structure-cluster `[STRUCTURAL-EXIT]` could
+never fire even though `InpEnableStructuralInvalidation` defaults to true. Both are live now; the exit is
+restricted so it cannot overrule the last-stand or too-young abstains in the same function, and a shorter
+mean-reversion TP means the `spread / TP` cost ratio is measured against the target that will actually be
+placed, which can refuse a tight-spread entry that used to pass. Three documents claimed the mean-reversion
+floor was 1:5; the literal is 1.5.
+
 ### Batch 218: the heartbeat the checklist tells you to verify had no printer
 
 AGENTS.md section 6 asks for `[HEARTBEAT]` after any strategy, risk or execution change. Eight of the

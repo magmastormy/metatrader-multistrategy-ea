@@ -8,6 +8,43 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 219: `dominantCluster` had six readers and no writer, so two designed branches never ran
+
+`ConsensusEngine` resolves the winning side's cluster on every decision that reaches consensus
+(`ResolveDominantCluster(winningContributors)`, line 1069) and publishes it as a **string** for the contributor
+record. The enum field on the decision context - `SConsensusDecisionContext.dominantCluster` - was assigned by
+nothing, so every reader saw the struct default `STRATEGY_CLUSTER_NONE` forever. Two of those readers are
+behaviour, not reporting:
+
+- `CandidateBuilder::CalculateStops` selects the minimum R:R floor from the cluster: 2.0 generally,
+  `1.5` for `MEAN_REVERSION_CLUSTER` (`Configure(2.0, 1.5, ...)` at `EAOrchestrator.mq5:1509`). Mean-reversion-
+  dominant entries have therefore had their take-profit stretched to the general floor since the branch was
+  written, instead of keeping the strategy's own target when it sits between 1.5R and 2R. Stop distance, lot
+  and per-trade risk are untouched - the floor only ever raises TP, so this shortens forced TP extension.
+  One consequence to expect: `costRatio = spread / takeProfitPips` is now measured against a shorter TP, so a
+  mean-reversion entry whose spread cannot be covered at 1.5R refuses as an execution-cost veto. That refusal
+  is the arithmetic working, not a new bug.
+- `PositionLifecycleManager`'s structural-invalidation exit fires on `dominantCluster == STRUCTURE_CLUSTER`
+  with confidence >= 0.45 - and could never fire. `InpEnableStructuralInvalidation` defaults to true, so the
+  operator has had a switch connected to nothing.
+
+#### The exit is reachable, but it may not overrule the abstains above it
+Wiring the field alone would have made the structural branch a way to bypass two deliberate decisions in the
+same function: `[SRE-LAST-STAND]` leaves a deeply-lost position to the hard SL, and a position younger than
+`InpSignalReversalMinTimeSec` is not reversed out of. The branch now requires neither to have abstained. The
+profit guard is deliberately **not** in that list - its own comment says a blocked SRE hands the decision to
+structural invalidation, and that handoff is what this batch finally delivers.
+
+#### Also corrected: three documents claimed the mean-reversion floor was 1:5
+It is 1.5 (`m_minRRMeanReversion`), and 1:5 would have been a 3.3x longer target. The Batch 97 summary,
+`SYSTEM_STRUCTURE.md` and `RUNTIME_DECISION_GRAPH.md` all carried the misread. `changelogs.md` Batch 206 had
+it right.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. `[STRUCTURAL-EXIT] <symbol> | trend
+invalidated | conf= | lossR=` becomes reachable for structure-cluster positions, and `[CANDIDATE-BUILDER]`
+reports `MinRRMeanRev=1.5` as the value that can now apply. No risk gate, stop distance, lot calculation or
+magic ownership changed.
+
 ### Batch 218: the heartbeat block had no printer, and every log tag in the five documents got checked against the tree
 
 AGENTS.md section 6 opens with "verify `[HEARTBEAT]`". No `Print` call site in this repository produced that

@@ -328,7 +328,12 @@ public:
                     }
                 }
 
-                if(m_structuralInvalidationEnabled && !reversalDetected)
+                // Last-stand leaves the decision to the hard SL and a position younger than m_sreMinTimeSec is not
+                // reversed out of; neither may structural invalidation overrule. The profit guard is deliberately
+                // not in this list - its own comment hands the decision to structural invalidation.
+                bool sreHeldByEarlierAbstain = (isLastStandZone || (hasBreathingRoom && lossR <= 0.50));
+
+                if(m_structuralInvalidationEnabled && !reversalDetected && !sreHeldByEarlierAbstain)
                 {
                     SConsensusDecisionContext context;
                     if(manager.GetLastDecisionContext(context))

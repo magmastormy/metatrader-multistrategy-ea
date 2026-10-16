@@ -1103,6 +1103,10 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     m_lastDecisionContext.quorumMode             = decisionClass;
     m_lastDecisionContext.vetoCode               = "";
     m_lastDecisionContext.reason                 = "consensus_reached";
+    // Resolved above for the contributor publish. The mean-reversion R:R floor in the candidate builder and the
+    // structural-invalidation exit in the lifecycle manager both read it off this context, so leaving it at
+    // STRATEGY_CLUSTER_NONE kept both branches unreachable.
+    m_lastDecisionContext.dominantCluster        = dominantCluster;
 
     ulong elapsed = GetMicrosecondCount() - startTime;
     CJsonLogger::LogPerformance("EnterpriseStrategyManager", "EvaluateConsensusInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
