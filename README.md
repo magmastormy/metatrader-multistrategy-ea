@@ -451,6 +451,12 @@ The consensus scan now drops a hard-gated strategy before any of those accumulat
 
 They do now: the consensus loop captures each voter's evidence and publishes the winning side's mean, plus the ready-ratio numerator and denominator the log used to print as zeros. **Consensus lots get larger where the pipeline genuinely measures a ready, in-context, cheap signal, and stay exactly as small as they are where it does not** - each bonus is still conditional on a threshold, and with no pipeline the values stay zero rather than being guessed. Nothing about vetoes, the low-confidence refusal, the AI bootstrap caps or the risk gates moved. Earned bonuses now name themselves in the authority reason string, so a grown lot is traceable to the measurement that earned it.
 
+### Batch 206: the minimum R:R stopped capping the take-profit
+
+`CalculateStops` clamped the stop and then set the target to `MathMin(proposedTP, stopLossPips * minRR)`. `minRR` is a *minimum* reward-to-risk requirement, so the line silently converted it into a maximum take-profit: a strategy designed for 5R was taken out at 1.5R or 2R on every entry, and because the execution-cost gate measures `spread / TP`, the shortened target also made those same entries more likely to be refused as too expensive. It is now a floor (`MathMax`), so a wider designed target survives and a stop widened by the spread floor drags its target up with it instead of letting the trade ship under the required R:R.
+
+Stop distance, lot size, per-trade risk and every gate are untouched - this changes where a winner is closed, not how big the position is. The sweep that found it checked five other suspected over-restrictions to the line and rejected them: a triple-counted spread term that a policy term dominates, a safe-mode per-symbol cap that cannot go stale because MT5 inputs cannot change mid-run, two quality-threshold arms whose decision classes are never published, a min-lot refusal that is this project's deliberate anti-round-up rule, and a fail-closed portfolio poison that is recomputed every pass by design. One real finding is deferred rather than guessed at: every ATR the EA reads is measured on the timeframe of the chart it sits on, because each per-symbol manager is initialized with that value - choosing a per-symbol operating timeframe is an operator decision.
+
 ## AI Integration
 
 The EA supports three AI operating modes:

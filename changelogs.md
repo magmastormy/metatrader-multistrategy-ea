@@ -8,6 +8,63 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 206: the minimum R:R stopped being a maximum take-profit
+
+#### The defect
+`CalculateStops` clamps the stop into `[minSlPips, maxSlPips]` and then set
+`takeProfitPips = MathMin(takeProfitPips, stopLossPips * minRR)`. `minRR` is a **minimum** reward-to-risk
+requirement (`InpMinRRDefault` 2.0, 1.5 for the mean-reversion class), so this line turned it into a ceiling on
+the target: a strategy whose designed TP was 5R had it chopped to 1.5R or 2R on every entry. Two damages from
+one token:
+- every winner's target was cut to the floor, which is the profit side of the same trade the stop was sized for;
+- `CheckExecutionCost` tests `spread / takeProfitPips` against `InpMaxSpreadToTpRatio` (0.15), so *lowering* TP
+  raises the ratio the gate refuses on. The line was vetoing entries that its own TP widening would have passed.
+
+It also broke the invariant in the other direction: when the spread floor widened the stop, `MathMin` left TP
+at the older, narrower figure, so the shipped trade's realised R:R fell **below** the configured minimum.
+`MathMax(takeProfitPips, stopLossPips * minRR)` satisfies both readings: the target is never below minRR of the
+stop actually taken, and a strategy's wider proposal survives.
+
+#### Investigated and ruled out, with the reason
+This batch came out of a two-front sweep for bug-shaped over-restrictions. These candidates were checked to the
+line and are **not** defects:
+- **`minSlPips` counts the spread three times** (`brokerMinPoints * 1.5` where `GetMinimumStopDistance` already
+  folds `1.5 * spread`, plus a `spread * 3` term). The three-way maximum means the explicit `spread * 3.0` term
+  dominates, so the double count changes nothing; 3x-spread minimum stop is the stated policy, and the
+  resulting fixed cost ratio is what `[CANDIDATE-BUILDER] ... stop pinned to floor` exists to name.
+- **`m_maxPositionsPerSymbol` latched at init** from safe mode's `noStacking`, with `Configure` having one call
+  site. MT5 inputs cannot change during a run, and `OnChartEvent` only re-pushes the same `InpRiskTier`, so the
+  tier this session can ever hold is the tier it booted with: the latch has no reachable stale case.
+- **`GetAdaptiveQualityThreshold`'s fixed `0.65` / `0.70`** arms for `MARGINAL_ADMIT` and `SOLO_FALLBACK`: the
+  live consensus publishes only `FULL_QUORUM` and `SPARSE_INTRABAR`, so neither arm is reachable and neither
+  overrides a configured floor.
+- **Correlation reduction refusing a min-lot candidate** (`adjustedLotSize < SYMBOL_VOLUME_MIN`) is the
+  documented anti-round-up rule: floor to the step and refuse, rather than hand a reduction back as a bigger
+  trade.
+- **`PortfolioRiskManager` forcing risk to `cap + 0.01`** when a position has no stop is deliberate fail-closed
+  behaviour, recomputed from zero on every pass rather than latched.
+- **`[RISK-VOL-GATE] atr_ratio > 1.5 -> halve_risk`** sitting below the 2.0/2.5 crisis veto is a policy number
+  with its own log line. Moving it is tuning a risk control without journals, which this round does not do.
+
+#### Deferred, and why it is not a one-line fix
+Every ATR this EA measures is taken on **the chart window's timeframe**: `CPostConsensusValidator::GetATRDirect`
+uses `Period()`, `CalculateStops` passes `PERIOD_CURRENT` to `CalculateATR`, and the reason both resolve to the
+same thing is that `EAOrchestrator.mqh:1790` initializes every per-symbol manager with
+`manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), ...)`. So the ATR crisis veto, the `>1.5` lot halving,
+the spread/ATR veto and the volatility-sized stop for all thirteen symbols are keyed to whichever chart the
+operator opened, while the strategies that voted each carry their own catalog timeframe. The correction is a
+per-symbol operating timeframe, which is a policy decision about which of a symbol's timeframes *is* its trading
+timeframe - not an arithmetic fix, and not blind-shippable on a live book. Recorded in `SYSTEM_STRUCTURE.md` §4.8.
+
+#### Verification
+- `sync_and_compile.ps1 -All`: 8 root programs, 0 errors / 0 total warnings.
+- No journal evidence exists (newest 2026-09-23). Expected signs of this fix: `[CANDIDATE-BUILDER] ... FINDING0
+  strategy-proposed stops | TP=` values that stay at the strategy's own target instead of collapsing to
+  `SL x minRR`, fewer `[CANDIDATE-BUILDER] ... execution cost too high` refusals on the same symbol, and the
+  `[CONSENSUS-...]`-following `[ENTERPRISE-CONFIG]`-era behaviour otherwise unchanged. Risk is unchanged: lot
+  size is derived from the stop distance, which this batch does not touch.
+
+
 ### Batch 205: the live-authority lot ladder receives the four measurements it was written to read
 
 #### The broken feed

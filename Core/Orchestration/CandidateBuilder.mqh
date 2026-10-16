@@ -689,8 +689,9 @@ public:
         
         double intendedSlPips = stopLossPips;
         stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-        // TP is an R-multiple of the stop actually taken, not of the ceiling.
-        takeProfitPips = MathMin(takeProfitPips, stopLossPips * minRR);
+        // minRR floors the R:R of the stop actually taken; as MathMin it capped every wider strategy TP at
+        // minRR, and a shorter TP is also what makes the execution-cost ratio below fail.
+        takeProfitPips = MathMax(takeProfitPips, stopLossPips * minRR);
 
         // Names the arithmetic before CheckExecutionCost can report it as a market reading: when the spread
         // floor is wider than the designed stop, TP becomes 3*spread*minRR and the cost ratio is fixed at

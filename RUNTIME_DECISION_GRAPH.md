@@ -336,6 +336,14 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 206: The Minimum R:R Stops Capping the Take-Profit (2026-10-15)
+
+- **Edge changed:** `CalculateStops` -> `takeProfitPips = MathMax(proposedTP, stopLossPips * minRR)` (was `MathMin`). The TP edge into `CheckExecutionCost`, `TradeExecutor` and the order request is the same edge; its value is now a floor rather than a ceiling.
+- **Two suppressions removed:** a strategy's wider designed target no longer collapses to `minRR` (which cut the profit side of every entry), and because the execution-cost gate tests `spread / TP` against `InpMaxSpreadToTpRatio`, the shrunken TP was itself raising the ratio those entries were refused on. When the spread floor widens the stop, TP now rises with it, so the shipped trade cannot sit below the configured R:R.
+- **Untouched:** `stopLossPips` and therefore lot size, per-trade risk, every risk gate and the exit authority. This changes where a winner is taken out, not how big the position is.
+- **Sweep result recorded:** five candidate over-restrictions were checked to the line and ruled out (triple-counted spread floor dominated by the policy term; the safe-mode per-symbol cap latch has no reachable stale case because MT5 inputs cannot change mid-run; two unreachable arms of `GetAdaptiveQualityThreshold`; the min-lot correlation refusal, which is the stated anti-round-up rule; the fail-closed SL-less portfolio poison, recomputed each pass).
+- **Deferred with reason:** all ATR reads (`PostConsensusValidator::GetATRDirect` via `Period()`, `CalculateStops` via `PERIOD_CURRENT`) resolve to the chart window because `EAOrchestrator.mqh:1790` initializes every manager with `Period()` as its base timeframe, while each strategy carries its own catalog timeframe. Fixing it means choosing a per-symbol operating timeframe - a policy decision, not an arithmetic correction.
+
 ## Batch 205: The Authority Ladder Is Fed Measurements Instead of Zeros (2026-10-15)
 
 - **New edge:** `pipeline.ProcessSignal(voter) -> SPipelineEvidenceSnapshot -> per-direction mean over the winning side -> SConsensusDecisionContext.convictionScore/readinessScore/contextScore/costScore (+ readyLiveWeight/totalLiveWeight) -> CandidateBuilder.mqh:383-386 -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult rung -> lot`.
