@@ -46,7 +46,7 @@ public:
 
 // Pre-trade risk validation via UnifiedRiskManager
 // (AGENTS.md invariant #1)
-   bool PassesRiskValidation(const string symbol, ENUM_ORDER_TYPE orderType, double lotSize,
+   bool PassesRiskValidation(const string symbol, ENUM_ORDER_TYPE orderType, double &lotSize,
                              double slDistance, int level)
    {
       if(m_riskManager != NULL)
@@ -66,8 +66,17 @@ public:
          SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "grid-pretrade");
          if(!riskResult.approved)
          {
-            PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.reason);
+            PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.message);
             return false;
+         }
+
+         // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
+         // adopting that would ship more than this engine's own sizing decided.
+         if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
+         {
+            PrintFormat("[GRID-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
+                        symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
+            lotSize = riskResult.adjustedLotSize;
          }
       }
       return true;

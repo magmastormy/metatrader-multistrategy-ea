@@ -594,13 +594,16 @@ public:
                 }
     }
 
-    // Per-family position cap: 2 for crash/boom, step, jump and hybrid, 3 otherwise. DetectFamily never returns -1
-    // (unclassified maps to DERIV_UNKNOWN=18), so all unclassified symbols share one bucket and the -1 test is dead.
+    // Per-family position cap: 2 for crash/boom, step, jump and hybrid, 3 otherwise. DetectFamily answers
+    // DERIV_UNKNOWN for every name that is not a Deriv synthetic, so counting it as a family capped the whole
+    // non-Deriv half of the universe at 3 positions together - EURUSD, GBPUSD, USDJPY, AUDUSD, XAUUSD and BTCUSD
+    // on the default list - while InpMaxPositionsPerSymbol = 5 and InpMaxPositionsTotal = 15 allow more. Those
+    // caps already govern those symbols; this bucket only means "the same synthetic family".
+        ENUM_DERIV_FAMILY reqFamily = m_derivAssetProfiler.DetectFamily(request.symbol);
+        if(reqFamily != DERIV_UNKNOWN)
         {
             int familyPositionCount = 0;
             int totalPositions = PositionsTotal();
-            string reqSymbol = request.symbol;
-            ENUM_DERIV_FAMILY reqFamily = m_derivAssetProfiler.DetectFamily(reqSymbol);
         
             for(int i = 0; i < totalPositions; i++)
             {
@@ -608,7 +611,7 @@ public:
                 if(ticket <= 0) continue;
                 string posSymbol = PositionGetString(POSITION_SYMBOL);
                 ENUM_DERIV_FAMILY posFamily = m_derivAssetProfiler.DetectFamily(posSymbol);
-                if(posFamily == reqFamily && reqFamily != ENUM_DERIV_FAMILY(-1))
+                if(posFamily == reqFamily)
                     familyPositionCount++;
             }
 
@@ -732,12 +735,18 @@ public:
     }
 
     double projectedDailyRisk = m_host.GetEffectiveDailyRiskUsedPercent(reservedRisk + MathMax(0.0, result.riskPercent));
-        if(projectedDailyRisk > m_config.maxDailyRiskPercent)
+    // >= and not >: GetEffectiveDailyRiskUsedPercent clamps its answer to maxDailyRiskPercent, so a
+    // strict comparison could never hold and this post-adjustment projection never refused a trade.
+    // The pre-approval budget gate above uses the same >= against the same clamped value.
+        if(projectedDailyRisk >= m_config.maxDailyRiskPercent)
         {
             result.approved = false;
             result.severity = ERROR_LEVEL_WARNING;
-            result.message = StringFormat("Daily risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+            result.message = StringFormat("Daily risk limit would be exceeded (%s): %.2f%% + %.2f%% >= %.2f%%",
                                           phaseTag, effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent);
+            PrintFormat("[RISK-DAILY-LIMIT] %s | reason=daily_risk_would_exceed | phase=%s | effective=%.2f%% + new=%.2f%% >= limit=%.2f%% | lot=%.4f",
+                        request.symbol, phaseTag, effectiveDailyRisk, result.riskPercent,
+                        m_config.maxDailyRiskPercent, result.adjustedLotSize);
             CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DAILY_RISK_WOULD_EXCEED",
                 StringFormat("Effective %.2f%% + new %.2f%% > limit %.2f%%", effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent),
                 projectedDailyRisk, m_config.maxDailyRiskPercent, corrId);

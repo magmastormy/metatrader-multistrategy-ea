@@ -632,6 +632,51 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 224: a cap that applied to the wrong symbols, and refusals that did not say why
+
+The per-family position limit counted `DERIV_UNKNOWN` - the answer `DetectFamily` gives to every symbol that
+is *not* a Deriv synthetic - as a family. Six of your thirteen default symbols (EURUSD, GBPUSD, USDJPY,
+AUDUSD, XAUUSD, BTCUSD) therefore shared a single 3-position bucket between them, a limit tighter
+than `InpMaxPositionsPerSymbol = 5` and `InpMaxPositionsTotal = 15` and one you could not see in the inputs
+dialog. The cap now applies only to a real synthetic family, and those symbols are bounded by the caps that
+name them.
+
+Three books - ATR scalp, grid recovery, spike hunter - asked the unified risk manager for permission and used
+only the yes/no. The correlation shrink, the lot-floor adjustment and the recomputed risk percentage were
+discarded, while the fast scalp has honoured the shrink since Batch 192. They now adopt it shrink-only and
+log it (`[ATR-SCALP-RISK-ADJUSTED]`, `[GRID-RISK-ADJUSTED]`, `[SPIKE-RISK-ADJUSTED]`), and their refusals
+print a reason: they were printing `reason=` with nothing after it, because the field they read is cleared by
+`ZeroMemory` and nothing in `Core/Risk/` ever writes it. The populated field is `.message`.
+
+Not changed, with the reason: the cluster letter is still not decoded from position comments, so
+`[RISK-CLUSTER]` counts same-symbol positions only and `[RISK-CLUSTER-SYNC]` reconciles nothing. Wiring it
+would rewrite the field that identifies a position's owner and would loosen the opposing-position mutex at the
+same time. `AGENTS.md` said it counted clusters that can be entered; that sentence was wrong and is fixed.
+
+### Batch 223: three risk ceilings that could not bind
+
+Each of these was written as a limit and reads as a limit in the logs, but its own arithmetic made refusal
+unreachable - and the unreachable direction was always "let more risk through".
+
+- `ApplyDrawdownScaling` decided whether a sub-minimum lot may be rounded up by comparing
+  `brokerMinLot / lotSize` against `InpMinLotRiskMultiplier`. Under the branch that computes it, that ratio is
+  always below 1.0 while the ceiling is 15.0, so the check never failed and every drawdown shrink that fell
+  under the broker minimum became a full minimum-size lot. It now measures the round-up the way the risk
+  pipeline does (the factor the shipped lot exceeds the intended one) and refuses above the ceiling with
+  `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`.
+- The daily-risk projection gate tested `projectedDailyRisk > maxDailyRiskPercent` on a value that
+  `GetEffectiveDailyRiskUsedPercent` has already clamped to `maxDailyRiskPercent`. Impossible by construction;
+  now `>=`, like the pre-approval gate above it, and it prints `[RISK-DAILY-LIMIT]` instead of only writing a
+  JSON record nobody reads at the moment of refusal.
+- Per-cluster risk caps were stored as absolute percentages (`T` 10.0, `R` 5.0), so
+  `InpRiskMaxClusterExposurePct` reached only the clusters with no row and trend ran at double the configured
+  cluster exposure whatever you set. They are factors of your number now (2.0x, 1.0x) - same values at the
+  default, and bounded by your ceiling at any other.
+
+Untouched on purpose: the margin-health constants (200% floor, 0.8 free-margin usage) and the CVaR cap (0.10)
+have no setter call and no input; their comments admit it, and inventing thresholds is your call, not a
+cleanup.
+
 ### Batch 222: three consensus gates could never pass, so most committees were being thrown away
 
 `InpConsensusConflictDeadband = 0.05` compared against a vote-count ratio that cannot fall below one dissenter

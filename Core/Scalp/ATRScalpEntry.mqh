@@ -162,8 +162,17 @@ public:
          SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "atr-scalp-pretrade");
          if(!riskResult.approved)
          {
-            PrintFormat("[ATR-SCALP] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.reason);
+            PrintFormat("[ATR-SCALP] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.message);
             return false;
+         }
+
+         // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
+         // adopting that would ship more than this engine's own sizing decided.
+         if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
+         {
+            PrintFormat("[ATR-SCALP-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
+                        symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
+            lotSize = riskResult.adjustedLotSize;
          }
       }
 

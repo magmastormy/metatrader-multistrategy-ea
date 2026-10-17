@@ -339,6 +339,43 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 224: Position-Governance Buckets Scoped Wrong, and Gate Answers Thrown Away (2026-10-17)
+
+| Path | What was wrong | Change |
+|---|---|---|
+| `RiskValidationPipeline.mqh:603` family cap | `DERIV_UNKNOWN` is the "not a Deriv synthetic" answer, and it was counted as a family: six of thirteen default symbols shared one 3-position bucket | cap runs only for a real family; the non-Deriv half is bounded by the per-symbol and total caps |
+| `ATRScalpEntry.mqh:165` / `GridRecoveryExecution.mqh:69` / `SpikeHunterExecutor.mqh:229` | printed `reason=` from `SValidationResult.reason` (never assigned anywhere in `Core/Risk/`) and read only `.approved`, discarding `adjustedLotSize` / `riskPercent` | print `.message`; adopt the shrink-only lot with `[ATR-SCALP-RISK-ADJUSTED]` / `[GRID-RISK-ADJUSTED]` / `[SPIKE-RISK-ADJUSTED]` |
+| `GridRecoveryExecution.mqh:49` | `PassesRiskValidation` took `lotSize` by value, so it could not pass an adjustment back | takes `double &lotSize`; the engine records the level lot after the send, so table and position agree |
+
+Not wired, with the reason on record: `ParseClusterCodeFromComment` needs a `K:<code>` marker no producer
+writes, so existing positions decode to `"N"` and `[RISK-CLUSTER] open_positions=` is same-symbol only while
+`[RISK-CLUSTER-SYNC]` reconciles nothing (Batch 200 declined it; the comment is the Batch 196/197 ownership
+discriminator and decoding it also loosens the opposing mutex). Also left: the family scan counts every
+owner's positions, because this file has no ownership test for that loop and copying the magic-band authority
+out of `CPositionLifecycleManager::IsEAOwnedMagic` would create a second one.
+
+
+## Batch 223: Risk Ceilings Whose Arithmetic Made Refusal Unreachable (2026-10-17)
+
+Path touched: `CCandidateBuilder::BuildCandidate` sizing block -> `CUnifiedRiskManager::ValidateTradeRequest`
+-> `CRiskValidationPipeline` daily-budget projection and `ValidateClusterGovernance`.
+
+| Limit | Comparison | Why it could not bind | Change |
+|---|---|---|---|
+| min-lot round-up ceiling, `CandidateBuilder.mqh:790` | `floorMult = brokerMinLot / lotSize <= m_minLotRiskMultiplier` | `lotSize > brokerMinLot` in the enclosing branch forces `floorMult < 1.0`; ceiling 15.0 | compare `brokerMinLot / newLot`, refuse above it, stop before the round-up at `:502` |
+| post-adjustment daily risk, `RiskValidationPipeline.mqh:738` | `projectedDailyRisk > maxDailyRiskPercent` | the getter clamps to `maxDailyRiskPercent`, so `>` is impossible | `>=` (matches `:365`) plus `[RISK-DAILY-LIMIT]` |
+| per-cluster risk cap, `RiskClusterBudget.mqh` | `"T" -> 10.0`, `"R" -> 5.0` absolute | a stored percent replaces `m_maxClusterRiskPercent`, which only `InpRiskMaxClusterExposurePct` writes | factors 2.0x / 1.0x of the configured cap; dead `SetClusterRiskCap` pair deleted |
+
+New/refused log lines: `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`,
+`[RISK-DAILY-LIMIT] ... phase= effective= + new= >= limit= | lot=`,
+`[RISK-CLUSTER-CAP-PER] ... factor=%.2fx of configured %.2f%`.
+
+Left as constants, with their own comments saying so: `CRiskMarginHealth` 200% floor and 0.8 free-margin
+usage (`SetMinMarginLevel` / `SetMaxFreeMarginUsage` have no callers; the `SetMinMarginLevel(150.0)` at
+`EAOrchestrator.mqh:1096` belongs to `CTickSafetyMonitor`, a different object), and
+`CPortfolioRiskManager::m_cvarMaxRisk = 0.10` with no setter and no input, failing open under 20 samples.
+
+
 ## Batch 222: Gates That Refused by Construction on the Consensus Path (2026-10-17)
 
 Path touched: `SignalGenerator::EvaluateSymbol` -> `CConsensusEngine::EvaluateConsensusInternal` ->

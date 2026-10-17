@@ -494,6 +494,8 @@ public:
         // VPIN reaches size through CVPINLotModifier (registered in the sizer chain) and vetoes
         // through CPostConsensusValidator; skew step, full margin and safe mode have no size hook.
         lotSize = ApplyDrawdownScaling(symbol, lotSize, proposedRisk);
+        if(lotSize <= 0.0)
+            return false;
         lotSize = ApplyMomentumScaling(symbol, lotSize);
         // This round-up re-adds risk; the re-gate below clamps the lot back to the per-trade cap,
         // or refuses when no compliant lot exists above the broker minimum.
@@ -781,12 +783,19 @@ public:
                 double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
                 if(newLot < brokerMinLot && lotSize > brokerMinLot)
                 {
-                    double floorMult = brokerMinLot / lotSize;
-                    if(floorMult <= m_minLotRiskMultiplier)
+                    // Measure the round-up the way the risk pipeline does: the factor the shipped lot
+                    // exceeds the intended one. brokerMinLot / lotSize is below 1.0 here by construction,
+                    // so comparing that against a multiplier ceiling could never fail, and any shrink
+                    // that under-shot the minimum was silently replaced by a full-minimum lot.
+                    double uplift = brokerMinLot / newLot;
+                    if(uplift > m_minLotRiskMultiplier)
                     {
-                        mult = MathMax(mult, floorMult);
-                        newLot = lotSize * mult;
+                        PrintFormat("[RISK-GATE-REJECT] %s | reason=drawdown_lot_below_min | intended=%.4f | broker_min=%.4f | uplift=%.1fx > %.1fx ceiling",
+                                    symbol, newLot, brokerMinLot, uplift, m_minLotRiskMultiplier);
+                        return 0.0;
                     }
+                    mult = MathMax(mult, brokerMinLot / lotSize);
+                    newLot = lotSize * mult;
                 }
                 
                 PrintFormat("[RISK-ADAPT] %s | dd=%.3f mult=%.3f lot=%.2f->%.2f",

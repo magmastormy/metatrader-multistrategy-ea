@@ -290,7 +290,7 @@ public:
     string FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result);
     virtual void UpdatePerformanceMetrics(const ulong startTime);
     double GetCurrentPortfolioRisk();
-    void SetClusterRiskCap(const string clusterCode, const double capPercent);
+
     void ClearOpposingConflictCache(const string symbol);
     void GetValidationStats(int &total, int &approved, int &rejected, double &approvalRate);
     void ResetStats(void);
@@ -1833,11 +1833,6 @@ double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) cons
 double CUnifiedRiskManager::GetCurrentPortfolioRisk()
 {
     return m_portfolioRiskManager.GetPortfolioRisk();
-}
-
-void CUnifiedRiskManager::SetClusterRiskCap(const string clusterCode, const double capPercent)
-{
-    m_clusterBudget.SetClusterRiskCap(clusterCode, capPercent);
 }
 
 void CUnifiedRiskManager::ClearOpposingConflictCache(const string symbol)

@@ -8,6 +8,101 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 224: one non-family capped six symbols, and three books that threw away the risk gate's answer
+
+#### The family position cap treated "not a Deriv synthetic" as a family
+`CDerivAssetProfiler::DetectFamily` tests 18 Deriv name predicates and answers `DERIV_UNKNOWN` for everything
+else, and the per-family position cap in `RiskValidationPipeline.mqh:597-648` counted that as a family. On the
+default universe EURUSD, GBPUSD, USDJPY, AUDUSD, XAUUSD and BTCUSD therefore shared one bucket capped at 3
+positions *together* - tighter than `InpMaxPositionsPerSymbol = 5` and `InpMaxPositionsTotal = 15`, and not
+visible anywhere as a policy. The block's own comment already said "all unclassified symbols share one bucket
+and the -1 test is dead" and enforced it anyway. The gate now runs only when the request resolves to a real
+family, so those six symbols are bounded by the caps that name them.
+
+Left as it was, with the reason: the position scan still counts *every* owner's positions toward a real
+family's cap. This file has no ownership test for that loop (the correlation scan in the same function uses
+`posMagic == 0 || posMagic == eaMagicNumber`, which since Batch 197 excludes the scalp/grid/spike magic
+bands), and magic-band ownership belongs to `CPositionLifecycleManager::IsEAOwnedMagic` - copying it here
+would create a second authority over who a position belongs to.
+
+#### Three engine books read the gate's verdict and ignored its arithmetic
+`[ATR-SCALP] REJECTED`, `[GRID-RECOVERY] REJECTED` and `[SPIKE-HUNT-TRADE] REJECTED` all printed
+`reason=` from `SValidationResult.reason`, which `ZeroMemory` clears at `RiskValidationPipeline.mqh:295` and
+which **no line in `Core/Risk/` ever assigns** - the populated field is `.message`, which is what the
+consensus path (`CandidateBuilder.mqh:555`), `StrategyBase` and Statistical Arbitrage already print. So every
+refusal on those three books said nothing about why. All three also tested only `.approved` and then shipped
+the lot their own sizing had produced, so the correlation REDUCE shrink, the lot-floor adjustment and the
+recomputed `riskPercent` were discarded there while the fast scalp has adopted the shrink-only version since
+Batch 192.
+
+They now print `.message` and adopt `adjustedLotSize` shrink-only, logged as `[ATR-SCALP-RISK-ADJUSTED]`,
+`[GRID-RISK-ADJUSTED]` and `[SPIKE-RISK-ADJUSTED]` in the shape `[SCALP-RISK-ADJUSTED]` already uses. For the
+grid this is safe in the direction that matters: `CGridRecoveryEngine` records the level's `lotSize` *after*
+the send, so the level table and the position agree, and later levels still derive from `baseLot` - only the
+level the gate shrank changes.
+
+#### Documented rather than wired: the cluster marker
+`ParseClusterCodeFromComment` looks for a `K:<code>` marker that no producer writes
+(`CTradeAttributionManager::BuildClusterTaggedTradeComment` has no call site), so every existing position
+decodes to `"N"`: `[RISK-CLUSTER] open_positions=` is a same-symbol count, and `[RISK-CLUSTER-SYNC]` at init
+reconciles nothing. Batch 200 recorded this and declined to wire it - the position comment is the ownership
+discriminator Batches 196 and 197 rely on, and decoding the cluster out of it would also hand the
+opposing-position mutex the same-cluster case it currently exempts, which is a loosening dressed as a
+completion. `AGENTS.md` section 6 claimed `[RISK-CLUSTER-SYNC]` "now counts clusters that can actually be
+entered"; that sentence was false and is corrected here.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. Not runtime-observed (no journal newer
+than 2026-09-23; the EA stays unattached). Expect `family=DERIV_UNKNOWN` to disappear from `[RISK-FAMILY-POS]`
+and from refusals on the six non-Deriv symbols, more `[ATR-SCALP]`/`[GRID-RECOVERY]`/`[SPIKE-HUNT-TRADE]`
+lots arriving smaller than the engine's own sizing, and those three refusals finally carrying a reason.
+
+### Batch 223: three risk ceilings that could not bind, each of them letting more through than configured
+
+All three were verified against the working tree. Each one is a limit written so that its own arithmetic
+made refusal unreachable, and in every case the unreachable direction was the protective one.
+
+#### The drawdown shrink was undone by a ceiling that could never fail
+`ApplyDrawdownScaling` (`CandidateBuilder.mqh:767`) rounds a shrunken lot up to the broker
+minimum only while that round-up stays inside `InpMinLotRiskMultiplier`. It measured the round-up as
+`floorMult = brokerMinLot / lotSize` - and the enclosing branch requires `lotSize > brokerMinLot`, so that
+ratio is below 1.0 by construction, against a ceiling of 15.0. The test could never fail, so every
+anti-martingale shrink that under-shot the minimum was silently replaced by a full minimum-size lot, and
+`[RISK-ADAPT] ... lot=A->B` printed the widened result as the adaptation. Now measured the way
+`RiskValidationPipeline.mqh:502` measures the same thing (`brokerMinLot / newLot`, the factor the shipped lot
+exceeds the intended one); above the ceiling the candidate is refused with
+`[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`, and the caller stops before the momentum scaler and
+the unconditional round-up at `:502-504` can reinstate a lot.
+
+#### The post-adjustment daily-risk projection could never exceed the limit it was compared with
+`GetEffectiveDailyRiskUsedPercent` ends by clamping its answer to `maxDailyRiskPercent` (so mark-to-market
+loss plus entry exposure cannot read 2x the limit in *reporting*), and `RiskValidationPipeline.mqh:738`
+tested `projectedDailyRisk > m_config.maxDailyRiskPercent` on that clamped value: arithmetically impossible.
+The gate that is supposed to stop the lot the candidate actually ships from breaking the daily budget has
+never refused anything, and `DAILY_RISK_WOULD_EXCEED` exists only as a JSON event that cannot be emitted. Now
+`>=`, the same operator the pre-approval budget gate at `:365` uses against the same clamped value, with a
+journal line (`[RISK-DAILY-LIMIT] ... phase= effective= + new= >= limit= | lot=`) because until now this
+refusal was only ever a `result.message` and a file record.
+
+#### Per-cluster risk caps were absolute percentages, so the operator's ceiling bound only the clusters with no row
+`CRiskClusterBudget` stored `"T" -> 10.0` and `"R" -> 5.0` as percents, and `GetClusterRiskCap` returned the
+stored value instead of the configured one. `InpRiskMaxClusterExposurePct` (default 5.0, and the only writer
+of `m_maxClusterRiskPercent` through `ConfigureClusterGovernance`) therefore reached clusters "S" and "N" -
+the ones with no row - while trend entries ran at twice the configured cluster exposure whatever the operator
+set. The rows are now factors (2.0x trend, 1.0x reversion) of the configured cap: identical at the default
+5.0% and bounded by the number in the inputs dialog at any other value. `[RISK-CLUSTER-CAP-PER]` prints the
+factor and the base it multiplied. `SetClusterRiskCap` - the budget method and the `CUnifiedRiskManager`
+forwarder - had zero call sites and no input feeding it, so both are deleted rather than wired.
+
+#### Checked and left alone, with the reason
+`CRiskMarginHealth`'s 200% margin floor and 0.8 free-margin ceiling, and `CPortfolioRiskManager`'s
+`m_cvarMaxRisk = 0.10`, are constants with no setter call site and no operator input; their own comments say
+so, and giving them inputs is a policy decision rather than a fix. `IsCVaRLimitExceeded` also fails open
+below 20 equity-curve samples, which is 20 minutes of live ticking.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. Not runtime-observed: no journal is
+newer than 2026-09-23 and the EA stays unattached this round. Expect fewer `[RISK-ADAPT]` lines whose `lot=B`
+exceeds `A`, and `[RISK-DAILY-LIMIT]` / `reason=drawdown_lot_below_min` refusals that did not exist before.
+
 ### Batch 222: three consensus gates that could never pass, and one veto whose answer was thrown away
 
 Four refusals in the entry path were structurally permanent rather than market-dependent. All four were

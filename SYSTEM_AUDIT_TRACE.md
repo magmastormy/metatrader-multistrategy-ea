@@ -1705,6 +1705,40 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 224 Scope of Two Governance Buckets, and the Reason Field That Was Never Written (2026-10-17)
+
+- **`[RISK-FAMILY-POS] family=DERIV_UNKNOWN` is no longer possible.** If a journal shows a family refusal on
+  EURUSD/XAUUSD/BTCUSD after this batch, the request resolved to a real synthetic family and the name match
+  is the thing to investigate, not the bucket.
+- **Three refusals became readable, and three lots became smaller.** `[ATR-SCALP]`/`[GRID-RECOVERY]`/
+  `[SPIKE-HUNT-TRADE]` `REJECTED ... reason=` now carries the gate's sentence; a blank `reason=` on those
+  lines identifies a pre-Batch-224 journal. The paired `[ATR-SCALP-RISK-ADJUSTED]`, `[GRID-RISK-ADJUSTED]`
+  and `[SPIKE-RISK-ADJUSTED]` lines are the gate's shrink being adopted, and their absence alongside a lot
+  smaller than the engine's own sizing means the shrink was *not* adopted.
+- **Grid level state is post-send.** The level table records the lot after the send returns, so a
+  `[GRID-RISK-ADJUSTED]` line and the level's stored `lotSize` describe the same number. Reconciled grids
+  (Batch 197 `[GRID-RESTART]`) rebuild from live positions, so they were already reading real volumes.
+- **Correction to the record, not to the runtime:** `[RISK-CLUSTER-SYNC]` reconciles nothing, and
+  `[RISK-CLUSTER] open_positions=` is a same-symbol count, because the `K:` marker the parser reads has no
+  producer. Section 6 said otherwise; both lines now say what they measure.
+
+
+## Batch 223 Protective Gates That Could Only Answer Yes (2026-10-17)
+
+- **A refusal that used to be invisible is now in the journal.** `[RISK-DAILY-LIMIT]` names the phase, the
+  effective usage, the new trade's risk, the limit and the lot at the moment of refusal. Before Batch 223 the
+  daily-projection gate could not refuse at all, and had it done so the only trace would have been a
+  `MQL5/Files` JSON record and a `result.message` that the consensus path surfaces one layer up.
+- **Read `[RISK-ADAPT] ... lot=A->B` with `B > A` as a bug signal, not a rounding note.** The shrink path that
+  rounds up to the broker minimum is now bounded by `InpMinLotRiskMultiplier` and refuses with
+  `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min` instead of quietly widening the position.
+- **`[RISK-CLUSTER] ... caps=n/x%` and `[RISK-CLUSTER-CAP-PER]` now describe your configuration.** The
+  trend-cluster row used to be an absolute 10%, so `x%` there was a constant; it is `2.0x` of
+  `InpRiskMaxClusterExposurePct` now, and the line prints the factor and the base so the doubling is legible.
+- **Dead API removed:** `CUnifiedRiskManager::SetClusterRiskCap` and the budget's own setter had no call
+  sites, which is why the constants looked configurable and were not.
+
+
 ## Batch 222 Refusals That Were Arithmetic, Not Markets (2026-10-17)
 
 - **Admission evidence changed shape.** A `[CONSENSUS-VETOED] Conflict ratio` line is now an actual split

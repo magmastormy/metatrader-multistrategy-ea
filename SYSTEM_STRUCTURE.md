@@ -1414,6 +1414,24 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **A governance bucket must contain what its name says** (Batch 224). `DERIV_UNKNOWN` is the fallback for
+  "this symbol is not a Deriv synthetic", and the per-family position cap counted it as a family, so the
+  entire non-Deriv half of the universe shared one limit that no input names. Same test applied to the risk
+  answers: three engine books consumed `.approved` and discarded `.adjustedLotSize`/`.riskPercent`, and
+  printed a refusal reason from a field no writer in `Core/Risk/` ever assigns. Ownership of the position
+  comment (Batch 196/197) and of magic bands (`CPositionLifecycleManager::IsEAOwnedMagic`) stays where it is:
+  reading the cluster out of the comment would put a second owner authority in the risk pipeline, and the
+  limitation is documented instead.
+
+- **A limit must be able to refuse** (Batch 223). Three risk ceilings were written so their own arithmetic
+  made the refusing branch unreachable: a round-up ceiling compared against a ratio bounded below 1.0, a
+  daily-risk projection compared against the value the getter clamps to that same limit, and per-cluster caps
+  stored as absolute percents that replaced the operator's configured ceiling instead of scaling it. Where a
+  designed behaviour was unreachable but *reaching* it would change risk in a direction the operator has not
+  chosen (margin-health floors, the CVaR tail cap), the constant stays and the code says so; where the
+  operator already configured the number and the code silently overrode it, the code now obeys it and prints
+  what it applied.
+
 - **Consensus gates must be reachable to count as policy** (Batch 222). Three admission gates on the
   consensus path were arithmetic dead ends rather than market tests: the conflict deadband (`0.05`) sat below
   the smallest dissent an integer committee can produce (`1/19`), so unanimity was required; the ready-weight
