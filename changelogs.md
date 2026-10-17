@@ -8,6 +8,43 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 225: a threshold that only ever reached the log, and four fields with no reader
+
+#### `InpAIStandaloneRelaxedConfidence` moved a printed number, not the gate
+`CCandidateBuilder` tracks the hybrid gate per symbol: after `InpHybridGateRelaxAfterCycles` (5) scans with no
+indicator contributor it opens the gate and prints `[HYBRID-GATE-RELAXED] <symbol> | ... AI threshold A -> B`.
+The value it tests was never B: the bar that binds is `CLiveAuthorityResolver::Resolve`'s own
+`m_aiStandaloneMinConfidence` (`LiveAuthorityResolver.mqh:215`, with a hardcoded 0.55 when an indicator
+contributed), and the orchestrator passed only `m_config.aiStandaloneMinConfidence` to `Configure` - the
+relaxed field's only readers were a `StringFormat` and a JSON literal. Batch 141-era notes in
+`docs/changelogs_batch102-169.md` record it as wired; the wiring stopped at the print.
+The builder now exposes `EffectiveStandaloneConfidenceFloor(symbol)` and the orchestrator hands that floor to
+the resolver through `SetStandaloneConfidenceFloor` before each `Resolve`, so the AI-standalone bar is 0.60
+while the gate is open and 0.65 when it is restored, and `[AUTHORITY-REJECT] ... LOW_CONFIDENCE_x<y` reports
+the number actually applied. `[AUTHORITY-CONFIG] effective:` now ends in `standaloneConf=`, so a session can
+confirm the input reached the gate instead of the log.
+
+#### The dead state removed with it
+- `InpPortfolioMaxPositionsPerSymbol` (default 3) reached `m_portfolioMaxPositionsPerSymbol`, which no code
+  read: `CheckSymbolPositionLimit` bounds the same quantity with `InpMaxPositionsPerSymbol` (5). Two inputs,
+  one limit, the tighter one inert - the Batch 38 shape again. The input, the config field, the `Configure`
+  argument and the field are deleted; 5 is the real number and now the only one.
+- `CRiskTieredCorrelation` held `m_correlationReduceThreshold` / `m_correlationBlockThreshold` pushed from
+  config and never read - the pipeline enforces both tiers from its own copy. Its own header comment said so.
+  `SetThresholds` takes the entry threshold alone now, and both URM call sites changed with it.
+- `SValidationResult::confidenceMultiplier` had one writer, `= 1.0`, restored after `ZeroMemory` precisely
+  because `StrategyBase` multiplied confidence by it. No gate ever set anything else, so the multiply was a
+  no-op with a footgun attached (a forgotten restore would zero every signal's confidence). Field, write and
+  multiply are gone.
+- `SPositionSizingParams::correlationAdjustment` (written `1.0` once, zero reads) and
+  `STradeCandidate::liveAuthorityAllowed` (written twice, zero reads - the orchestrator branches on the local
+  `authority.allowed`) are deleted. `ResolveLiveAuthority` stays: it has a live caller and its comment already
+  says it is a stub that gates nothing.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. Behaviour change is the intended one:
+AI-standalone candidates on indicator-quiet symbols are now admitted between 0.60 and 0.65 confidence where
+they were refused, and no other threshold moved. Not runtime-observed - no journal newer than 2026-09-23.
+
 ### Batch 224: one non-family capped six symbols, and three books that threw away the risk gate's answer
 
 #### The family position cap treated "not a Deriv synthetic" as a family

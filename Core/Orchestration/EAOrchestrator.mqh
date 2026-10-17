@@ -872,7 +872,6 @@ bool InitializeSubsystems()
     sizingParams.atrMultiplier    = 1.5;
     sizingParams.maxLotSize       = MAX_LOT_SIZE;
     sizingParams.minLotSize       = MIN_LOT_SIZE;
-    sizingParams.correlationAdjustment  = 1.0;
     sizingParams.useVolatilityAdjustment = true;
     sizingParams.useCorrelationAdjustment = false;
 
@@ -1508,7 +1507,7 @@ bool InitializeComponents()
     }
     m_candidateBuilder.Configure(2.0, 1.5, 5.0,
                                  0.15, m_config.minLotRiskMultiplier, m_config.aiDrawdownSizingLimit,
-                                 true, safeModeMaxPositionsPerSymbol, m_config.portfolioMaxPositionsPerSymbol,
+                                 true, safeModeMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
 
@@ -3541,6 +3540,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         int strategyIndices[];
         manager.GetLastSignalContributorIndices(strategyIndices);
         m_liveAuthority.SetStrategyManager(manager);
+        m_liveAuthority.SetStandaloneConfidenceFloor(m_candidateBuilder.EffectiveStandaloneConfidenceFloor(symbol));
         m_liveAuthority.Resolve(
         symbol, candidate.hasAIContributor, candidate.hasONNXContributor,
         candidate.hasIndicatorContributor, candidate.indicatorContributorCount,
@@ -3549,7 +3549,6 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         candidate.costScore, candidate.contributorSummary, strategyIndices,
         authority, cycleCorrId);
 
-        candidate.liveAuthorityAllowed = authority.allowed;
         // Batch 173: this multiplier now sets the shipped lot (see ScaleLotByLiveAuthority). It is
         // shrink-only, and a lot that drops under the broker minimum is refused loudly rather than
         // rounded back up, so the gate cannot be silently undone by lot normalization.

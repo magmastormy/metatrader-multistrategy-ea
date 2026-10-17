@@ -296,9 +296,6 @@ public:
     result.approved = false;
     result.adjustedLotSize = request.lotSize;
     result.severity = ERROR_LEVEL_ERROR;
-    // ZeroMemory() wipes the struct's confidenceMultiplier=1.0 default back to 0.0 and callers multiply
-    // confidence by it (StrategyBase.mqh:471), so it must be restored before any early return.
-    result.confidenceMultiplier = 1.0;
 
     // Fail-closed: this returns before any collaborator is read (the owner wires them in its constructor body,
     // WireValidationPipeline). Caveat: the Run() wrapper still touches m_validationStats and m_host on this path.

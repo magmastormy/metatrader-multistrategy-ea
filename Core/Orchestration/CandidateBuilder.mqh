@@ -41,7 +41,6 @@ struct STradeCandidate
     double costScore;
     double liveAuthorityRiskMult;
     string liveAuthorityReason;
-    bool liveAuthorityAllowed;
     bool hasAIContributor;
     bool hasONNXContributor;
     bool hasNeuralNetContributor;
@@ -53,7 +52,7 @@ struct STradeCandidate
                        takeProfitPips(0), lotSize(0), riskPercent(0), confidence(0),
                        confluence(0), qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
                        costScore(0), liveAuthorityRiskMult(1.0),
-                       liveAuthorityAllowed(false), hasAIContributor(false), hasONNXContributor(false),
+                       hasAIContributor(false), hasONNXContributor(false),
                        hasNeuralNetContributor(false),
                        hasIndicatorContributor(false), indicatorContributorCount(0),
                        predictionId("") {}
@@ -83,7 +82,6 @@ private:
     double                      m_aiDrawdownSizingLimit;
     bool                        m_antiMartingaleEnabled;
     int                         m_maxPositionsPerSymbol;
-    int                         m_portfolioMaxPositionsPerSymbol;
     
     double                      m_minRRByCluster[];
     
@@ -209,7 +207,7 @@ public:
             m_minRRDefault(2.0), m_minRRMeanReversion(1.5), m_maxRiskPerTrade(5.0),
             m_maxSpreadToTpRatio(0.15), m_minLotRiskMultiplier(1.5),
             m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
-            m_maxPositionsPerSymbol(0), m_portfolioMaxPositionsPerSymbol(0),
+            m_maxPositionsPerSymbol(0),
             m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
                 m_aiStandaloneRelaxedConfidence(0.65), m_symbolCycleCount(0),
                 m_symbolHybridGateRelaxedCount(0),
@@ -332,7 +330,7 @@ public:
     
     void Configure(double minRRDefault, double minRRMeanRev, double maxRiskPerTrade,
                    double maxSpreadTpRatio, double minLotRiskMult, double aiDDSizingLimit,
-                   bool antiMartingale, int maxPosPerSymbol, int portfolioMaxPosPerSymbol,
+                   bool antiMartingale, int maxPosPerSymbol,
                    int hybridRelaxCycles, double aiStandaloneConf, double aiRelaxedConf)
     {
         m_minRRDefault = minRRDefault;
@@ -343,10 +341,16 @@ public:
         m_aiDrawdownSizingLimit = aiDDSizingLimit;
         m_antiMartingaleEnabled = antiMartingale;
         m_maxPositionsPerSymbol = maxPosPerSymbol;
-        m_portfolioMaxPositionsPerSymbol = portfolioMaxPosPerSymbol;
         m_hybridGateRelaxAfterCycles = hybridRelaxCycles;
         m_aiStandaloneMinConfidence = aiStandaloneConf;
         m_aiStandaloneRelaxedConfidence = aiRelaxedConf;
+    }
+
+    // The resolver owns the bar it compares; handing it this symbol's floor is what keeps
+    // [HYBRID-GATE-RELAXED] and [AUTHORITY-REJECT] naming the same number.
+    double EffectiveStandaloneConfidenceFloor(const string symbol)
+    {
+        return GetHybridGateRelaxed(symbol) ? m_aiStandaloneRelaxedConfidence : m_aiStandaloneMinConfidence;
     }
     
         bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
@@ -734,8 +738,7 @@ public:
     bool ResolveLiveAuthority(const string symbol, STradeCandidate &candidate, double &proposedRisk)
     {
         // Stub: always authorizes at 1.0 and returns true, so it gates nothing. EAOrchestrator
-        // overwrites these three fields from CLiveAuthorityResolver after BuildCandidate returns.
-        candidate.liveAuthorityAllowed = true;
+        // overwrites these two fields from CLiveAuthorityResolver after BuildCandidate returns.
         candidate.liveAuthorityRiskMult = 1.0;
         candidate.liveAuthorityReason = "AUTHORIZED";
         return true;

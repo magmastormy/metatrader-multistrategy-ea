@@ -429,7 +429,6 @@ struct SValidationResult
     double correlationRisk;
     bool requiresAdjustment;       // Whether adjustment is required
     ENUM_ERROR_LEVEL severity;
-    double confidenceMultiplier;   // Confidence adjustment multiplier (1.0 = no change)
     
     // Additional fields used by AdvancedSignalValidator
     bool isValid;                  // Signal validity
@@ -452,7 +451,7 @@ struct SValidationResult
         correlationRisk(0.0),
         requiresAdjustment(false),
         severity(ERROR_LEVEL_INFO),
-        confidenceMultiplier(1.0),
+
         isValid(false),
         qualityScore(0.0),
         reason(""),
@@ -474,7 +473,7 @@ struct SValidationResult
         correlationRisk(other.correlationRisk),
         requiresAdjustment(other.requiresAdjustment),
         severity(other.severity),
-        confidenceMultiplier(other.confidenceMultiplier),
+
         isValid(other.isValid),
         qualityScore(other.qualityScore),
         reason(other.reason),
@@ -497,7 +496,7 @@ struct SValidationResult
         correlationRisk = other.correlationRisk;
         requiresAdjustment = other.requiresAdjustment;
         severity = other.severity;
-        confidenceMultiplier = other.confidenceMultiplier;
+
         isValid = other.isValid;
         qualityScore = other.qualityScore;
         reason = other.reason;

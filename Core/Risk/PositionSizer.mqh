@@ -37,7 +37,6 @@ struct SPositionSizingParams
     bool useCorrelationAdjustment;           // Correlation can only reduce size
         double correlationBlockThreshold;        // Correlation threshold to block trade
         double correlationReduceThreshold;       // Correlation threshold to reduce size
-        double correlationAdjustment;
         double kellyWinRate;
         double kellyPayoffRatio;
         double kellyFraction;                    // Kelly fraction (0.25 = quarter Kelly)

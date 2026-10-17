@@ -128,8 +128,8 @@ public:
         if(clamped != "")
             PrintFormat("[AUTHORITY-CONFIG] clamped to documented floor, promotion may not be loosened by an input that has never been exercised: %s", clamped);
         // Effective values, so a live session can confirm the inputs reached the gate at all.
-        PrintFormat("[AUTHORITY-CONFIG] effective: samples=%d expectancyR=%.3f profitFactor=%.2f costScore=%.2f readiness=%.2f context=%.2f bootstrapMult=%.2f promotedMult=%.2f",
-                    samples, expR, pf, cost, ready, ctx, boot, promo);
+        PrintFormat("[AUTHORITY-CONFIG] effective: samples=%d expectancyR=%.3f profitFactor=%.2f costScore=%.2f readiness=%.2f context=%.2f bootstrapMult=%.2f promotedMult=%.2f standaloneConf=%.3f",
+                    samples, expR, pf, cost, ready, ctx, boot, promo, aiStandaloneConf);
 
         m_effectiveEAMode = eaMode;
         m_aiStandaloneMinConfidence = aiStandaloneConf;
@@ -142,6 +142,15 @@ public:
         m_authorityMinReadinessScore = ready;
         m_authorityMinContextScore = ctx;
         m_aiPromotedRiskMultiplier = promo;
+    }
+
+    // The hybrid gate opens per symbol once that symbol's committee has produced no indicator signal for
+    // InpHybridGateRelaxAfterCycles, and the builder owns that state. The orchestrator hands the resulting
+    // floor here before each Resolve, so the number [HYBRID-GATE-RELAXED] prints is the one actually tested.
+    void SetStandaloneConfidenceFloor(const double confidenceFloor)
+    {
+        if(confidenceFloor > 0.0)
+            m_aiStandaloneMinConfidence = confidenceFloor;
     }
     
             void Resolve(const string symbol, bool hasAIContributor, bool hasONNXContributor,

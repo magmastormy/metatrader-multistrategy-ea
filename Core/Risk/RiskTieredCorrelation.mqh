@@ -7,21 +7,18 @@
 #include "PortfolioRiskManager.mqh"
 #include "CorrelationEngine.mqh"
 
-// Only m_correlationThreshold governs a decision: CRiskValidationPipeline forwards here rather
-// than enforcing its own limits, and the reduce/block pair is written from config but never read.
+// Only m_correlationThreshold governs a decision here: CRiskValidationPipeline enforces the reduce/block
+// tiers from its own config copy, so holding a second unread pair of them was a second definition of one
+// threshold (Batch 38's rule).
 class CRiskTieredCorrelation
 {
 private:
     double m_correlationThreshold;        // 0-1 scale
-    double m_correlationReduceThreshold;  // 0-1 scale
-    double m_correlationBlockThreshold;   // 0-1 scale
     CPortfolioRiskManager* m_portfolioRiskManager;  // Non-owning, set from URM
 
 public:
     CRiskTieredCorrelation() :
         m_correlationThreshold(0.7),
-        m_correlationReduceThreshold(0.4),
-        m_correlationBlockThreshold(0.7),
         m_portfolioRiskManager(NULL)
     {
     }
@@ -31,14 +28,10 @@ public:
         // No owned resources.
     }
 
-    //--- Thresholds are pushed in by URM (constructor and Initialize()); nothing here re-reads config.
-    void SetThresholds(const double threshold,
-                       const double reduceThreshold,
-                       const double blockThreshold)
+    //--- Pushed in by URM (constructor and Initialize()); nothing here re-reads config.
+    void SetThresholds(const double threshold)
     {
         m_correlationThreshold = threshold;
-        m_correlationReduceThreshold = reduceThreshold;
-        m_correlationBlockThreshold = blockThreshold;
     }
 
     //--- Set once from URM's constructor; stable because URM holds the portfolio manager by value.

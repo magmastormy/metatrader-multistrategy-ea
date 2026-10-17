@@ -1705,6 +1705,23 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 225 Inputs That Reached a Printer, and State Nobody Read (2026-10-17)
+
+- **`[HYBRID-GATE-RELAXED]` / `[HYBRID-GATE-RESTORED]` are now statements about the gate.** Read
+  `[AUTHORITY-REJECT] ... LOW_CONFIDENCE_x<y` beside them: `y` is the floor in force for that symbol, so a
+  relaxed symbol shows 0.60 and a strict one 0.65. Before Batch 225 those two lines described a change the
+  resolver never made, and `y` was always the configured value.
+- **`[AUTHORITY-CONFIG] effective:` ends in `standaloneConf=`** - the input-to-gate confirmation this section
+  asks for on every control, added because the relaxed half of the same control had been silently dead.
+- **One per-symbol cap, not two.** `InpPortfolioMaxPositionsPerSymbol` is gone from the input list; the
+  governing number has always been `InpMaxPositionsPerSymbol` and `[CANDIDATE-BUILDER] ... per-symbol limit
+  reached: n >= m` prints it. A journal that shows a per-symbol refusal at 3 with the dialog reading 5 is a
+  pre-225 binary.
+- **A removed footgun:** `SValidationResult.confidenceMultiplier` existed so `StrategyBase` could scale
+  confidence by the gate's answer. The gate only ever wrote 1.0, and `ZeroMemory` had to be undone by hand at
+  the top of every validation or confidence went to zero. Both the field and the multiply are gone.
+
+
 ## Batch 224 Scope of Two Governance Buckets, and the Reason Field That Was Never Written (2026-10-17)
 
 - **`[RISK-FAMILY-POS] family=DERIV_UNKNOWN` is no longer possible.** If a journal shows a family refusal on

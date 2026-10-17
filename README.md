@@ -632,6 +632,23 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 225: an input that only moved a log line, plus four pieces of state nothing read
+
+`InpAIStandaloneRelaxedConfidence = 0.60` is the bar the EA is supposed to fall back to when a symbol's
+committee has produced no indicator signal for `InpHybridGateRelaxAfterCycles` scans. `[HYBRID-GATE-RELAXED]`
+printed "AI threshold 0.650 -> 0.600" and the gate tested 0.650 anyway: the number that binds lives in
+`CLiveAuthorityResolver`, and the relaxed value reached only a print statement. The builder's per-symbol state
+now feeds the resolver before each decision, so the relaxed bar is real - which means AI-standalone entries on
+indicator-quiet symbols at 0.60-0.65 confidence, previously refused, are now admitted. `[AUTHORITY-CONFIG]`
+reports `standaloneConf=` at init so you can see the input landed.
+
+Deleted as unread: `InpPortfolioMaxPositionsPerSymbol` (a second per-symbol cap, tighter than
+`InpMaxPositionsPerSymbol = 5` and never consulted - 5 was always the real limit), `CRiskTieredCorrelation`'s
+reduce/block threshold copies (the pipeline enforces those tiers), `SValidationResult.confidenceMultiplier`
+(only ever written 1.0 while a caller multiplied confidence by it), `SPositionSizingParams.correlationAdjustment`
+and `STradeCandidate.liveAuthorityAllowed`. Each removal is state the code kept alive so a reader could believe
+a control existed.
+
 ### Batch 224: a cap that applied to the wrong symbols, and refusals that did not say why
 
 The per-family position limit counted `DERIV_UNKNOWN` - the answer `DetectFamily` gives to every symbol that

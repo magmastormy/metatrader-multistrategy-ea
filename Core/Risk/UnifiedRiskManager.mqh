@@ -503,10 +503,9 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.enableAuditLogging = true;
     m_config.auditLogFile = "UnifiedRiskValidation.log";
 
-    // CRiskTieredCorrelation keeps its own copy of the thresholds; the portfolio-manager pointer stays valid for URM's lifetime.
-    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
-                                      m_config.correlationReduceThreshold,
-                                      m_config.correlationBlockThreshold);
+    // CRiskTieredCorrelation keeps its own copy of the entry threshold; the portfolio-manager pointer stays
+    // valid for URM's lifetime. The reduce/block tiers are enforced by the pipeline from its config copy.
+    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold);
     m_tieredCorrelation.SetPortfolioRiskManager(&m_portfolioRiskManager);
 
     // Wired here, not in Initialize(), so ValidateTradeRequest can never dereference a NULL collaborator.
@@ -596,10 +595,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                     m_envelopeMaxPositionsSameBase);
     }
 
-    // Re-synced after clamping so CRiskTieredCorrelation never sees unclamped thresholds.
-    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
-                                      m_config.correlationReduceThreshold,
-                                      m_config.correlationBlockThreshold);
+    // Re-synced after clamping so CRiskTieredCorrelation never sees an unclamped threshold.
+    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold);
 
     if(!m_portfolioRiskManager.Initialize(m_config.maxPortfolioRiskPercent, m_config.correlationThreshold))
     {

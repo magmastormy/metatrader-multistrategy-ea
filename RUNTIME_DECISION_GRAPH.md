@@ -339,6 +339,33 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 225: The Relaxed AI Floor Reached the Log and Not the Gate (2026-10-17)
+
+`CCandidateBuilder::BuildCandidate` owns the per-symbol hybrid gate flag. Before this batch it read
+`m_aiStandaloneRelaxedConfidence` only inside `[HYBRID-GATE-RELAXED]` and its JSON twin; the confidence bar
+applied to an AI-standalone candidate was `CLiveAuthorityResolver::m_aiStandaloneMinConfidence`, configured
+once from `m_config.aiStandaloneMinConfidence` (`LiveAuthorityResolver.mqh:215`, or a hardcoded 0.55 when an
+indicator contributed). Now:
+
+```
+BuildCandidate  ->  sets/reads the relaxed flag per symbol
+EAOrchestrator  ->  m_liveAuthority.SetStandaloneConfidenceFloor(
+                        m_candidateBuilder.EffectiveStandaloneConfidenceFloor(symbol))
+Resolve         ->  minConfidence = m_aiStandaloneMinConfidence   (0.60 relaxed, 0.65 strict, 0.55 with indicator support)
+```
+
+Net effect: AI-standalone candidates at 0.60-0.65 confidence on a symbol with no indicator contributor for
+`InpHybridGateRelaxAfterCycles` scans are admitted instead of refused. `[AUTHORITY-CONFIG] effective:` gained
+`standaloneConf=`; `[AUTHORITY-REJECT] ... LOW_CONFIDENCE_` now names the floor actually tested.
+
+Dead state removed: `InpPortfolioMaxPositionsPerSymbol` (input, config field, `Configure` argument,
+`m_portfolioMaxPositionsPerSymbol` - zero readers, duplicating the live `InpMaxPositionsPerSymbol` cap),
+`CRiskTieredCorrelation::m_correlationReduceThreshold`/`m_correlationBlockThreshold` (pushed from config, never
+read; the pipeline enforces both tiers), `SValidationResult::confidenceMultiplier` (sole writer set it to 1.0;
+sole reader multiplied confidence by it), `SPositionSizingParams::correlationAdjustment`, and
+`STradeCandidate::liveAuthorityAllowed`.
+
+
 ## Batch 224: Position-Governance Buckets Scoped Wrong, and Gate Answers Thrown Away (2026-10-17)
 
 | Path | What was wrong | Change |
@@ -1679,8 +1706,9 @@ reader searching a journal for an answer that cannot exist.
   - `[SCALP-LOT-MIN]` — Scalp lot below minimum
   - `[SCALP-COST-REJECTED]` — Scalp cost too high
   - `[SCALP-COST-OK]` — Scalp cost viable
-  - `[HYBRID-GATE-RELAXED]` — AI threshold lowered
-  - `[HYBRID-GATE-RESTORED]` — AI threshold restored
+  - `[HYBRID-GATE-RELAXED]` / `[HYBRID-GATE-RESTORED]` - the per-symbol AI-standalone bar moving
+    between `InpAIStandaloneRelaxedConfidence` and `InpAIStandaloneMinConfidence`. Since Batch 225 the resolver
+    applies what these lines print; before it the relaxed value reached only the print.
   - `[RISK-BUDGET-PNL-ADJUSTED]` — Risk budget adjusted by P&L
   - `[KELLY-ADJUSTMENT]` — Bayesian Kelly lot adjustment
   - `[EQUITY-CURVE-BELOW]` — Equity below EMA

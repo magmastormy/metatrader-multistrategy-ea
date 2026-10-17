@@ -1414,6 +1414,14 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **An input either reaches the gate or it goes** (Batch 225). `InpAIStandaloneRelaxedConfidence` fed a log
+  line while the resolver tested its own configured floor; `InpPortfolioMaxPositionsPerSymbol` and
+  `CRiskTieredCorrelation`'s reduce/block copies were state that existed so a control could look configured.
+  The relaxed floor is now handed to the resolver per symbol per scan, and the three unread holders are
+  deleted rather than documented as dead. `AGENTS.md` section 4.4's warning - a factory path can still contain
+  configuration that no longer runs - is the reason each input gets checked to its consuming comparison, not
+  just to its assignment.
+
 - **A governance bucket must contain what its name says** (Batch 224). `DERIV_UNKNOWN` is the fallback for
   "this symbol is not a Deriv synthetic", and the per-family position cap counted it as a family, so the
   entire non-Deriv half of the universe shared one limit that no input names. Same test applied to the risk

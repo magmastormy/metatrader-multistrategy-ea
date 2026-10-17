@@ -467,10 +467,6 @@ bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &reque
         return false;
     }
 
-    // A non-positive confidenceMultiplier would silently zero an approved signal's confidence.
-    // Anything <= 0 (e.g. a ZeroMemory'd field) is treated as 1.0 = no change.
-    double confMult = (result.confidenceMultiplier > 0.0) ? result.confidenceMultiplier : 1.0;
-    confidence *= confMult;
     return true;
 }
 

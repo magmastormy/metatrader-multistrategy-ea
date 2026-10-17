@@ -406,7 +406,6 @@ input bool     InpEnableStructureFilter = true;
 input bool     InpEnableLiquidityFilter = true;
 input int      InpDormancyStrikeBars = 3;
 input int      InpDormancyCooldownMinutes = 30;
-input int      InpPortfolioMaxPositionsPerSymbol = 3;
 input int      InpMaxPositionsSameBase = 3;
 input bool     InpEnableClusterRiskGovernance = true;
 input bool     InpEnableClusterMutex = true;
@@ -1339,7 +1338,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.enableLiquidityFilter = InpEnableLiquidityFilter;
     config.dormancyStrikeBars = MathMax(1, InpDormancyStrikeBars);
     config.dormancyCooldownMinutes = MathMax(1, InpDormancyCooldownMinutes);
-    config.portfolioMaxPositionsPerSymbol = InpPortfolioMaxPositionsPerSymbol;
     config.maxPositionsSameBase = InpMaxPositionsSameBase;
     config.enableClusterRiskGovernance = InpEnableClusterRiskGovernance;
     config.enableClusterMutex = InpEnableClusterMutex;

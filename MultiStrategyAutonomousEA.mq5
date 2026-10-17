@@ -63,7 +63,6 @@ input int      InpMaxPositionsPerSymbol = 5;
 input int      InpMaxPositionsPerSymbolMin = 1;
 input int      InpMaxTradeSendsPerCycle = 3;
 input int      InpMinSecondsBetweenTrades = 10;
-input int      InpPortfolioMaxPositionsPerSymbol = 3;
 input int      InpMaxPositionsSameBase = 3;
 
 input group "Symbol Universe & Liquidity";
@@ -679,7 +678,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.enableLiquidityFilter = InpEnableLiquidityFilter;
     config.dormancyStrikeBars = MathMax(1, InpDormancyStrikeBars);
     config.dormancyCooldownMinutes = MathMax(1, InpDormancyCooldownMinutes);
-    config.portfolioMaxPositionsPerSymbol = InpPortfolioMaxPositionsPerSymbol;
     config.maxPositionsSameBase = InpMaxPositionsSameBase;
     config.enableClusterRiskGovernance = InpEnableClusterRiskGovernance;
     config.enableClusterMutex = InpEnableClusterMutex;
