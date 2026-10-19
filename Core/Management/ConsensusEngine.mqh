@@ -57,8 +57,6 @@ public:
                                                                     ENUM_SIGNAL_EVAL_MODE evalMode);
     ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence,
                                                ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode,
-                                            double &outConfidence, int &outConfluence, string &outReason);
 
     void SyncEnabledWithRegistry();
 
@@ -88,8 +86,6 @@ private:
                                                        ENUM_SIGNAL_EVAL_MODE evalMode);
     ENUM_TRADE_SIGNAL EvaluateConsensusProbeOnlyInternal(const string symbol, double &confidence, int &confluence,
                                                          ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL TryFallbackSoloSignalInternal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode,
-                                                    double &outConfidence, int &outConfluence, string &outReason);
     void CalculateEffectiveQuorumParamsInternal(
         const string symbol,
         const int activeLiveStrategies,
@@ -313,89 +309,6 @@ bool CConsensusEngine::IsTrendingRegime()
 
     // ADX unavailable: reported as ranging, not as blocked
     return false;
-}
-
-// Solo fallback when consensus abstains. Dead path: the manager's TryFallbackSoloSignal forwarder has no caller.
-ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
-                                                          ENUM_SIGNAL_EVAL_MODE evalMode,
-                                                          double &outConfidence,
-                                                          int &outConfluence,
-                                                          string &outReason)
-{
-    if(m_src == NULL)
-    {
-        outReason = "no_solo_candidates";
-        return TRADE_SIGNAL_NONE;
-    }
-
-    if(m_src.GetPipelineConst() != NULL)
-    {
-        return TryFallbackSoloSignalInternal(symbol, evalMode, outConfidence, outConfluence, outReason);
-    }
-
-    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
-    double bestScore = -1.0;
-    string bestStrategy = "";
-
-    int strategyCount = m_src.GetStrategyCount();
-    CStrategyRegistry* strategyRegistry = m_src.GetStrategyRegistryConst();
-
-    for(int i = 0; i < strategyCount; i++)
-    {
-        IStrategy* entryStrategy = m_src.GetStrategyPtr(i);
-        if(!m_src.IsStrategyEnabled(i) || entryStrategy == NULL)
-            continue;
-
-        ENUM_STRATEGY_TYPE stratType = entryStrategy.GetType();
-        bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
-
-        if(isAI && strategyRegistry != NULL && strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
-            continue;
-
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = entryStrategy.GetSignal(stratConf);
-
-        if(signal == TRADE_SIGNAL_NONE)
-            continue;
-
-        double weight = m_src.GetStrategyWeight(i);
-        double participation = GetStrategyParticipationMultiplier(i);
-
-        // Scores are pinned neutral on this path: only confidence * weight * participation decides.
-        double readinessScore = 0.5;
-        double contextScore = 0.5;
-        double costScore = 0.5;
-        double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
-        double score = stratConf * weight * participation * qualityMultiplier;
-
-        double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
-        if(stratConf < minSoloConfidence)
-        {
-            PrintFormat("[CONSENSUS-SOLO-SKIP] %s | %s conf=%.2f < min=%.2f",
-                        symbol, m_src.GetStrategyName(i), stratConf, minSoloConfidence);
-            continue;
-        }
-
-        if(score > bestScore)
-        {
-            bestScore = score;
-            bestSignal = signal;
-            bestStrategy = m_src.GetStrategyName(i);
-            outConfidence = MathMin(0.85, stratConf * 0.9); // Slight penalty for solo
-            outConfluence = 1;
-            outReason = "solo_" + m_src.GetStrategyName(i);
-        }
-    }
-
-    if(bestSignal != TRADE_SIGNAL_NONE)
-    {
-        PrintFormat("[CONSENSUS-SOLO-SELECT] %s | Selected %s signal=%s score=%.3f conf=%.2f",
-                    symbol, bestStrategy, EnumToString(bestSignal), bestScore, outConfidence);
-        return bestSignal;
-    }
-
-    outReason = "no_solo_candidates";
-    return TRADE_SIGNAL_NONE;
 }
 
 // Regime gate values: 0.0 = category has no edge here, vote hard-disabled; 1.0 = allowed; 0.25-0.40 = strongly deweighted.
@@ -1298,124 +1211,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusProbeOnlyInternal(const str
     CJsonLogger::LogPerformance("EnterpriseStrategyManager", "EvaluateConsensusProbeOnlyInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
 
     return probeSignal;
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string symbol,
-                                                                  ENUM_SIGNAL_EVAL_MODE evalMode,
-                                                                  double &outConfidence,
-                                                                  int &outConfluence,
-                                                                  string &outReason)
-{
-    // Best solo signal at relaxed thresholds; reachable only through the uncalled TryFallbackSoloSignal.
-
-    ulong startTime = GetMicrosecondCount();
-
-    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
-    double bestScore = -1.0;
-    string bestStrategy = "";
-    double bestConfidence = 0.0;
-
-    if(m_src == NULL)
-    {
-        outReason = "no_solo_candidates";
-        return TRADE_SIGNAL_NONE;
-    }
-
-    int strategyCount = m_src.GetStrategyCount();
-    CUnifiedSignalPipeline* pipeline = m_src.GetPipelineConst();
-    CStrategyRegistry* strategyRegistry = m_src.GetStrategyRegistryConst();
-
-    for(int i = 0; i < strategyCount; i++)
-    {
-        IStrategy* entryStrategy = m_src.GetStrategyPtr(i);
-        if(!m_src.IsStrategyEnabled(i) || entryStrategy == NULL)
-            continue;
-
-        ENUM_STRATEGY_TYPE stratType = entryStrategy.GetType();
-        bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
-
-        if(isAI && strategyRegistry != NULL && strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
-            continue;
-
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = entryStrategy.GetSignal(stratConf);
-
-        if(signal == TRADE_SIGNAL_NONE)
-            continue;
-
-        bool passedPipeline = true;
-        double filteredConf = stratConf;
-        ENUM_TRADE_SIGNAL filteredSignal = signal;
-
-        if(pipeline != NULL)
-        {
-            filteredSignal = pipeline.ProcessSignal(entryStrategy, symbol, m_src.GetStrategyTimeframe(i), filteredConf);
-            if(filteredSignal == TRADE_SIGNAL_NONE)
-            {
-                // Solo fallback keeps pipeline-filtered signals; the flag only gates the boost below
-                passedPipeline = false;
-            }
-            else
-            {
-                signal = filteredSignal;
-                stratConf = filteredConf;
-            }
-        }
-
-        double weight = m_src.GetStrategyWeight(i);
-        double participation = GetStrategyParticipationMultiplier(i);
-        double reliability = GetStrategyReliabilityMultiplier(i);
-
-        double readinessScore = m_src.GetStrategyReadinessScore(i);
-        double contextScore = m_src.GetStrategyContextScore(i);
-        double costScore = m_src.GetStrategyCostScore(i);
-        double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
-        double score = stratConf * weight * participation * reliability * qualityMultiplier * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
-
-        double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
-        if(stratConf < minSoloConfidence)
-        {
-            PrintFormat("[CONSENSUS-SOLO-SKIP] %s | %s conf=%.2f < min=%.2f",
-                        symbol, m_src.GetStrategyName(i), stratConf, minSoloConfidence);
-            continue;
-        }
-
-        if(passedPipeline)
-        {
-            score *= 1.1; // 10% boost for pipeline-validated signals
-        }
-
-        if(score > bestScore)
-        {
-            bestScore = score;
-            bestSignal = signal;
-            bestStrategy = m_src.GetStrategyName(i);
-            bestConfidence = stratConf;
-        }
-    }
-
-    if(bestSignal != TRADE_SIGNAL_NONE)
-    {
-        outConfidence = MathMin(0.85, bestConfidence * 0.9); // Slight penalty for solo
-        outConfluence = 1;
-        outReason = "solo_" + bestStrategy;
-
-        PrintFormat("[CONSENSUS-SOLO-SELECT] %s | Selected %s signal=%s score=%.3f conf=%.2f | pipeline=%s",
-                    symbol, bestStrategy, EnumToString(bestSignal), bestScore, outConfidence,
-                    (pipeline != NULL ? "yes" : "no"));
-
-        ulong elapsed = GetMicrosecondCount() - startTime;
-        CJsonLogger::LogPerformance("EnterpriseStrategyManager", "TryFallbackSoloSignalInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
-
-        return bestSignal;
-    }
-
-    outReason = "no_solo_candidates";
-
-    ulong elapsed = GetMicrosecondCount() - startTime;
-    CJsonLogger::LogPerformance("EnterpriseStrategyManager", "TryFallbackSoloSignalInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
-
-    return TRADE_SIGNAL_NONE;
 }
 
 #endif // CONSENSUS_ENGINE_MQH

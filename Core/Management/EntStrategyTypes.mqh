@@ -53,11 +53,6 @@ struct StrategyEntry
     datetime disabledUntil;
     datetime lastUpdate;
 
-    // Consensus component scores (populated by pipeline/consensus engine)
-    double participation;        // Participation multiplier [0-1]
-    double readinessScore;
-    double contextScore;
-    double costScore;
     bool isProbeEligible;        // Eligible for intrabar probe voting
 
     double regimePerformance[5];

@@ -1705,6 +1705,28 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 230 An Unreachable Fallback and the State Only It Read (2026-10-19)
+
+- **Reachability:** `TryFallbackSoloSignal` on the manager had zero call sites, the engine's method of the same
+  name was reachable only through it, and `TryFallbackSoloSignalInternal` only through that. The chain is gone
+  (242 lines, four files) rather than left as a second place a solo entry could appear to come from.
+- **State removed with it:** three `CStrategyMgrRoster` getters and the three `CEnterpriseStrategyManager`
+  forwarders behind them, and the four `SStrategyEntry` fields they read (`participation`, `readinessScore`,
+  `contextScore`, `costScore`). None of the four had a writer anywhere in the tree, so the fallback's quality
+  ranking was arithmetic on struct defaults - which is how a path can be both unreachable and, if revived as
+  written, permanently refusing.
+- **State kept:** `SConsensusDecisionContext.readinessScore / contextScore / costScore` (written at
+  `ConsensusEngine.mqh:1029-1031` from pipeline evidence) and `SPipelineEvidence`'s own scores. Those are the
+  Batch 205 sizing inputs and the only live readers of those three quantities.
+- **Lifecycle:** no position, ticket, handle or deinit change; `CIndicatorManager::DestroyInstance()` still runs
+  (AGENTS.md §3.5).
+- **Log surface:** `[CONSENSUS-SOLO-SELECT]` and `[CONSENSUS-SOLO-SKIP]` existed only in the deleted fallback, so
+  they now have no printer anywhere in the tree. AGENTS.md §6 never listed them; the `RUNTIME_DECISION_GRAPH.md`
+  bullet that did was corrected in this batch and states that their absence proves nothing.
+- **Queued, not deleted here:** `m_sparseIntrabarMinReadyCoverage`, `m_allowSparseIntrabarSingleVoter` and
+  `m_intrabarSingleVoterMinConfidence` have zero readers but are fed from four operator inputs, two of them
+  printed by `[ENTERPRISE-CONFIG]`. Removing or wiring them changes admission, so it is an explicit next decision.
+
 ## Batch 229 Removing a Stored Collaborator Nothing Read, and Two Wrong Comment Claims (2026-10-19)
 
 - **State removed:** `CRiskValidationPipeline::m_adaptiveTuner` (declaration, constructor initialiser,

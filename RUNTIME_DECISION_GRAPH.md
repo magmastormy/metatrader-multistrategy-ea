@@ -339,6 +339,35 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 230: The Solo-Voter Fallback Had No Entry Point (2026-10-19)
+
+Edge removed from the graph — it was drawn but never walked:
+
+```
+consensus abstains -> CEnterpriseStrategyManager::TryFallbackSoloSignal   (zero call sites)
+                   -> CConsensusEngine::TryFallbackSoloSignal             (reachable only from the above)
+                   -> TryFallbackSoloSignalInternal                       (reachable only from that)
+```
+
+242 lines deleted across `ConsensusEngine.mqh`, `EnterpriseStrategyManager.mqh`, `StrategyMgrRoster.mqh`,
+`EntStrategyTypes.mqh`: both engine methods, the manager forwarder, the three roster getters and three manager
+forwarders behind it, and the four `SStrategyEntry` fields (`participation`, `readinessScore`, `contextScore`,
+`costScore`) that only that path read. **No line ever wrote those four fields**, so the fallback's own ranking
+(`readiness x 0.4 + context x 0.4 + cost x 0.2`) would have scored every candidate 0.0 - the proof it never
+produced a trade, and the reason re-wiring it as written was never an option.
+
+What the live graph keeps:
+
+- Sparse intrabar **probe** voting (`EvaluateConsensusProbeOnlyInternal`) - reachable, and it reads
+  `GetSparseIntrabarMinQuality` at `ConsensusEngine.mqh:1237` and `GetSparseIntrabarMinSupportRatio` at `:1282`.
+  A probe-eligible strategy needs confidence ≥ that quality floor to cast a probe vote; the winner needs
+  `winningVotes / probeEligibleCount ≥ minSupportRatio`. With 0.30 that admits a **single** winner whenever at
+  most three strategies are probe-eligible - which is why `InpAllowSparseIntrabarSingleVoter = false` describes a
+  rule nothing enforces (queued for an explicit delete-or-wire decision, not folded into this deletion).
+- Authority scoring for sizing (`SPipelineEvidence` -> `SConsensusDecisionContext.readinessScore/contextScore/
+  costScore`, averaged over the winning side at `:831-846`, published at `:1029-1031`) - the Batch 205 path,
+  untouched by this batch, and the only reader of those three quantities in the running tree.
+
 ## Batch 229: One Unused Collaborator, and Two Comment Claims That Were Wrong (2026-10-19)
 
 No decision edge changed. `CRiskValidationPipeline` no longer stores `CRiskAdaptiveTuner*` — field, constructor
@@ -1753,9 +1782,11 @@ reader searching a journal for an answer that cannot exist.
 
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`; a vetoed or emptied vote surfaces as
   `[CONSENSUS-VETOED]`, `[CONSENSUS-REGIME-VETO]` (Batch 204) or `[CONSENSUS-ABSTAIN]`.
-- Selection and rejection detail: `[CONSENSUS-REJECT]`, `[CONSENSUS-TIE]`, `[CONSENSUS-SOLO-SELECT]`,
-  `[CONSENSUS-SOLO-SKIP]`, `[CONSENSUS-FILTERED]`, `[CONSENSUS-PROBE]` / `[CONSENSUS-PROBE-DECISION]` /
-  `[CONSENSUS-PROBE-REJECT]`, `[CONSENSUS-DECISION]`.
+- Selection and rejection detail: `[CONSENSUS-REJECT]`, `[CONSENSUS-TIE]`, `[CONSENSUS-FILTERED]`,
+  `[CONSENSUS-PROBE]` / `[CONSENSUS-PROBE-DECISION]` /
+  `[CONSENSUS-PROBE-REJECT]`, `[CONSENSUS-DECISION]`. (`[CONSENSUS-SOLO-SELECT]` and `[CONSENSUS-SOLO-SKIP]`
+  were printed only by the unreachable fallback Batch 230 deleted, so they can no longer appear in a journal -
+  their absence is not evidence about solo candidates.)
 - Scan cadence: `[SCAN-POLICY]` once at init (Batch 212) and `[SCAN-BUDGET] mode= | evalBudget= | evaluations= |
   signalsGenerated= | pending=`, throttled inside `CSignalGenerator`. There is no intrabar budget split to log.
 - Dormancy: `[DORMANT-COOLDOWN]` on the park and on its expiry, `[DORMANT-REMOVED]` when a symbol leaves the list.

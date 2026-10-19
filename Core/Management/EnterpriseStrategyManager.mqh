@@ -109,9 +109,6 @@ private:
     //--- CStrategyStateReporter consumes this via GetStrategyIsLiveVoter().
     bool IsStrategyLiveVoter(const int strategyIndex) const;
 
-    // Fallback solo signal when all strategies abstain.
-    ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode, double &outConfidence, int &outConfluence, string &outReason);
-
     static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
 
     //--- Result type must be the top-level SPostConsensusValidation: a nested SValidationResult would
@@ -341,12 +338,6 @@ public:
            { return m_roster.GetStrategyIntrabarEligible(index); }
     bool   IsStrategyProbeEligible(const int index) const
            { return m_roster.IsStrategyProbeEligible(index); }
-    double GetStrategyReadinessScore(const int index) const
-           { return m_roster.GetStrategyReadinessScore(index); }
-    double GetStrategyContextScore(const int index) const
-           { return m_roster.GetStrategyContextScore(index); }
-    double GetStrategyCostScore(const int index) const
-           { return m_roster.GetStrategyCostScore(index); }
 
     int    GetIntrabarMinQuorum() const              { return m_quorumConfig.GetIntrabarMinQuorum(); }
     bool   IsIntrabarDynamicQuorumEnabled() const    { return m_quorumConfig.IsIntrabarDynamicQuorumEnabled(); }
@@ -1166,23 +1157,6 @@ IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
     return m_registryState.GetStrategyByName(name);
 }
-
-
-
-
-
-
-
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string symbol,
-                                       ENUM_SIGNAL_EVAL_MODE evalMode,
-                                       double &outConfidence,
-                                       int &outConfluence,
-                                       string &outReason)
-{
-    return m_consensusEngine.TryFallbackSoloSignal(symbol, evalMode, outConfidence, outConfluence, outReason);
-}
-
-
 
 bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
 {

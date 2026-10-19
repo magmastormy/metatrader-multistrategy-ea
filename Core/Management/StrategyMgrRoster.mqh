@@ -93,12 +93,6 @@ public:
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarEligible : false; }
     bool   IsStrategyProbeEligible(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].isProbeEligible : false; }
-    double GetStrategyReadinessScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].readinessScore : 0.0; }
-    double GetStrategyContextScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].contextScore : 0.0; }
-    double GetStrategyCostScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].costScore : 0.0; }
 
     //--- Writes the entry weight and pushes it to the strategy object, but deliberately
     //--- does NOT touch the health monitor.

@@ -1424,6 +1424,14 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   reads it at fourteen sites (six each for active risk and conservative mode) including the factor behind
   `ApplyPnlRiskAdjustment` - this removed a second reader, not a control.
 
+- **A dead path is proved by its inputs, not its caller** (Batch 230). The solo-voter fallback had no call site,
+  and on top of that the four `SStrategyEntry` fields its ranking formula read - `participation`,
+  `readinessScore`, `contextScore`, `costScore`, under a comment saying the pipeline populated them - had no
+  writer anywhere. So it was not a control waiting to be connected; connected as written, it would have scored
+  every candidate 0.0 and refused everything, quietly. 242 lines and six reader-only accessors deleted. The live
+  readers of those three quantities are `SPipelineEvidence` -> `SConsensusDecisionContext` (Batch 205), which is
+  what sizes a trade.
+
 - **A comment that miscounts a machine-read layout is a defect** (Batch 229). `MetaLabeler::BuildInput` fills
   `[0]`..`[25]` into an array `AI_MLP_INPUT` sizes at 26, and its header said "24 features"; a
   `WalkForwardValidator.mqh` header named a consumer that does not include it. Both corrected during the sweep

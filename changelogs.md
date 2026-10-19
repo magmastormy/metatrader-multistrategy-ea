@@ -8,7 +8,43 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
-### Batch 229: a risk pipeline holding a collaborator it never read, and 87 comment lines that listed what the code lists
+### Batch 230: the solo-voter fallback was unreachable, and four controls configured it
+
+#### The chain had no entry
+`CEnterpriseStrategyManager::TryFallbackSoloSignal` has no caller anywhere; the engine's
+`TryFallbackSoloSignal` is reached only through it, and `TryFallbackSoloSignalInternal` only through that. Its
+own comment said "Dead path" - the repository knew, and left 242 lines of it in the binary anyway. Deleted: both
+engine methods, the manager forwarder and its declaration, and the three roster getters plus the three manager
+forwarders behind it.
+
+The detail that proves it was never live rather than merely disconnected: the internal ranked every candidate by
+`readinessScore x 0.4 + contextScore x 0.4 + costScore x 0.2`, read through those getters from `SStrategyEntry`
+fields **no line in the tree ever wrote** - so every solo candidate scored 0.0 and would have been refused by its
+own thresholds. Wiring it as written would have shipped a fallback that cannot fire, which is the Batch 213/217
+lesson: revive a dead control and it silently does nothing, or worse. The four unread fields - `participation`,
+`readinessScore`, `contextScore`, `costScore`, under a comment claiming they are "populated by
+pipeline/consensus engine" - went with it.
+
+The live measurement path is untouched: Batch 205's authority bonuses read `SPipelineEvidence.readinessScore /
+contextScore / costScore` and average them into `SConsensusDecisionContext` (`ConsensusEngine.mqh:831-846`,
+`1029-1031`), which is what the candidate and the lot ladder consume.
+
+#### What still runs, and what is now queued
+The sparse-intrabar **probe** path (`EvaluateConsensusProbeOnlyInternal`) is live and reads
+`GetSparseIntrabarMinQuality` (per-voter confidence floor) and `GetSparseIntrabarMinSupportRatio` (winner share
+of probe-eligible strategies). Three quorum fields fed from operator inputs have zero readers and are the next
+batch: `m_sparseIntrabarMinReadyCoverage`, `m_allowSparseIntrabarSingleVoter`, `m_intrabarSingleVoterMinConfidence`.
+The first two are printed by `[ENTERPRISE-CONFIG]` as `sparse_ready=` and `sparse_single_voter=`, so the init log
+names controls that gate nothing - and `InpAllowSparseIntrabarSingleVoter = false` reads as "no single-voter
+entries" while the probe gate admits a lone winner whenever `1 / probeEligibleCount >= 0.30`, i.e. whenever at
+most three strategies are probe-eligible. Deleting or wiring those is an admission decision, not a cleanup, so it
+is recorded rather than bundled here.
+
+**Verification:** `sync_and_compile.ps1 -All` after the deletion - eight programs, each with its own `Result:`
+line, 0 errors / 0 warnings, script exit 0. No input, threshold or gate moved; the deleted path had no caller, so
+no candidate that used to reach the executor reaches it differently.
+
+### Batch 229: a risk pipeline holding a collaborator it never read, and 90 comment lines that restated what the code lists
 
 #### The eleventh pointer
 `CRiskValidationPipeline::Initialize` takes eleven pointers and stores all eleven; `m_adaptiveTuner` is read by

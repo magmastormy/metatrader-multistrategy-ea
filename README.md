@@ -632,6 +632,27 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 230: a 242-line fallback that could never be called, and the fields that only it read
+
+The consensus engine carried a "solo fallback" for the case where every strategy abstains. Nothing in the
+repository called it — the manager's forwarder had no caller, the engine's public method was reachable only
+through that, and the implementation only through that. Its comment already said *Dead path*. Gone: 242 lines
+across four files, plus three roster getters, three manager forwarders, and four `SStrategyEntry` fields
+(`participation`, `readinessScore`, `contextScore`, `costScore`) whose comment claimed the pipeline filled them.
+No line ever wrote those fields, which is the proof this was never a live control: had it been wired, every
+solo candidate would have scored 0.0 on its own quality formula and been refused. Your live authority
+measurements are unaffected — those come from pipeline evidence averaged into the consensus decision context
+(Batch 205), which is what sizes your lots.
+
+Still live and honoured: the intrabar **probe** path, gated by `InpSparseIntrabarMinQuality` and
+`InpSparseIntrabarMinSupportRatio`. What we found and did not touch: four more quorum inputs that reach no decision at all —
+`InpSparseIntrabarMinReadyCoverage`, `InpAllowSparseIntrabarSingleVoter`, and the pair
+`InpIntrabarSingleVoterMinConfidence` / `InpSyntheticLeanIntrabarSingleVoterMinConfidence` (both 0.95, both
+feeding one unread field). Two of them are printed at init as if they were settings, and the single-voter
+switch reads as "off" while a lone probe winner passes whenever three or fewer strategies are probe-eligible.
+Deleting or wiring those changes how many trades you get, so it is flagged for your call rather than decided in a
+cleanup.
+
 ### Batch 229: a risk collaborator nobody read, and 90 comment lines that restated the code
 
 `CRiskValidationPipeline` was handed eleven pointers and stored one — the adaptive risk tuner — that no line in
