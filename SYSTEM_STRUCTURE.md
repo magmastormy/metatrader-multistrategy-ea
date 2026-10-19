@@ -1176,7 +1176,7 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
 - AI adapters can be the sole tradable family when enabled. The *entry* vote is new-bar only (`EVAL_MODE_NEW_BAR` at
-  `EAOrchestrator.mqh:3464`/`:3493`); no entry path runs an intrabar scan (Batch 233).
+  `EAOrchestrator.mqh:3467`/`:3496`); no entry path runs an intrabar scan (Batch 233).
 - AI intrabar participation is *configured* per strategy (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) rather than hard-forced `OFF` at governance time — and since Batch 233 that field is stated as report-only: the stored policy gates no vote, and the AI adapters register with `fixedPolicy = LIVE` regardless of the input, because their catalog slot is `-1`.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
@@ -1433,9 +1433,23 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   readers of those three quantities are `SPipelineEvidence` -> `SConsensusDecisionContext` (Batch 205), which is
   what sizes a trade.
 
+- **A write-only table keeps only what a future decision needs** (Batch 234). The per-strategy timeframe table
+  (`SStrategyTimeframeConfig`, 23 slots) is read by nothing - `GetStrategyTimeframeConfig` has no caller on either
+  owner - so `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` are stored and never consulted, and
+  every strategy runs the chart timeframe its catalog row carries (`PERIOD_CURRENT`). What stayed is the carrier for
+  the per-strategy timeframe decision; what went is what could never be part of it: `intrabarEnabled` (a bool
+  restating the policy enum's fact, 20 writes and no reader), `GetStrategyIntrabarPolicyConfig` on both owners (no
+  caller; `GetIntrabarPolicyHelper` is the live per-slot reader), and config slot 20 still named "Exit Optimizer" for
+  a strategy Batch 207 deleted. `GetIntrabarPolicyHelper` is called with `CatalogPolicySlot(i)`, which names 14 of the
+  19 written rows; rows 9-13 (the five AI adapters) carry `siPolicyIndex = -1` and register a `fixedPolicy`, so their
+  stored policy has no consumer - kept because those strategies exist and the table is the timeframe carrier.
+  `[ENTERPRISE]` now prints `strategyTF=chart(...) | momentumScalpTF=...(stored,
+  unconsulted) candlestickTF=...(stored,unconsulted)` so the mismatch is visible at init rather than inferred from a
+  dialog.
+
 - **A field no branch reads must announce itself** (Batch 233). The eleven `InpIntrabarEligibility*` inputs still
   write a per-strategy intrabar policy, and after Batch 231 the only reader left is the registration print: the entry
-  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3464`/`:3493`, `SignalGenerator.mqh:109` says so outright), and
+  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3467`/`:3496`, `SignalGenerator.mqh:109` says so outright), and
   the one live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`), whose voter
   set is enabled + `liveVotingEnabled` + the regime veto - never the policy. Making it binding is one line and the
   *restrictive* direction, because eight indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` with no input at
@@ -1452,7 +1466,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   path is positional (`SetStrategyIntrabarPolicyConfig` from the `StrategyConfigBuilder` rows). What the sweep
   exposed and deliberately left alone: the stored `intrabarPolicy` is now read only by the strategy report's
   `Intrabar:` field, `GetStrategyIntrabarPolicyConfig` has no caller, and
-  `SStrategyTimeframeConfig::intrabarEnabled` is written 22 times and read nowhere - so the eleven
+  `SStrategyTimeframeConfig::intrabarEnabled` is written 20 times and read nowhere - so the eleven
   `InpIntrabarEligibility*` inputs gate no entry, and enforcing the stored policy would strip eight catalog rows
   whose `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF` from sub-bar voting. Restriction is operator policy
   (Batch 233); the one authority that remains is `intrabarPolicy`, the integer.

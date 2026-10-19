@@ -339,6 +339,27 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 234: The Per-Strategy Timeframe Table Is Still Write-Only, and Now Says So (2026-10-19)
+
+No decision edge changed. `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land only in
+`strategyTimeframeConfigs[].defaultTF/intrabarTF`, whose sole getter chain
+(`COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig` + the `EAOrchestrator.mqh:2056` wrapper) has no caller, so
+every strategy keeps running the chart timeframe from its catalog row (`timeframe = PERIOD_CURRENT`), which is what
+`[MOMENTUM] ... TF=` prints. Binding the table is task #65's operator decision - it moves indicator reads for two
+strategies on every symbol - so it is announced instead:
+
+- `[ENTERPRISE]` per symbol now carries `strategyTF=chart(<Period>) | momentumScalpTF=<value>(stored,unconsulted)
+  candlestickTF=<value>(stored,unconsulted)`.
+- Removed: `SStrategyTimeframeConfig::intrabarEnabled` (field, ctor init, 20 writes; a bool restating the policy
+  enum's fact, unread since Batch 231), `GetStrategyIntrabarPolicyConfig` on both owners (no caller - the live
+  per-slot reader is `GetIntrabarPolicyHelper`), and config slot 20 `"Exit Optimizer"` in both tables (Batch 207
+  deleted that strategy; no `CatalogPolicySlot` indexes 20). The table is 23 slots, 19 written; 3, 5, 6 and 20 keep
+  struct defaults, and of the 19 only the 14 indices the catalog names (0,1,2,4,7,8,14,15,16,17,18,19,21,22) reach a
+  reader - `GetIntrabarPolicyHelper` is called with `CatalogPolicySlot(i)`, and rows 9-13 (the five AI adapters) carry
+  `siPolicyIndex = -1`, so their stored policy is never consulted. `[CONFIG] Initialized 23 ...` prints
+  `strategyConfigCount`, which is set to `MAX_STRATEGY_CONFIGS`, so it counts the array, not the writes, and is
+  unchanged.
+
 ## Batch 233: The Intrabar Policy Is a Report Field (2026-10-19)
 
 No edge moved; the graph's missing edge is now named on the journal.
@@ -346,7 +367,7 @@ No edge moved; the graph's missing edge is now named on the journal.
 Verified order of reading:
 - `StrategyEntry::intrabarPolicy` has one reader - the registration line's `Intrabar:` field
   (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` on both owners has no caller.
-- The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3464`, `:3493`;
+- The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3467`, `:3496`;
   `SignalGenerator.mqh:109` states it), so no entry decision ever runs an intrabar scan.
 - The only live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263` (signal-reversal exit), whose voter
   set is `IsStrategyLiveVoter(i)` (enabled + `liveVotingEnabled`) plus the Batch 204 regime veto. The policy is not
@@ -370,7 +391,7 @@ No decision edge changed. `SStrategyEntry.intrabarEligible` - a boolean mirror o
 once Batch 231 removed the two policy-resolution copies - is deleted with its roster getter, manager forwarder,
 setter and both writes. `SetStrategyIntrabarPolicyByName` and its `...EligibilityByName` shim go too (manager +
 `CIntrabarPolicy` copies): declared, defined, forwarded, never called, because the live path is positional -
-`EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)` from the `StrategyConfigBuilder` rows.
+`EAOrchestrator.mqh:1975` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)` from the `StrategyConfigBuilder` rows.
 
 Log surface: `[EnterpriseStrategyManager] Intrabar policy updated: <name> => <policy>` has no emitter now, and never
 had one that could be reached - it printed only from the uncalled by-name method.
@@ -378,7 +399,7 @@ had one that could be reached - it printed only from the uncalled by-name method
 **The finding this batch leaves open (Batch 233).** With those copies gone, nothing on a decision path reads the
 stored intrabar policy: `GetStrategyIntrabarPolicyRaw` survives only as the argument to the strategy report's
 `Intrabar:` field (`StrategyRegistryState.mqh:128`), `GetStrategyIntrabarPolicyConfig` has no caller, and
-`SStrategyTimeframeConfig::intrabarEnabled` - the second output of the same eleven inputs, written 22 times in
+`SStrategyTimeframeConfig::intrabarEnabled` - the second output of the same eleven inputs, written 20 times in
 `StrategyConfigBuilder.mqh` - has **no reader at all**. So the eleven `InpIntrabarEligibility*` inputs gate no
 entry today, and every enabled live-voting strategy votes in the intrabar path. Enforcing the stored policy would
 remove eight rows whose `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF` (Statistical Arbitrage, FVG Scalper,

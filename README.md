@@ -632,6 +632,30 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 234: two timeframe inputs the EA never consults, now stated at startup
+
+`InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` both default to M5, and both land in a per-strategy
+timeframe table that nothing reads — its only getter chain (`GetStrategyTimeframeConfig`) has no caller. So Momentum
+and Candlestick run on the chart timeframe, which is exactly what their own startup lines print, and moving those
+inputs moves nothing.
+
+They were not quietly switched on, because that is strategy behaviour, not housekeeping: binding the table would move
+Momentum's scalp reads and Candlestick's intrabar reads to M5 on every symbol at once. That belongs with the
+per-symbol operating-timeframe decision, where you choose a timeframe per strategy on purpose.
+
+What shipped is the truth on the line you already read at init:
+
+```
+[ENTERPRISE] Manager initialized for EURUSD with 12 active strategies | profile=... |
+  strategyTF=chart(PERIOD_M1) | momentumScalpTF=PERIOD_M5(stored,unconsulted) candlestickTF=PERIOD_M5(stored,unconsulted)
+```
+
+Three pieces of residue went with it: `intrabarEnabled`, a boolean restating the intrabar-policy fact the policy enum
+already carries (20 writes, no reader); `GetStrategyIntrabarPolicyConfig` on both owners, declared, defined,
+forwarded, never called; and config slot 20, a row still named "Exit Optimizer" — a strategy whose catalog slot
+Batch 207 deleted and which nothing indexes any more. Behaviour is unchanged by construction: every deleted line wrote
+to storage no code read, or was a getter nothing called.
+
 ### Batch 233: your eleven intrabar eligibility inputs are a report field, and the journal now says so
 
 If you set `InpIntrabarEligibilityMeanReversion = OFF` you would expect Mean Reversion to stop voting inside a bar.

@@ -8,6 +8,50 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 234: the write-only timeframe table's residue, and the two timeframe inputs the EA never consults
+
+Batch 233 left the per-strategy timeframe table standing because it is the natural carrier for task #65 (give each
+symbol an explicit operating timeframe). This batch removes only what cannot be part of that future and announces
+what can.
+
+**Deleted.**
+- `SStrategyTimeframeConfig::intrabarEnabled` - field, constructor initialiser and 20 assignment lines in
+  `StrategyConfigBuilder.mqh`. It was a boolean restatement of the same `InpIntrabarEligibility* != OFF` fact the
+  policy enum already carries, with no reader since Batch 231. Two authorities for one quantity, one of them inert -
+  the Batch 38/215 shape.
+- `CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig` and the `CIntrabarPolicy` original. Declared,
+  defined, forwarded, never called: the live per-slot reader is `GetIntrabarPolicyHelper`, used at registration.
+- Config slot 20, name `"Exit Optimizer"`, in both the timeframe and intrabar tables. Batch 207 deleted that
+  strategy's catalog slot; no `CatalogPolicySlot` index names 20, so the row described nothing and defaulted to the
+  same values (`INTRABAR_POLICY_OFF`) its deletion leaves. The table is 23 slots (`MAX_STRATEGY_CONFIGS`) and 19 are
+  written after this; slots 3, 5, 6 and 20 keep struct defaults. Of the 19, only 14 are ever read: the sole reader is
+  `GetIntrabarPolicyHelper(CatalogPolicySlot(i))` at registration, and the catalog names 0,1,2,4,7,8,14,15,16,17,18,
+  19,21,22. Rows 9-13 - the five AI adapters - are written and never read because those rows carry `siPolicyIndex = -1`
+  and register a `fixedPolicy` instead. Kept: those five strategies exist, and the table is task #65's carrier, so
+  deleting them is a timeframe decision, not a cleanup.
+
+**Announced rather than wired.** `InpMomentumScalpTimeframe` (M5) and `InpCandlestickIntrabarTimeframe` (M5) flow
+only into `strategyTimeframeConfigs[].defaultTF/intrabarTF`, and the sole getter chain -
+`COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig` plus the `EAOrchestrator.mqh:2056` wrapper - has no
+caller. So every strategy runs the chart timeframe (catalog `timeframe = PERIOD_CURRENT`), and what a strategy
+reports is that: `[MOMENTUM] ... TF=` prints `m_timeframe`, the registered one. Making the table binding would move
+Momentum's scalp indicator reads from the chart timeframe to M5 and Candlestick's likewise - a change in which bars
+the strategies see, i.e. task #65's operator decision, not a cleanup. `[ENTERPRISE]` now says so at every symbol
+init:
+
+```
+[ENTERPRISE] Manager initialized for EURUSD with 12 active strategies | profile=... |
+  strategyTF=chart(PERIOD_M1) | momentumScalpTF=PERIOD_M5(stored,unconsulted) candlestickTF=PERIOD_M5(stored,unconsulted)
+```
+
+Also corrected in this batch's reading: Batch 233 said `intrabarEnabled` was written 22 times; it is 20 assignment
+sites plus the field and its constructor initialiser.
+
+**Verification:** `sync_and_compile.ps1 -All` after the deletions - eight programs, each with its own `Result:` line,
+all 0 errors / 0 warnings (7.9 / 4.3 / 8.4 / 8.9 / 134.0 / 142.1 / 38.3 / 2.9 s), script exit 0, and every `.ex5`
+newer than the last source edit. 5 added / 56 deleted lines across five files. Behavior is unchanged by construction:
+every deleted line was a write to storage no code read, or a getter nothing called.
+
 ### Batch 233: the intrabar policy is a report field, and now it says so
 
 Batch 232 left the question open: eleven `InpIntrabarEligibility*` inputs still write a per-strategy policy, and
@@ -18,7 +62,7 @@ prints the answer instead of guessing at it.
 - The stored policy (`StrategyEntry::intrabarPolicy`) has exactly one reader: the per-row registration print's
   `Intrabar:` field (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` (manager and
   `CIntrabarPolicy` copies) has no caller.
-- The *entry* path never asks for intrabar evaluation: `EAOrchestrator.mqh:3464`/`:3493` pass
+- The *entry* path never asks for intrabar evaluation: `EAOrchestrator.mqh:3467`/`:3496` pass
   `EVAL_MODE_NEW_BAR`, and `SignalGenerator.mqh:109` says so in a comment ("Only EVAL_MODE_NEW_BAR is ever passed
   on this path") - Batch 212 declined to change that, with the admission arithmetic on record.
 - The one live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263`, the signal-reversal exit check.
@@ -61,7 +105,7 @@ bool was a second copy of a derived value that nothing consulted.
 
 The same sweep found the by-name API itself unreachable: `SetStrategyIntrabarPolicyByName` and its eligibility shim
 `SetStrategyIntrabarEligibilityByName` are declared, defined, and forwarded by the manager, and nothing calls the
-manager. The live path is positional - `EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`
+manager. The live path is positional - `EAOrchestrator.mqh:1975` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`
 from `StrategyConfigBuilder`'s catalog rows. Both pairs (manager + `CIntrabarPolicy`) are gone, with the
 `[EnterpriseStrategyManager] Intrabar policy updated:` print inside them - a line that could never have appeared in
 a journal, because nothing could reach it.

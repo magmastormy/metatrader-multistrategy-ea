@@ -2021,7 +2021,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     }
 }
 
-Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile);
+Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile,
+      " | strategyTF=chart(", EnumToString((ENUM_TIMEFRAMES)Period()),
+      ") | momentumScalpTF=", EnumToString(m_config.momentumScalpTimeframe), "(stored,unconsulted)",
+      " candlestickTF=", EnumToString(m_config.candlestickIntrabarTimeframe), "(stored,unconsulted)");
 return true;
 }
 

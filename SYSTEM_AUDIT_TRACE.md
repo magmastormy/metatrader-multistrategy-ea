@@ -1705,12 +1705,27 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 234 Write-Only Timeframe Residue Removed, the Rest Announced (2026-10-19)
+
+- **State removed:** `SStrategyTimeframeConfig::intrabarEnabled` (field + constructor initialiser + 20 writes in
+  `StrategyConfigBuilder.mqh`); `CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig` and the
+  `CIntrabarPolicy` original; config slot 20 `"Exit Optimizer"` rows in both tables, a strategy deleted in Batch 207
+  that no `CatalogPolicySlot` index names.
+- **Lifecycle:** unchanged. Registration, `SyncEnabledWithRegistry`, deinit and
+  `CIndicatorManager::DestroyInstance()` untouched; `[CONFIG] Initialized 23 strategy timeframe/intrabar configs`
+  counts `MAX_STRATEGY_CONFIGS`, not written rows, so it still prints 23.
+- **Log surface:** `[ENTERPRISE]` gains `strategyTF=`, `momentumScalpTF=(stored,unconsulted)` and
+  `candlestickTF=(stored,unconsulted)` per symbol.
+- **Deliberately not wired:** `GetStrategyTimeframeConfig` (both copies) has no caller, so making
+  `InpMomentumScalpTimeframe` / `InpCandlestickIntrabarTimeframe` bind would move Momentum's scalp and Candlestick's
+  intrabar indicator reads to M5 on every symbol - the per-strategy timeframe decision, not a cleanup.
+
 ## Batch 233 Naming a Policy Field That No Branch Reads (2026-10-19)
 
 - **State read, none removed:** the report path now walks the roster (`GetStrategyCount` /
   `GetStrategyIntrabarPolicyRaw` / `GetStrategyName`) instead of restating config, so what prints is what registration
   stored.
-- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3464`, `:3493`, and
+- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3467`, `:3496`, and
   `SignalGenerator.mqh:109`'s own comment); the sole live `EVAL_MODE_INTRABAR` caller is
   `PositionLifecycleManager.mqh:263`. `GetStrategyIntrabarPolicyConfig` (manager + `CIntrabarPolicy`) has no caller,
   and `SStrategyTimeframeConfig::intrabarEnabled` has no reader at all.
@@ -1730,14 +1745,14 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   It was a derived copy of `intrabarPolicy == INTRABAR_POLICY_LIVE` with two writers and, after Batch 231, zero
   readers. `SetStrategyIntrabarPolicyByName` and `SetStrategyIntrabarEligibilityByName` (manager + `CIntrabarPolicy`)
   are gone as a declared-defined-forwarded-never-called chain; the live write path is
-  `EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`.
+  `EAOrchestrator.mqh:1975` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`.
 - **Log surface:** `[EnterpriseStrategyManager] Intrabar policy updated:` loses its only emitter, which no caller
   could reach. No doc cited it.
 - **Lifecycle:** unchanged. Registration, `SyncEnabledWithRegistry`, deinit and `CIndicatorManager::DestroyInstance()`
   behave as before; `TrainingDataExporter.mq5`'s registration argument comment now names `intrabarPolicy = OFF`,
   which is what that `false` actually is, and the append comment loses its miscounted "35-field" label.
 - **Open, filed as Batch 233:** the eleven `InpIntrabarEligibility*` inputs now reach only the stored policy, which
-  only the strategy report reads. `SStrategyTimeframeConfig::intrabarEnabled` is written 22 times and read nowhere.
+  only the strategy report reads. `SStrategyTimeframeConfig::intrabarEnabled` is written 20 times and read nowhere.
   Every enabled live voter therefore participates intrabar today, including the eight catalog rows whose
   `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF`. Enforcement is a restriction of those eight rows, so it is
   operator policy with the arithmetic on record, not a cleanup.

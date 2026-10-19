@@ -31,7 +31,6 @@ public:
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
     void                 SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
-    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
 
 };
@@ -50,16 +49,6 @@ void CIntrabarPolicy::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_IN
     {
         m_policyConfig[strategyIndex] = policy;
     }
-}
-
-// Read the configured per-slot policy (OFF when out of range)
-ENUM_INTRABAR_POLICY CIntrabarPolicy::GetStrategyIntrabarPolicyConfig(int strategyIndex) const
-{
-    if(strategyIndex >= 0 && strategyIndex < 32)
-    {
-        return m_policyConfig[strategyIndex];
-    }
-    return INTRABAR_POLICY_OFF;
 }
 
 // Slot -> default policy used by auto-registration (C8)

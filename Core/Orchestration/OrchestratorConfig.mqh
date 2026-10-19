@@ -12,11 +12,10 @@ struct SStrategyTimeframeConfig
 {
     string              name;
     ENUM_TIMEFRAMES     defaultTF;
-    bool                intrabarEnabled;
     ENUM_TIMEFRAMES     intrabarTF;
     bool                forceHigherOnM1Synthetic;
 
-    SStrategyTimeframeConfig() : name(""), defaultTF(PERIOD_CURRENT), intrabarEnabled(false), intrabarTF(PERIOD_M5), forceHigherOnM1Synthetic(false) {}
+    SStrategyTimeframeConfig() : name(""), defaultTF(PERIOD_CURRENT), intrabarTF(PERIOD_M5), forceHigherOnM1Synthetic(false) {}
 };
 
 struct SStrategyIntrabarConfig

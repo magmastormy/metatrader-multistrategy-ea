@@ -391,7 +391,6 @@ public:
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
     
     void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
-    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
 
     //--- Per-field accessors consumed by CStrategyRegistryState / CIntrabarPolicy via their m_src back-pointers.
     int    GetMaxStrategies() const { return m_roster.GetMaxStrategies(); }
@@ -667,12 +666,6 @@ void CEnterpriseStrategyManager::ConfigureBeforeInit(IStrategy* strategy, const 
         else
             Print("[STRATEGY-CONFIG] Momentum row did not yield a CSimpleMomentumStrategy - its inputs were not applied");
     }
-}
-
-ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig(int strategyIndex) const
-{
-    //--- Out-of-range indexes fall back to INTRABAR_POLICY_OFF.
-    return m_intrabarPolicy.GetStrategyIntrabarPolicyConfig(strategyIndex);
 }
 
 void CEnterpriseStrategyManager::SetParticipationFormulaBase(const double base)
