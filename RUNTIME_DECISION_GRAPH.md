@@ -339,6 +339,49 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 235: The Trainer Reported an Untrained Network as the Model's Metrics (2026-10-19)
+
+No EA edge changed. The edge that was broken is upstream of the EA, on the path
+`train -> measure -> rank architectures -> save checkpoint -> EA loads it`, and it was broken by a second network
+inside the session.
+
+- **The node that read the wrong object.** `CTrainingSession::Finalize()` is called by the live
+  `Train(model, ...)` at the end of every run, and it ended with `Evaluate(m_valFeatures, ...)` - the by-value
+  `m_model` member, which no code ever trained (only the uncalled `Initialize()` touched it). That pass wrote its
+  confusion matrix and loss into `m_metrics` through `UpdateMetrics`, which overwrites completely.
+- **Two getters, one object.** `GetTrainMetrics()` and `GetValMetrics()` both returned `m_metrics`, so the train and
+  validation blocks in `MQHModelTrainer.mq5`'s summary were the same untrained numbers, and an overfitting gap could
+  not be expressed even in principle.
+- **The ranking was noise.** `HyperparameterOptimizer::EvaluateCandidate` fills
+  `valAccuracy/valLoss/f1Score` from `GetValMetrics()`, and `RankResults()` orders candidates by `f1Score`. The
+  untrained `m_model` is identical for every candidate, so every `[MQH-TUNER]` row carried the same score and the
+  `rank` column selected nothing. This is the shape of a control that cannot fail: it produces a plausible number for
+  the wrong object.
+- **Rewired:** `EvaluateWithModel(features, labels, count, CTrainingMetrics &target)` scores the caller's holder;
+  `Finalize()` uses it for validation (`m_metrics`) and adds one real training-set pass (`m_trainMetrics`);
+  `GetTrainMetrics()` returns the latter. `m_model` and the family that used it
+  (`Initialize`, no-arg `Train()`, `TrainEpoch`, `Evaluate`, `GetModel`, `SetLearningRate/SetTemperature/SetL2Regularization`)
+  are deleted, so one network is in charge.
+- **New output edge:** `Train()` opens `MQHTrainingLog_<date time>.txt` and prints
+  `[MQH-TRAIN] Training log: <file>`; before this the pattern existed only in the uncalled `Initialize()`, so the file
+  could not be created and `LogMessage`'s file branch was dead. `Finalize` prints
+  `stop=early-stopping|epoch-budget`, which distinguishes "stopped improving" from "ran out of epochs".
+- **Threshold now real:** `CheckEarlyStopping` used a hard-coded `1e-6` while `STrainingConfig::earlyStoppingMinDelta`
+  was written `0.0001` by all three callers and read by nobody. The field is now the test's operand, with `1e-6` as the
+  struct's constructor default, so the arithmetic is unchanged and a deliberate change to that number is possible.
+- **Deleted as ceremony:** `STrainingConfig::enableVisualization` (+ the `input bool enableVisualization` in
+  `MQHModelTrainer.mq5`), `SetVisualizer()` - a method whose body was a comment and which discarded its argument - the
+  unused `CTrainingVisualizer` local and include in the trainer program, and the write-only `trainMetrics` local in
+  `MQHModelVisualizer.mq5`.
+
+- **Cross-candidate state leak, found in the same reading:** `CHyperparameterOptimizer` holds one session and calls
+  `Train(model, ...)` per candidate with a fresh network each time, while `m_bestValLoss` was only initialised in the
+  constructor (`1e10`). Candidate two's improvement test therefore ran against candidate one's best validation loss,
+  `m_earlyStopCounter` carried over, and `m_earlyStopTriggered` stayed true for every later candidate - so `bestEpoch`
+  and the new `stop=` field could describe a different model than the row they were printed on. `Train()` now resets
+  those four at the top of each run, and `m_logHandle` is in the initialiser list (a zero-filled handle is `0`, not
+  `INVALID_HANDLE`, and the file-write branch this batch made reachable tests exactly that).
+
 ## Batch 234: The Per-Strategy Timeframe Table Is Still Write-Only, and Now Says So (2026-10-19)
 
 No decision edge changed. `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land only in

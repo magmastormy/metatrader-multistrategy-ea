@@ -632,6 +632,55 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 235: the trainer measured the model it never trained, and reported that as your validation score
+
+`CTrainingSession` had two neural networks inside it. One was a pointer to the model your script passes in — the one
+that actually trains. The other was a member network, created when the session was constructed, that no code ever
+trained. That second network is not a curiosity: `Finalize()` runs at the end of every training session, and it
+finished by evaluating the validation set **through the untrained network**, writing the result into the same metrics
+object your summary reads.
+
+What that did to the evidence you act on:
+
+- `--- Validation Metrics ---` in `MQHModelTrainer` and the visualizer's metrics table were the accuracy, F1 and
+  confusion counts of a randomly initialised network.
+- `GetTrainMetrics()` and `GetValMetrics()` returned the *same object*, so `--- Training Metrics ---` printed the same
+  untrained numbers again. The train-vs-validation gap you use to spot overfitting could not have appeared.
+- The hyperparameter tuner ranks candidates by `f1Score`, taken from that same object. Because the untrained network
+  is the same for every candidate, `[MQH-TUNER]` scored every architecture identically and the `rank` column described
+  one untrained network, not your candidates.
+- The training log file the code formats (`MQHTrainingLog_*.txt`) could never be created: its only open call sat inside
+  `Initialize()`, which nothing calls, so the file branch of every `LogMessage` and the closing `FileClose` were
+  unreachable.
+- `GetModel()`, `SetLearningRate()`, `SetTemperature()` and `SetL2Regularization()` were the session's own wrappers
+  around the untrained network. Nothing calls them — a lookalike API that would have silently configured the wrong
+  model for whoever reached for it first.
+
+The session now has one network: the one you gave it. `Finalize()` scores that model on validation into
+`m_metrics` and does one real pass over the training set into a new `m_trainMetrics`, so the two blocks in your
+summary are two measurements, and the tuner's F1 ranking is an F1 of the model that was trained. The log file is
+opened by the live training call and named on the journal: `[MQH-TRAIN] Training log: <file>`. The closing line says
+which condition ended the run — `stop=early-stopping` or `stop=epoch-budget` — which is the difference between "the
+model stopped improving" and "you ran out of epochs".
+
+Two dead config fields went with it. `earlyStoppingMinDelta` was set to `0.0001` by all three callers and read by
+nothing, while the improvement test used a hard-coded `1e-6`; it is now a real field that the test uses, defaulted in
+the struct to `1e-6`, so today's behaviour is unchanged and the knob is honest. `enableVisualization` — an input in
+the dialog, a config field, and a `SetVisualizer()` whose body was a comment that threw its argument away — is
+deleted; the visualizer program drives its charts itself and always did. `MQHModelTrainer/README.md` documented
+`earlyStoppingMinDelta: 0.0001` as a working setting; it now says what actually binds and lists the training log as an
+output, which is true only from this batch.
+
+Fixing that surfaced a second leak in the same object: the tuner reuses one session for every architecture candidate,
+and the early-stopping state was only initialised when the session was constructed. From the second candidate onward the
+"improved enough?" test was measured against the *previous* candidate's best validation loss, the patience counter
+carried over, and once any candidate stopped early the flag stayed set for the rest of the run. A training session now
+resets that state at the start of each run, and the log file is named once per program run with each candidate
+appending to it — a tuning session leaves one readable file instead of one per candidate.
+
+No EA binary includes this code, so no live decision, lot or exit moved. What changed is the evidence behind the
+decision of *which trained model to load into the EA*.
+
 ### Batch 234: two timeframe inputs the EA never consults, now stated at startup
 
 `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` both default to M5, and both land in a per-strategy

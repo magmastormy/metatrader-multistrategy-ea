@@ -101,12 +101,9 @@ void OnStart()
     config.epochs = g_epochs;
     config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
-    config.earlyStoppingMinDelta = 0.0001;
     config.logInterval = 5;
-    config.enableVisualization = true;
     
     trainer.SetConfig(config);
-    trainer.SetVisualizer(visualizer);
     
     double trainFeatures[][FEATURE_VECTOR_SIZE];
     int trainLabels[];
@@ -123,7 +120,6 @@ void OnStart()
     
     Print("[MQH-VIZ] Training complete");
     
-    CTrainingMetrics trainMetrics = trainer.GetTrainMetrics();
     CTrainingMetrics valMetrics = trainer.GetValMetrics();
     
     visualizer.ShowMetricsTable(valMetrics.GetAccuracy(),

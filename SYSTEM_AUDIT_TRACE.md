@@ -1705,6 +1705,47 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 235 The Training Session's Second Network Reported the Model's Metrics (2026-10-19)
+
+- **Lifecycle change:** `CTrainingSession` now owns one network - `m_model_ptr`, the caller's - for the whole run. The
+  by-value `m_model` and its family (`Initialize`, no-arg `Train`, `TrainEpoch`, `Evaluate`, `GetModel`,
+  `SetLearningRate/SetTemperature/SetL2Regularization`) are deleted. The path that made them load-bearing was
+  `Train(model, ...) -> Finalize() -> Evaluate(...)`: the final evaluation ran the never-trained network and wrote its
+  result into the metrics object both `GetTrainMetrics()` and `GetValMetrics()` returned.
+- **Consequence for the artefacts the operator acts on:** `--- Training Metrics ---` and `--- Validation Metrics ---`
+  in `MQHModelTrainer.mq5`, `[MQH-VIZ]`'s metrics table and confusion matrix, and `SHyperparameterTuningResult`'s
+  `valAccuracy/valLoss/f1Score` were that untrained network's numbers. `RankResults()` sorts by `f1Score`, and because
+  `m_model` is the same default-constructed network for every candidate, no tuner run ever discriminated between
+  architectures. Nothing here reached the live EA, which loads checkpoints; it reached the choice of *which*
+  checkpoint.
+- **Two holders now:** `EvaluateWithModel(features, labels, count, CTrainingMetrics &target)` writes validation into
+  `m_metrics` and, from a real pass over the training set at the end of the run, training into `m_trainMetrics`.
+- **Observability restored:** `MQHTrainingLog_<date time>.txt` is opened by `Train()` and named by
+  `[MQH-TRAIN] Training log: <file>` - its only `FileOpen` had been inside the uncalled `Initialize()`, so the file
+  branch of `LogMessage` and `Finalize`'s `FileClose` had never been reachable. The name is set once per program run and
+  each later `Train()` reopens with `FILE_READ | FILE_WRITE` + `FileSeek(SEEK_END)`, so the tuner appends one section per
+  candidate instead of one timestamped file per candidate. `Finalize` reports `stop=early-stopping|epoch-budget`.
+- **Session lifetime, and the state that outlived a run:** `CHyperparameterOptimizer` keeps one `CTrainingSession` and
+  calls `Train(model, ...)` per candidate with a freshly initialised network each time. `m_bestValLoss` was set to `1e10`
+  only in the constructor, so from candidate two onward the improvement test was measured against another model's best
+  loss, `m_earlyStopCounter` carried over, and `m_earlyStopTriggered` stayed `true` once any candidate stopped early -
+  which would have made this batch's new `stop=` field describe an earlier candidate. `Train()` now resets those four at
+  the top of every run. `m_logHandle` was not in the initialiser list; a zero-filled handle is `0` rather than
+  `INVALID_HANDLE` (`-1`), and the write branch made reachable in this batch compares against exactly that, so it is
+  initialised now.
+- **Threshold state:** `STrainingConfig::earlyStoppingMinDelta` was write-only (three callers wrote `0.0001`;
+  `CheckEarlyStopping` used a hard-coded `1e-6`). It is now read into `m_earlyStopMinDelta` and is the test's operand,
+  defaulted in the struct's constructor to `1e-6` so the running arithmetic did not move.
+- **State removed:** `enableVisualization` (field, two writes, the `input bool` in `MQHModelTrainer.mq5`),
+  `SetVisualizer()` (body was a comment; argument discarded), the unused `CTrainingVisualizer` local and its include in
+  `MQHModelTrainer.mq5`, the `TrainingVisualizer.mqh` include in `TrainingSession.mqh`, and the write-only
+  `trainMetrics` local in `MQHModelVisualizer.mq5`.
+- **Doc correction:** `MQHModelTrainer/README.md` listed `earlyStoppingMinDelta: 0.0001` as a training parameter; it now
+  states the effective `1e-6`, what raising it would change, and adds the `MQHTrainingLog_*` row to Output Files, which
+  is true only from this batch.
+- **Verification:** eight programs, each with its own `Result:` line, 0 errors / 0 warnings, script exit 0;
+  `TrainingSession.mqh` 380 -> 257 lines. No EA decision path, lot, threshold or exit changed.
+
 ## Batch 234 Write-Only Timeframe Residue Removed, the Rest Announced (2026-10-19)
 
 - **State removed:** `SStrategyTimeframeConfig::intrabarEnabled` (field + constructor initialiser + 20 writes in

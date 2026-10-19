@@ -8,6 +8,79 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 235: the training session scored a second, untrained network and reported it as the model's metrics
+
+`CTrainingSession` held **two** neural networks. `m_model_ptr` is the caller's model - the one `Train(model, ...)`
+trains. `m_model` was a by-value `CFeedForwardNN` member that nothing ever trained, and the whole first family of the
+class worked on it: `Initialize()`, `Train()` (the no-arg twin of the live overload), `TrainEpoch()` and `Evaluate()`.
+None of those four has a caller - the three consumers (`MQHModelTrainer.mq5`, `MQHModelVisualizer.mq5`,
+`HyperparameterOptimizer.mqh`) all go through `SetConfig` + `Train(model, ...)` - so the family looked like an unused
+alternative API. It was not unused. `Finalize()` is called by the live `Train(model, ...)` at the end of every run,
+and its last act was `Evaluate(m_valFeatures, m_valLabels, m_valCount)`: a pass over the validation set through the
+**untrained** `m_model`, whose result is written into `m_metrics` by that same method. Every consequence below follows
+from one line:
+
+- `GetValMetrics()` returned the untrained network's accuracy, F1, loss and confusion matrix - the numbers printed
+  under `--- Validation Metrics ---` and shown in `[MQH-VIZ]`'s metrics table.
+- `GetTrainMetrics()` returned the *same object*, so `--- Training Metrics ---` printed that same untrained result a
+  second time. The train/validation gap an operator reads to judge overfitting was structurally invisible.
+- `HyperparameterOptimizer::EvaluateCandidate` filled `valAccuracy`/`valLoss`/`f1Score` from those metrics and
+  `RankResults()` sorts every candidate by `f1Score`. Since `m_model` is the same default-constructed network for all
+  candidates, the tuner ranked architecture candidates on identical noise: `[MQH-TUNER] ... Train: x | Val: x` printed
+  one number twice, and the `rank` column was not evidence about any candidate.
+- `GetModel()`, `SetLearningRate()`, `SetTemperature()` and `SetL2Regularization()` configured or returned `m_model` -
+  the wrong object. All four have zero call sites (the three `SetTemperature` hits in the tree are the live NN/ONNX/
+  Transformer adapters on their own nets), so they were a trap rather than a bug.
+- `MQHTrainingLog_*.txt` could never exist: its only `FileOpen` was inside the uncalled `Initialize()`, so
+  `LogMessage`'s `if(m_logHandle != INVALID_HANDLE)` file branch and `Finalize`'s `FileClose` were both unreachable,
+  and the trainer's only training-run record was the terminal journal.
+
+**Fixed.** The by-value family is deleted with `m_model` and the four wrong-object accessors, and `Finalize()` now
+scores the model that was trained: `EvaluateWithModel(..., CTrainingMetrics &target)` writes into the holder the caller
+names, validation into `m_metrics` and one real pass over the training set into a new `m_trainMetrics`, so
+`GetTrainMetrics()` and `GetValMetrics()` answer two different measurements. The log file is opened by the live
+`Train(model, ...)` and its path is printed as `[MQH-TRAIN] Training log: <file>` (the `[MQH-TRAIN] Warning: Failed to
+open log file:` line that names the same file is now reachable), and `Finalize`'s closing line states which condition
+ended the run: `stop=early-stopping` or `stop=epoch-budget`.
+
+**A second defect the first one exposed.** `CHyperparameterOptimizer` holds one `CTrainingSession` as a member and
+calls `Train(model, ...)` once per candidate - a fresh network each time, the same session. Early-stopping state lived
+on the session and nothing reset it: `m_bestValLoss` starts at `1e10` only in the constructor, so candidate two's
+improvement test compared against candidate one's best validation loss (a harder bar, and an unrelated model's
+number), `m_earlyStopCounter` carried over, and `m_earlyStopTriggered` stayed `true` for every candidate after the
+first one that stopped early. `Train()` now resets `m_bestValLoss`/`m_bestEpoch`/`m_earlyStopCounter`/
+`m_earlyStopTriggered` at the top of each run, so `bestEpoch` and `stop=` describe the model that produced them.
+Same root, different symptom: `m_logHandle` was not in the constructor's initialiser list at all, and a zero-filled
+handle is `0`, not `INVALID_HANDLE` (`-1`), so the newly-reachable `if(m_logHandle != INVALID_HANDLE)` write branch
+would have been reading an uninitialised member on the first run - it is now initialised, and the log file name is set
+once per program run with each candidate appending (`FILE_READ | FILE_WRITE` + `FileSeek(SEEK_END)`) instead of a
+timestamped file per candidate.
+
+**Also in this batch - the two write-only config fields and one inert input.**
+- `STrainingConfig::earlyStoppingMinDelta` was set to `0.0001` at all three call sites and read by nobody, while
+  `CheckEarlyStopping` compared against a hard-coded `1e-6`: the classic "threshold written, never read" with a
+  constant standing in for it. It is now a real member (`m_earlyStopMinDelta`) set from the config and used by the
+  test, and the value that binds is the one that has always bound - `1e-6` as `STrainingConfig`'s constructor default,
+  three dead writes deleted. Raising it stops training sooner, which is a model-quality choice, not a cleanup.
+- `STrainingConfig::enableVisualization` (field + two writes) and `CTrainingSession::SetVisualizer` - a method whose
+  body was a comment and which discarded its argument, called once - are deleted, with the `CTrainingVisualizer`
+  member that only that method referenced, its include in `TrainingSession.mqh`, the unused `CTrainingVisualizer
+  visualizer` local and include in `MQHModelTrainer.mq5`, and `input bool enableVisualization = true` - an
+  operator-visible switch in the inputs dialog that did nothing. `MQHModelVisualizer.mq5` still draws its charts; that
+  program drives the visualizer itself.
+- `MQHModelVisualizer.mq5`'s `CTrainingMetrics trainMetrics` local was written and never read; deleted.
+
+`MQHModelTrainer/README.md` documented `earlyStoppingMinDelta: 0.0001` as a working setting (the Batch 215
+phantom-evidence shape in a subfolder doc) - it now states the effective `1e-6`, what raising it would do, and adds the
+`MQHTrainingLog_*` row to the Output Files table, which is true only from this batch.
+
+**Scope note:** no EA binary includes `TrainingSession.mqh`, so nothing here changes a live decision, a lot or an exit.
+What it changes is the evidence the operator uses to choose the model the EA loads.
+
+**Verification:** `sync_and_compile.ps1 -All` - eight programs, each with its own `Result:` line, 0 errors / 0 warnings
+(7.6 / 3.3 / 6.8 / 6.7 / 105.4 / 103.8 / 26.0 / 1.7 s), script exit 0, every `.ex5` newer than the last source edit.
+`TrainingSession.mqh` went 380 -> 257 lines.
+
 ### Batch 234: the write-only timeframe table's residue, and the two timeframe inputs the EA never consults
 
 Batch 233 left the per-strategy timeframe table standing because it is the natural carrier for task #65 (give each

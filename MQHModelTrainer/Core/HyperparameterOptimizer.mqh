@@ -163,7 +163,6 @@ public:
         config.epochs = params.epochs;
         config.batchSize = params.batchSize;
         config.earlyStoppingPatience = 10;
-        config.earlyStoppingMinDelta = 0.0001;
         config.logInterval = 20;
         
         m_trainer.SetConfig(config);

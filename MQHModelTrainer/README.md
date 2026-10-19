@@ -123,7 +123,11 @@ Run `TrainingDataExporter.mq5` in MetaTrader to generate CSV training data:
 - **learningRate**: 0.001 (default)
 - **l2Regularization**: 0.001 (default)
 - **earlyStoppingPatience**: 10 epochs
-- **earlyStoppingMinDelta**: 0.0001
+- **earlyStoppingMinDelta**: 0.000001 (`STrainingConfig`'s constructor default; no caller overrides it). An epoch
+  counts as improvement only if validation loss drops by more than this. It was 0.0001 at all three call sites and
+  read by nothing - `CheckEarlyStopping` compared against a hard-coded 1e-6 - so the configured number described no
+  behaviour. It is now the value the test uses, and the default keeps the test at the number that has always run.
+  A larger value stops training sooner; that is a model-quality choice, not a cleanup.
 
 ### Data Split
 - **Train**: 70% (default)
@@ -146,6 +150,7 @@ Run `TrainingDataExporter.mq5` in MetaTrader to generate CSV training data:
 | File Type | Naming Pattern | Description |
 |-----------|----------------|-------------|
 | Model Checkpoint | `NeuralCheckpoint_{SYMBOL}_{TIMEFRAME}.dat` | Trained model weights |
+| Training Log | `MQHTrainingLog_{date time}.txt` | Per-epoch loss, final train/validation metrics (opened by `CTrainingSession::Train`, path printed as `[MQH-TRAIN] Training log:`) |
 | Evaluation Report | `EvaluationReport_{SYMBOL}_{TIMEFRAME}_{TIMESTAMP}.txt` | Evaluation summary |
 | Metrics File | `EvaluationMetrics_{SYMBOL}_{TIMEFRAME}_{TIMESTAMP}.txt` | Detailed metrics |
 | Training Chart | `TrainingChart_{SYMBOL}_{TIMEFRAME}_{TIMESTAMP}.png` | Visualization image |

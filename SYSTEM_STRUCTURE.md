@@ -421,6 +421,35 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
   - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
 
+### 2.6.1 Offline training tools (Batch 235) - one model, two metric holders
+
+- **Not in the EA binary.** `MQHModelTrainer.mq5`, `MQHModelVisualizer.mq5`, `MQHHyperparameterTuner.mq5` and
+  `MQHModelEvaluator.mq5` are standalone scripts; nothing under `Core/` includes `MQHModelTrainer/`. The EA loads the
+  checkpoint files these produce, so their authority is over *which model gets loaded*, not over a live decision.
+- **Model authority:** `CTrainingSession` has exactly one network - `m_model_ptr`, the caller's - set by
+  `Train(model, ...)`. The by-value `m_model` member and the family that used it (`Initialize()`, the no-arg `Train()`,
+  `TrainEpoch()`, `Evaluate()`, `GetModel()`, `SetLearningRate/SetTemperature/SetL2Regularization`) are deleted; they
+  had no callers except that `Finalize()` did call `Evaluate()`, which scored the never-trained network and wrote it
+  into `m_metrics` - the object both `GetTrainMetrics()` and `GetValMetrics()` returned.
+- **Metrics:** `m_metrics` is validation, `m_trainMetrics` is one real pass over the training set, both filled by
+  `EvaluateWithModel(features, labels, count, CTrainingMetrics &target)`. `HyperparameterOptimizer::RankResults` sorts
+  by `f1Score` from `GetValMetrics()`, so that ranking reads the trained model from this batch on.
+- **Early stopping:** improvement means `valLoss < m_bestValLoss - m_earlyStopMinDelta`, where the delta comes from
+  `STrainingConfig::earlyStoppingMinDelta` - constructor default `1e-6`, which is the value the test has always used
+  (the three callers wrote `0.0001` into a field nothing read). Patience is `earlyStoppingPatience` (10 at all three
+  call sites).
+- **Observability:** `Train()` opens `MQHTrainingLog_<date time>.txt` and prints `[MQH-TRAIN] Training log: <file>`.
+  The name is set once per program run; a later `Train()` reopens the same file with `FILE_READ | FILE_WRITE` and seeks
+  to the end, so a tuner run appends one section per candidate. `Finalize()` prints `stop=early-stopping|epoch-budget`
+  plus one `Train:` and one `Validation:` line. Before this batch the log's only `FileOpen` sat in the uncalled
+  `Initialize()`, so neither the file nor those metric lines existed and the file branch of `LogMessage` was
+  unreachable - and `m_logHandle` was absent from the initialiser list, which matters because a zero handle is `0`,
+  not `INVALID_HANDLE`, and that is the value the write branch tests against.
+- **Run scoping:** one `CTrainingSession` is reused across the tuner's candidates, so `Train()` resets
+  `m_bestValLoss`/`m_bestEpoch`/`m_earlyStopCounter`/`m_earlyStopTriggered` before the epoch loop. Without it, every
+  candidate after the first was measured against an earlier candidate's best validation loss and inherited its stop
+  flag.
+
 ### 2.7 AI Modular Architecture (Batch 92 - GOD TIER Refactoring)
 
 - **Modular Component Decomposition:**

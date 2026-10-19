@@ -20,7 +20,6 @@ input int hiddenLayer3 = 8;
 input int g_valRatio = 20;
 input int g_testRatio = 10;
 
-input bool enableVisualization = true;
 input bool saveModel = true;
 
 #include "Core/AI/AIFeatureVectorBuilder.mqh"
@@ -30,7 +29,6 @@ input bool saveModel = true;
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"
 #include "MQHModelTrainer/Data/LabelEncoder.mqh"
 #include "MQHModelTrainer/Core/TrainingMetrics.mqh"
-#include "MQHModelTrainer/Core/TrainingVisualizer.mqh"
 #include "MQHModelTrainer/Models/FeedForwardNN.mqh"
 #include "MQHModelTrainer/Models/TrainingSession.mqh"
 
@@ -45,7 +43,6 @@ void OnStart()
     CLabelEncoder labelEncoder;
     CFeedForwardNN model;
     CTrainingSession trainer;
-    CTrainingVisualizer visualizer;
     
     PrintFormat("[MQH-TRAINER] Loading data from: %s", dataFile);
     
@@ -107,9 +104,7 @@ void OnStart()
     config.epochs = g_epochs;
     config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
-    config.earlyStoppingMinDelta = 0.0001;
     config.logInterval = 10;
-    config.enableVisualization = enableVisualization;
     
     trainer.SetConfig(config);
     
