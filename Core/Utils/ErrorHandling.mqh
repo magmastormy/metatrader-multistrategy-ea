@@ -13,14 +13,8 @@
 
 #include "../Utils/Enums.mqh"
 
-// Thin coordinator: aggregates the extracted ErrorHandling* modules so every
-// symbol previously declared here stays available to any includer.
-//   Types  - enums, structs, severity macros, forward declarations
-//   Core   - CEnhancedErrorHandler declaration, static state storage, lifecycle
-//   Format - message formatting and error-code classification helpers
-//   Retry  - retry / backoff logic and cleanup
-//   Report - logging sinks, verbosity, aggregation
-//   Health - component health, stats, emergency mode
+// Thin coordinator: aggregates the ErrorHandling* modules included below so every symbol previously declared
+// here stays available to any includer.
 #include "ErrorHandlingTypes.mqh"
 #include "ErrorHandlingCore.mqh"
 #include "ErrorHandlingFormat.mqh"

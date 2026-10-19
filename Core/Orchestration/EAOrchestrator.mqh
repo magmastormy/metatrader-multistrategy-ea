@@ -1929,15 +1929,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 m_config.intrabarDynamicQuorumEnabled ? "true" : "false",
                 manager.IsIntrabarDynamicQuorumEnabled() ? "true" : "false");
 
-    // Batch 175: CPostConsensusValidator::SetValidatorConfig existed with no call site anywhere in
-    // the repository, so every arm below ran on the constructor's defaults. InpEnableOFIProxy and
-    // InpEnableVPINFilter were therefore OFF regardless of the operator's inputs (which is also why
-    // the VPIN veto armed in Batch 174 could not reach a live session), and the quality floors were
-    // 0.72/0.75 rather than the configured 0.70/0.68.
-    // The spread cutoff is the one value that must not come straight from config: the configured
-    // InpHardSpreadCutoffPoints default (200) is below synthetic-index spreads of 1,727-11,140
-    // points and would veto the entire synthetic book, which is the failure the constructor
-    // documented by parking at max entry spread. Floor it at the symbol's admitted entry spread.
+    // The arms below are the validator's only configuration call site (Batch 175): before it they ran on
+    // constructor defaults - OFI/VPIN off whatever the inputs said, floors 0.72/0.75 not 0.70/0.68.
+    // The spread cutoff must not come straight from config: the 200-point default sits below synthetic
+    // spreads of 1,727-11,140 points and would veto the whole synthetic book, so floor it at entry spread.
     double validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, m_config.maxEntrySpreadPoints);
     manager.SetValidatorConfig(MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
                                MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
@@ -3214,16 +3209,9 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
 
 void ProcessTickSafetyLoop()
 {
-    // Intentional stub, not dead safety equipment: every concern it once routed is LIVE elsewhere.
-    //  - Drawdown halt / conservative mode / emergency flatten: CRiskCircuitBreaker (thresholds from
-    //    m_config.maxDrawdown) -> CUnifiedRiskManager -> OnTick honors IsEmergencyCloseRequested().
-    //    Wiring CSyntheticSpikeMonitor::HandleEmergencyDrawdown here would create a second flatten
-    //    authority with unconfigured thresholds.
-    //  - Trading-pause expiry: m_spikeMonitor.ReleasePauseIfExpired() runs via the cycle gate (IsPaused).
-    //  - Spread / free-margin / margin-level health: CRiskMarginHealth inside CRiskValidationPipeline
-    //    plus TradeManager preflight gates; CTickSafetyMonitor stays a passive query API.
-    //  - Synthetic tick-rate spike detection (EvaluateSpike): single-symbol (_Symbol) legacy with no
-    //    multi-symbol configuration; deliberately not revived with invented thresholds.
+    // Intentional stub: drawdown halt, pause expiry and margin health are live in CRiskCircuitBreaker,
+    // m_spikeMonitor's cycle gate and CRiskMarginHealth. Wiring the spike monitor's HandleEmergencyDrawdown
+    // here would add a second flatten authority on thresholds no input configures.
 }
 
 // OnTradeTransaction forwarder: confirms filled async scalp orders into the position tracker (no-op when none pending).
@@ -3233,14 +3221,9 @@ void ProcessScalpDealConfirmed(const ulong dealTicket, const ulong orderTicket)
         m_scalpEngine.OnDealConfirmed(dealTicket, orderTicket);
 }
 
-// Closed-trade feedback loop: the EA's OnTradeTransaction routes DEAL_ADD events here.
-//  1. fan the transaction out to every symbol manager so per-strategy
-//     attribution pop / UpdatePerformance / health monitor / auto-disable run;
-//  2. feed account-level learners on full closes of EA-owned positions:
-//     CPerformanceAnalytics::RecordClosedTrade (sole writer of win-rate/PF/
-//     momentum stats consumed by live lot scaling + risk snapshots),
-//     loss-guard consecutive-loss accounting, and live-authority outcome
-//     learning (PROVEN_AI promotion).
+// Closed-trade feedback: the EA's OnTradeTransaction routes DEAL_ADD here, fanning out to every symbol manager
+// for per-strategy attribution and, on full closes of EA-owned positions, feeding CPerformanceAnalytics::
+// RecordClosedTrade - sole writer of the win-rate/PF/momentum stats that live lot scaling and risk snapshots read.
 
 bool IsEAPositionIdOpen(const ulong positionId)
 {

@@ -1,11 +1,5 @@
-// Structure Detection Engine - Enterprise Grade
-// Unified ICT structure detection for all strategies
-// Coordinator only. The heavy lifting lives in focused modules:
-// StructureTypes.mqh     - shared value types
-// StructureSwing.mqh     - swing high/low + potential tracking
-// StructureScore.mqh     - swing strength + structure scoring
-// StructureBOSCHoCH.mqh  - break of structure / change of char.
-// StructureLiquidity.mqh - liquidity sweep detection
+// Structure detection for the ICT strategies: coordinator only, the detection steps live in the modules
+// included below (swings, scoring, BOS/CHoCH, liquidity).
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict

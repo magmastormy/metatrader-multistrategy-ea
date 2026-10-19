@@ -1,11 +1,7 @@
-// Validation applied AFTER a consensus decision has been produced: hard spread
-// cutoff, exogenous (ATR / spread) filters, adaptive quality gate, OFI directional
-// confirmation, VPIN toxicity.
-// Checks that VETO a trade: no_signal, hard_spread_cutoff (spread in points vs
-// m_hardSpreadCutoffPoints), ATR-ratio crisis (ATR14/ATR50), spread too wide vs ATR,
-// insufficient_quality, OFI contradiction, VPIN toxicity. The ATR 1.5-2.0 band is measured
-// and logged only; the ATR-derived stop already scales the lot for it.
-// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
+// Validation applied AFTER a consensus decision: hard spread cutoff, exogenous ATR/spread filters, the adaptive
+// quality gate, OFI directional confirmation, VPIN toxicity - each of these can veto. The ATR 1.5-2.0 band is
+// measured and logged only, because the ATR-derived stop already scales the lot for it.
+// Implementation detail of EnterpriseStrategyManager.mqh; not standalone.
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
 

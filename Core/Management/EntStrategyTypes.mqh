@@ -1,15 +1,6 @@
-// Enterprise Strategy Types (Phase G - G1)
-// Shared value types (struct StrategyEntry, the 40-field registration record) and free
-// enum -> text / reason-tag / [0,1] clamp helpers, extracted verbatim.
-// These are file-scope (non-member) declarations. They are consumed
-// by the Phase C slice modules (CStrategyStateReporter,
-// CStrategyRegistryState, CIntrabarPolicy, CConsensusEngine) which
-// rely on them being visible BEFORE their own definitions, so this
-// header must stay included at the exact position the originals
-// occupied in EnterpriseStrategyManager.mqh: after the strategy
-// registry include, before the slice-module includes.
-// NOTHING IN THIS FILE WAS CHANGED - every body is a byte-for-byte
-// relocation of the original.
+// Shared value types and file-scope enum -> text / clamp helpers for the manager slice modules.
+// They must be visible before CStrategyStateReporter / CStrategyRegistryState / CIntrabarPolicy /
+// CConsensusEngine define, so keep this include where the originals sat: after the registry, before them.
 #ifndef ENT_STRATEGY_TYPES_MQH
 #define ENT_STRATEGY_TYPES_MQH
 

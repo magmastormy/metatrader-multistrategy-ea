@@ -339,6 +339,27 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 229: One Unused Collaborator, and Two Comment Claims That Were Wrong (2026-10-19)
+
+No decision edge changed. `CRiskValidationPipeline` no longer stores `CRiskAdaptiveTuner*` — field, constructor
+initialiser, `Initialize` parameter, assignment, the argument at `UnifiedRiskManager.mqh:518` and the
+`#include "RiskAdaptiveTuner.mqh"` are gone. The pipeline never read the pointer, so no gate's arithmetic moved,
+and the tuner itself is unchanged: the risk manager reads it at fourteen sites, `ApplyPnlRiskAdjustment`
+(`rawUsedRisk - max(0, profit x factor)`) among them.
+
+Two facts worth reading from here rather than from a comment:
+
+- `IsWired()` now gates every pointer the class holds. It used to check ten and skip the eleventh, with a
+  comment explaining the skip - so the pipeline's liveness probe could report a healthy wiring while carrying a
+  member nothing consumed. A future collaborator has to land in both places or it is dead on arrival.
+- The neural-net meta-input is **26** slots (`AI_MLP_INPUT`), filled `[0]`..`[25]` by
+  `CMetaLabeler::BuildInput`; its header said "24 features" until this batch. Anyone comparing a training matrix
+  or an exported column set against that comment was sizing the vector wrong, which is the reason the count in
+  the comment was corrected rather than deleted.
+
+90 comment lines removed across fifteen files (runs of 8+ consecutive comment lines: 17 → 1), with non-comment
+lines proved byte-identical in all fifteen comment-only files.
+
 ## Batch 228: The Build Verification Could Not Fail (2026-10-19)
 
 No decision path changed. What changed is what a journal from before this batch is evidence of.

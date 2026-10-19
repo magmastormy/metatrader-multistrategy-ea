@@ -519,7 +519,6 @@ void CUnifiedRiskManager::WireValidationPipeline()
                                     GetPointer(m_circuitBreaker),
                                     GetPointer(m_virtualPositionBook),
                                     GetPointer(m_portfolioRiskManager),
-                                    GetPointer(m_adaptiveTuner),
                                     GetPointer(m_tieredCorrelation),
                                     GetPointer(m_clusterBudget),
                                     GetPointer(m_marginHealth),

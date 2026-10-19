@@ -1,11 +1,6 @@
-// Owns the per-symbol family override table.
-// FindFamilyOverrideIndex()
-// the eight GetEffectiveXxx() resolvers — here they take the
-// symbol plus the base-config fallback instead of a state index,
-// so the table has no dependency on the symbol-state array.
-// Comparison operators (> 0.0 / > 0) and the hasOverrides gate are
-// reproduced verbatim, so a zero override still falls back to the
-// base config value exactly as before.
+// Owns the per-symbol family override table and the GetEffectiveXxx() resolvers over it.
+// Resolvers take a symbol plus a base-config fallback instead of a state index, so this table has no dependency
+// on the symbol-state array; the > 0.0 / > 0 comparisons mean a zero override still falls back to the base value.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_OVERRIDES_MQH

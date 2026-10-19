@@ -209,14 +209,9 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         return false;
     SUnifiedRiskConfig riskConfig;
     g_contexts[ctxIdx].riskManager.Initialize(riskConfig);
-    // The exporter is a READ-ONLY signal tap: we want the RAW per-strategy
-    // candidate signal + confidence for OOS walk-forward validation, NOT a
-    // live risk-gated one. The default SUnifiedRiskConfig leaves
-    // maxPortfolioRiskPercent = 0.0, which makes ValidateTradeRequest reject
-    // EVERY candidate during the historical scan and forces GetSignal() to
-    // return 0 (so the exported *_signal columns were all zero). Make the
-    // risk manager permissive so signals flow through untouched. This has no
-    // effect on the live EA - it only governs this exporter's engine instance.
+    // The exporter is a read-only signal tap: it wants the raw per-strategy signal + confidence for walk-forward
+    // validation, not a risk-gated one. Default maxPortfolioRiskPercent = 0.0 rejects every candidate, which is
+    // what made the exported *_signal columns all zero. This instance only - never the live EA.
     g_contexts[ctxIdx].riskManager.ApplyTierOverrides(
         100.0,   // tierRiskPerTradePct
         999,     // tierMaxPositions

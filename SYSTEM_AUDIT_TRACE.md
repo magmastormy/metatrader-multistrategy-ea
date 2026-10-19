@@ -1705,6 +1705,28 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 229 Removing a Stored Collaborator Nothing Read, and Two Wrong Comment Claims (2026-10-19)
+
+- **State removed:** `CRiskValidationPipeline::m_adaptiveTuner` (declaration, constructor initialiser,
+  `Initialize` parameter, assignment), the corresponding argument at `UnifiedRiskManager::WireValidationPipeline`
+  — the only call site — and the pipeline's `#include "RiskAdaptiveTuner.mqh"`. That header defines exactly one
+  class and the pipeline's only includer already includes it two lines before, so no other translation unit is
+  affected. Six executable lines.
+- **Owner unchanged:** `CRiskAdaptiveTuner` remains owned and driven entirely by `CUnifiedRiskManager`, which
+  reads it at fourteen sites (six each for active risk per trade and conservative mode) and writes or updates it
+  at nine. The pipeline was a second holder with no consumer.
+- **Health probe now truthful:** `IsWired()` gates all ten stored collaborators, which is only meaningful
+  because the eleventh unused one is gone; the comment that had excused the skip now states the invariant a new
+  pointer must satisfy (declaration and gate together, or it is dead on arrival).
+- **No lifecycle change** for positions, tickets, handles or deinit; `CIndicatorManager::DestroyInstance()` still
+  runs (AGENTS.md §3.5).
+- **Documentation corrections found by trimming:** the meta-input layout in `AIModules/MetaLabeler.mqh` said
+  "24 features" for the 26-slot vector `AI_MLP_INPUT` sizes and `CMetaLabeler::BuildInput` fills `[0]`..`[25]`;
+  `Core/Validation/WalkForwardValidator.mqh` named `WalkForwardTesterEA.mqh` as a consumer, and the only file
+  including it is `WalkForwardTesterEA.mq5`.
+- **Comment surface:** 90 lines removed across fifteen files; runs of 8+ consecutive comment lines across 335 MQL
+  files went 17 → 1, the survivor being that input layout, which is the net's contract.
+
 ## Batch 228 Build Verification Made Able to Fail (2026-10-19)
 
 - **Lifecycle stage affected:** the Definition of Done's first condition (§10.1, "compile passes"). No runtime

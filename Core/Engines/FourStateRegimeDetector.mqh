@@ -53,15 +53,8 @@ struct SFourStateSnapshot
     {}
 };
 
-// Layer 1: Volatility regime via rolling percentile of realized vol
-// - Uses 50-bar realized vol (log returns)
-// - Compares to 252-bar rolling window
-// - > 75th percentile = high vol, < 25th = low vol
-// Layer 2: Trend direction via KAMA (Kaufman Adaptive MA)
-// - KAMA > price → bearish
-// - KAMA < price → bullish
-// - KAMA adapts to market efficiency (ER ratio)
-// Combined: 4 states × strategy weight multipliers
+// Realized-vol percentile (50 bars against a 252-bar window: high above the 75th, low below the 25th) crossed
+// with KAMA/price direction into four states; the per-state weight multipliers are the struct above.
 class CFourStateRegimeDetector
 {
 private:

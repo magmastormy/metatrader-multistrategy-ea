@@ -1416,6 +1416,20 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **A collaborator list is only honest if every entry is read** (Batch 229). `CRiskValidationPipeline` was
+  handed eleven pointers and stored one - `CRiskAdaptiveTuner*` - that no line in the class reads, and its own
+  comment said so while `IsWired()` gated the ten that were read and skipped the eleventh: the class's only
+  liveness probe agreed with the dead member. Field, initialiser, parameter, assignment, the argument at the
+  single call site and the include are gone. The tuner stays exactly as alive as it was - `CUnifiedRiskManager`
+  reads it at fourteen sites (six each for active risk and conservative mode) including the factor behind
+  `ApplyPnlRiskAdjustment` - this removed a second reader, not a control.
+
+- **A comment that miscounts a machine-read layout is a defect** (Batch 229). `MetaLabeler::BuildInput` fills
+  `[0]`..`[25]` into an array `AI_MLP_INPUT` sizes at 26, and its header said "24 features"; a
+  `WalkForwardValidator.mqh` header named a consumer that does not include it. Both corrected during the sweep
+  that removed 90 comment lines and cut runs of 8+ from 17 to 1 (the survivor is that 26-slot layout, which is
+  the net's input contract). Length reduction is where these were found; the finding is the point.
+
 - **One authority per risk means one *reachable* authority** (Batch 226). `CPositionSizer` held a complete
   second correlation reduction behind a flag no writer ever set true. It was deleted rather than enabled:
   the pipeline's REDUCE tier already scales the lot and, since Batch 224, every book adopts that result -

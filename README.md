@@ -632,6 +632,22 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 229: a risk collaborator nobody read, and 90 comment lines that restated the code
+
+`CRiskValidationPipeline` was handed eleven pointers and stored one — the adaptive risk tuner — that no line in
+the class ever read. Its comment admitted this ("stored but never used, so it is not gated") and the class's
+health probe `IsWired()` checked the ten live ones and skipped it, so the check agreed with the dead weight
+instead of flagging it. The pointer, its parameter and its include are gone. Nothing about risk behaviour moved:
+`CUnifiedRiskManager` still reads the tuner at fourteen sites, including the factor that gives you budget back
+when a position is in profit. This is the case for why the pointer went — one decision, one reader.
+
+The rest is comment surface: fifteen files carried 8-13 line blocks listing the members and includes declared a
+few lines below, and cutting them (runs of 8+ consecutive comment lines: 17 → 1) turned up two wrong claims
+worth more than the lines saved. The neural net's meta-input header said "24 features" for a 26-slot vector —
+`BuildInput` fills `[0]`..`[25]` into an array `AI_MLP_INPUT` sizes at 26, so anyone matching a training matrix
+to that comment was sizing the input wrong — and the walk-forward validator named a consumer file that does not
+include it. Both corrected. If you train or export model data, trust `AI_MLP_INPUT`, not prose.
+
 ### Batch 228: the build script reported success for compiles it had abandoned
 
 `sync_and_compile.ps1` waited 180 s for each compile to write its `Result:` line, and when it didn't arrive it

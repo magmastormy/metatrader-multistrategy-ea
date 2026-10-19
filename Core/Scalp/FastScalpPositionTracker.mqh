@@ -1,11 +1,8 @@
 // Owns the scalp position tracking array.
-// IsScalpPosition()
-// CountScalpPositions()/IsScalpPosition() scan the terminal, not
-// the local array, so they are `static`.
-// Element mutation is exposed through MarkPartialClosed() /
-// MarkBreakevenSet() because MQL5 cannot return a struct by
-// reference; callers read a snapshot via GetState() and mirror the
-// flag locally, which reproduces the original in-place semantics.
+// CountScalpPositions() / IsScalpPosition() scan the terminal, not the local array, so they are `static`.
+// MQL5 cannot return a struct by reference, so element mutation goes through MarkPartialClosed() /
+// MarkBreakevenSet(); callers take a GetState() snapshot and mirror the flag locally, which reproduces the
+// original in-place semantics.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_POSITION_TRACKER_MQH

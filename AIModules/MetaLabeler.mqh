@@ -328,7 +328,7 @@ public:
 
     void Deinit() {}
 
-    // Enhanced meta-input layout (24 features):
+    // Meta-input layout, the 26 slots AI_MLP_INPUT sizes:
     // [0]    primaryConf
     // [1..4] regimeProbs (4 HMM states)
     // [5]    barVolRatio

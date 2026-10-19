@@ -1,11 +1,8 @@
-// Intrabar (within-bar) signal-handling policy: the per-slot default policy table, the
-// slot -> default resolution used while auto-registering, and the registered-entry
-// resolution with its legacy intrabarEligible fallback.
-// MUTATES the manager, so the back-pointer is non-const and writes go through the
-// manager's narrow per-field accessors.
-// m_sparseIntrabar* stay in the manager despite the prefix: they are consensus QUORUM
-// parameters read by CalculateEffectiveQuorumParamsInternal, not intrabar policy.
-// Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
+// Intrabar (within-bar) signal-handling policy table and its slot/entry resolvers.
+// MUTATES the manager: the back-pointer is non-const and writes go through its narrow per-field accessors.
+// m_sparseIntrabar* stay in the manager despite the prefix - they are consensus QUORUM parameters read by
+// CalculateEffectiveQuorumParamsInternal, not intrabar policy.
+// Implementation detail of EnterpriseStrategyManager.mqh; not standalone.
 #ifndef INTRABAR_POLICY_MQH
 #define INTRABAR_POLICY_MQH
 

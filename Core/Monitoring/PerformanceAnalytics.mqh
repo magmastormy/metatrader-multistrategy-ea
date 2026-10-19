@@ -11,19 +11,8 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 
-// Structural decomposition (behaviour unchanged).
-// This header is a thin coordinator: it aggregates the extracted
-// modules and forwards every call, so that each symbol previously
-// declared here remains available to any translation unit.
-// PerfAnalyticsTypes.mqh        - MAX_TRADES, stateless math and
-// logging helpers
-// PerfAnalyticsTradeStats.mqh   - trade statistics aggregation,
-// ratio metrics, rolling window,
-// streak momentum scaling
-// PerfAnalyticsEquity.mqh       - equity curve / drawdown tracking
-// PerfAnalyticsRiskTriggers.mqh - performance triggers and risk
-// assessment recommendations
-// PerfAnalyticsReport.mqh       - reporting / snapshot assembly
+// Thin coordinator: aggregates the modules included below and forwards every call, so the symbols
+// first declared here stay visible to any translation unit.
 #include "PerfAnalyticsTypes.mqh"
 #include "PerfAnalyticsTradeStats.mqh"
 #include "PerfAnalyticsEquity.mqh"

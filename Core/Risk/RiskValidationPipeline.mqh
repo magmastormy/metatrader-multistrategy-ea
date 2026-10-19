@@ -21,7 +21,6 @@
 #include "RiskCircuitBreaker.mqh"
 #include "RiskMarginHealth.mqh"
 #include "RiskTieredCorrelation.mqh"
-#include "RiskAdaptiveTuner.mqh"
 
 // All percent fields in SUnifiedRiskConfig use the 0-100 scale (1.0 = 1%), never 0-1 fractions.
 struct SUnifiedRiskConfig
@@ -129,7 +128,6 @@ private:
     CRiskCircuitBreaker*        m_circuitBreaker;
     CVirtualPositionBook*       m_virtualPositionBook;
     CPortfolioRiskManager*      m_portfolioRiskManager;
-    CRiskAdaptiveTuner*         m_adaptiveTuner;
     CRiskTieredCorrelation*     m_tieredCorrelation;
     CRiskClusterBudget*         m_clusterBudget;
     CRiskMarginHealth*          m_marginHealth;
@@ -154,7 +152,7 @@ private:
             m_host.CopyRiskConfig(m_config);
     }
 
-    //--- The 10 collaborators this class actually reads. m_adaptiveTuner is stored but never used, so it is not gated.
+    //--- IsWired gates every collaborator this class holds, so a new pointer must land in both places.
     bool IsWired() const
     {
         return (CheckPointer(m_host)                 != POINTER_INVALID &&
@@ -176,7 +174,6 @@ public:
         m_circuitBreaker(NULL),
         m_virtualPositionBook(NULL),
         m_portfolioRiskManager(NULL),
-        m_adaptiveTuner(NULL),
         m_tieredCorrelation(NULL),
         m_clusterBudget(NULL),
         m_marginHealth(NULL),
@@ -202,7 +199,6 @@ public:
                     CRiskCircuitBreaker*        circuitBreaker,
                     CVirtualPositionBook*       virtualPositionBook,
                     CPortfolioRiskManager*      portfolioRiskManager,
-                    CRiskAdaptiveTuner*         adaptiveTuner,
                     CRiskTieredCorrelation*     tieredCorrelation,
                     CRiskClusterBudget*         clusterBudget,
                     CRiskMarginHealth*          marginHealth,
@@ -220,7 +216,6 @@ public:
         m_circuitBreaker           = circuitBreaker;
         m_virtualPositionBook      = virtualPositionBook;
         m_portfolioRiskManager     = portfolioRiskManager;
-        m_adaptiveTuner            = adaptiveTuner;
         m_tieredCorrelation        = tieredCorrelation;
         m_clusterBudget            = clusterBudget;
         m_marginHealth             = marginHealth;

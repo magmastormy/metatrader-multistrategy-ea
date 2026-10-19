@@ -1,11 +1,7 @@
-// Phase 1 walk-forward validation engine (MQL5 in-terminal port).
-// Mirrors Tools/walkforward/*.py methodology exactly:
-// - continuous simulation across IS/OOS window boundaries
-// - next-bar-open entry (no look-ahead)
-// - ATR-based SL/TP, cost-aware returns
-// - threshold re-optimized per IS window, applied to OOS
-// - verdict gates on OOS (WFE, robustness, PF, maxDD)
-// Used by WalkForwardTesterEA.mqh / WalkForwardTesterEA.mq5.
+// Phase 1 walk-forward validation, the in-terminal port of Tools/walkforward/*.py: same methodology, so the two
+// sets of numbers are comparable. Continuous simulation across IS/OOS boundaries, next-bar-open entry (no
+// look-ahead), ATR SL/TP with cost-aware returns, thresholds re-optimized per IS window and judged on OOS
+// (WFE, robustness, PF, maxDD). WalkForwardTesterEA.mq5 is its only consumer.
 #property strict
 
 #ifndef WALKFORWARD_VALIDATOR_MQH

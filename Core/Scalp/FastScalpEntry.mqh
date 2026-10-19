@@ -1,11 +1,7 @@
-// Owns the scalp entry path extracted from CFastScalpEngine: entry gates, risk gating, lot finalization and execution.
-// All methods are `static`; mutable engine state (cooldown stamp,
-// risk budget, trackers) is passed in by reference so the observed
-// side effects and their ordering are identical to the original.
-// Every risk gate, retcode branch and log tag is verbatim,
-// including the MANDATORY pre-trade CUnifiedRiskManager validation
-// (AGENTS.md Invariant #1) and the L10-015 partial-fill risk
-// scaling.
+// Owns the scalp entry path extracted from CFastScalpEngine: entry gates, risk gating, lot finalization, send.
+// Methods are `static` and mutable engine state (cooldown stamp, risk budget, trackers) arrives by reference, so
+// side effects and their ordering match the inline original. The pre-trade CUnifiedRiskManager validation here
+// is AGENTS.md Invariant #1; the partial-fill risk scaling keeps its L10-015 behaviour.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_ENTRY_MQH

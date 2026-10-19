@@ -8,6 +8,41 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 229: a risk pipeline holding a collaborator it never read, and 87 comment lines that listed what the code lists
+
+#### The eleventh pointer
+`CRiskValidationPipeline::Initialize` takes eleven pointers and stores all eleven; `m_adaptiveTuner` is read by
+no line in the class. The field, its constructor initialiser, the parameter, the assignment, the argument at the
+single call site (`UnifiedRiskManager.mqh:518`) and the `#include` of the header that defines only that class all
+went (6 executable lines). The file had recorded its own dead weight - "The 10 collaborators this class actually
+reads. m_adaptiveTuner is stored but never used, so it is not gated" - and `IsWired()` obliged, health-checking
+the ten and skipping the eleventh, so the class's only liveness probe agreed with the unmaintained member
+instead of noticing it.
+
+Not wired, with the reason: the tuner itself is live and well. `CUnifiedRiskManager` reads
+`GetActiveRiskPerTradePercent()` at five sites, `IsConservativeMode()`, `GetThrottlePressure()` and
+`GetRiskReductionFactor()`, and that last feeds `ApplyPnlRiskAdjustment`, called from two budget paths (§5.1 of
+this file's history: Batch 213 declined to touch the field itself). A second handle in the pipeline would be a
+second reader with no second decision to inform (§2).
+
+#### Comment surface
+Fifteen files still carried 8-13 line blocks inventorying the members, includes and parameters declared a few
+lines below - the shape Batch 221 cleared from the manager files, in the files that batch did not open. 90
+comment lines removed, and runs of 8+ consecutive comment lines across 335 MQL files went **17 -> 1**. Kept
+because each is unrecoverable from the code: `EntStrategyTypes.mqh`'s include-position constraint, the
+`m_sparseIntrabar*`-is-quorum-not-policy naming trap, the by-value config copy and by-reference engine state in
+the four scalp modules, the walk-forward methodology, the exporter's permissive-risk-manager workaround (why the
+exported `*_signal` columns were once all zero), and `MetaLabeler.mqh`'s 26-slot input layout - the only run left,
+and the one whose header line was wrong: it said "24 features" while listing `[0]` through `[25]` into an array
+`AI_MLP_INPUT` sizes at 26. Two claims corrected rather than reworded: `WalkForwardValidator.mqh` named a
+`.mqh` consumer that does not include it (`WalkForwardTesterEA.mq5` is the only one), and
+`FastScalpEntry.mqh`'s note read as if the L10-015 partial-fill scaling were the mechanism of AGENTS §3.1.
+
+**Verification:** non-comment lines proved byte-identical in all fifteen comment-only files (the two risk files
+are the only executable change). `sync_and_compile.ps1 -All` on the fixed harness: eight programs, each with its
+own `Result:` line, **0 errors / 0 warnings**, script exit 0 - which after Batch 228 means the compiler
+finished rather than that it was abandoned.
+
 ### Batch 228: the compile harness reported green for builds that never finished
 
 #### The green came from a log with nothing in it yet

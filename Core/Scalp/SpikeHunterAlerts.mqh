@@ -1,12 +1,6 @@
-// Owns the push-notification throttle state (last alert tick + alert count).
-// SendThrottledAlert() — enable gate, GetTickCount() delta vs
-// alertThrottleSeconds*1000, SendNotification() success/failure
-// branches and all three log tags.
-// The module keeps its own by-value copy of SSpikeHunterConfig.
-// The engine assigns it in Init() exactly where m_config was
-// assigned; before Init() the default-constructed copy carries the
-// identical production defaults, so the pre-Init behaviour of the
-// original (enablePushAlerts=true, throttle=120s) is unchanged.
+// Owns the push-alert throttle state (last alert tick + count) and every SendNotification branch.
+// Holds SSpikeHunterConfig by value, assigned in the engine's Init(); before that the default copy carries the
+// same production defaults, so an alert fired pre-Init behaves as the original inline code did.
 #property strict
 
 #ifndef CORE_SCALP_SPIKE_HUNTER_ALERTS_MQH
