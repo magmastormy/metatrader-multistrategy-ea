@@ -189,9 +189,7 @@ public:
                                         const STradeValidationRequest &request,
                                         const double riskPercent);
     virtual void ReleaseVirtualPosition(const string ownerTag);
-    virtual void UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent);
-    // No caller in this repo. Reservations are released by each rejection branch in the pipeline; one approved but never executed lingers until its 60s TTL is pruned.
-    void ClearVirtualPositions();
+    virtual void UpdateVirtualPositionRisk(const string ownerTag, const double lotSize, const double riskPercent);
 
     // Register accepted risk usage only after successful execution.
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
@@ -809,23 +807,14 @@ void CUnifiedRiskManager::ReleaseVirtualPosition(const string ownerTag)
     }
 }
 
-// Re-syncs an early reservation's risk with the validated one: lot-floor and correlation-reduce adjustments land only after Reserve.
-void CUnifiedRiskManager::UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent)
+// Re-syncs an early reservation with the validated lot and risk: lot-floor and correlation-reduce adjustments land
+// only after Reserve, and a reservation whose lot no longer matches the fill can never be discharged by that fill.
+void CUnifiedRiskManager::UpdateVirtualPositionRisk(const string ownerTag, const double lotSize, const double riskPercent)
 {
-    if(m_virtualPositionBook.UpdateRisk(ownerTag, riskPercent))
+    if(m_virtualPositionBook.UpdateRisk(ownerTag, lotSize, riskPercent))
     {
-        PrintFormat("[RISK-VIRTUAL] update | owner=%s | risk=%.2f", ownerTag, riskPercent);
+        PrintFormat("[RISK-VIRTUAL] update | owner=%s | lot=%.2f | risk=%.2f", ownerTag, lotSize, riskPercent);
     }
-}
-
-void CUnifiedRiskManager::ClearVirtualPositions()
-{
-    int count = m_virtualPositionBook.GetReservationCount();
-    if(count <= 0)
-        return;
-
-    m_virtualPositionBook.Clear();
-    Print("[RISK-VIRTUAL] clear | remaining=0");
 }
 
 void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio)

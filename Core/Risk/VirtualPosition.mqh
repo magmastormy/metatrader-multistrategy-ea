@@ -52,8 +52,11 @@ public:
         ArrayResize(m_positions, 0);
     }
 
-// Remove entries older than their TTL
-    int PruneExpired()
+// A reservation bridges the gap between approval and visibility. Two things end it: the TTL, and the position
+// arriving. The terminal's own position list feeds GetPortfolioRisk(), so a reservation that outlives its fill
+// charges the same risk twice - once as an open position and once as pending - for the rest of the minute, and the
+// portfolio cap refuses entries it should have allowed.
+    int PruneStale()
     {
         datetime now = TimeCurrent();
         int pruned = 0;
@@ -69,12 +72,113 @@ public:
                 pruned++;
             }
         }
-        if(pruned > 0)
+
+        int covered = PruneCoveredByPositions();
+
+        if(pruned > 0 || covered > 0)
         {
-            PrintFormat("[RISK-VIRTUAL] Pruned %d expired reservation(s) | remaining=%d",
-                        pruned, ArraySize(m_positions));
+            PrintFormat("[RISK-VIRTUAL] pruned | expired=%d | covered_by_position=%d | remaining=%d",
+                        pruned, covered, ArraySize(m_positions));
         }
-        return pruned;
+        return pruned + covered;
+    }
+
+// One position can cover one reservation: matched oldest first, by symbol, direction, a lot at least as large, and
+// an open time at or after the reservation. POSITION_MAGIC != 0 keeps a manual trade from discharging our pending
+// risk, and the time test keeps an older same-direction position from covering a reservation it predates.
+    int PruneCoveredByPositions()
+    {
+        int total = ArraySize(m_positions);
+        int live = PositionsTotal();
+        if(total == 0 || live == 0)
+            return 0;
+
+        string posSymbol[];
+        datetime posTime[];
+        double posVolume[];
+        bool posBuy[];
+        bool posUsed[];
+        ArrayResize(posSymbol, live);
+        ArrayResize(posTime, live);
+        ArrayResize(posVolume, live);
+        ArrayResize(posBuy, live);
+        ArrayResize(posUsed, live);
+        int count = 0;
+        for(int p = 0; p < live; p++)
+        {
+            ulong ticket = PositionGetTicket(p);
+            if(ticket == 0 || !PositionSelectByTicket(ticket))
+                continue;
+            if(PositionGetInteger(POSITION_MAGIC) == 0)
+                continue;
+            posSymbol[count] = PositionGetString(POSITION_SYMBOL);
+            posTime[count] = (datetime)PositionGetInteger(POSITION_TIME);
+            posVolume[count] = PositionGetDouble(POSITION_VOLUME);
+            posBuy[count] = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+            posUsed[count] = false;
+            count++;
+        }
+
+        bool drop[];
+        bool decided[];
+        ArrayResize(drop, total);
+        ArrayResize(decided, total);
+        for(int i = 0; i < total; i++)
+        {
+            drop[i] = false;
+            decided[i] = false;
+        }
+        int removed = 0;
+
+        // Selection order is explicit because the swap-remove compaction below does not keep the book chronological:
+        // picking the oldest undecided reservation each pass means the same set of fills always discharges the same set
+        // of reservations, instead of whichever one happened to survive a previous prune.
+        for(int pass = 0; pass < total; pass++)
+        {
+            int sel = -1;
+            for(int i = 0; i < total; i++)
+            {
+                if(decided[i])
+                    continue;
+                if(sel < 0 || m_positions[i].reservedAt < m_positions[sel].reservedAt)
+                    sel = i;
+            }
+            if(sel < 0)
+                break;
+            decided[sel] = true;
+            if(m_positions[sel].reservedAt <= 0)
+                continue;
+
+            bool wantBuy = IsBuyOrderType(m_positions[sel].orderType);
+            for(int p = 0; p < count; p++)
+            {
+                if(posUsed[p])
+                    continue;
+                if(posSymbol[p] != m_positions[sel].symbol)
+                    continue;
+                if(posBuy[p] != wantBuy)
+                    continue;
+                if(posTime[p] < m_positions[sel].reservedAt)
+                    continue;
+                if(posVolume[p] + 0.0000001 < m_positions[sel].lotSize)
+                    continue;
+
+                posUsed[p] = true;
+                drop[sel] = true;
+                break;
+            }
+        }
+
+        for(int i = total - 1; i >= 0; i--)
+        {
+            if(!drop[i])
+                continue;
+            int last = ArraySize(m_positions) - 1;
+            m_positions[i] = m_positions[last];
+            ArrayResize(m_positions, last);
+            removed++;
+        }
+        return removed;
     }
 
     void ClearOwner(const string ownerTag)
@@ -90,12 +194,13 @@ public:
         }
     }
 
-    // Batch 151: update an existing reservation's risk percent once the
-    // validated/adjusted lot is known. Reserve() rejects riskPercent <= 0.0,
-    // so a zero-risk placeholder can never sit in the book.
-    bool UpdateRisk(const string ownerTag, const double riskPercent)
+    // Batch 151: sync a reservation to the validated numbers once they exist. Reserve() books the provisional lot and
+    // risk and refuses riskPercent<=0, so a zero-risk placeholder can never sit in the book. Batch 239 adds the lot:
+    // a correlation shrink or lot-floor change lands after Reserve, and a reservation still carrying the pre-adjustment
+    // lot can never be matched by the position that actually filled, so it would double-charge the portfolio cap.
+    bool UpdateRisk(const string ownerTag, const double lotSize, const double riskPercent)
     {
-        if(ownerTag == "" || riskPercent <= 0.0)
+        if(ownerTag == "" || lotSize <= 0.0 || riskPercent <= 0.0)
             return false;
 
         bool updated = false;
@@ -103,6 +208,7 @@ public:
         {
             if(m_positions[i].ownerTag != ownerTag)
                 continue;
+            m_positions[i].lotSize = lotSize;
             m_positions[i].riskPercent = riskPercent;
             updated = true;
         }
@@ -120,7 +226,7 @@ public:
         if(ownerTag == "" || symbol == "" || lotSize <= 0.0 || riskPercent <= 0.0)
             return false;
 
-        PruneExpired();
+        PruneStale();
         ClearOwner(ownerTag);
 
         int size = ArraySize(m_positions);
@@ -142,17 +248,9 @@ public:
         return ArraySize(m_positions);
     }
 
-    bool GetReservation(const int index, SVirtualPosition &position) const
-    {
-        if(index < 0 || index >= ArraySize(m_positions))
-            return false;
-        position = m_positions[index];
-        return true;
-    }
-
     double GetReservedRiskPercent()
     {
-        PruneExpired();
+        PruneStale();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
             total += MathMax(0.0, m_positions[i].riskPercent);
@@ -161,7 +259,7 @@ public:
 
     double GetReservedRiskPercentForSymbol(const string symbol)
     {
-        PruneExpired();
+        PruneStale();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -173,7 +271,7 @@ public:
 
     double GetReservedRiskPercentForCluster(const string strategyCluster)
     {
-        PruneExpired();
+        PruneStale();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -185,7 +283,7 @@ public:
 
     int GetReservedPositionsOnSymbol(const string symbol)
     {
-        PruneExpired();
+        PruneStale();
         int total = 0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -202,10 +300,8 @@ public:
     bool HasOpposingReservation(const string symbol,
                                 const ENUM_ORDER_TYPE orderType) const
     {
-        // Batch 118: Prune expired entries before checking to avoid false positives
-        // (PruneExpired is non-const but we call it on mutable 'this' via const_cast pattern)
-        // Since this is const, we skip pruning here — callers should ensure PruneExpired runs periodically
-
+        // const, so it cannot prune; the pipeline's GetReservedRiskPercent call runs PruneStale on this same book
+        // a few statements earlier in the same validation request.
         bool requestedBuy = IsBuyOrderType(orderType);
 
         for(int i = 0; i < ArraySize(m_positions); i++)

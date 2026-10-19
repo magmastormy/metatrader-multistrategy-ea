@@ -100,7 +100,7 @@ public:
                                           const STradeValidationRequest &request,
                                           const double riskPercent) = 0;
     virtual void   ReleaseVirtualPosition(const string ownerTag) = 0;
-    virtual void   UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent) = 0;
+    virtual void   UpdateVirtualPositionRisk(const string ownerTag, const double lotSize, const double riskPercent) = 0;
 
     virtual bool   IsSymbolBudgetAvailable(const string symbol, const double riskPct) = 0;
     virtual double GetSymbolRiskAllocation(const string symbol) = 0;
@@ -770,9 +770,10 @@ public:
         return result;
     }
 
-    // Sync the reservation to the final risk so post-approval budget checks see real exposure, not the provisional estimate.
-    if(virtualReserved && result.riskPercent > 0.0)
-        m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.riskPercent);
+    // Sync the reservation to the final lot and risk so post-approval budget checks see real exposure, not the
+    // provisional estimate, and so the fill can discharge the pending risk instead of double-counting it.
+    if(virtualReserved && result.riskPercent > 0.0 && result.adjustedLotSize > 0.0)
+        m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.adjustedLotSize, result.riskPercent);
 
     result.approved = true;
     result.message = "Trade request approved";

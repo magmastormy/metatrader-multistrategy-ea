@@ -214,7 +214,7 @@ flowchart TD
   V --> VC[CVaR tail-risk veto gate ACTIVE - IsCVaRLimitExceeded checked in pipeline pre-approval, reservation released on reject; minute-gated UpdateEquityCurve fed from RefreshRuntimeState Batch 151]
   VC --> W{Pass?}
   W -->|No| T
-  W -->|Yes| X[Reserve virtual risk and stage approved candidate - Batch 151: reservation books provisional risk then syncs final adjusted risk]
+  W -->|Yes| X[Reserve virtual risk and stage approved candidate - Batch 151: books provisional risk then syncs final lot and risk; Batch 239: the reservation ends on TTL or when the fill covers it]
 
   X --> X1{More symbols?}
   X1 -->|Yes| E4
@@ -377,9 +377,11 @@ Both changes sit on the entry edge, and both were declared in the inputs dialog 
   roster could send against one stale measurement; `InpMaxTradeSendsPerCycle` had no reader anywhere in the tree.
   Only an executed send decrements the budget (`:3589`), so a deduped or broker-refused send does not spend it. The
   test sits before validation deliberately: an approved candidate keeps a virtual portfolio reservation
-  (`RiskValidationPipeline.mqh:391-394`, TTL 60 s in `VirtualPosition.mqh:136`) whose owner tag embeds
+  (`RiskValidationPipeline.mqh:385-393`, TTL 60 s at `VirtualPosition.mqh:242`) whose owner tag embeds
   `GetMicrosecondCount()` and is therefore unreconstructable by the caller, so a slot validated then held would reserve
-  risk for a minute against no position.
+  risk for a minute against no position. Batch 239 added the other ending: `PruneCoveredByPositions()` (`:89`)
+  discharges a reservation once an open position covers it, because `GetPortfolioRisk()` counts that position and the
+  caps were charging the same trade twice.
 - **Changed edge: the spike pause now has a detector.** `CSyntheticSpikeMonitor::EvaluateSpike` was reachable only
   through `ProcessTickSafety`, which no code calls, so `IsPaused()` - `spike_pause` in `[ENTRY-GATE]` (`:3462`) and
   `pause_active=` in `[HEARTBEAT]` (`:2925`) - could only be false, and `InpSyntheticSpikeVelocityMultiplier`,

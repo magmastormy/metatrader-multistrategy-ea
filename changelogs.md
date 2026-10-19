@@ -8,6 +8,58 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 239: an open position was charged to the risk caps twice for a minute after every fill
+
+`ValidateTradeRequest` reserves portfolio budget before the gates (`RiskValidationPipeline.mqh:385-393`), releases it on
+every rejection branch, and **keeps it on approval** - which is right, because the reservation bridges approval and the
+moment the position becomes visible. It was never ended any other way. The tag it is keyed on (`"%s_%s_%lld"`, built at
+`:391`) is not returned to the caller, so after a fill no code could release it, and the only thing that removed it was
+its 60-second TTL. Meanwhile `CPortfolioRiskManager::GetPortfolioRisk()` had been counting that same position as open
+exposure since the fill. So every projection built on `reservedRisk + openExposureRisk` saw one trade as two:
+
+- the pre-gate daily budget test (`:359-362`) and its post-adjustment twin (`:738`), against `InpMaxDailyRisk = 4.0`;
+- the portfolio projection `CalculatePortfolioRiskAfterTrade` (`:919-922`), against `InpMaxPortfolioRisk = 12.0`;
+- `CUnifiedRiskManager::GetRemainingPortfolioRiskPercent()` (`:929`), `GetRemainingDailyRiskPercent()` (`:834`), and
+  `snapshot.virtualReservedRiskPercent` / `virtualReservationCount` (`:962`/`:966`).
+
+At roughly 1% risk per trade a four-fill minute read as 8% of a 4% daily budget, and eight fills as 16% of a 12%
+portfolio cap - the caps refused live entries on money already counted as exposure. With the Batch 237 send cap of 3
+per cycle this is reachable inside one scan pass.
+
+**Fix.** `PruneExpired()` becomes `PruneStale()`: the TTL pass, then `PruneCoveredByPositions()`, which discharges a
+reservation once a real position covers it. Matching is oldest-reservation-first and **one position covers one
+reservation** (`posUsed[]`), on symbol, direction (`POSITION_TYPE` vs `IsBuyOrderType`), `POSITION_TIME >= reservedAt`
+(so a position that predates the reservation cannot discharge it), `POSITION_VOLUME >= lotSize`, and
+`POSITION_MAGIC != 0` (a manual trade does not discharge our pending risk). Oldest-first is an explicit selection pass
+over `reservedAt`, not the array order: both prune branches compact by swap-remove, so the book is not chronological, and
+without the selection the same set of fills could discharge different reservations depending on which earlier prune had
+run. The position list is snapshotted into parallel arrays once per call, not re-walked per reservation: `PruneStale` runs
+from five entry points, each validation request calls it about four times, and a cycle validates up to thirteen symbol
+slots.
+
+`UpdateVirtualPositionRisk` now takes the lot as well as the risk percent and is fed `result.adjustedLotSize` at `:776`.
+Without that the fix would have missed exactly the trades that needed it: a correlation REDUCE or a min-lot floor changes
+the lot *after* `Reserve()`, so the reservation would still have carried the pre-adjustment lot, no fill could ever match
+the volume test, and the double count would have stayed for those books.
+
+Sweep deletions in the same two files: `CVirtualPositionBook::GetReservation` (declared and defined, zero callers) and
+`CUnifiedRiskManager::ClearVirtualPositions` (same) - the latter's `[RISK-VIRTUAL] clear | remaining=0` line therefore
+no longer exists, and `Print("[RISK-VIRTUAL] clear...")` was never in any journal. `HasOpposingReservation` lost a
+three-line comment describing a `const_cast` pattern that is not in the file; it keeps the true reason it can skip
+pruning (it is const, and `:359` prunes this same book a few statements earlier).
+
+What is deliberately not fixed: a candidate the gate approves and the orchestrator never sends still holds its
+reservation until the TTL, because nothing covers it. That is the conservative direction - it charges risk that may not
+exist for up to a minute - and releasing it would need the send path to report back, which is a larger change than a
+double count this clean to close.
+
+`[RISK-VIRTUAL] pruned` now prints `expired= | covered_by_position= | remaining=`; the old
+`Pruned %d expired reservation(s) | remaining=%d` form reported only the clock. 135 added / 49 deleted across three
+files. Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own
+`Result:` line in its own kept log, all 0 errors / 0 warnings, every `.ex5` newer than every source. The batch was
+compiled twice because the prune matcher was rewritten between runs; the run that stands is 5.0 / 2.7 / 6.1 / 6.3 /
+123.7 / 112.1 / 36.9 / 2.9 s, script exit 0. No journal newer than 2026-09-23, so this is not runtime-observed yet.
+
 ### Batch 238: twelve inputs that wrote a config field and bound nothing, and the dead class one of them served
 
 The Batch-237 audit swept every `SOrchestratorConfig` field for a reader. Fourteen had a writer in both root EAs and

@@ -357,7 +357,7 @@ The terminal's own EA journals (`MQL5/Logs/`, UTF-16LE) for 17-23 September were
 
 The pre-trade gate used to be called before the position was sized, with `lotSize` set to the broker minimum, and the real lot was computed afterwards. Twenty-odd checks inside it — portfolio exposure, the correlation tiers, the daily risk budget, margin, cluster governance — were therefore voting on a 0.01-lot trade while the candidate shipped whatever the sizer, the daily-budget cap, the drawdown and momentum scalers and the min-lot round-up produced. The file's own comment said the shipped lot "can carry several times the proposed risk with no gate behind it"; only the per-trade cap clamp looked at the real size.
 
-- **What changed:** `ValidateTradeRequest` now runs once, at the end, against `candidate.lotSize`. It moved rather than being added because each approval keeps a virtual reservation until its TTL, so two calls would count the same trade twice.
+- **What changed:** `ValidateTradeRequest` now runs once, at the end, against `candidate.lotSize`. It moved rather than being added because each approval keeps a virtual reservation until its TTL, so two calls would count the same trade twice. (Batch 239 added the other ending, and found the one this line could not see: a *filled* trade was still counted twice, because no code discharged its reservation when the position appeared.)
 - **What to expect on the first session:** fewer and smaller consensus entries, never larger. Refusals are countable: `[RISK-GATE-REJECT] ... reason=final_lot_validation`, `reason=adjusted_lot_below_min`, `reason=correlation_reduce_below_min_lot`, and `[RISK-GATE-ADJUST] symbol | lot=A -> B | risk=x% -> y% | reason` when the gate asked for less and got it.
 - **Three gates that could not refuse now can:** a correlation reduction that cannot be expressed above the broker minimum used to approve the full lot with the discount silently gone; a lot above `SYMBOL_VOLUME_MAX` printed "caller must cap" and returned approval; the validator's quality floor was derived from the very quality being compared, so `InpValidatorNewBarMinQuality=0.68` / `InpValidatorIntrabarMinQuality=0.70` did nothing for the two consensus classes that carry most entries. That last one tightens entries: the floors become 0.612 / 0.63 / 0.595 instead of 0.40 / 0.45.
 - **Stop distance is volatility-aware and unit-consistent:** `atrValue` was hard-wired to 0, so the ATR branch in `CalculateStops` never ran; ATR(14) now comes from the shared indicator cache. The broker minimum stop was compared in price units against point counts, roughly 100,000x too small on 5-digit FX, so the spread-folded floor never bound.
@@ -631,6 +631,34 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
+
+When a candidate passes the risk gate it books its risk as a *pending* reservation, so the next candidate in the same
+scan cannot spend budget the first one already took. On rejection the reservation is released. On approval it is kept -
+correctly, because there is a gap between "approved" and "the terminal shows me a position" - and then nothing ever
+ended it except its 60-second timeout. Meanwhile your open exposure had started counting that same trade the moment it
+filled. So for up to a minute after every fill, that trade's risk appeared twice in the number the caps are compared
+against: `InpMaxDailyRisk = 4.0` and `InpMaxPortfolioRisk = 12.0`, plus the remaining-budget figures in the risk
+snapshot. At your default sizing of roughly 1% per trade, four fills inside a minute read as 8% of a 4% daily budget,
+and the EA refused live entries on money it was already carrying. The Batch 237 send cap of three per cycle makes that
+minute easy to reach.
+
+What changed: a reservation now also ends when the position it stands for appears. The matcher is conservative - one
+open position discharges one reservation, matched on symbol, direction, a lot at least as large, an open time at or
+after the reservation, and a non-zero magic so a manual trade cannot clear pending EA risk. The gate's final lot is now
+written back into the reservation too, because a correlation shrink or a broker-minimum floor changes the size *after*
+the reservation was taken, and a reservation still carrying the old lot could never be recognised by the fill that
+replaced it.
+
+You will see `[RISK-VIRTUAL] pruned | expired=0 | covered_by_position=3 | remaining=1` where the journal used to show
+only `expired=`. Expect more entries inside the minute after a burst of fills - that is the point: the caps are now
+measuring the risk you actually have on. The two-line cleanup in the same file (`GetReservation`, `ClearVirtualPositions`)
+had no callers, and the `[RISK-VIRTUAL] clear` line they would have printed has never appeared in a journal.
+
+Not fixed, on purpose: a trade the gate approves and the EA then never sends still holds its reservation for the full
+60 seconds, because no position exists to discharge it. That direction over-counts risk rather than under-counting it,
+and closing it properly means the send path reporting its outcome back into the risk layer.
 
 ### Batch 238: twelve inputs removed from your dialog because they changed nothing
 
