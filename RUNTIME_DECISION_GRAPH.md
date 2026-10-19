@@ -339,6 +339,30 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 233: The Intrabar Policy Is a Report Field (2026-10-19)
+
+No edge moved; the graph's missing edge is now named on the journal.
+
+Verified order of reading:
+- `StrategyEntry::intrabarPolicy` has one reader - the registration line's `Intrabar:` field
+  (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` on both owners has no caller.
+- The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3464`, `:3493`;
+  `SignalGenerator.mqh:109` states it), so no entry decision ever runs an intrabar scan.
+- The only live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263` (signal-reversal exit), whose voter
+  set is `IsStrategyLiveVoter(i)` (enabled + `liveVotingEnabled`) plus the Batch 204 regime veto. The policy is not
+  consulted there.
+
+So `InpIntrabarEligibility*` -> stored policy -> report line is a chain with no branch on it. Gating on
+`policy == INTRABAR_POLICY_LIVE` is one line and is the *restrictive* direction: eight indicator rows carry
+`defaultPolicy = INTRABAR_POLICY_OFF` with no operator input (`StrategyConfigBuilder.mqh` slots 14-22: Statistical
+Arbitrage, FVG Scalper, Turtle Soup, Breaker Block, NY Open Gap, Asian Range Break, Liquidity Sweep, Range
+Compression), so enforcement would drop them from the reversal-exit vote and slow the EA's response to a new signal.
+Recorded as an operator decision, not applied.
+
+Output added: `[INTRABAR-POLICY] <symbol> | stored LIVE= | other= | applied=no(...) | rows_not_LIVE=` once per
+symbol at registration, read out of the roster; and the per-row field is now
+`Intrabar(report-only): <policy>` so a journal cannot be read as "this strategy does not vote intrabar".
+
 ## Batch 232: The Intrabar-Eligibility Mirror and the By-Name Policy API (2026-10-19)
 
 No decision edge changed. `SStrategyEntry.intrabarEligible` - a boolean mirror of

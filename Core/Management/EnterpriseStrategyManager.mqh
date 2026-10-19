@@ -783,6 +783,28 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());
+
+    // The stored per-row intrabar policy is report-only: the gate that used to consult it was unreachable and is
+    // deleted, and the entry path requests EVAL_MODE_NEW_BAR, so the intrabar vote happens only in the
+    // reversal-exit check - where every enabled live voter votes whatever this row says.
+    int policyLiveCount = 0;
+    int policyOtherCount = 0;
+    string policyIdleNames = "";
+    for(int r = 0; r < GetStrategyCount(); r++)
+    {
+        if((ENUM_INTRABAR_POLICY)GetStrategyIntrabarPolicyRaw(r) == INTRABAR_POLICY_LIVE)
+            policyLiveCount++;
+        else
+        {
+            policyOtherCount++;
+            if(policyIdleNames != "")
+                policyIdleNames += ",";
+            policyIdleNames += GetStrategyName(r);
+        }
+    }
+    PrintFormat("[INTRABAR-POLICY] %s | stored LIVE=%d other=%d | applied=no(report-only field; intrabar mode runs only in the reversal-exit check, and every enabled live voter votes there) | rows_not_LIVE=%s",
+                GetManagedSymbol(), policyLiveCount, policyOtherCount,
+                (policyIdleNames != "" ? policyIdleNames : "none"));
 }
 
 //--- Auto-registration runs BEFORE the orchestrator fills the shared CStrategyRegistry, so IsStrategyActive() is

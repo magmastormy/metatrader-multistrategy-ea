@@ -1175,8 +1175,9 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - Intrabar eligibility is explicit and authoritative: when an enabled strategy's intrabar flag is `true`, that strategy is promoted into the live intrabar voter pool instead of a hidden probe-only lane.
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
-- AI adapters can be the sole tradable family on both new-bar and timed intrabar paths when enabled.
-- AI intrabar participation is strategy-scoped (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) instead of being hard-forced `OFF` at governance time.
+- AI adapters can be the sole tradable family when enabled. The *entry* vote is new-bar only (`EVAL_MODE_NEW_BAR` at
+  `EAOrchestrator.mqh:3464`/`:3493`); no entry path runs an intrabar scan (Batch 233).
+- AI intrabar participation is *configured* per strategy (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) rather than hard-forced `OFF` at governance time — and since Batch 233 that field is stated as report-only: the stored policy gates no vote, and the AI adapters register with `fixedPolicy = LIVE` regardless of the input, because their catalog slot is `-1`.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
   - FX symbols keep the full enabled roster unless manually disabled
@@ -1431,6 +1432,17 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   every candidate 0.0 and refused everything, quietly. 242 lines and six reader-only accessors deleted. The live
   readers of those three quantities are `SPipelineEvidence` -> `SConsensusDecisionContext` (Batch 205), which is
   what sizes a trade.
+
+- **A field no branch reads must announce itself** (Batch 233). The eleven `InpIntrabarEligibility*` inputs still
+  write a per-strategy intrabar policy, and after Batch 231 the only reader left is the registration print: the entry
+  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3464`/`:3493`, `SignalGenerator.mqh:109` says so outright), and
+  the one live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`), whose voter
+  set is enabled + `liveVotingEnabled` + the regime veto - never the policy. Making it binding is one line and the
+  *restrictive* direction, because eight indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` with no input at
+  all (`StrategyConfigBuilder.mqh` slots 14-22), so enforcement would drop them from the reversal vote. Held as an
+  operator decision; shipped instead is `[INTRABAR-POLICY] <symbol> | stored LIVE= | other= | applied=no(...) |
+  rows_not_LIVE=` from the roster, and the per-row field relabelled `Intrabar(report-only):`. The point is the
+  journal's grammar: a line that reads `OFF` where no gate exists is evidence for a conclusion the runtime never draws.
 
 - **A derived mirror needs a reader or it goes** (Batch 232). `StrategyEntry::intrabarEligible` was
   `intrabarPolicy == INTRABAR_POLICY_LIVE` stored as a second boolean: written at registration and by the by-name

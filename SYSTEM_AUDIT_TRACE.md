@@ -1705,6 +1705,24 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 233 Naming a Policy Field That No Branch Reads (2026-10-19)
+
+- **State read, none removed:** the report path now walks the roster (`GetStrategyCount` /
+  `GetStrategyIntrabarPolicyRaw` / `GetStrategyName`) instead of restating config, so what prints is what registration
+  stored.
+- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3464`, `:3493`, and
+  `SignalGenerator.mqh:109`'s own comment); the sole live `EVAL_MODE_INTRABAR` caller is
+  `PositionLifecycleManager.mqh:263`. `GetStrategyIntrabarPolicyConfig` (manager + `CIntrabarPolicy`) has no caller,
+  and `SStrategyTimeframeConfig::intrabarEnabled` has no reader at all.
+- **Lifecycle:** unchanged - registration order, `SyncEnabledWithRegistry`, deinit and
+  `CIndicatorManager::DestroyInstance()` are untouched; one print and one label moved.
+- **Log surface:** `[INTRABAR-POLICY]` gains its printer (per symbol, at registration complete). The per-row field
+  changes text: `Intrabar:` -> `Intrabar(report-only):`, so a journal line can no longer be read as evidence that a
+  strategy abstains intrabar.
+- **Deliberately not enforced:** gating the intrabar vote on `INTRABAR_POLICY_LIVE` would remove the eight rows whose
+  `defaultPolicy` is hardcoded OFF and that have no operator input, slowing the reversal exit. Restriction is operator
+  policy (the Batch 217/220/222 precedent), and it is on record here and in `README.md`.
+
 ## Batch 232 Removing the Intrabar-Eligibility Mirror and an Unreachable By-Name Policy API (2026-10-19)
 
 - **State removed:** `StrategyEntry::intrabarEligible` (field, `CStrategyMgrRoster::GetStrategyIntrabarEligible` +

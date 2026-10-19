@@ -125,7 +125,7 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
     Print("[EnterpriseStrategyManager] Registered strategy: ", name,
           " | Enabled: ", enabled, " | Tier: ", (int)tier, " | Weight: ", weight,
           " | TF: ", EnumToString(resolvedTf),
-          " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_src.GetStrategyIntrabarPolicyRaw(m_src.GetStrategyCount() - 1)),
+          " | Intrabar(report-only): ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_src.GetStrategyIntrabarPolicyRaw(m_src.GetStrategyCount() - 1)),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
           " | LiveVote: ", liveVotingEnabled ? "YES" : "NO");

@@ -8,6 +8,46 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 233: the intrabar policy is a report field, and now it says so
+
+Batch 232 left the question open: eleven `InpIntrabarEligibility*` inputs still write a per-strategy policy, and
+Batch 231 had deleted the only code that ever tested it. This batch checks what actually gates a sub-bar vote and
+prints the answer instead of guessing at it.
+
+**What was verified, in order:**
+- The stored policy (`StrategyEntry::intrabarPolicy`) has exactly one reader: the per-row registration print's
+  `Intrabar:` field (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` (manager and
+  `CIntrabarPolicy` copies) has no caller.
+- The *entry* path never asks for intrabar evaluation: `EAOrchestrator.mqh:3464`/`:3493` pass
+  `EVAL_MODE_NEW_BAR`, and `SignalGenerator.mqh:109` says so in a comment ("Only EVAL_MODE_NEW_BAR is ever passed
+  on this path") - Batch 212 declined to change that, with the admission arithmetic on record.
+- The one live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263`, the signal-reversal exit check.
+  There, the voter set is `IsStrategyLiveVoter(i)` (enabled + `liveVotingEnabled`) and the regime veto; the intrabar
+  policy is not consulted.
+
+So the honest statement is: a row's policy is `LIVE` or not in a field nobody branches on, and every enabled live
+voter participates in the intrabar path whatever it says.
+
+**Not wired, deliberately.** Gating the vote loop on `policy == INTRABAR_POLICY_LIVE` is one line, and it is the
+restrictive direction: eight of the fourteen indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` hardcoded in
+`StrategyConfigBuilder.mqh` slots 14-22 - Statistical Arbitrage, FVG Scalper, Turtle Soup, Breaker Block, NY Open
+Gap, Asian Range Break, Liquidity Sweep, Range Compression - and none of them has an operator input. Turning the
+control on would strip those eight from the reversal-exit vote, i.e. it would make the EA *slower* to reverse a
+position, on a setting the operator never chose. That is risk policy, and the Batch 217/220/222 rule says the
+operator picks it, not a constant.
+
+**Shipped: two lines of truth.**
+- `[INTRABAR-POLICY] <symbol> | stored LIVE=n other=m | applied=no(report-only field; intrabar mode runs only in
+  the reversal-exit check, and every enabled live voter votes there) | rows_not_LIVE=<names>` once per symbol at
+  registration, built from the roster itself, so it reports what was actually stored rather than what the dialog
+  shows.
+- The per-row field is now `Intrabar(report-only): OFF`, because a line reading `Intrabar: OFF` in a journal is
+  evidence that the strategy does not vote intrabar - and it is not.
+
+**Verification:** `sync_and_compile.ps1 -All` after the change - eight programs, each with its own `Result:` line,
+all 0 errors / 0 warnings (11.6 / 4.3 / 9.1 / 8.8 / 136.4 / 137.4 / 45.3 / 3.8 s), script exit 0, binaries newer
+than sources. No gate, threshold, lot or voter set moved: 22 lines of output added, one label changed.
+
 ### Batch 232: the intrabar-eligibility mirror, and the by-name policy API no input reaches
 
 Batch 231 deleted the two functions that read `SStrategyEntry.intrabarEligible`, which left the field on the exact

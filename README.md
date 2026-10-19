@@ -632,6 +632,29 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 233: your eleven intrabar eligibility inputs are a report field, and the journal now says so
+
+If you set `InpIntrabarEligibilityMeanReversion = OFF` you would expect Mean Reversion to stop voting inside a bar.
+It does not, and this batch proves why rather than guessing: after the unreachable evaluators were deleted in
+Batch 231, the only code that ever *read* a strategy's stored intrabar policy is the line that prints it. The entry
+path never asks for sub-bar evaluation at all (it passes `EVAL_MODE_NEW_BAR`, and the declined change is recorded in
+Batch 212), so the only live intrabar evaluation is the signal-reversal exit check — and there the voter set is
+"enabled and live-voting", whatever the policy field says.
+
+**Why the control was not simply switched on.** Fourteen indicator rows are configured through
+`StrategyConfigBuilder`, and eight of them have no input at all: Statistical Arbitrage, FVG Scalper, Turtle Soup,
+Breaker Block, NY Open Gap, Asian Range Break, Liquidity Sweep and Range Compression carry
+`defaultPolicy = INTRABAR_POLICY_OFF` in code. Making the stored policy binding would therefore remove those eight
+from the reversal-exit vote — the EA would be slower to flip a position against a new signal — on a setting nobody
+chose. Enforcement is your risk policy, so it needs your decision: say the word and the gate is one line, and the
+eight rows would first need inputs so you can pick them individually.
+
+**What you get now:** one line per symbol at startup,
+`[INTRABAR-POLICY] <symbol> | stored LIVE=n other=m | applied=no(...) | rows_not_LIVE=<names>`, generated from the
+roster rather than from the dialog, so it tells you what is stored *and* that nothing branches on it; and the
+per-strategy registration line now reads `Intrabar(report-only): OFF`, because a journal field that says `OFF` where
+no gate exists is the kind of evidence that sends you hunting the wrong thing.
+
 ### Batch 232: a second copy of the intrabar policy that nothing consulted
 
 Removing the dead evaluators left `SStrategyEntry.intrabarEligible` in the shape this project keeps finding: two
@@ -645,7 +668,7 @@ catalog rows through `SetStrategyIntrabarPolicyConfig`. One consequence worth kn
 `[EnterpriseStrategyManager] Intrabar policy updated: <name> => <policy>` line those methods print has **never
 appeared in any journal** and never could, because nothing could reach the code that prints it. If you want to flip
 one strategy's intrabar policy at runtime, that is now a real feature request rather than a switch you expected to
-work — the inputs that exist are the eleven `InpIntrabarEligibility*` per-strategy policies, and they do bind.
+work — and the eleven `InpIntrabarEligibility*` inputs that exist reach a stored field, not a decision (Batch 233).
 
 52 lines deleted across five files; no policy value, threshold or eligibility decision moved, so what a symbol may do
 inside a bar is unchanged. Verified by the eight-program compile at 0 errors / 0 warnings with each program's own
