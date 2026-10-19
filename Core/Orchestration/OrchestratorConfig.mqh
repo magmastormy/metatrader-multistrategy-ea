@@ -108,10 +108,6 @@ struct SOrchestratorConfig
     double  consensusMinReadyWeightRatio;
     double  consensusSupportFloorNewBar;
     double  consensusSupportFloorIntrabar;
-    bool    allowSparseIntrabarSingleVoter;
-    double  sparseIntrabarMinQuality;
-    double  sparseIntrabarMinSupportRatio;
-    double  sparseIntrabarMinReadyCoverage;
     CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE quorumProfile;
 
     // Strategy weights
@@ -180,9 +176,6 @@ struct SOrchestratorConfig
     bool    intrabarChartSymbolOnly;
     bool    intrabarDynamicQuorumEnabled;
     double  pipelineMinConfidence;
-    double  intrabarSingleVoterMinConfidence;
-    double  syntheticLeanSparseIntrabarMinQuality;
-    double  syntheticLeanIntrabarSingleVoterMinConfidence;
     double  pipelineIntrabarConfidenceCap;
     bool    pipelineEnableRegimeCostGate;
     double  pipelineMaxSpreadToAtrRatio;
@@ -443,10 +436,6 @@ struct SOrchestratorConfig
         consensusMinReadyWeightRatio = 0.40;
         consensusSupportFloorNewBar = 0.20;
         consensusSupportFloorIntrabar = 0.15;
-        allowSparseIntrabarSingleVoter = false;
-        sparseIntrabarMinQuality = 0.85;
-        sparseIntrabarMinSupportRatio = 0.40;
-        sparseIntrabarMinReadyCoverage = 0.85;
         quorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
 
         weightMomentum = 1.0;
@@ -511,9 +500,6 @@ struct SOrchestratorConfig
         intrabarChartSymbolOnly = false;
         intrabarDynamicQuorumEnabled = true;
         pipelineMinConfidence = 0.55;
-        intrabarSingleVoterMinConfidence = 0.95;
-        syntheticLeanSparseIntrabarMinQuality = 0.85;
-        syntheticLeanIntrabarSingleVoterMinConfidence = 0.95;
         pipelineIntrabarConfidenceCap = 0.05;
         pipelineEnableRegimeCostGate = true;
         pipelineMaxSpreadToAtrRatio = 0.50;

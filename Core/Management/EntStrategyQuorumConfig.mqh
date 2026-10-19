@@ -1,6 +1,6 @@
-// Storage object for the consensus-quorum, sparse-intrabar, adaptive-quorum, regime-relax,
-// decay and participation-formula configuration that used to sit as loose manager members,
-// with the clamping setters that write them.
+// Storage object for the consensus-quorum, adaptive-quorum, regime-relax, decay and
+// participation-formula configuration that used to sit as loose manager members, with the
+// clamping setters that write them.
 // Computes nothing: CConsensusEngine reads these through the same manager getters as before,
 // which are one-line forwarders here, so the quorum path's numbers are unchanged.
 // Leaf value object held BY VALUE - no back-pointer, it never observes manager state.
@@ -21,18 +21,12 @@ private:
     int    m_minQuorum;
     int    m_intrabarMinQuorum;
     bool   m_intrabarDynamicQuorumEnabled;
-    double m_intrabarSingleVoterMinConfidence;
     double m_quorumThreshold;
     double m_pipelineMinConfidence;
     double m_conflictDeadband;
     double m_minReadyWeightRatio;
     double m_supportFloorNewBar;
     double m_supportFloorIntrabar;
-    double m_sparseIntrabarMinQuality;
-    double m_sparseIntrabarMinSupportRatio;
-    double m_sparseIntrabarMinReadyCoverage;
-    double m_sparseIntrabarConfidencePenalty;
-    bool   m_allowSparseIntrabarSingleVoter;
     bool   m_adaptiveQuorumEnabled;
     double m_adaptiveQualityThreshold_1voter;
     double m_adaptiveSupportFloor_1voter;
@@ -64,18 +58,12 @@ public:
     int    GetMinQuorum() const                        { return m_minQuorum; }
     int    GetIntrabarMinQuorum() const                { return m_intrabarMinQuorum; }
     bool   IsIntrabarDynamicQuorumEnabled() const      { return m_intrabarDynamicQuorumEnabled; }
-    double GetIntrabarSingleVoterMinConfidence() const { return m_intrabarSingleVoterMinConfidence; }
     double GetQuorumThreshold() const                  { return m_quorumThreshold; }
     double GetPipelineMinConfidence() const            { return m_pipelineMinConfidence; }
     double GetConflictDeadband() const                 { return m_conflictDeadband; }
     double GetMinReadyWeightRatio() const              { return m_minReadyWeightRatio; }
     double GetSupportFloorNewBar() const               { return m_supportFloorNewBar; }
     double GetSupportFloorIntrabar() const             { return m_supportFloorIntrabar; }
-    double GetSparseIntrabarMinQuality() const         { return m_sparseIntrabarMinQuality; }
-    double GetSparseIntrabarMinSupportRatio() const    { return m_sparseIntrabarMinSupportRatio; }
-    double GetSparseIntrabarMinReadyCoverage() const   { return m_sparseIntrabarMinReadyCoverage; }
-    double GetSparseIntrabarConfidencePenalty() const  { return m_sparseIntrabarConfidencePenalty; }
-    bool   IsSparseIntrabarSingleVoterAllowed() const  { return m_allowSparseIntrabarSingleVoter; }
     bool   IsAdaptiveQuorumEnabled() const             { return m_adaptiveQuorumEnabled; }
     double GetAdaptiveQualityThreshold1Voter() const   { return m_adaptiveQualityThreshold_1voter; }
     double GetAdaptiveSupportFloor1Voter() const       { return m_adaptiveSupportFloor_1voter; }
@@ -99,15 +87,10 @@ public:
     void SetMinQuorum(int quorum);
     void SetIntrabarMinQuorum(int quorum);
     void SetIntrabarDynamicQuorumEnabled(const bool enabled);
-    void SetIntrabarSingleVoterMinConfidence(const double minConfidence);
     void SetQuorumThreshold(const double threshold);
     void SetConflictDeadband(const double deadband);
     void SetMinReadyWeightRatio(const double ratio);
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
-    void SetSparseIntrabarThresholds(const double minQuality,
-                                     const double minSupportRatio,
-                                     const double minReadyCoverage);
-    void SetAllowSparseIntrabarSingleVoter(const bool enabled);
     void SetParticipationFormulaBase(const double base);
     void SetParticipationFormulaCoeff(const double coeff);
     void SetParticipationFormulaMin(const double minVal);
@@ -128,18 +111,12 @@ CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
     m_minQuorum(1),
     m_intrabarMinQuorum(1),
     m_intrabarDynamicQuorumEnabled(true),
-    m_intrabarSingleVoterMinConfidence(0.75),
     m_quorumThreshold(0.60),
     m_pipelineMinConfidence(0.40),
     m_conflictDeadband(0.35),         // [PROFIT-02] default deadband raised (audit: 0.30-0.35)
     m_minReadyWeightRatio(0.30),
     m_supportFloorNewBar(0.30),        // [PROFIT-11] ratio field, not a count
     m_supportFloorIntrabar(0.25),      // [PROFIT-11] ratio field, not a count
-    m_sparseIntrabarMinQuality(0.65),
-    m_sparseIntrabarMinSupportRatio(0.30),
-    m_sparseIntrabarMinReadyCoverage(0.50),
-    m_sparseIntrabarConfidencePenalty(0.10),
-    m_allowSparseIntrabarSingleVoter(false),
     m_adaptiveQuorumEnabled(false),
     m_adaptiveQualityThreshold_1voter(0.80),
     m_adaptiveSupportFloor_1voter(1),
@@ -175,11 +152,6 @@ void CEntStrategyQuorumConfig::SetIntrabarDynamicQuorumEnabled(const bool enable
     m_intrabarDynamicQuorumEnabled = enabled;
 }
 
-void CEntStrategyQuorumConfig::SetIntrabarSingleVoterMinConfidence(const double minConfidence)
-{
-    m_intrabarSingleVoterMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));
-}
-
 void CEntStrategyQuorumConfig::SetQuorumThreshold(const double threshold)
 {
     m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
@@ -199,20 +171,6 @@ void CEntStrategyQuorumConfig::SetSupportFloors(const double newBarFloor, const 
 {
     m_supportFloorNewBar = MathMax(0.0, MathMin(1.0, newBarFloor));
     m_supportFloorIntrabar = MathMax(0.0, MathMin(1.0, intrabarFloor));
-}
-
-void CEntStrategyQuorumConfig::SetSparseIntrabarThresholds(const double minQuality,
-                                     const double minSupportRatio,
-                                     const double minReadyCoverage)
-{
-    m_sparseIntrabarMinQuality = MathMax(0.0, MathMin(1.0, minQuality));
-    m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
-    m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
-}
-
-void CEntStrategyQuorumConfig::SetAllowSparseIntrabarSingleVoter(const bool enabled)
-{
-    m_allowSparseIntrabarSingleVoter = enabled;
 }
 
 void CEntStrategyQuorumConfig::SetParticipationFormulaBase(const double base)

@@ -339,6 +339,54 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 231: Two More Evaluators With No Entry Point, and the Seven Inputs That Configured Them (2026-10-19)
+
+Batch 230's "what the live graph keeps" bullet below is wrong: the probe path was never reachable. The check that
+failed was reading the getters' callers without asking who can enter the function holding them.
+
+Edges removed from the graph - drawn, never walked:
+
+```
+(any caller) -> CEnterpriseStrategyManager::EvaluateConsensusTwoTier -> CConsensusEngine::EvaluateConsensusTwoTier
+            -> EvaluateConsensusTwoTierInternal          (counts probe-eligible votes, then calls the live evaluator)
+(any caller) -> EvaluateConsensusProbeOnlyInternal       (not even exposed through the manager)
+GetConsensusSignal -> WithConfluence -> ForSymbolWithConfluence -> ForSymbolWithConfluenceMode  <- the live entry
+GetConsensusSignalForSymbol ----------------------------------^
+```
+
+The live entry point is the last one and is untouched: `CSignalGenerator`, `CPositionLifecycleManager` and
+`TrainingDataExporter` all call `GetConsensusSignalForSymbolWithConfluenceMode`; the four siblings in front of it
+forwarded and were never called. Ten helpers whose only two occurrences are a declaration and a definition went
+with them (`GetStrategyIntrabarPolicy`, `IsStrategyIntrabarLiveEligible`, `IsStrategyIntrabarProbeEligible`,
+`CalculateAverageStrategyMetric`, member `ClampUnitValue`, `GetStrategyRoleVoteMultiplier`,
+`CalculateDirectionDiversityScore`, `IsTrendingRegime`, `JoinContributorsWithContext`,
+`MaybeLogConsensusDiagnostics` on the engine, plus the three same-named `CIntrabarPolicy` copies).
+`[CONSENSUS-DIAG]` is unaffected - it prints from `DiagMgrCounters.mqh:649`/`:659` and from the strategy classes.
+
+**Why this is a deletion rather than the admission decision Batch 230 said it was:** the probe gate counted
+`m_src.IsStrategyProbeEligible(i)`, whose field `SStrategyEntry.isProbeEligible` has no writer anywhere in the
+tree (registration sets `intrabarPolicy` and `intrabarEligible`, never this). So `probeEligibleCount` was always
+zero, and a wired probe path would have printed `[CONSENSUS-PROBE] No probe support (buy=0 sell=0)` and returned
+NONE on every intrabar scan. Deleting the seven inputs behind it -
+`InpAllowSparseIntrabarSingleVoter`, `InpSparseIntrabarMinQuality`, `InpSparseIntrabarMinSupportRatio`,
+`InpSparseIntrabarMinReadyCoverage`, `InpIntrabarSingleVoterMinConfidence`,
+`InpSyntheticLeanSparseIntrabarMinQuality`, `InpSyntheticLeanIntrabarSingleVoterMinConfidence` - removes nothing
+that was restricting entries. The chain went whole: config fields and defaults, the two per-symbol resolvers and
+their orchestrator wrappers, `ClampConsensusInput` (both copies), three manager setters, two getters, and six
+`CEntStrategyQuorumConfig` fields - including `m_sparseIntrabarConfidencePenalty`, which had no reader *and* no
+writer. `[ENTERPRISE-CONFIG]` loses `sparse_single_voter=`, `sparse_quality=`, `sparse_support=`, `sparse_ready=`
+and `single_voter_min_conf=`; `[SYMBOL-PROFILE]` loses its two trailing numbers.
+
+`INTRABAR_POLICY_PROBE` remains selectable in the dialog and keeps one live meaning:
+`COrchestratorIntrabarPolicy::GetIntrabarPolicy` upgrades it to `LIVE` for a synthetic-lean primary strategy.
+
+Second finding: `CConsensusEngine::IsTrendingRegime` was the only writer of
+`CStrategyMgrInfrastructure::m_adxHandleCached`, so the cached ADX handle sat at `INVALID_HANDLE` for the life of
+every manager and two deinit blocks released a handle that never existed. Field, both accessors, the constructor
+initialiser and both release blocks are gone.
+
+706 lines deleted, 10 added, across thirteen files. No quorum, veto, threshold, lot or exit moved.
+
 ## Batch 230: The Solo-Voter Fallback Had No Entry Point (2026-10-19)
 
 Edge removed from the graph — it was drawn but never walked:
@@ -358,14 +406,11 @@ produced a trade, and the reason re-wiring it as written was never an option.
 
 What the live graph keeps:
 
-- Sparse intrabar **probe** voting (`EvaluateConsensusProbeOnlyInternal`) - reachable, and it reads
-  `GetSparseIntrabarMinQuality` at `ConsensusEngine.mqh:1237` and `GetSparseIntrabarMinSupportRatio` at `:1282`.
-  A probe-eligible strategy needs confidence ≥ that quality floor to cast a probe vote; the winner needs
-  `winningVotes / probeEligibleCount ≥ minSupportRatio`. With 0.30 that admits a **single** winner whenever at
-  most three strategies are probe-eligible - which is why `InpAllowSparseIntrabarSingleVoter = false` describes a
-  rule nothing enforces (queued for an explicit delete-or-wire decision, not folded into this deletion).
+- Sparse intrabar **probe** voting (`EvaluateConsensusProbeOnlyInternal`) - **deleted by Batch 231, not reachable**.
+  The bullet here said "reachable, and it reads `GetSparseIntrabarMinQuality` ..."; the function had no caller, so
+  nothing on that path ever ran, and its eligibility test read a field no line writes.
 - Authority scoring for sizing (`SPipelineEvidence` -> `SConsensusDecisionContext.readinessScore/contextScore/
-  costScore`, averaged over the winning side at `:831-846`, published at `:1029-1031`) - the Batch 205 path,
+  costScore`, averaged over the winning side at `:574-576`/`:587-589`, published at `:772-774`) - the Batch 205 path,
   untouched by this batch, and the only reader of those three quantities in the running tree.
 
 ## Batch 229: One Unused Collaborator, and Two Comment Claims That Were Wrong (2026-10-19)
@@ -545,8 +590,8 @@ Path touched: `SignalGenerator::EvaluateSymbol` -> `CConsensusEngine::EvaluateCo
 
 | Gate | Operand | Why it could not pass | Change |
 |---|---|---|---|
-| `ConsensusEngine.mqh:1047` conflict deadband | `conflictRatio = losingVotes / (winningVotes + losingVotes)` | floor is one dissenter over votes cast (`>= 1/19 = 0.0526`); deadband `0.05` => unanimity required | default `0.35` in both EAs and `OrchestratorConfig`; `[VALIDATION]` range `[0.05, 0.50]` |
-| `ConsensusEngine.mqh:967` ready-weight ratio | `buyScore + sellScore / votedWeight`, each score `conf x weight x participation x reliability x regimeMult` | `regimeMult = 0.30` for an unconfirmed snapshot caps the ratio at `0.36225 < 0.40` | `RefreshMarketRegime` now calls `CRegimeEngine::Update` when the snapshot is invalid |
+| `ConsensusEngine.mqh:713` conflict deadband | `conflictRatio = losingVotes / (winningVotes + losingVotes)` | floor is one dissenter over votes cast (`>= 1/19 = 0.0526`); deadband `0.05` => unanimity required | default `0.35` in both EAs and `OrchestratorConfig`; `[VALIDATION]` range `[0.05, 0.50]` |
+| `ConsensusEngine.mqh:630` ready-weight ratio | `buyScore + sellScore / votedWeight`, each score `conf x weight x participation x reliability x regimeMult` | `regimeMult = 0.30` for an unconfirmed snapshot caps the ratio at `0.36225 < 0.40` | `RefreshMarketRegime` now calls `CRegimeEngine::Update` when the snapshot is invalid |
 | `PostConsensusValidator.mqh:276` ATR crisis | `result.atrRatio > GetATRCrisisThreshold(symbol)` | branch set `exogenousPass = false` then `return true`; the caller tests only the return value | `return false` |
 | `PostConsensusValidator.mqh:278` ATR 1.5 band | `result.atrRiskScale = 0.5` | zero readers; `validation.passed` is the only field consumed | field deleted; log says `action=none(...)`, double-count arithmetic recorded |
 
@@ -809,7 +854,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 
 ## Batch 204: A Regime Veto Removes the Vote Itself (2026-10-15)
 
-- **Before:** `RegimeStateHardGate(state, type)` returning `0.0` zeroed the *score* only, and `ConsensusEngine.mqh:439` said so. The strategy still incremented `buyVotes`/`sellVotes`, still entered `buyContributorIndices`, still contributed its weight to `votedWeight`, still counted in `totalVotesCast` and in `conflictRatio`, and still got charged the trade outcome through `SetLastSignalContributors`.
+- **Before:** `RegimeStateHardGate(state, type)` returning `0.0` zeroed the *score* only, and `ConsensusEngine.mqh:553` is that skip now. The strategy still incremented `buyVotes`/`sellVotes`, still entered `buyContributorIndices`, still contributed its weight to `votedWeight`, still counted in `totalVotesCast` and in `conflictRatio`, and still got charged the trade outcome through `SetLastSignalContributors`.
 - **Now:** the category multiplier is read before the accumulations and a value `<= 0.0` skips the strategy outright. `[CONSENSUS-REGIME-VETO] <symbol> | N vote(s) hard-gated by regime | excluded weight=W | counted votes B buy / S sell` reports it once per scan; a fully vetoed field reaches `[CONSENSUS-ABSTAIN]` instead of `[CONSENSUS-TIE] buyScore=0.000 sellScore=0.000`.
 - **Gate-by-gate direction:**
 
@@ -860,7 +905,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 
 ## Batch 199: The Consensus Decision Now Publishes Its Voters, Which Starts Four Dead Loops (2026-10-14)
 
-- **New edge:** `consensus accepted -> SetLastSignalContributors(winners, role, cluster, clusterCode)` (`ConsensusEngine.mqh:1007`) -> candidate tags, attribution, cluster governance and authority learning all read from it. Before this batch the writer did not exist, so every downstream consumer ran on an empty contributor list.
+- **New edge:** `consensus accepted -> SetLastSignalContributors(winners, role, cluster, clusterCode)` (`ConsensusEngine.mqh:754`) -> candidate tags, attribution, cluster governance and authority learning all read from it. Before this batch the writer did not exist, so every downstream consumer ran on an empty contributor list.
 - **Second new edge:** `send executed -> positionId known -> AttributeExecutedPosition(positionId, winners)` (`EAOrchestrator.mqh:3544`). Attribution is keyed to the fill, not to whatever decision the cache holds at `DEAL_ENTRY_IN`; the old in-deal upsert is removed. Provenance now records every executed trade, not only AI ones (`[AUTHORITY-LEARN]` was unreachable because `hasAIContributor` was computed from the empty list).
 - **Revived loop:** `close -> PopPositionAttribution -> UpdatePerformance -> successCount/failCount/totalTrades/healthScore -> GetStrategyReliabilityMultiplier`. Indicator strategies sat on the registration default (0.75 -> multiplier 1.025) for every vote forever; AI rows were the only ones that moved, via `UpdateAIPerformanceMetrics`. So the indicator book was immune to its own results while the AI book was not.
 - **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:949`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
@@ -891,7 +936,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **Open:** `requestedVolume` remains unread in the matcher (a volume filter would break the partial-fill case this helper exists for); the live fast-scalp path is the synchronous branch (`InpScalpAsyncMode = false`), and the async branch labels its positions `"AsyncTrade"` and returns before the confirm block, so it is unaffected.
 
 ## Batch 195: `GetType()` Restored on Two Strategies, Which Returns a Regime Veto (2026-10-14)
-- **The vote-scoring path is unchanged; the value entering it was wrong.** `EvaluateConsensusInternal` computes `score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType())` (`ConsensusEngine.mqh:856`, `:1134`, `:1264`). `GetRegimeCategoryMultiplier` first calls `RegimeStateHardGate(snap.state, strategyType)`, which returns 0.0 for reversion-like types in `REGIME_TREND` and 0.25 in `REGIME_BREAKOUT`, and then selects a category weight by type. `CLiquiditySweepStrategy` and `CRangeCompressionBreakout` reported `STRATEGY_TYPE_CUSTOM` because they declare `GetStrategyType()` rather than overriding `GetType()`, so they matched no classification and took `default: 1.0`.
+- **The vote-scoring path is unchanged; the value entering it was wrong.** `EvaluateConsensusInternal` computes `score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType())` (`ConsensusEngine.mqh:560`; the probe and two-tier copies of the same product were deleted by Batch 231). `GetRegimeCategoryMultiplier` first calls `RegimeStateHardGate(snap.state, strategyType)`, which returns 0.0 for reversion-like types in `REGIME_TREND` and 0.25 in `REGIME_BREAKOUT`, and then selects a category weight by type. `CLiquiditySweepStrategy` and `CRangeCompressionBreakout` reported `STRATEGY_TYPE_CUSTOM` because they declare `GetStrategyType()` rather than overriding `GetType()`, so they matched no classification and took `default: 1.0`.
 - **Restored edge:** Range Compression (a reversion-like type in the gate) now has its score zeroed in a confirmed trend regime and is deweighted to 0.25 in a breakout regime, and it is grouped with Volatility Breakout under `breakoutWeightMult`; Liquidity Sweep is grouped with the ICT family under `ictWeightMult`. A zeroed score still counted as a vote for the minimum-voter test and diluted `readyWeightRatio`, because its weight stayed in the `votedWeight` denominator while its score left the numerator - **both of those are fixed by Batch 204**, which drops a hard-gated strategy before any accumulation.
 - **What did not move:** magic numbers, position comments, the ownership window, the risk gates, the lot, and every other `GetType()` consumer (five of them test only `STRATEGY_BRAIN`/`STRATEGY_AI_ENHANCED`; `LiveAuthorityResolver` uses it for a report). `CMagicNumberAllocator::GetStrategyOffset` does switch on strategy type, but the allocator has no call site, so no open position changes bucket (the allocator was deleted in Batch 197).
 - **§3 invariants:** §3.1 and §3.2 untouched. §3.4 is served: a manager's consensus now weighs these two voters the way the regime engine intends.
@@ -1103,7 +1148,7 @@ Decision inputs feeding strategy votes are now computed from closed bars and cor
   - **Single-voter hardening** (Batch 77/78): low-voter ecosystems no longer bypass `InpMinLiveVoters` unless the configured floor is explicitly `1`; AI-only HYBRID packets use the explicit live-authority gate instead of hidden quorum bypass.
   - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
-- Intrabar sparse one-voter admission is disabled by default through `InpAllowSparseIntrabarSingleVoter=false`; high-confidence AI-only packets are handled by live authority, not sparse admission.
+- A single-voter intrabar entry is refused by `MIN_CONSENSUS_VOTERS = 2` (`EnforcedMinVoters`), never by an input; `InpAllowSparseIntrabarSingleVoter` had no readers and is deleted by Batch 231. `SPARSE_INTRABAR` is the *label* `ConsensusEngine.mqh:734` puts on a decision that already passed quorum with fewer than three eligible voters. High-confidence AI-only packets are handled by live authority, not sparse admission.
 - Synthetic lean symbols now use dedicated sparse intrabar thresholds for one-voter admission, so structure-first synthetic rosters are no longer evaluated against the same sparse-quality floor used by broader FX/balanced rosters.
 - Pipeline confidence policy remains separate from AI thresholds so non-AI strategies are not gated by AI policy.
 - Structural admission is now manager-owned: once manager consensus admits a packet, the validator no longer re-judges confidence, confluence, or support ratio. `directionalQuality` is still re-judged by the quality gate, whose threshold for a `FULL_QUORUM` packet is `max(0.40, directionalQuality * 0.9)` — self-satisfying above 0.40, so the gate only ever rejects a quality below that absolute floor.
@@ -1783,10 +1828,10 @@ reader searching a journal for an answer that cannot exist.
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`; a vetoed or emptied vote surfaces as
   `[CONSENSUS-VETOED]`, `[CONSENSUS-REGIME-VETO]` (Batch 204) or `[CONSENSUS-ABSTAIN]`.
 - Selection and rejection detail: `[CONSENSUS-REJECT]`, `[CONSENSUS-TIE]`, `[CONSENSUS-FILTERED]`,
-  `[CONSENSUS-PROBE]` / `[CONSENSUS-PROBE-DECISION]` /
-  `[CONSENSUS-PROBE-REJECT]`, `[CONSENSUS-DECISION]`. (`[CONSENSUS-SOLO-SELECT]` and `[CONSENSUS-SOLO-SKIP]`
-  were printed only by the unreachable fallback Batch 230 deleted, so they can no longer appear in a journal -
-  their absence is not evidence about solo candidates.)
+  `[CONSENSUS-DECISION]`. (`[CONSENSUS-SOLO-SELECT]` and `[CONSENSUS-SOLO-SKIP]`
+  were printed only by the unreachable fallback Batch 230 deleted, and `[CONSENSUS-PROBE]`,
+  `[CONSENSUS-PROBE-DECISION]` and `[CONSENSUS-PROBE-REJECT]` only by the probe/two-tier evaluators Batch 231
+  deleted - all five emitters are gone from the tree, so their absence proves nothing about candidates.)
 - Scan cadence: `[SCAN-POLICY]` once at init (Batch 212) and `[SCAN-BUDGET] mode= | evalBudget= | evaluations= |
   signalsGenerated= | pending=`, throttled inside `CSignalGenerator`. There is no intrabar budget split to log.
 - Dormancy: `[DORMANT-COOLDOWN]` on the park and on its expiry, `[DORMANT-REMOVED]` when a symbol leaves the list.

@@ -1872,10 +1872,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
 
     int minLiveVoters = MathMax(1, m_config.minLiveVoters);
     double quorumThreshold = MathMax(0.0, MathMin(1.0, m_config.quorumThreshold));
-    double sparseIntrabarMinQuality = ResolveSparseIntrabarMinQualityForSymbol(symbol, strategyFlags);
-    double sparseIntrabarMinSupportRatio = ClampConsensusInput(m_config.sparseIntrabarMinSupportRatio);
-    double sparseIntrabarMinReadyCoverage = ClampConsensusInput(m_config.sparseIntrabarMinReadyCoverage);
-    double intrabarSingleVoterMinConfidence = ResolveIntrabarSingleVoterMinConfidenceForSymbol(symbol, strategyFlags);
     manager.SetMinQuorum(minLiveVoters);
     manager.SetIntrabarMinQuorum(minLiveVoters);
     manager.SetQuorumThreshold(quorumThreshold);
@@ -1884,12 +1880,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     double inputSupportFloorNewBar = MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorNewBar));
     double inputSupportFloorIntrabar = MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorIntrabar));
     manager.SetSupportFloors(inputSupportFloorNewBar, inputSupportFloorIntrabar);
-    manager.SetSparseIntrabarThresholds(sparseIntrabarMinQuality,
-    sparseIntrabarMinSupportRatio,
-    sparseIntrabarMinReadyCoverage);
-    manager.SetAllowSparseIntrabarSingleVoter(m_config.allowSparseIntrabarSingleVoter);
     manager.SetIntrabarDynamicQuorumEnabled(m_config.intrabarDynamicQuorumEnabled);
-    manager.SetIntrabarSingleVoterMinConfidence(intrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(m_config.deadlockAttributionIntervalSec);
 
     // The profile owns min quorum, quorum threshold, both support floors and the intrabar dynamic-quorum
@@ -1954,7 +1945,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 VALIDATOR_BASE_SPREAD_ATR_RATIO,
                 VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO,
                 m_config.spikeHunterEnabled ? "set(no-op branch)" : "OFF");
-    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_single_voter=%s | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) — only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | intrabar_dynamic_quorum_input=%s | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) — only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
     symbol,
     symbolClass,
     symbolProfile,
@@ -1963,12 +1954,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.GetMinQuorum(),
     manager.GetSupportFloorNewBar(),
     manager.GetSupportFloorIntrabar(),
-    m_config.allowSparseIntrabarSingleVoter ? "true" : "false",
-    sparseIntrabarMinQuality,
-    sparseIntrabarMinSupportRatio,
-    sparseIntrabarMinReadyCoverage,
     m_config.intrabarDynamicQuorumEnabled ? "true" : "false",
-    intrabarSingleVoterMinConfidence,
     MathMax(0.0, MathMin(1.0, m_config.pipelineMinConfidence)),
     MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinConfidence)),
     MathMax(1, m_config.validatorNewBarMinConfluence),
@@ -1980,10 +1966,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     MathMax(0.0, m_config.pipelineIntrabarConfidenceCap));
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     if(syntheticLeanProfile)
-    PrintFormat("[SYMBOL-PROFILE] %s uses synthetic lean roster: Momentum/Trend suppressed from manager roster; Candlestick remains new-bar active but intrabar PROBE while Fibonacci/Elliott/SupportResistance/UICT stay LIVE | sparse_quality=%.2f | single_voter_min_conf=%.2f",
-    symbol,
-    sparseIntrabarMinQuality,
-    intrabarSingleVoterMinConfidence);
+    PrintFormat("[SYMBOL-PROFILE] %s uses synthetic lean roster: Momentum/Trend suppressed from manager roster; Candlestick remains new-bar active but intrabar PROBE while Fibonacci/Elliott/SupportResistance/UICT stay LIVE",
+    symbol);
 
     // Intrabar policies must be set from the config array before auto-registration
     for(int si = 0; si < m_config.strategyConfigCount; si++)
@@ -2059,16 +2043,6 @@ int CountEffectiveIndicatorStrategiesForSymbol(const bool& symbolFlags[])
     return COrchestratorSymbolClassifier::CountEffectiveIndicatorStrategiesForSymbol(symbolFlags);
 }
 
-double ResolveSparseIntrabarMinQualityForSymbol(const string& symbol, const bool& strategyFlags[])
-{
-    return COrchestratorIntrabarPolicy::ResolveSparseIntrabarMinQualityForSymbol(m_config, symbol, strategyFlags);
-}
-
-double ResolveIntrabarSingleVoterMinConfidenceForSymbol(const string& symbol, const bool& strategyFlags[])
-{
-    return COrchestratorIntrabarPolicy::ResolveIntrabarSingleVoterMinConfidenceForSymbol(m_config, symbol, strategyFlags);
-}
-
 // Synthetic lean overrides come from the CDerivAssetProfiler family profile, not indices
 ENUM_INTRABAR_POLICY GetIntrabarPolicy(const string symbol, int strategyIndex, const bool& strategyFlags[])
 {
@@ -2079,11 +2053,6 @@ ENUM_INTRABAR_POLICY GetIntrabarPolicy(const string symbol, int strategyIndex, c
 SStrategyTimeframeConfig GetStrategyTimeframeConfig(int strategyIndex) const
 {
     return COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig(m_config, strategyIndex);
-}
-
-double ClampConsensusInput(double value)
-{
-    return COrchestratorSymbolClassifier::ClampConsensusInput(value);
 }
 
 string BuildEnabledStrategyList(const bool& strategyFlags[])
@@ -2207,7 +2176,6 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
                                                 g_strategyCatalog[ci].weight);
         }
     }
-
 
     bool aiBaseEnabled = m_config.enableAIMode;
     double aiWeight = MathMax(0.1, m_config.aiWeightMultiplier);
@@ -3633,7 +3601,6 @@ int GetEAPositionCount() const
     }
     return count;
 }
-
 
 bool IsEAOwnedMagic(long magic) const
 {

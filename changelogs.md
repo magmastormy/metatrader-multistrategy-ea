@@ -8,6 +8,73 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 231: two more consensus evaluators no caller could reach, the four sibling entry points beside them, and the seven inputs that configured all of it
+
+#### The Batch 230 note that was wrong
+Batch 230 recorded the sparse-intrabar probe path as "live" and queued three quorum fields. Both halves were
+incorrect: `EvaluateConsensusProbeOnlyInternal` has no caller anywhere - its own comment at the top of the body
+said "Dead path: no caller in the repo" - and the number of queued fields was wrong. The claim went into four
+documents because I checked who *reads* the getters and not who can *reach* the function holding them. Corrected
+here, in `README.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md` and `AGENTS.md`.
+
+#### The dead set, proved by call sites rather than by reach
+- `EvaluateConsensusTwoTier` (engine decl+def, manager forwarder decl+def) and `EvaluateConsensusTwoTierInternal`:
+  the manager forwarder's only occurrence outside its own definition is the engine's internal call, and nothing
+  calls the manager. Tier 1 counted probe-eligible votes, Tier 2 was `EvaluateConsensusInternal` - so the
+  unreachable path was a slower wrapper around the live one.
+- `EvaluateConsensusProbeOnlyInternal`: no declaration outside the engine, no caller, and its
+  `probeEligibleCount` gate could never have found a voter anyway.
+- Four sibling entry points `GetConsensusSignal`, `GetConsensusSignalWithConfluence`,
+  `GetConsensusSignalForSymbol`, `GetConsensusSignalForSymbolWithConfluence` on both the engine and the manager.
+  Each forwards to the next and the last forwards to `GetConsensusSignalForSymbolWithConfluenceMode`, which is
+  the one `CSignalGenerator`, `CPositionLifecycleManager` and `TrainingDataExporter` call. The surviving entry
+  point is unchanged.
+- Eight engine helpers whose only two occurrences are their declaration and their definition:
+  `GetStrategyIntrabarPolicy`, `IsStrategyIntrabarLiveEligible`, `IsStrategyIntrabarProbeEligible`,
+  `CalculateAverageStrategyMetric`, `ClampUnitValue` (the member form; the free
+  `EntStrategyTypes.mqh:ClampUnitValue` stays), `GetStrategyRoleVoteMultiplier`,
+  `CalculateDirectionDiversityScore`, `IsTrendingRegime`, `JoinContributorsWithContext`,
+  `MaybeLogConsensusDiagnostics`. `[CONSENSUS-DIAG]` is unaffected: it prints from
+  `DiagMgrCounters.mqh:649`/`:659` and from the strategy classes, not from the deleted engine method.
+- The same three `CIntrabarPolicy` methods (`GetStrategyIntrabarPolicy` and the two eligibility tests) - a second
+  copy under a different owner, also uncalled. Counting a method *name* is not counting a call on its *owner*
+  (the Batch 215 lesson applied in reverse: here both copies were dead).
+
+#### What died with them, which is the part an operator can see
+- **`SStrategyEntry.isProbeEligible` had no writer in any build.** Grepping `isProbeEligible =` returns nothing:
+  registration sets `intrabarEligible` and `intrabarPolicy`, never this. So the probe gate's
+  `probeEligibleCount` was structurally zero - even wired, the probe path would have printed
+  `[CONSENSUS-PROBE] No probe support (buy=0 sell=0)` on every intrabar scan and returned NONE. Field, roster
+  getter and manager forwarder deleted.
+- **The ADX handle cache was never populated.** `CConsensusEngine::IsTrendingRegime` was the only caller of
+  `SetAdxHandleCached`, so `m_adxHandleCached` sat at `INVALID_HANDLE` for the life of every manager, and the two
+  `IndicatorRelease` blocks in `AllocateHealthMonitor`'s neighbours released a handle that never existed. Field,
+  both accessors, the constructor initialiser and both release blocks deleted.
+- **Seven operator inputs reached no decision at all**: `InpAllowSparseIntrabarSingleVoter`,
+  `InpSparseIntrabarMinQuality`, `InpSparseIntrabarMinSupportRatio`, `InpSparseIntrabarMinReadyCoverage`,
+  `InpIntrabarSingleVoterMinConfidence`, `InpSyntheticLeanSparseIntrabarMinQuality`,
+  `InpSyntheticLeanIntrabarSingleVoterMinConfidence`, in both root EAs. Their whole chain went with them: seven
+  `SOrchestratorConfig` fields and defaults, the two per-symbol resolvers
+  (`COrchestratorIntrabarPolicy::ResolveSparseIntrabarMinQualityForSymbol` and
+  `ResolveIntrabarSingleVoterMinConfidenceForSymbol`) plus the orchestrator wrappers, `ClampConsensusInput`
+  (wrapper and classifier static - its only two callers were the deleted lines), three manager setters, two
+  manager getters, and six `CEntStrategyQuorumConfig` fields with their getters and setters
+  (`m_sparseIntrabarConfidencePenalty` included: no reader *and* no writer).
+- `[ENTERPRISE-CONFIG]` loses `sparse_single_voter=`, `sparse_quality=`, `sparse_support=`, `sparse_ready=` and
+  `single_voter_min_conf=`; `[SYMBOL-PROFILE]` loses its trailing `sparse_quality=` / `single_voter_min_conf=`.
+  Both were print-only consumers of values that gate nothing - the Batch 225 shape, where an init line makes an
+  unreachable control look configured.
+
+`INTRABAR_POLICY_PROBE` itself stays: an operator can still select it in the dialog, and it keeps exactly one
+live meaning - `COrchestratorIntrabarPolicy::GetIntrabarPolicy` upgrades a PROBE policy to LIVE for a
+synthetic-lean primary strategy. What is gone is the second, unreachable consumer of that same enum value.
+
+**706 lines deleted and 10 added (net 696) across thirteen files** - `ConsensusEngine.mqh` 1216 → 800,
+`EnterpriseStrategyManager.mqh` -79, `EntStrategyQuorumConfig.mqh` -42, `EAOrchestrator.mqh` -33,
+`IntrabarPolicy.mqh` -34, `StrategyMgrInfrastructure.mqh` -17, and nine smaller. No threshold, veto, weight, lot
+or gate moved: every deleted path was unreachable, and the live consensus entry point, its quorum arithmetic and
+its logs are behaviourally identical.
+
 ### Batch 230: the solo-voter fallback was unreachable, and four controls configured it
 
 #### The chain had no entry
@@ -26,10 +93,12 @@ lesson: revive a dead control and it silently does nothing, or worse. The four u
 pipeline/consensus engine" - went with it.
 
 The live measurement path is untouched: Batch 205's authority bonuses read `SPipelineEvidence.readinessScore /
-contextScore / costScore` and average them into `SConsensusDecisionContext` (`ConsensusEngine.mqh:831-846`,
-`1029-1031`), which is what the candidate and the lot ladder consume.
+contextScore / costScore` and average them into `SConsensusDecisionContext` (`ConsensusEngine.mqh:574-576`/`587-589` accumulate, `:772-774` publish), which is what the candidate and the lot ladder consume.
 
 #### What still runs, and what is now queued
+**Corrected by Batch 231:** the paragraph below is wrong in both halves. The probe path was not live -
+`EvaluateConsensusProbeOnlyInternal` has no caller - and three fields was an undercount: seven operator inputs fed
+a chain that reached no decision.
 The sparse-intrabar **probe** path (`EvaluateConsensusProbeOnlyInternal`) is live and reads
 `GetSparseIntrabarMinQuality` (per-voter confidence floor) and `GetSparseIntrabarMinSupportRatio` (winner share
 of probe-eligible strategies). Three quorum fields fed from operator inputs have zero readers and are the next

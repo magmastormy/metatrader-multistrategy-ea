@@ -1,7 +1,5 @@
 // Intrabar (within-bar) signal-handling policy table and its slot/entry resolvers.
 // MUTATES the manager: the back-pointer is non-const and writes go through its narrow per-field accessors.
-// m_sparseIntrabar* stay in the manager despite the prefix - they are consensus QUORUM parameters read by
-// CalculateEffectiveQuorumParamsInternal, not intrabar policy.
 // Implementation detail of EnterpriseStrategyManager.mqh; not standalone.
 #ifndef INTRABAR_POLICY_MQH
 #define INTRABAR_POLICY_MQH
@@ -35,10 +33,6 @@ public:
     void                 SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
-
-    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicy(const int strategyIndex) const;
-    bool                 IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
-    bool                 IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
 
     bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
     bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
@@ -81,34 +75,6 @@ ENUM_INTRABAR_POLICY CIntrabarPolicy::GetIntrabarPolicyHelper(int idx)
     // rows those two strategies actually own. The legacy 9/10 literals were removed.
     if(idx == 7 || idx == 8) return INTRABAR_POLICY_LIVE;
     return INTRABAR_POLICY_OFF;
-}
-
-// Resolved policy for a registered strategy entry
-// Falls back to the legacy intrabarEligible flag when the stored
-// raw policy ordinal is out of the enum range (verbatim).
-ENUM_INTRABAR_POLICY CIntrabarPolicy::GetStrategyIntrabarPolicy(const int strategyIndex) const
-{
-    if(m_src == NULL)
-        return INTRABAR_POLICY_OFF;
-
-    if(strategyIndex < 0 || strategyIndex >= m_src.GetStrategyCount())
-        return INTRABAR_POLICY_OFF;
-
-    int rawPolicy = m_src.GetStrategyIntrabarPolicyRaw(strategyIndex);
-    if(rawPolicy < (int)INTRABAR_POLICY_OFF || rawPolicy > (int)INTRABAR_POLICY_LIVE)
-        return m_src.GetStrategyIntrabarEligible(strategyIndex) ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF;
-
-    return (ENUM_INTRABAR_POLICY)rawPolicy;
-}
-
-bool CIntrabarPolicy::IsStrategyIntrabarLiveEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_LIVE);
-}
-
-bool CIntrabarPolicy::IsStrategyIntrabarProbeEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_PROBE);
 }
 
 // By-name eligibility shim (LIVE when enabled, OFF otherwise)

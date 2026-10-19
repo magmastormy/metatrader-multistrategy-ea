@@ -108,10 +108,6 @@ public:
         return list;
     }
 
-    static double ClampConsensusInput(double value)
-    {
-        return MathMax(0.0, MathMin(1.0, value));
-    }
 };
 
 #endif // CORE_ORCHESTRATION_ORCHESTRATOR_SYMBOL_CLASSIFIER_MQH

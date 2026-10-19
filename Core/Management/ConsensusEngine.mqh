@@ -45,18 +45,11 @@ public:
         return MathMax(intrabar ? m_src.GetIntrabarMinQuorum() : m_src.GetMinQuorum(), MIN_CONSENSUS_VOTERS);
     }
 
-    // Entry funnel: only the WithConfluenceMode variant has a runtime caller (SignalGenerator,
-    // PositionLifecycleManager, TrainingDataExporter); the sibling forwarders are never called.
-    ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence,
-                                                                int &confluence);
+    // The only consensus entry point is the WithConfluenceMode variant below, called by
+    // SignalGenerator, PositionLifecycleManager and TrainingDataExporter.
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence,
                                                                     int &confluence,
                                                                     ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence,
-                                               ENUM_SIGNAL_EVAL_MODE evalMode);
 
     void SyncEnabledWithRegistry();
 
@@ -66,26 +59,12 @@ public:
     double GetRegimeCategoryMultiplier(const string symbol, ENUM_STRATEGY_TYPE strategyType) const;
     double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
     double GetStrategyParticipationMultiplier(const int strategyIndex) const;
-    double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
-    double CalculateDirectionDiversityScore(const int &strategyIndices[]) const;
-    double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
-    double ClampUnitValue(const double value) const;
-    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicy(const int strategyIndex) const;
-    bool   IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
-    bool   IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
-    bool   IsTrendingRegime();
     ENUM_STRATEGY_ROLE    ResolveDominantRole(const int &strategyIndices[]) const;
     ENUM_STRATEGY_CLUSTER ResolveDominantCluster(const int &strategyIndices[]) const;
-    string JoinContributorsWithContext(const int &strategyIndices[]) const;
-    void   MaybeLogConsensusDiagnostics(const string symbol);
 
 private:
     ENUM_TRADE_SIGNAL EvaluateConsensusInternal(const string symbol, double &confidence, int &confluence,
                                                 ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL EvaluateConsensusTwoTierInternal(const string symbol, double &confidence, int &confluence,
-                                                       ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL EvaluateConsensusProbeOnlyInternal(const string symbol, double &confidence, int &confluence,
-                                                         ENUM_SIGNAL_EVAL_MODE evalMode);
     void CalculateEffectiveQuorumParamsInternal(
         const string symbol,
         const int activeLiveStrategies,
@@ -108,36 +87,6 @@ private:
         double &sellQuorum
     ) const;
 };
-
-ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignal(double &confidence)
-{
-    int confluence = 0;
-    return GetConsensusSignalWithConfluence(confidence, confluence);
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalWithConfluence(double &confidence, int &confluence)
-{
-    if(m_src == NULL)
-    {
-        confidence = 0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-    return GetConsensusSignalForSymbolWithConfluence(m_src.GetManagedSymbol(), confidence, confluence);
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluence(const string symbol,
-                                                                             double &confidence,
-                                                                             int &confluence)
-{
-    return GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, EVAL_MODE_NEW_BAR);
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbol(const string symbol, double &confidence)
-{
-    int confluence = 0;
-    return GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
-}
 
 ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
                                                                                   double &confidence,
@@ -172,18 +121,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMod
     return result;
 }
 
-ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence,
-                                                             ENUM_SIGNAL_EVAL_MODE evalMode)
-{
-    if(m_src != NULL && m_src.GetPipelineConst() != NULL && m_src.GetTFConsistencyConst() != NULL)
-    {
-        return EvaluateConsensusTwoTierInternal(symbol, confidence, confluence, evalMode);
-    }
-    confluence = 0;
-    confidence = 0;
-    return TRADE_SIGNAL_NONE;
-}
-
 // Strategies are auto-registered before CStrategyRegistry is populated, so this re-applies the
 // registry's active state to the live objects.
 void CConsensusEngine::SyncEnabledWithRegistry()
@@ -215,100 +152,6 @@ void CConsensusEngine::SyncEnabledWithRegistry()
     if(synced > 0)
         PrintFormat("[EnterpriseStrategyManager] %s: reconciled %d strategy enable-flags with registry",
                     m_src.GetManagedSymbol(), synced);
-}
-
-// Member-form unit clamp; shadows the free helper
-double CConsensusEngine::ClampUnitValue(const double value) const
-{
-    if(!MathIsValidNumber(value))
-        return 0.0;
-    return MathMax(0.0, MathMin(1.0, value));
-}
-
-ENUM_INTRABAR_POLICY CConsensusEngine::GetStrategyIntrabarPolicy(const int strategyIndex) const
-{
-    if(m_src == NULL)
-        return INTRABAR_POLICY_OFF;
-
-    if(strategyIndex < 0 || strategyIndex >= m_src.GetStrategyCount())
-        return INTRABAR_POLICY_OFF;
-
-    int rawPolicy = m_src.GetStrategyIntrabarPolicyRaw(strategyIndex);
-    if(rawPolicy < (int)INTRABAR_POLICY_OFF || rawPolicy > (int)INTRABAR_POLICY_LIVE)
-        return m_src.GetStrategyIntrabarEligible(strategyIndex) ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF;
-
-    return (ENUM_INTRABAR_POLICY)rawPolicy;
-}
-
-bool CConsensusEngine::IsStrategyIntrabarLiveEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_LIVE);
-}
-
-bool CConsensusEngine::IsStrategyIntrabarProbeEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_PROBE);
-}
-
-double CConsensusEngine::CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const
-{
-    if(m_src == NULL)
-        return 0.0;
-
-    int samples = MathMin(ArraySize(strategyIndices), ArraySize(metrics));
-    if(samples <= 0)
-        return 0.0;
-
-    int strategyCount = m_src.GetStrategyCount();
-    double weightedSum = 0.0;
-    double totalWeight = 0.0;
-    for(int i = 0; i < samples; i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= strategyCount)
-            continue;
-
-        double metric = ClampUnitValue(metrics[i]);
-        double weight = MathMax(0.0, m_src.GetStrategyWeight(idx));
-        if(weight <= 0.0)
-            continue;
-
-        weightedSum += (metric * weight);
-        totalWeight += weight;
-    }
-
-    if(totalWeight <= 0.0)
-        return 0.0;
-
-    return ClampUnitValue(weightedSum / totalWeight);
-}
-
-// Dead path: no caller anywhere in the repo, so the ADX handle cache below is never populated at runtime.
-bool CConsensusEngine::IsTrendingRegime()
-{
-    if(m_src == NULL)
-        return false;
-
-    // ADX(14) on the managed symbol and base timeframe: above 25 counts as trending.
-    int adxHandleCached = m_src.GetAdxHandleCached();
-    if(adxHandleCached == INVALID_HANDLE)
-    {
-        adxHandleCached = iADX(m_src.GetManagedSymbol(), m_src.GetBaseTimeframe(), 14);
-        m_src.SetAdxHandleCached(adxHandleCached);
-    }
-
-    if(adxHandleCached != INVALID_HANDLE)
-    {
-        double adxBuffer[];
-        ArraySetAsSeries(adxBuffer, true);
-        if(CopyBuffer(adxHandleCached, 0, 0, 1, adxBuffer) > 0)
-        {
-            return (adxBuffer[0] > 25.0);
-        }
-    }
-
-    // ADX unavailable: reported as ranging, not as blocked
-    return false;
 }
 
 // Regime gate values: 0.0 = category has no edge here, vote hard-disabled; 1.0 = allowed; 0.25-0.40 = strongly deweighted.
@@ -447,69 +290,6 @@ double CConsensusEngine::GetStrategyParticipationMultiplier(const int strategyIn
     return MathMax(minVal, MathMin(maxVal, base + (coeff * participationScore)));
 }
 
-double CConsensusEngine::GetStrategyRoleVoteMultiplier(const int strategyIndex) const
-{
-    if(m_src == NULL)
-        return 1.0;
-    if(strategyIndex < 0 || strategyIndex >= m_src.GetStrategyCount())
-        return 1.0;
-
-    ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_src.GetStrategyRole(strategyIndex);
-    if(role == CONTEXT_FEATURE)
-        return 0.85;
-    return 1.0;
-}
-
-double CConsensusEngine::CalculateDirectionDiversityScore(const int &strategyIndices[]) const
-{
-    if(m_src == NULL)
-        return 0.0;
-    if(ArraySize(strategyIndices) <= 0)
-        return 0.0;
-
-    int strategyCount = m_src.GetStrategyCount();
-
-    bool roleSeen[2];
-    bool clusterSeen[4];
-    roleSeen[0] = false;
-    roleSeen[1] = false;
-    clusterSeen[0] = false;
-    clusterSeen[1] = false;
-    clusterSeen[2] = false;
-    clusterSeen[3] = false;
-
-    int roleCount = 0;
-    int clusterCount = 0;
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= strategyCount)
-            continue;
-
-        int role = m_src.GetStrategyRole(idx);
-        if(role < 0 || role > 1)
-            role = 0;
-        if(!roleSeen[role])
-        {
-            roleSeen[role] = true;
-            roleCount++;
-        }
-
-        int cluster = m_src.GetStrategyCluster(idx);
-        if(cluster < 0 || cluster > 3)
-            cluster = 0;
-        if(!clusterSeen[cluster])
-        {
-            clusterSeen[cluster] = true;
-            clusterCount++;
-        }
-    }
-
-    double roleScore = MathMax(0.0, MathMin(1.0, (double)roleCount / 3.0));
-    double clusterScore = MathMax(0.0, MathMin(1.0, (double)clusterCount / 4.0));
-    return MathMax(0.0, MathMin(1.0, (roleScore * 0.55) + (clusterScore * 0.45)));
-}
-
 ENUM_STRATEGY_ROLE CConsensusEngine::ResolveDominantRole(const int &strategyIndices[]) const
 {
     double roleWeights[3];
@@ -585,43 +365,6 @@ ENUM_STRATEGY_CLUSTER CConsensusEngine::ResolveDominantCluster(const int &strate
         dominant = 3;
 
     return (ENUM_STRATEGY_CLUSTER)dominant;
-}
-
-string CConsensusEngine::JoinContributorsWithContext(const int &strategyIndices[]) const
-{
-    if(m_src == NULL)
-        return "";
-
-    int strategyCount = m_src.GetStrategyCount();
-
-    string summary = "";
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= strategyCount)
-            continue;
-
-        if(StringLen(summary) > 0)
-            summary += ",";
-
-        string name = m_src.GetStrategyName(idx);
-        ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_src.GetStrategyRole(idx);
-        ENUM_STRATEGY_CLUSTER cluster = (ENUM_STRATEGY_CLUSTER)m_src.GetStrategyCluster(idx);
-        summary += name + "[" + StrategyRoleToString(role) + "|" + StrategyClusterToString(cluster) + "]";
-    }
-    return summary;
-}
-
-void CConsensusEngine::MaybeLogConsensusDiagnostics(const string symbol)
-{
-    if(m_src == NULL)
-        return;
-
-    CDiagnosticsManager* diagnostics = m_src.GetDiagnosticsConst();
-    if(diagnostics != NULL)
-    {
-        diagnostics.MaybeLogDiagnostics(symbol);
-    }
 }
 
 void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
@@ -1052,165 +795,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     CJsonLogger::LogPerformance("EnterpriseStrategyManager", "EvaluateConsensusInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
 
     return consensusSignal;
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const string symbol, double &confidence, int &confluence,
-                                                                     ENUM_SIGNAL_EVAL_MODE evalMode)
-{
-    // Dead path: the manager's EvaluateConsensusTwoTier forwarder has no caller. Tier 1 counts only
-    // probe-eligible votes; the direction still comes from tier 2.
-
-    ulong startTime = GetMicrosecondCount();
-
-    int probeBuyVotes = 0;
-    int probeSellVotes = 0;
-    int probeEligibleCount = 0;
-
-    if(m_src == NULL)
-    {
-        confidence = 0.0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    int strategyCount = m_src.GetStrategyCount();
-
-    for(int i = 0; i < strategyCount; i++)
-    {
-        if(!IsStrategyLiveVoter(i))
-            continue;
-
-        if(!m_src.IsStrategyProbeEligible(i))
-            continue;
-
-        probeEligibleCount++;
-
-        // Probe reads the raw signal, no pipeline filtering
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = m_src.GetStrategyPtr(i).GetSignal(stratConf);
-
-        if(signal == TRADE_SIGNAL_BUY && stratConf >= 0.5)
-            probeBuyVotes++;
-        else if(signal == TRADE_SIGNAL_SELL && stratConf >= 0.5)
-            probeSellVotes++;
-    }
-
-    if(probeBuyVotes == 0 && probeSellVotes == 0)
-    {
-        PrintFormat("[CONSENSUS-PROBE] %s | No probe support (buy=%d sell=%d)", symbol, probeBuyVotes, probeSellVotes);
-        confidence = 0.0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    ENUM_TRADE_SIGNAL result = EvaluateConsensusInternal(symbol, confidence, confluence, evalMode);
-
-    ulong elapsed = GetMicrosecondCount() - startTime;
-    CJsonLogger::LogPerformance("EnterpriseStrategyManager", "EvaluateConsensusTwoTierInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
-
-    return result;
-}
-
-ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusProbeOnlyInternal(const string symbol, double &confidence, int &confluence,
-                                                                       ENUM_SIGNAL_EVAL_MODE evalMode)
-{
-    // Dead path: no caller in the repo. Probe-only read: raw signals, no pipeline filtering, no full quorum.
-
-    ulong startTime = GetMicrosecondCount();
-
-    int probeBuyVotes = 0;
-    int probeSellVotes = 0;
-    double probeBuyScore = 0.0;
-    double probeSellScore = 0.0;
-    int probeEligibleCount = 0;
-
-    if(m_src == NULL)
-    {
-        confidence = 0.0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    int strategyCount = m_src.GetStrategyCount();
-    double sparseIntrabarMinQuality = m_src.GetSparseIntrabarMinQuality();
-
-    for(int i = 0; i < strategyCount; i++)
-    {
-        if(!IsStrategyLiveVoter(i))
-            continue;
-
-        if(!m_src.IsStrategyProbeEligible(i))
-            continue;
-
-        probeEligibleCount++;
-
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = m_src.GetStrategyPtr(i).GetSignal(stratConf);
-
-        if(signal == TRADE_SIGNAL_NONE || stratConf < sparseIntrabarMinQuality)
-            continue;
-
-        double weight = m_src.GetStrategyWeight(i);
-        double participation = GetStrategyParticipationMultiplier(i);
-        double reliability = GetStrategyReliabilityMultiplier(i);
-        double score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, m_src.GetStrategyPtr(i).GetType());
-
-        if(signal == TRADE_SIGNAL_BUY)
-        {
-            probeBuyVotes++;
-            probeBuyScore += score;
-        }
-        else if(signal == TRADE_SIGNAL_SELL)
-        {
-            probeSellVotes++;
-            probeSellScore += score;
-        }
-    }
-
-    if(probeBuyVotes == 0 && probeSellVotes == 0)
-    {
-        confidence = 0.0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    ENUM_TRADE_SIGNAL probeSignal = TRADE_SIGNAL_NONE;
-    double winningScore = 0.0;
-    int winningVotes = 0;
-
-    if(probeBuyScore > probeSellScore)
-    {
-        probeSignal = TRADE_SIGNAL_BUY;
-        winningScore = probeBuyScore;
-        winningVotes = probeBuyVotes;
-    }
-    else if(probeSellScore > probeBuyScore)
-    {
-        probeSignal = TRADE_SIGNAL_SELL;
-        winningScore = probeSellScore;
-        winningVotes = probeSellVotes;
-    }
-
-    double supportRatio = (probeEligibleCount > 0) ? (double)winningVotes / probeEligibleCount : 0.0;
-    if(supportRatio < m_src.GetSparseIntrabarMinSupportRatio())
-    {
-        PrintFormat("[CONSENSUS-PROBE-REJECT] %s | Support ratio %.2f < min %.2f",
-                    symbol, supportRatio, m_src.GetSparseIntrabarMinSupportRatio());
-        confidence = 0.0;
-        confluence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    confluence = winningVotes;
-    confidence = MathMin(0.8, winningScore / MathMax(1.0, probeBuyScore + probeSellScore));
-
-    PrintFormat("[CONSENSUS-PROBE-DECISION] %s | %s | conf=%.2f | confluence=%d | support=%.2f",
-                symbol, EnumToString(probeSignal), confidence, confluence, supportRatio);
-
-    ulong elapsed = GetMicrosecondCount() - startTime;
-    CJsonLogger::LogPerformance("EnterpriseStrategyManager", "EvaluateConsensusProbeOnlyInternal_us", (double)elapsed, CCorrelationIdGenerator::Generate());
-
-    return probeSignal;
 }
 
 #endif // CONSENSUS_ENGINE_MQH

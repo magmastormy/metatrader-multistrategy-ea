@@ -336,8 +336,6 @@ public:
            { return m_roster.GetStrategyIntrabarPolicyRaw(index); }
     bool   GetStrategyIntrabarEligible(const int index) const
            { return m_roster.GetStrategyIntrabarEligible(index); }
-    bool   IsStrategyProbeEligible(const int index) const
-           { return m_roster.IsStrategyProbeEligible(index); }
 
     int    GetIntrabarMinQuorum() const              { return m_quorumConfig.GetIntrabarMinQuorum(); }
     bool   IsIntrabarDynamicQuorumEnabled() const    { return m_quorumConfig.IsIntrabarDynamicQuorumEnabled(); }
@@ -347,17 +345,11 @@ public:
     double GetMinReadyWeightRatio() const            { return m_quorumConfig.GetMinReadyWeightRatio(); }
     double GetSupportFloorNewBar() const             { return m_quorumConfig.GetSupportFloorNewBar(); }
     double GetSupportFloorIntrabar() const           { return m_quorumConfig.GetSupportFloorIntrabar(); }
-    double GetSparseIntrabarMinQuality() const       { return m_quorumConfig.GetSparseIntrabarMinQuality(); }
-    double GetSparseIntrabarMinSupportRatio() const  { return m_quorumConfig.GetSparseIntrabarMinSupportRatio(); }
 
     double GetParticipationFormulaBase() const       { return m_quorumConfig.GetParticipationFormulaBase(); }
     double GetParticipationFormulaCoeff() const      { return m_quorumConfig.GetParticipationFormulaCoeff(); }
     double GetParticipationFormulaMin() const        { return m_quorumConfig.GetParticipationFormulaMin(); }
     double GetParticipationFormulaMax() const        { return m_quorumConfig.GetParticipationFormulaMax(); }
-
-    //--- ADX handle cache; SetAdxHandleCached is called only by CConsensusEngine::IsTrendingRegime()
-    int    GetAdxHandleCached() const                { return m_infra.GetAdxHandleCached(); }
-    void   SetAdxHandleCached(const int handle)      { m_infra.SetAdxHandleCached(handle); }
 
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool usePipeline = true,
@@ -378,15 +370,8 @@ public:
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
     
-    ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
-    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
 
-    // Two-tier consensus: Tier 1 quick-probe fast path, Tier 2 full evaluation fallback
-    ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
-    
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum);
@@ -403,14 +388,9 @@ public:
     void SetQuorumThreshold(const double threshold);
     void SetIntrabarMinQuorum(int quorum);
     void SetIntrabarDynamicQuorumEnabled(const bool enabled);
-    void SetIntrabarSingleVoterMinConfidence(const double minConfidence);
     void SetConflictDeadband(const double deadband);
     void SetMinReadyWeightRatio(const double ratio);
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
-    void SetSparseIntrabarThresholds(const double minQuality,
-                                     const double minSupportRatio,
-                                     const double minReadyCoverage);
-    void SetAllowSparseIntrabarSingleVoter(const bool enabled);
     
     void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
@@ -639,11 +619,6 @@ void CEnterpriseStrategyManager::SetIntrabarDynamicQuorumEnabled(const bool enab
     m_quorumConfig.SetIntrabarDynamicQuorumEnabled(enabled);
 }
 
-void CEnterpriseStrategyManager::SetIntrabarSingleVoterMinConfidence(const double minConfidence)
-{
-    m_quorumConfig.SetIntrabarSingleVoterMinConfidence(minConfidence);
-}
-
 void CEnterpriseStrategyManager::SetQuorumThreshold(const double threshold)
 {
     m_quorumConfig.SetQuorumThreshold(threshold);
@@ -662,18 +637,6 @@ void CEnterpriseStrategyManager::SetMinReadyWeightRatio(const double ratio)
 void CEnterpriseStrategyManager::SetSupportFloors(const double newBarFloor, const double intrabarFloor)
 {
     m_quorumConfig.SetSupportFloors(newBarFloor, intrabarFloor);
-}
-
-void CEnterpriseStrategyManager::SetSparseIntrabarThresholds(const double minQuality,
-                                     const double minSupportRatio,
-                                     const double minReadyCoverage)
-{
-    m_quorumConfig.SetSparseIntrabarThresholds(minQuality, minSupportRatio, minReadyCoverage);
-}
-
-void CEnterpriseStrategyManager::SetAllowSparseIntrabarSingleVoter(const bool enabled)
-{
-    m_quorumConfig.SetAllowSparseIntrabarSingleVoter(enabled);
 }
 
 void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy)
@@ -749,21 +712,7 @@ int CEnterpriseStrategyManager::GetEnforcedMinVoters(const bool intrabar) const
     return m_consensusEngine.EnforcedMinVoters(intrabar);
 }
 
-//--- Consensus entry points; the decision core is CConsensusEngine.
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confidence)
-{
-    return m_consensusEngine.GetConsensusSignal(confidence);
-}
-
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(double &confidence, int &confluence)
-{
-    return m_consensusEngine.GetConsensusSignalWithConfluence(confidence, confluence);
-}
-
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence)
-{
-    return m_consensusEngine.GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
-}
+//--- The consensus entry point; the decision core is CConsensusEngine.
 
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
                                                                                               double &confidence,
@@ -771,16 +720,6 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                                                                               ENUM_SIGNAL_EVAL_MODE evalMode)
 {
     return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
-}
-
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode)
-{
-    return m_consensusEngine.EvaluateConsensusTwoTier(symbol, confidence, confluence, evalMode);
-}
-
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const string symbol, double &confidence)
-{
-    return m_consensusEngine.GetConsensusSignalForSymbol(symbol, confidence);
 }
 
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx)
@@ -857,7 +796,6 @@ void CEnterpriseStrategyManager::SyncEnabledWithRegistry()
 {
     m_consensusEngine.SyncEnabledWithRegistry();
 }
-
 
 int CEnterpriseStrategyManager::GetActiveStrategyCount() const
 {
@@ -998,7 +936,6 @@ bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const stri
     return m_roster.SetStrategyConfidenceThresholdByName(name, threshold);
 }
 
-
 bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
                                                              ENUM_STRATEGY_ROLE role,
                                                              ENUM_STRATEGY_CLUSTER cluster,
@@ -1006,7 +943,6 @@ bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
 {
     return m_registryState.SetStrategyGovernanceByName(name, role, cluster, liveVotingEnabled);
 }
-
 
 string CEnterpriseStrategyManager::GetRegisteredStrategyName(const int index) const
 {
@@ -1162,16 +1098,6 @@ bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) co
 {
     return m_consensusEngine.IsStrategyLiveVoter(strategyIndex);
 }
-
-
-
-
-
-
-
-
-
-
 
 int CEnterpriseStrategyManager::FindAttributionIndexByPositionId(const ulong positionId) const
 {
@@ -1394,11 +1320,6 @@ void CEnterpriseStrategyManager::UpdateAIPerformanceMetrics(const string strateg
 {
     m_performanceHealth.UpdateAIPerformanceMetrics(strategyName, metrics);
 }
-
-
-
-
-
 
 SPostConsensusValidation CEnterpriseStrategyManager::ValidateSignal(const string symbol,
                                                                     ENUM_TRADE_SIGNAL signal,

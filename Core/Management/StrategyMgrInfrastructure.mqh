@@ -49,7 +49,6 @@ private:
 
     bool m_initialized;
     bool m_usePipeline;
-    int  m_adxHandleCached;    // Cached ADX handle for IsTrendingRegime() (Batch 116)
 
 public:
     CStrategyMgrInfrastructure();
@@ -82,7 +81,6 @@ public:
     void SetMultiAssetProfiler(CMultiAssetProfiler* profiler)      { m_multiAssetProfiler = profiler; }
     void SetVPINFilter(CVPINFilter* vpin)                          { m_vpinFilter = vpin; }
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi)              { m_ofiEngine = ofi; }
-    void SetAdxHandleCached(const int handle)                      { m_adxHandleCached = handle; }
 
     CUnifiedSignalPipeline*      GetPipeline() const               { return m_pipeline; }
     CTimeframeConsistency*       GetTFConsistency() const          { return m_tfConsistency; }
@@ -106,7 +104,6 @@ public:
     ENUM_TIMEFRAMES GetBaseTimeframe() const            { return m_baseTimeframe; }
     bool            IsManagerInitialized() const        { return m_initialized; }
     bool            IsPipelineEnabled() const           { return m_usePipeline; }
-    int             GetAdxHandleCached() const          { return m_adxHandleCached; }
 };
 
 CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
@@ -129,8 +126,7 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_healthMonitor(NULL),
     m_baseTimeframe(PERIOD_CURRENT),
     m_initialized(false),
-    m_usePipeline(true),
-    m_adxHandleCached(INVALID_HANDLE)        // Batch 116: cached ADX handle
+    m_usePipeline(true)
 {
     m_symbol = "";
 }
@@ -228,7 +224,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
         m_healthMonitor.SetStrategyInactiveCounterThreshold(quorumConfig.GetStrategyInactiveCounterThreshold());
     }
 
-
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
     if(m_fourStateRegimeDetector != NULL)
     {
@@ -264,12 +259,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_pipeline = NULL;
     }
 
-    if(m_adxHandleCached != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_adxHandleCached);
-        m_adxHandleCached = INVALID_HANDLE;
-    }
-
     if(m_fourStateRegimeDetector != NULL)
     {
         delete m_fourStateRegimeDetector;
@@ -296,12 +285,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
     {
         delete m_pipeline;
         m_pipeline = NULL;
-    }
-
-    if(m_adxHandleCached != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_adxHandleCached);
-        m_adxHandleCached = INVALID_HANDLE;
     }
 
     if(m_fourStateRegimeDetector != NULL)

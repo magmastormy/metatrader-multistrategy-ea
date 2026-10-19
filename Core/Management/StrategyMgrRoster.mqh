@@ -91,8 +91,6 @@ public:
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarPolicy : (int)INTRABAR_POLICY_OFF; }
     bool   GetStrategyIntrabarEligible(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarEligible : false; }
-    bool   IsStrategyProbeEligible(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].isProbeEligible : false; }
 
     //--- Writes the entry weight and pushes it to the strategy object, but deliberately
     //--- does NOT touch the health monitor.

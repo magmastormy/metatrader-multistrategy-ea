@@ -53,14 +53,9 @@ struct StrategyEntry
     datetime disabledUntil;
     datetime lastUpdate;
 
-    bool isProbeEligible;        // Eligible for intrabar probe voting
-
     double regimePerformance[5];
     int regimeTrades[5];
 };
-
-
-
 
 string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
 {
@@ -110,7 +105,6 @@ string IntrabarPolicyToString(const ENUM_INTRABAR_POLICY policy)
         default: return "OFF";
     }
 }
-
 
 string TradeSignalToString(const ENUM_TRADE_SIGNAL signal)
 {

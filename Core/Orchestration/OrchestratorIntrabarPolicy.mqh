@@ -12,24 +12,6 @@
 class COrchestratorIntrabarPolicy
 {
 public:
-    static double ResolveSparseIntrabarMinQualityForSymbol(const SOrchestratorConfig &config,
-                                                           const string &symbol,
-                                                           const bool &strategyFlags[])
-    {
-        if(COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol))
-        return config.syntheticLeanSparseIntrabarMinQuality;
-        return config.sparseIntrabarMinQuality;
-    }
-
-    static double ResolveIntrabarSingleVoterMinConfidenceForSymbol(const SOrchestratorConfig &config,
-                                                                   const string &symbol,
-                                                                   const bool &strategyFlags[])
-    {
-        if(COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol))
-        return config.syntheticLeanIntrabarSingleVoterMinConfidence;
-        return config.intrabarSingleVoterMinConfidence;
-    }
-
     // Synthetic-lean overrides come from the CDerivAssetProfiler family profile, never hardcoded indices.
     static ENUM_INTRABAR_POLICY GetIntrabarPolicy(const SOrchestratorConfig &config,
                                                   CMultiAssetProfiler *multiAssetProfiler,

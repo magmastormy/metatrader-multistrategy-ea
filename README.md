@@ -632,6 +632,49 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 231: two more consensus evaluators nothing could call, and the seven inputs that configured them
+
+Batch 230 said the intrabar *probe* path was live and that seven-ish quorum inputs were a decision waiting for you.
+It was wrong, and the check that would have caught it was *who can reach this function*, not *who reads its
+values*. `EvaluateConsensusProbeOnlyInternal` has no caller in the repository, and its own first line of comment
+already said so.
+
+The dead set is gone — 706 lines across thirteen files:
+
+- **Two unreachable evaluators.** The two-tier consensus path (a quick probe counting Tier 1, then the normal
+  evaluation as Tier 2) and the probe-only path. Neither had an entry point: the manager's forwarder for the
+  first is called by nothing, and the second is not even exposed.
+- **Four sibling entry points.** `GetConsensusSignal`, `GetConsensusSignalWithConfluence`,
+  `GetConsensusSignalForSymbol` and `GetConsensusSignalForSymbolWithConfluence` each forward to the next, and the
+  last forwards to the one method the signal generator, the position lifecycle manager and the training exporter
+  actually call. Your consensus decisions come from that one entry point and always did.
+- **Ten uncalled helpers** across the consensus engine and the intrabar-policy class — a direction-diversity
+  score, an average-metric helper, a role-vote multiplier, a join-contributors string, a diagnostics printer
+  (`[CONSENSUS-DIAG]` prints from the diagnostics manager and the strategy classes, so nothing you read in a
+  journal is lost), and an ADX "is it trending" test.
+- **Seven inputs in each EA** — `InpAllowSparseIntrabarSingleVoter`, `InpSparseIntrabarMinQuality`,
+  `InpSparseIntrabarMinSupportRatio`, `InpSparseIntrabarMinReadyCoverage`, `InpIntrabarSingleVoterMinConfidence`,
+  `InpSyntheticLeanSparseIntrabarMinQuality`, `InpSyntheticLeanIntrabarSingleVoterMinConfidence` — with their
+  config fields, per-symbol resolvers, manager setters and quorum-storage fields. They were the reason those two
+  evaluators looked configured rather than abandoned.
+
+Two findings worth reading as an operator:
+
+**Probe eligibility was never assignable.** `SStrategyEntry.isProbeEligible` has no writer anywhere — registration
+sets the intrabar policy, never this field — so even if the probe path had been wired it would have counted zero
+eligible voters and abstained every scan. That is why deleting seven inputs changes no trade count: the gate they
+configured could not run, and could not have admitted anything.
+
+**The ADX handle cache never held a handle.** Only the deleted trending-regime test called `SetAdxHandleCached`,
+so the cached handle stayed invalid for the life of every symbol, and two deinit blocks "released" it. Removed
+with the test.
+
+`[ENTERPRISE-CONFIG]` no longer prints `sparse_single_voter=`, `sparse_quality=`, `sparse_support=`,
+`sparse_ready=` or `single_voter_min_conf=`, and `[SYMBOL-PROFILE]` loses the same two trailing numbers. Those
+fields made unreachable controls look configured — the reason we now treat an init line naming a setting as
+evidence only if the value is read on a path that can be entered. `INTRABAR_POLICY_PROBE` stays selectable in the
+dialog and keeps its one live meaning: on a synthetic-lean roster it behaves as `LIVE`.
+
 ### Batch 230: a 242-line fallback that could never be called, and the fields that only it read
 
 The consensus engine carried a "solo fallback" for the case where every strategy abstains. Nothing in the
@@ -643,6 +686,9 @@ No line ever wrote those fields, which is the proof this was never a live contro
 solo candidate would have scored 0.0 on its own quality formula and been refused. Your live authority
 measurements are unaffected — those come from pipeline evidence averaged into the consensus decision context
 (Batch 205), which is what sizes your lots.
+
+**Corrected by Batch 231:** the last paragraph here is wrong. The probe path was not live, and those inputs did
+not gate any trades — so deleting them changed nothing about how many trades you get. See the Batch 231 entry.
 
 Still live and honoured: the intrabar **probe** path, gated by `InpSparseIntrabarMinQuality` and
 `InpSparseIntrabarMinSupportRatio`. What we found and did not touch: four more quorum inputs that reach no decision at all —

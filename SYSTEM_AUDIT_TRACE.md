@@ -642,7 +642,7 @@ Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" w
   - Prevents impossible quorum math where inactive strategies inflated weight pool and rejected legitimate votes.
   - Adaptive one-/two-voter quality thresholds now respect the current base quorum so user-lowered quorum profiles are not silently re-hardened by stale fixed fallback thresholds.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
-- Manager can emit a separate `SPARSE_INTRABAR` decision class only when `InpAllowSparseIntrabarSingleVoter=true`; the default posture keeps this off and routes high-confidence AI-only packets through the live-authority gate instead.
+- `SPARSE_INTRABAR` is a **label on a decision that already passed quorum**, not an admission rule: `ConsensusEngine.mqh:734` sets it when `evalMode == EVAL_MODE_INTRABAR && eligibleLiveVoterCount < 3`, and `PostConsensusValidator.mqh:475` / `StrategyStateReporter.mqh:221` read the label. `InpAllowSparseIntrabarSingleVoter` never gated it - that input had no readers and is deleted by Batch 231. A single-voter entry is refused by `MIN_CONSENSUS_VOTERS = 2`, not by the dialog, and high-confidence AI-only packets route through the live-authority gate instead.
 - **Multi-Tier Signal Validation (Batch 60):**
   - Votes are processed through `CTieredSignalValidator` for tier-based hierarchy.
   - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
@@ -1705,6 +1705,33 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 231 Unreachable Evaluators, the Sibling Forwarders Beside Them, and a Seven-Input Chain (2026-10-19)
+
+- **State removed:** `EvaluateConsensusTwoTier` / `...TwoTierInternal` and `EvaluateConsensusProbeOnlyInternal`
+  (engine decls, definitions, the manager forwarder); the four sibling `GetConsensusSignal*` entry points on both
+  classes; ten engine helpers plus the three same-named `CIntrabarPolicy` copies; `SStrategyEntry.isProbeEligible`
+  with its roster getter and manager forwarder; the whole `m_adxHandleCached` chain (field, both accessors,
+  constructor initialiser, two `IndicatorRelease` blocks); six `CEntStrategyQuorumConfig` fields with their
+  getters and setters; seven `SOrchestratorConfig` fields with defaults; the two per-symbol resolvers and their
+  orchestrator wrappers; `ClampConsensusInput` in both copies; three manager setters and two getters; and seven
+  inputs in each of `MultiStrategyAutonomousEA.mq5` and `MultiStrategyTestingEA.mq5`.
+- **What stays live:** `GetConsensusSignalForSymbolWithConfluenceMode` as the single consensus entry point,
+  `EvaluateConsensusInternal` as the only evaluator, `CRegimeEngine::Update` / `RefreshMarketRegime`, the Batch 205
+  authority-score path, and `INTRABAR_POLICY_PROBE` as an operator-selectable value upgraded to `LIVE` for
+  synthetic-lean primary rows. No position, ticket, handle or deinit behaviour changed;
+  `CIndicatorManager::DestroyInstance()` still runs (§3.5).
+- **The proof that no admission moved:** `isProbeEligible` has no writer in the tree, so the probe and two-tier
+  paths could not have counted a single eligible voter even if reached. That is why this is a deletion and not the
+  admission decision Batch 230 predicted.
+- **Log surface:** `[CONSENSUS-PROBE]`, `[CONSENSUS-PROBE-DECISION]` and `[CONSENSUS-PROBE-REJECT]` now have no
+  emitter (their printers were inside the deleted paths); `[CONSENSUS-DIAG]` is unaffected, printing from
+  `DiagMgrCounters.mqh:649`/`:659` and the strategy classes. `[ENTERPRISE-CONFIG]` loses `sparse_single_voter=`,
+  `sparse_quality=`, `sparse_support=`, `sparse_ready=` and `single_voter_min_conf=`; `[SYMBOL-PROFILE]` loses its
+  two trailing numbers. Both were print-only consumers of values that reach no decision.
+- **How the Batch 230 error happened:** I verified that a getter had a reader and stopped there. The reader was
+  inside a function nothing can enter. Every "is this live" claim in these documents now needs a caller chain to
+  an entry point, not a reader.
+
 ## Batch 230 An Unreachable Fallback and the State Only It Read (2026-10-19)
 
 - **Reachability:** `TryFallbackSoloSignal` on the manager had zero call sites, the engine's method of the same
@@ -1716,16 +1743,16 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   ranking was arithmetic on struct defaults - which is how a path can be both unreachable and, if revived as
   written, permanently refusing.
 - **State kept:** `SConsensusDecisionContext.readinessScore / contextScore / costScore` (written at
-  `ConsensusEngine.mqh:1029-1031` from pipeline evidence) and `SPipelineEvidence`'s own scores. Those are the
+  `ConsensusEngine.mqh:772-774` from pipeline evidence) and `SPipelineEvidence`'s own scores. Those are the
   Batch 205 sizing inputs and the only live readers of those three quantities.
 - **Lifecycle:** no position, ticket, handle or deinit change; `CIndicatorManager::DestroyInstance()` still runs
   (AGENTS.md §3.5).
 - **Log surface:** `[CONSENSUS-SOLO-SELECT]` and `[CONSENSUS-SOLO-SKIP]` existed only in the deleted fallback, so
   they now have no printer anywhere in the tree. AGENTS.md §6 never listed them; the `RUNTIME_DECISION_GRAPH.md`
   bullet that did was corrected in this batch and states that their absence proves nothing.
-- **Queued, not deleted here:** `m_sparseIntrabarMinReadyCoverage`, `m_allowSparseIntrabarSingleVoter` and
-  `m_intrabarSingleVoterMinConfidence` have zero readers but are fed from four operator inputs, two of them
-  printed by `[ENTERPRISE-CONFIG]`. Removing or wiring them changes admission, so it is an explicit next decision.
+- **Deleted by Batch 231, not queued:** the three fields named above, their four operator inputs, and the two
+  more getters only the unreachable probe path read. Removing them changes no admission because the path that read
+  them had no entry point and its eligibility field had no writer.
 
 ## Batch 229 Removing a Stored Collaborator Nothing Read, and Two Wrong Comment Claims (2026-10-19)
 
@@ -1781,7 +1808,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **State written:** none. `inputSupportFloorNewBar` / `inputSupportFloorIntrabar` became locals so the setter
   and the log read one expression rather than two copies of it.
 - **New method, one owner:** `CConsensusEngine::EnforcedMinVoters(intrabar)` is the `max(config value,
-  MIN_CONSENSUS_VOTERS)` the decision already applied inline at `ConsensusEngine.mqh:742`, extracted so the
+  MIN_CONSENSUS_VOTERS)` the decision already applied inline at `ConsensusEngine.mqh:398`, extracted so the
   init print can name the enforced voter count without restating it. `CalculateEffectiveQuorumParamsInternal`
   now calls it; the arithmetic a live committee sees is unchanged.
 - **New observability edge:** `[QUORUM-PRECEDENCE] <symbol> | profile=… | minQuorum input=2 stored=1
@@ -2186,7 +2213,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## Batch 204 The Regime Veto Stops Being Arithmetic (2026-10-15)
 
 - **How it was found:** the Batch 195 entry in `RUNTIME_DECISION_GRAPH.md` recorded "A zeroed score still counts as a vote for the minimum-voter test", and the AGENTS.md §6 bullet on `[CONSENSUS-REJECT]` called the ready-weight dilution "the known gap". Both described the same veto producing opposite errors, so neither could be read as intended behaviour.
-- **Traced forward from `RegimeStateHardGate`'s `0.0`:** `GetRegimeCategoryMultiplier` -> the `score` product at `ConsensusEngine.mqh:859` -> `buyVotes`/`sellVotes`, `buyContributorIndices`, `votedWeight`, `totalVotesCast`, `conflictRatio`, `winningContributors` -> `SetLastSignalContributors` -> `[TRADE-ATTRIBUTION]`, `CStrategyMgrTradeFeedback`, `m_strategyHealthScore`, `[RISK-CLUSTER]` cluster code. Every one of those accumulated a strategy the regime had forbidden, and the health score closes the loop into the same vote's reliability multiplier.
+- **Traced forward from `RegimeStateHardGate`'s `0.0`:** `GetRegimeCategoryMultiplier` -> the `score` product at `ConsensusEngine.mqh:560` -> `buyVotes`/`sellVotes`, `buyContributorIndices`, `votedWeight`, `totalVotesCast`, `conflictRatio`, `winningContributors` -> `SetLastSignalContributors` -> `[TRADE-ATTRIBUTION]`, `CStrategyMgrTradeFeedback`, `m_strategyHealthScore`, `[RISK-CLUSTER]` cluster code. Every one of those accumulated a strategy the regime had forbidden, and the health score closes the loop into the same vote's reliability multiplier.
 - **Proved the zero is only the veto before relying on the skip:** `RegimeComposite.mqh:246-250` clamps all five category weights to `>= 0.01`; the chaos factor is `0.30` and the low-confidence factor `0.55`; `RegimeStateHardGate` returns `0.0` in exactly two cells. So no deweight can be mistaken for a veto.
 - **Left alone with reasons:** the dead `EvaluateConsensusProbeOnlyInternal` / `EvaluateConsensusTwoTierInternal` / `TryFallbackSoloSignalInternal` copies of the same shape (an edit there is unverifiable), and `eligibleLiveVoterCount`, which measures field size rather than support.
 - **Found while documenting §4.2:** the Batch 82 weighting vocabulary in that section (role multiplier, dynamic weight decay, contribution-class denominators, four veto-code names) matches no code in the repository, and `SConsensusDecisionContext`'s `convictionScore`/`readinessScore`/`contextScore`/`costScore`/`readyLiveWeight`/`totalLiveWeight` have no writer while `CandidateBuilder.mqh:383-386` copies four of them into every candidate and two log lines print them as `0.00`. §4.2 is rewritten to the live algorithm; the zero fields are filed as Batch 205, not silently deleted.

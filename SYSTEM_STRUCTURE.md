@@ -1352,12 +1352,12 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **The last live journals (17-23 September, UTF-16LE in `MQL5/Logs/`) are the runtime evidence for Batches 168-178** (Batch 179). They confirm the dormant-engine finding (grid/ATR-scalp/spike-hunter appear only as `Initialized` / `PARKED` / `Deinitialized`, `gridsOpened=0`), confirm that no OFI/VPIN/quality/hard-spread veto line ever existed before Batch 175's wiring, and show `[SCALP-ENTRY]` as the only engine traffic. Nothing newer than 23 September exists, so the tags introduced by Batches 173-179 cannot be evidenced from this machine.
 
 - **Three scalp-class engines are enabled by inputs and wired to no tick routine** (Batch 178, verified by call-site diffing): `m_spikeHunter`, `m_gridRecovery` and `m_atrScalping` receive only `Init`/`AddSymbol`/`Deinit` in `EAOrchestrator` (`:1211`, `:1313`, `:1360` each print `PARKED`), while `InpSpikeHunterEnabled` / `InpGridRecoveryEnabled` / `InpATRScalpingEnabled` all default true. They open zero trades. The only engine with a per-cycle driver is `CFastScalpEngine` (`:2598` entry, `:3315-3327` management). Wiring the other three is a strategy-activation decision, not a refactor: it creates exposure on paths that have never traded, so it is left to the operator and `[ENGINE-STATUS]` reports the state at every startup.
-- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` remains stored but unread (`IsSparseIntrabarSingleVoterAllowed` has no caller); it is not a bypass of the voter floor.
+- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` / `IsSparseIntrabarSingleVoterAllowed` — **gone** (Batch 231). It never bypassed the voter floor: one-voter entries were refused by `MIN_CONSENSUS_VOTERS = 2`, and `SPARSE_INTRABAR` is only the label `ConsensusEngine.mqh:734` puts on a decision that already passed quorum.
 - Configuration entry points with no caller anywhere, found by diffing every `Set*/Configure*` in `Core/` against its call sites (Batch 176). None has an operator input behind it, so these are unsettable features rather than misreported inputs — the distinction matters, and each is listed with what actually runs:
   - `CRiskMarginHealth::SetMaxFreeMarginUsage` / `SetMinMarginLevel` (`Core/Risk/RiskMarginHealth.mqh:199/209`) — **this one gates live money**: the pre-trade margin check runs on the construction defaults 80% free-margin usage and 200% margin level, and its rejection message prints those numbers, so an operator reading a rejection can see the ceiling in force.
   - `CUnifiedRiskManager::SetTradingDayStartHour` (`UnifiedRiskManager.mqh:225`) — the daily risk window rolls at server midnight.
-  - `CPositionSizer::SetCorrelationThresholds` (`PositionSizer.mqh:805`) — dead API, not a missing control: the sizer's correlation path is switched off at `EAOrchestrator.mqh:886` and the pre-trade gate owns the one enforced pair.
-  - `CRiskTieredCorrelation`'s `m_correlationReduceThreshold` / `m_correlationBlockThreshold` (`RiskTieredCorrelation.mqh:15-16`) — **same shape, different class** (confirmed while reducing comments in Batch 180): both are initialized and written by the setter and read by nothing, and `CRiskValidationPipeline::ValidateCorrelationLimits` (`RiskValidationPipeline.mqh:1052`) does not enforce its own limits — it forwards straight back into the tiered object, which only consults `m_correlationThreshold`. There is one enforced correlation threshold, not three.
+  - `CPositionSizer::SetCorrelationThresholds` — **gone** (Batch 226): it had zero call sites and the three params it wrote were only read by the sizer's unreachable correlation branch, which the same batch deleted.
+  - `CRiskTieredCorrelation`'s `m_correlationReduceThreshold` / `m_correlationBlockThreshold` — **gone** (Batch 225): written from config, read by nothing, while `CRiskValidationPipeline::ValidateCorrelationLimits` enforces both tiers from its own copy.
   - `CPositionLifecycleManager::ConfigurePyramiding` / `ConfigureDynamicSL` / `ConfigureLossMinimization` (`PositionLifecycleManager.mqh:158/163/168`) and their `CPositionManager` twins — pyramiding and adverse-momentum exit stay off; `CPosLifecycleLossGuard`'s *daily budget* is separately wired (Batch 170), so only these three arms are unsettable.
   - `CPositionLifecycleManager::SetRegimeEngine` (`:184`) — stays NULL, so the ranging-regime branch that pauses trailing (`:372`) never runs and positions are trailed in range like any other regime. The per-symbol regime source is live as of Batch 201 (`GetCurrentMarketRegime()`), but routing needs a symbol-scoped trailing call that `CTradeManager::ManageAllPositions` does not offer. Recorded, not shipped.
   - `CVPINFilter::SetClassificationMode` and its `m_classificationMode` shadow field — **deleted in Batch 176**: `ClassifyTick` reads `m_classifyMode` (set by the constructor), while the init log printed the decorative twin, so the line reported a mode that never affected classification.
@@ -1407,7 +1407,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 
 - **The validator quality floor is not a confidence bar, and making it one would tighten admission** (found
   Batch 220, not changed). `buyDirectionalQuality = sum(voter confidence x registration weight) / buyVotes`
-  (`ConsensusEngine.mqh:890,916`) divides by the *vote count*, not the summed weight, so on the default roster
+  (`ConsensusEngine.mqh:572,585`) divides by the *vote count*, not the summed weight, so on the default roster
   (weights 1.0 Momentum to 2.0 Volatility Breakout, mean about 1.5) the metric runs ~1.5x the committee's mean
   confidence: `InpValidatorNewBarMinQuality = 0.68`, discounted to 0.612 for a full quorum, is in practice a
   ~0.41 mean-confidence bar. `confidence = min(0.95, quality x 0.8 + support x 0.2)` inherits the same inflation,
@@ -1431,6 +1431,20 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   every candidate 0.0 and refused everything, quietly. 242 lines and six reader-only accessors deleted. The live
   readers of those three quantities are `SPipelineEvidence` -> `SConsensusDecisionContext` (Batch 205), which is
   what sizes a trade.
+
+- **A reader is not reachability** (Batch 231, and the correction of Batch 230's own note). The probe path was
+  recorded as live because its getters had readers; the readers were inside
+  `EvaluateConsensusProbeOnlyInternal`, which no code can enter, and whose eligibility test read
+  `SStrategyEntry.isProbeEligible` - a field with no writer in the tree. So `probeEligibleCount` was always zero
+  and the gate could have admitted nothing. Same finding for `EvaluateConsensusTwoTier` (a wrapper around the live
+  evaluator, unreachable), four sibling `GetConsensusSignal*` forwarders, ten engine/policy helpers whose only two
+  occurrences are a declaration and a definition, `m_adxHandleCached` (written only by a dead ADX test, so never
+  valid, "released" twice at deinit anyway), and a seven-input chain - `InpAllowSparseIntrabarSingleVoter`,
+  `InpSparseIntrabarMin*`, `InpIntrabarSingleVoterMinConfidence`, `InpSyntheticLean*` - through config fields,
+  resolvers, setters and quorum storage. 706 lines deleted. The single live consensus entry point is
+  `GetConsensusSignalForSymbolWithConfluenceMode`; `INTRABAR_POLICY_PROBE` survives as an operator-selectable
+  value that `COrchestratorIntrabarPolicy::GetIntrabarPolicy` upgrades to `LIVE` on synthetic-lean rosters. The
+  method this batch changes: an "is it wired" claim needs a caller chain to an entry point, not a reader.
 
 - **A comment that miscounts a machine-read layout is a defect** (Batch 229). `MetaLabeler::BuildInput` fills
   `[0]`..`[25]` into an array `AI_MLP_INPUT` sizes at 26, and its header said "24 features"; a

@@ -178,10 +178,6 @@ input double   InpConsensusConflictDeadband = 0.35;
 input double   InpConsensusMinReadyWeightRatio = 0.40;
 input double   InpConsensusSupportFloorNewBar = 0.20;
 input double   InpConsensusSupportFloorIntrabar = 0.15;
-input bool     InpAllowSparseIntrabarSingleVoter = false;
-input double   InpSparseIntrabarMinQuality = 0.85;
-input double   InpSparseIntrabarMinSupportRatio = 0.40;
-input double   InpSparseIntrabarMinReadyCoverage = 0.85;
 
 input group "=== STRATEGY WEIGHTS ==="
 input double   InpWeightMomentum = 1.0;
@@ -252,9 +248,6 @@ input bool     InpEnableHybridCadence = true;
 input bool     InpIntrabarChartSymbolOnly = false;
 input bool     InpIntrabarDynamicQuorumEnabled = true;
 input double   InpPipelineMinConfidence = 0.55;
-input double   InpIntrabarSingleVoterMinConfidence = 0.95;
-input double   InpSyntheticLeanSparseIntrabarMinQuality = 0.85;
-input double   InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.95;
 input double   InpPipelineIntrabarConfidenceCap = 0.05;
 input bool     InpPipelineEnableRegimeCostGate = true;
 input double   InpPipelineMaxSpreadToAtrRatio = 0.50;
@@ -1142,10 +1135,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.consensusMinReadyWeightRatio = InpConsensusMinReadyWeightRatio;
     config.consensusSupportFloorNewBar = InpConsensusSupportFloorNewBar;
     config.consensusSupportFloorIntrabar = InpConsensusSupportFloorIntrabar;
-    config.allowSparseIntrabarSingleVoter = InpAllowSparseIntrabarSingleVoter;
-    config.sparseIntrabarMinQuality = InpSparseIntrabarMinQuality;
-    config.sparseIntrabarMinSupportRatio = InpSparseIntrabarMinSupportRatio;
-    config.sparseIntrabarMinReadyCoverage = InpSparseIntrabarMinReadyCoverage;
 
     // Strategy Weights
     config.weightMomentum = InpWeightMomentum;
@@ -1194,9 +1183,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.intrabarChartSymbolOnly = InpIntrabarChartSymbolOnly;
     config.intrabarDynamicQuorumEnabled = InpIntrabarDynamicQuorumEnabled;
     config.pipelineMinConfidence = InpPipelineMinConfidence;
-    config.intrabarSingleVoterMinConfidence = InpIntrabarSingleVoterMinConfidence;
-    config.syntheticLeanSparseIntrabarMinQuality = InpSyntheticLeanSparseIntrabarMinQuality;
-    config.syntheticLeanIntrabarSingleVoterMinConfidence = InpSyntheticLeanIntrabarSingleVoterMinConfidence;
     config.pipelineIntrabarConfidenceCap = InpPipelineIntrabarConfidenceCap;
     config.pipelineEnableRegimeCostGate = InpPipelineEnableRegimeCostGate;
     config.pipelineMaxSpreadToAtrRatio = InpPipelineMaxSpreadToAtrRatio;
@@ -1616,7 +1602,6 @@ string GetDeInitReasonText(int reasonCode)
 
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
 
-
 // Restore Engine States (from MultiStrategyAutonomousEA.mq5)
 void RestoreEngineStates()
 {
@@ -1693,4 +1678,3 @@ bool ValidateInputs()
     }
     return true;
 }
-
