@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3531`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3571`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -632,6 +632,39 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 237: one cycle could order every symbol, and the spike monitor could not see a spike
+
+Two controls in the path that spends money were declared and did nothing. Both are now real, and both announce
+themselves.
+
+**The per-cycle burst.** `InpMaxPositionsTotal = 15` and `InpMaxTradeSendsPerCycle = 3` are both in your inputs dialog.
+The EA read the position count once, at the top of the scan cycle, and every symbol slot in that cycle sent against
+that one measurement - so a book at 14 open positions could take thirteen more in a single pass, and the send cap had
+no code anywhere. Now each slot is tested against the count plus the sends this cycle already made, before the
+candidate is validated (a validated candidate holds a 60-second virtual reservation of the portfolio budget, and the
+orchestrator cannot release it, so testing after validation would spend next minute's risk headroom on trades that
+were never going out). Only a fill consumes budget; a refused or deduped send does not. You will see
+`[ENTRY-GATE] entry held mid-cycle | reason=cycle_send_cap | eaPositions=2 +1/15 | sends=3/3` when it binds, and
+`[ENTRY-BOUNDS]` at startup prints the three numbers the loop actually enforces, including that
+`InpMinSecondsBetweenTrades` is still measured once per cycle, not per send.
+
+**The spike monitor.** `CSyntheticSpikeMonitor` is the protective half of the Deriv-synthetic story: a tick flood on a
+volatility index should stop new entries, because that is when a fill lands at a price that does not exist. Its
+entry point had no caller, so nothing could ever be detected - `[SPIKE-PAUSE]`, `[SYNTHETIC-SPIKE]` and
+`[SPIKE-ALARM]` had printers on unreachable paths, `pause_active=` in `[HEARTBEAT]` and the `spike_pause` term in
+`[ENTRY-GATE]` were constant false, `spike_events=` constant zero, and three of your inputs bound nothing. Two more
+things were wrong with the code that could not run: it counted *its own calls*, which measures how often the chart
+symbol ticks rather than what the market does, and both of its trigger paths closed positions, which would have made
+it a second flatten authority next to `CRiskCircuitBreaker`. It now watches every synthetic on your roster from the
+M1 tick-volume series (a real per-symbol tick count, sampled once a second), keeps the same confirmation arithmetic
+and pause length, and raises the entry pause only. The flatten loops are deleted. `[SPIKE-MONITOR] 7 synthetic
+symbol(s) watched | velMult=3.0 | confirmWindows=2 | pauseSeconds=30 | action=pause_entries(open positions untouched)`
+at startup is the evidence that it is armed; FX and crypto slots are not watched, because their tick volume tracks
+the session and would alarm on any busy hour.
+
+This is not runtime-observed. The newest journal in the terminal is still 2026-09-23, so no `[SPIKE-PAUSE]` or
+held-mid-cycle line has ever been seen firing - the first live session will be the test.
+
 ### Batch 236: thirty doc pointers that could not point anywhere, and one more field written into nothing
 
 This documentation is the instrument you read decisions from, and it is full of `file.mqh:NNNN` pointers. Batches
@@ -642,7 +675,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3531`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3571`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

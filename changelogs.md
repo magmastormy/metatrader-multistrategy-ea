@@ -8,6 +8,67 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 237: the entry loop's own send budget, and a spike monitor that had no driver
+
+Two controls in the path that puts money on were declared, wired into `SOrchestratorConfig`, printed in the dialog and
+bound nothing. 154 added / 275 deleted across three files.
+
+**The cycle's position count was measured once, so one cycle could order every slot.** `GetEAPositionCount()` feeds
+`positionLimitBlocked` at `EAOrchestrator.mqh:3459`, that flag folds into `canOpenNewTrades` at `:3464`, and the send
+loop tests the single bool at every iteration - so with the default 13-symbol roster a book read at 14/15 could take
+13 orders in one pass, nearly double `InpMaxPositionsTotal`, and `InpMinSecondsBetweenTrades = 10` was likewise
+armed only after the cycle returned (`m_lastTradeTime` updates per fill at `:3590` but `cooldownBlocked` had already
+been computed). Third input in the same group, `InpMaxTradeSendsPerCycle = 3`, wrote `spikeConfirmWindows`'s
+neighbour `maxTradeSendsPerCycle` in the config and had no reader anywhere in the tree: no send counter exists in
+`CTradeExecutor` or the builder. Both counting bounds are now measured per slot - `sendsThisCycle >= cycleSendCap`
+and `eaPositions + sendsThisCycle >= maxPositionsTotal` - tested before `ValidateSignal`, because a candidate that
+reaches `BuildCandidate` keeps a virtual portfolio reservation (`RiskValidationPipeline.mqh:391-394`, TTL 60 s, and
+`ReleaseVirtualPosition` cannot be called by the orchestrator since the tag embeds `GetMicrosecondCount()`) and held
+slots would otherwise spend the budget of a minute's cycles. The tally, not a fresh count, is the right measure:
+async fills reach the position list after the send. `spike_events=` and the pause were already per-cycle-stable;
+`minSecondsBetweenTrades` is still measured at cycle start and now says so in `[ENTRY-BOUNDS]`.
+
+**`CSyntheticSpikeMonitor` could not detect anything, and what it detected was a second flatten authority.**
+`ProcessTickSafety` had no call site, so `EvaluateSpike` (its only caller), `TriggerSpikeAlarm`, `HandleEmergencyDrawdown`
+and `ActivatePause` were unreachable: `[SPIKE-PAUSE]`, `[SYNTHETIC-SPIKE]` and `[SPIKE-ALARM]` had printers no path
+could enter, `IsPaused()` - the `spike_pause` term of `[ENTRY-GATE]` and `pause_active=` of `[HEARTBEAT]` - was
+constant false, `[HEARTBEAT] spike_events=` constant zero, and `InpSyntheticSpikeVelocityMultiplier`,
+`InpSyntheticSpikePauseSeconds` and `InpSpikeConfirmWindows` bound nothing. The dead `ProcessTickSafetyLoop` stub said
+wiring `HandleEmergencyDrawdown` would add a second flatten authority, and reading the code that authority would have
+been right twice over: both `HandleEmergencyDrawdown` and `TriggerSpikeAlarm` close positions, and `CTradeManager`
+already has three emergency-close call sites driven by `CRiskCircuitBreaker`. So detection was rebuilt and flatten
+deleted. `CRiskCircuitBreaker` is the sole flatten authority; this path only holds new entries.
+
+**The rebuilt measurement is per symbol and works without a tick callback.** The old code counted its own calls
+(`m_tickRateWindowCount++` per `EvaluateSpike`) and tested `IsSyntheticIndexSymbolName(_Symbol)`, so it measured how
+often the chart symbol delivered `OnTick` - which for a 13-symbol universe attached to one chart is not the market's
+tick rate, and for a chart on EURUSD is nothing at all. Each watched synthetic now keeps a 1-second window over
+`iVolume(symbol, PERIOD_M1, 0)`: the delta is the terminal's own tick count for that symbol, so a 1 s timer poll
+(`EventSetTimer(1)`) measures a real flood. Windows that rolled the M1 bar (negative delta) or that spanned more than
+5 s (weekend gap, restart) re-anchor without measuring, because seeding the EWMA with an hours-long window would put
+the baseline near zero and read the next live second as a spike. Confirmation arithmetic is unchanged
+(`MathMax(1.5, velMult)` against `MathMax(1.0, baseline)`, `confirmWindows` consecutive windows), the pause policy is
+unchanged (`MathMax(5, pauseSeconds)`, entries only), and the EMA is unchanged (0.85/0.15). Registration filters to
+`IsSyntheticIndexSymbolName`, so the six FX/crypto slots of the default universe cost nothing and cannot alarm on a
+busy session. `[SPIKE-MONITOR] N synthetic symbol(s) watched | velMult= | confirmWindows= | pauseSeconds= |
+action=pause_entries` names the watched count and the three values at init.
+
+**Deleted with the flatten loops:** `GetSpikeEventCount`/`ResetSpikeEventCount` and `m_spikeEventCount` (no caller;
+`[HEARTBEAT] spike_events=` is fed from `CHeartbeatTelemetry`, whose `IncSyntheticSpikeEvents` had *no* caller at all
+until this batch and now takes the count), `GetPauseUntilTime` (no reader), `IsEAOwnedMagic` (its only callers were the
+two flatten loops), `Initialize` and its three collaborator pointers. Of those, `m_riskManager` existed to call
+`RefreshRuntimeState`, which has its own live caller at `EAOrchestrator.mqh:3088`, and `m_tickSafetyMonitor` was the
+only caller of `CTickSafetyMonitor`'s checks (`ValidateTick`, `IsTradingAllowed`, `IsSpreadAcceptable`, `HasTickGap`),
+so that class is now read by nothing and Batch 238 deletes it. `[EMERGENCY] Flatten completed` and
+`[EMERGENCY-WARNING]` printed nowhere and are gone with their code; no doc cited them.
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:`
+line, 0 errors / 0 warnings (7.8 / 3.8 / 7.6 / 9.1 / 104.0 / 118.8 / 37.5 / 2.5 s), harness exit 0, synced sources byte
+identical to the tree. The first run reported one warning per EA - `possible loss of data due to type conversion from
+'long' to 'double'` at the `iVolume` read - fixed by taking the tick volume as the `long` it is and converting once, at
+the rate, rather than by suppressing it. Not runtime-observed: the newest journal is still 2026-09-23, so no
+`[SPIKE-PAUSE]`, `[ENTRY-BOUNDS]` or held-mid-cycle line has ever been seen firing.
+
 ### Batch 236: thirty stale line pointers in the five docs, and one more write-only candidate field
 
 AGENTS.md section 8 says a citation must be re-pointed in the batch that moves the code. Batches 215-231 moved a lot of

@@ -309,10 +309,11 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 
 - File: `Core/Processing/SyntheticSpikeMonitor.mqh`
 - Responsibilities:
-  - Synthetic tick velocity spike detection
-  - Trading pause activation and release
-  - Emergency drawdown stop
-  - Tick safety loop processing
+  - Per-symbol tick-rate spike detection over the registered Deriv synthetics, measured as the M1 tick-volume delta
+    across 1-second windows (`EvaluateSpikes`, driven from `OnTick` and the 1 s `OnTimer`)
+  - Trading pause activation and release, which is the only effect an alarm has: no position is closed here
+- Owned by: `CEAOrchestrator` (by value). It holds no pointers to the trade, risk or tick-safety objects - Batch 237
+  deleted the two flatten loops that needed them, leaving `CRiskCircuitBreaker` as the single halt-and-flatten authority
 
 #### CTradeAttributionManager
 
@@ -1205,7 +1206,7 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
 - AI adapters can be the sole tradable family when enabled. The *entry* vote is new-bar only (`EVAL_MODE_NEW_BAR` at
-  `EAOrchestrator.mqh:3467`/`:3496`); no entry path runs an intrabar scan (Batch 233).
+  `EAOrchestrator.mqh:3491`/`:3536`); no entry path runs an intrabar scan (Batch 233).
 - AI intrabar participation is *configured* per strategy (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) rather than hard-forced `OFF` at governance time — and since Batch 233 that field is stated as report-only: the stored policy gates no vote, and the AI adapters register with `fixedPolicy = LIVE` regardless of the input, because their catalog slot is `-1`.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
@@ -1471,6 +1472,23 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   last field that the re-read exposed: `STradeCandidate::liveAuthorityRiskMult`, two writers and no reader, while the
   lot is sized by the parameter `ScaleLotByLiveAuthority` receives and the log line by `liveAuthorityReason`.
 
+- **A count measured before the loop is not a bound on the loop** (Batch 237). `GenerateAndProcessSignals` reads
+  `GetEAPositionCount()` once, folds it into one `canOpenNewTrades` bool, and re-tests that bool at every send - so the
+  total-position ceiling bounded the *start* of a cycle, not its output, and one cycle could order all 13 slots against
+  a book measured at 14/15. `InpMaxTradeSendsPerCycle` named the missing bound and had no reader anywhere. The fix is
+  an in-cycle tally tested per slot, with the send budget decremented only by a fill. Where the test goes matters: an
+  approved candidate keeps a virtual portfolio reservation whose owner tag embeds `GetMicrosecondCount()`, so a slot
+  validated and then held reserves risk that no release call can reach for the reservation's whole 60 s TTL.
+
+- **A protective class can be complete, compilable and unreachable** (Batch 237). `CSyntheticSpikeMonitor` had the
+  pause primitives its consumers read (`IsPaused` feeds the `[ENTRY-GATE]` term and `[HEARTBEAT] pause_active=`) and
+  the detection code that raises them, but the only entry point to the detection - `ProcessTickSafety` - had no caller,
+  so the three spike inputs bound nothing, `spike_events=` was a constant zero, and both of its alarm paths would have
+  closed positions from a second place, beside `CRiskCircuitBreaker`'s halt. Rebuilt as per-symbol M1 tick-volume
+  windows driven from `OnTick` and the 1 s timer, alarm holds entries only; the flatten loops and their
+  `Alert()`/`Comment()` affordances are gone. Its counting method was also wrong before it was unreachable: it counted
+  its own calls, which is the chart symbol's tick callback, not the market - and for a chart attached to EURUSD, nothing.
+
 - **A write-only table keeps only what a future decision needs** (Batch 234). The per-strategy timeframe table
   (`SStrategyTimeframeConfig`, 23 slots) is read by nothing - `GetStrategyTimeframeConfig` has no caller on either
   owner - so `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` are stored and never consulted, and
@@ -1487,7 +1505,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 
 - **A field no branch reads must announce itself** (Batch 233). The eleven `InpIntrabarEligibility*` inputs still
   write a per-strategy intrabar policy, and after Batch 231 the only reader left is the registration print: the entry
-  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3467`/`:3496`, `SignalGenerator.mqh:109` says so outright), and
+  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3491`/`:3536`, `SignalGenerator.mqh:109` says so outright), and
   the one live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`), whose voter
   set is enabled + `liveVotingEnabled` + the regime veto - never the policy. Making it binding is one line and the
   *restrictive* direction, because eight indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` with no input at

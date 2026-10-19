@@ -249,9 +249,8 @@ The main EA delegates to the following extracted managers instead of inline logi
 | `CPositionLifecycleManager` | `Core/Management/PositionLifecycleManager.mqh` | `ManageOpenPositionsIfNeeded()` SRE + lifecycle | `ManagePositions()`, `CheckSignalReversalExit()`, `ManageBreakevenAndTrailing()` |
 | `CDiagnosticsManager` | `Core/Management/DiagnosticsManager.mqh` | Heartbeat block + consensus diagnostics | `EmitHeartbeat()`, `EmitConsensusDiagnostics()` |
 | `CUnprotectedPositionTracker` | `Core/Risk/UnprotectedPositionTracker.mqh` | `AttemptUnprotectedPositionRemediation()` + helpers | `AttemptRemediation()` |
-| `CSyntheticSpikeMonitor` | `Core/Processing/SyntheticSpikeMonitor.mqh` | Spike alarm + trading pause + emergency drawdown | `ProcessTickSafety()`, `EvaluateSpike()`, `IsPaused()` |
+| `CSyntheticSpikeMonitor` | `Core/Processing/SyntheticSpikeMonitor.mqh` | Spike detection + the entry pause it raises (flatten belongs to `CRiskCircuitBreaker`) | `RegisterSymbol()`, `EvaluateSpikes()`, `IsPaused()`, `ReleasePauseIfExpired()` |
 | `CTradeAttributionManager` | `Core/Trading/TradeAttributionManager.mqh` | 27+ prediction/attribution/NN functions | `UpsertPredictionPositionMap()`, `ConsumeAIPendingRequestMap()`, `NNDiagPrintSummary()` |
-| `CSymbolScanScheduler` | `Core/Processing/SymbolScanScheduler.mqh` | 8 intrabar scoring/scheduling functions | `ScoreSymbolForIntrabar()`, `UpdateSymbolScanStateAfterDecision()` |
 
 ## Scalping Fast Path (Batch 97)
 
@@ -339,6 +338,35 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 237: The Send Loop Got Its Own Budget, and the Spike Pause Got Its Detector (2026-10-19)
+
+Both changes sit on the entry edge, and both were declared in the inputs dialog while binding nothing.
+
+- **New edge: the per-cycle send budget.** `GenerateAndProcessSignals` (`EAOrchestrator.mqh:3450`) now tests, per
+  symbol slot and before `ValidateSignal`, that `sendsThisCycle < maxTradeSendsPerCycle` and that
+  `eaPositions + sendsThisCycle < maxPositionsTotal`. Before it, `GetEAPositionCount()` (`:3459`) was read once for the
+  cycle and its result folded into the single `canOpenNewTrades` bool the loop re-tests, so all 13 slots of the default
+  roster could send against one stale measurement; `InpMaxTradeSendsPerCycle` had no reader anywhere in the tree.
+  Only an executed send decrements the budget (`:3589`), so a deduped or broker-refused send does not spend it. The
+  test sits before validation deliberately: an approved candidate keeps a virtual portfolio reservation
+  (`RiskValidationPipeline.mqh:391-394`, TTL 60 s in `VirtualPosition.mqh:136`) whose owner tag embeds
+  `GetMicrosecondCount()` and is therefore unreconstructable by the caller, so a slot validated then held would reserve
+  risk for a minute against no position.
+- **Changed edge: the spike pause now has a detector.** `CSyntheticSpikeMonitor::EvaluateSpike` was reachable only
+  through `ProcessTickSafety`, which no code calls, so `IsPaused()` - `spike_pause` in `[ENTRY-GATE]` (`:3462`) and
+  `pause_active=` in `[HEARTBEAT]` (`:2925`) - could only be false, and `InpSyntheticSpikeVelocityMultiplier`,
+  `InpSyntheticSpikePauseSeconds`, `InpSpikeConfirmWindows` reached nothing. `ProcessTickSafetyLoop()` (`:3196`, called
+  from `OnTick:2601` and, since this batch, from the 1 s `OnTimer`) now drives `EvaluateSpikes`, which walks the
+  registered synthetics and measures each one's M1 tick-volume delta per second. Same threshold and confirmation
+  arithmetic as the dead code (`MathMax(1.5, velMult)` over `MathMax(1.0, baseline)`, N consecutive windows), same
+  pause (`MathMax(5, pauseSeconds)`), one difference that matters: the alarm holds entries and does not close a
+  position.
+- **Flatten has one authority.** Both dead trigger paths (`TriggerSpikeAlarm`, `HandleEmergencyDrawdown`) closed
+  positions; deleted rather than wired, because `CRiskCircuitBreaker` already owns the halt and `CTradeManager`
+  already has the three emergency-close call sites (`:2593`, `:2659`, `:2984`). `CSyntheticSpikeMonitor` keeps no
+  `CTradeManager*`, no `CUnifiedRiskManager*` and no `CTickSafetyMonitor*` any more - the last of those was the only
+  caller of `CTickSafetyMonitor`'s checks, so that class is now read by nothing.
+
 ## Batch 236: Thirty Doc Pointers That Could Not Point, and the Candidate Copy That Followed One (2026-10-19)
 
 No decision edge changed. The edge that changed is the one the docs draw: a citation you follow is part of the
@@ -348,7 +376,7 @@ pointed at a plausible neighbour - and surfaced only while re-anchoring the clai
 
 - **Two claims, not pointers, were false.** Both the graph and the trace said `authority.riskMultiplier` "reaches
   nothing" and that only the mode vetoes and `LOW_CONFIDENCE` bind. Batch 205 ended that; `ScaleLotByLiveAuthority`
-  (`EAOrchestrator.mqh:3531`) applies it, shrink-only. The bullets now separate what was true when written from what
+  (`EAOrchestrator.mqh:3571`) applies it, shrink-only. The bullets now separate what was true when written from what
   closed it, in the same way Batch 231 marked the probe-path correction.
 - **The README's correlation row** described a `CPositionSizer` path "explicitly disabled at `:886`". Batch 226 deleted
   that path; the row now cites `RiskValidationPipeline.mqh:448` -> the REDUCE shrink at `:694`, and the comment at
@@ -409,7 +437,7 @@ inside the session.
 
 No decision edge changed. `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land only in
 `strategyTimeframeConfigs[].defaultTF/intrabarTF`, whose sole getter chain
-(`COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig` + the `EAOrchestrator.mqh:2056` wrapper) has no caller, so
+(`COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig` + the `EAOrchestrator.mqh:2068` wrapper) has no caller, so
 every strategy keeps running the chart timeframe from its catalog row (`timeframe = PERIOD_CURRENT`), which is what
 `[MOMENTUM] ... TF=` prints. Binding the table is task #65's operator decision - it moves indicator reads for two
 strategies on every symbol - so it is announced instead:
@@ -433,7 +461,7 @@ No edge moved; the graph's missing edge is now named on the journal.
 Verified order of reading:
 - `StrategyEntry::intrabarPolicy` has one reader - the registration line's `Intrabar:` field
   (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` on both owners has no caller.
-- The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3467`, `:3496`;
+- The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3491`, `:3536`;
   `SignalGenerator.mqh:109` states it), so no entry decision ever runs an intrabar scan.
 - The only live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263` (signal-reversal exit), whose voter
   set is `IsStrategyLiveVoter(i)` (enabled + `liveVotingEnabled`) plus the Batch 204 regime veto. The policy is not
@@ -457,7 +485,7 @@ No decision edge changed. `SStrategyEntry.intrabarEligible` - a boolean mirror o
 once Batch 231 removed the two policy-resolution copies - is deleted with its roster getter, manager forwarder,
 setter and both writes. `SetStrategyIntrabarPolicyByName` and its `...EligibilityByName` shim go too (manager +
 `CIntrabarPolicy` copies): declared, defined, forwarded, never called, because the live path is positional -
-`EAOrchestrator.mqh:1975` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)` from the `StrategyConfigBuilder` rows.
+`EAOrchestrator.mqh:1987` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)` from the `StrategyConfigBuilder` rows.
 
 Log surface: `[EnterpriseStrategyManager] Intrabar policy updated: <name> => <policy>` has no emitter now, and never
 had one that could be reached - it printed only from the uncalled by-name method.
@@ -712,7 +740,7 @@ New/refused log lines: `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`,
 
 Left as constants, with their own comments saying so: `CRiskMarginHealth` 200% floor and 0.8 free-margin
 usage (`SetMinMarginLevel` / `SetMaxFreeMarginUsage` have no callers; the `SetMinMarginLevel(150.0)` at
-`EAOrchestrator.mqh:1096` belongs to `CTickSafetyMonitor`, a different object), and
+`EAOrchestrator.mqh:1094` belongs to `CTickSafetyMonitor`, a different object), and
 `CPortfolioRiskManager::m_cvarMaxRisk = 0.10` with no setter and no input, failing open under 20 samples.
 
 
@@ -958,7 +986,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 | `hasONNXContributor` (`+0.30`) | matched on `"ONNX"` | matched on `aiKind == CAT_AI_ONNX` |
 | `hasNeuralNetContributor` (label gate, Batch 203) | matched on `"Neural"` | matched on `aiKind == CAT_AI_NEURAL_NET` |
 
-- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:768`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2425`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
+- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:768`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2437`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
 - **Plug-and-play effect:** a new row is classified correctly without touching `CandidateBuilder`, which removes the fifth hand-maintained per-strategy list.
 
 ## Batch 207: Three Phantom Strategy Slots Removed (2026-10-15)
@@ -1017,7 +1045,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 ## Batch 202: The Heartbeat's Pause Field Comes From the Monitor That Pauses Trading (2026-10-14)
 
 - **New edge:** `CSyntheticSpikeMonitor.IsPaused() -> CHeartbeatTelemetry::Emit -> CDiagnosticsManager::SetTradingPaused -> [HEARTBEAT] paused=`. Nothing was removed from the decision graph: no gate, cap or branch reads that field.
-- **What it replaces:** a constant. The field had two writers and neither had a caller, so `paused=` printed `false` for the repository's whole life, including while the spike monitor was actively refusing new positions (its own `IsPaused()` gate at `EAOrchestrator.mqh:3441` was doing the work).
+- **What it replaces:** a constant. The field had two writers and neither had a caller, so `paused=` printed `false` for the repository's whole life, including while the spike monitor was actively refusing new positions (its own `IsPaused()` gate at `EAOrchestrator.mqh:3462` was doing the work).
 - **§3 invariants:** untouched. `IsPaused()` also expires the pause, but the cycle gate already calls it, so no extra state advance per tick beyond what already happened.
 
 ## Batch 201: The AI Confidence Threshold Now Moves With the Market Regime (2026-10-14)
@@ -1039,7 +1067,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 ## Batch 199: The Consensus Decision Now Publishes Its Voters, Which Starts Four Dead Loops (2026-10-14)
 
 - **New edge:** `consensus accepted -> SetLastSignalContributors(winners, role, cluster, clusterCode)` (`ConsensusEngine.mqh:754`) -> candidate tags, attribution, cluster governance and authority learning all read from it. Before this batch the writer did not exist, so every downstream consumer ran on an empty contributor list.
-- **Second new edge:** `send executed -> positionId known -> AttributeExecutedPosition(positionId, winners)` (`EAOrchestrator.mqh:3568`). Attribution is keyed to the fill, not to whatever decision the cache holds at `DEAL_ENTRY_IN`; the old in-deal upsert is removed. Provenance now records every executed trade, not only AI ones (`[AUTHORITY-LEARN]` was unreachable because `hasAIContributor` was computed from the empty list).
+- **Second new edge:** `send executed -> positionId known -> AttributeExecutedPosition(positionId, winners)` (`EAOrchestrator.mqh:3610`). Attribution is keyed to the fill, not to whatever decision the cache holds at `DEAL_ENTRY_IN`; the old in-deal upsert is removed. Provenance now records every executed trade, not only AI ones (`[AUTHORITY-LEARN]` was unreachable because `hasAIContributor` was computed from the empty list).
 - **Revived loop:** `close -> PopPositionAttribution -> UpdatePerformance -> successCount/failCount/totalTrades/healthScore -> GetStrategyReliabilityMultiplier`. Indicator strategies sat on the registration default (0.75 -> multiplier 1.025) for every vote forever; AI rows were the only ones that moved, via `UpdateAIPerformanceMetrics`. So the indicator book was immune to its own results while the AI book was not.
 - **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:958`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
 - **Tightened first:** `HasOpposingReservation` treated *same*-cluster opposing reservations as no conflict and *different*-cluster ones as a conflict - unreachable while every code was empty, and a loosening the moment codes arrived. The cluster term is removed: an opposing reservation on the same symbol is a conflict. The unused `clusterCode` parameter went with it.
@@ -1053,7 +1081,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **Send-time composition changed for five owners, not four.** `fast scalp = base + 6000` (both the async branch and the synchronous `OpenPosition` call, which previously left magic at 0 and let `TradeManager.mqh:1267` stamp the symbol's consensus magic; pending orders previously shipped the bare base), `ATR scalp = base + 6100`, `grid = base + 6200 + level`, `spike = base + 6300`. **Consensus composition also changed:** `SetMagicOffsetForSymbol` registered the asset offset alone, so every symbol in an asset class shipped the same magic (`base + 7000` for all forex pairs); it now registers `assetOffset + symbolIndex * 100`, one per symbol. New consensus positions therefore carry a different number than the ones already on the account.
 - **Why that is safe to change:** every consumer of `POSITION_MAGIC` either tests the ownership *window* (`IsEAOwnedMagic` / `CMagicRange::IsOwned` / `IsLifecycleManaged`, seven sites) or filters by symbol before comparing (the grid's `GridRecoveryExecution.mqh:210`). No gate, cap, lot or exit reads an exact consensus magic, so the re-label moves no decision.
 - **Why the bands sit under 7000:** asset-class offsets run 7000 (ASSET_FOREX) to 9999 (DERIV_UNKNOWN), so an engine can no longer reach a consensus number or the reverse. Only `ASSET_UNIVERSAL` (offset 0) composes below 7000, from slot 60 upward - which is what the init assertion refuses to trade rather than merge two books.
-- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1820` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:580` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
+- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1832` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:580` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
 - **Grid restart edge added:** `init -> RecoverOpenGridLevels() -> for each open position whose comment starts with GRID-RECOVERY -> decode level from magic (new band, or legacy 8000 band via %100) -> refill slot`. Previously the level table started empty every session while the positions stayed open, so `CalculateGridDrawdownPercent`, `CloseAllGrids` and the next-level logic all acted on a grid the engine could not see.
 - **Lifecycle gate widened:** `ManageSignalReversalExit` and the ranging-regime breakeven loop test `IsPositionLifecycleManaged()`, whose window was `base + symbolCount*100 + maxClusterCode` (`base + 1399` on the default 13-symbol universe) against magics shipped at `base + 7000..9400`. Twelve of thirteen symbols were excluded, so both exits never ran with `InpEnableSignalReversalExit = true`. The predicate now delegates to `CMagicRange::IsOwned(magic, base, MagicMax())`, the same authority `CTradeManager`, `CPositionMgrMagicFilter`, `SyntheticSpikeMonitor` and `UnprotectedPositionTracker` use.
 - **Behaviour direction:** more exits, not fewer - signal reversal closes and breakeven SL moves now reach consensus positions. Both are bounded by their own inputs (`InpSignalReversalMinLossR`/`MaxLossR`/`MinTimeSec`, `InpSignalReversalProfitGuard`). No entry gate, risk ceiling, lot or stop distance changed.
@@ -1113,7 +1141,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 ## Batch 179: The Scalp Budget That Refunded Itself, and Two Logs That Were Not True (2026-10-12)
 - **New edge on the live scalp path:** `CFastScalpEntry` market send succeeds -> `CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, volume)` -> **hit**: register the tracker slot under the *position* ticket; **miss**: register nothing, `[SCALP-ENTRY] … ticket=0 | position not visible yet, sync will adopt it`, and `SyncScalpPositionTracking` adopts it by position ticket on the next pass.
 - **The path this replaces:** the entry registered `CTradeManager::GetLastTicket()` (the *order* ticket) into a tracker keyed by *position* ticket. `SyncScalpPositionTracking` then failed `PositionSelectByTicket`, so `FreeScalpRiskBudget` -> `FreeForTicket` (which also cannot select it, leaving `lotSize = 0.0`) -> `ReleaseFallback()` -> `Release(riskPerTrade)`, and the same pass re-added the position with no `Add`. `m_usedScalpRiskPct` returned to ~0 with the trade open, so `PassesEntryGates`' `usedScalpRiskPct >= config.scalpRiskPct` (tier `scalpBudgetPct`, default 3.0) could only ever block inside the entry tick. `maxScalpPositions` was never defeated: it counts live positions by `SCALP` comment prefix.
-- **Authority gate is not an input decision.** `m_liveAuthority.Resolve(...)` (`EAOrchestrator.mqh:3517`) and `ScaleLotByLiveAuthority` run for every risk-approved candidate. `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) had exactly one consumer, an init print, which is now the unconditional `[AUTHORITY-GATE] … InpEnableLiveAuthorityGate=%s is not consulted by the sizing path`. Making the flag gate the ladder was rejected: a chart holding the saved default would stop shrinking lots.
+- **Authority gate is not an input decision.** `m_liveAuthority.Resolve(...)` (`EAOrchestrator.mqh:3557`) and `ScaleLotByLiveAuthority` run for every risk-approved candidate. `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) had exactly one consumer, an init print, which is now the unconditional `[AUTHORITY-GATE] … InpEnableLiveAuthorityGate=%s is not consulted by the sizing path`. Making the flag gate the ladder was rejected: a chart holding the saved default would stop shrinking lots.
 - **ATR crisis gate logs what it saw.** `result.atrRatio` is still clamped to 10.0 for the decision, but the veto message adds the pre-clamp `raw` value. In the last live session 46 of 71 vetoes printed an identical `10.000` for ratios spanning 10.58x (`54.34286 / 5.13826`) and 431x (`3419.82571 / 7.93232`) — the second is a data fault treated as a crisis, which is fail-safe, and is recorded rather than reclassified.
 - **Runtime evidence, and what it can and cannot show:** the EA journals for 17-23 September confirm Batch 175 (no `quality_gate`/`hard_spread_cutoff`/`ofi_*`/`vpin_*` line ever appears; 71 `atr_ratio` lines) and Batch 178 (the three engines appear only as `Initialized`/`PARKED`/`Deinitialized`, `gridsOpened=0`; `[SCALP-ENTRY]` x6 on XAUUSD is the only engine traffic). Nothing after 23 September exists, so `[AUTHORITY-GATE]`, `[ENGINE-STATUS]`, `[VALIDATOR-CONFIG]` and this batch's ticket output are owed from the first attached session.
 - **§3 invariants:** unchanged. Entry still passes `CUnifiedRiskManager`, still sends through `CTradeManager`, and position management is still driven from the EA loop.
@@ -1150,7 +1178,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 ## Batch 173 Live-Authority Ladder Applied to Position Size (2026-10-11)
 The Batch 172 scope limit above was closed by operator decision: "apply the full ladder, but don't make things fall silently."
 
-- **New node in the entry path.** Between the authority `allowed` test and the send, `EAOrchestrator` (`EAOrchestrator.mqh:3531`) calls `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)`. Returning false drops the candidate exactly like a veto; returning true rewrites `candidate.lotSize` before `CTradeExecutor::Execute`.
+- **New node in the entry path.** Between the authority `allowed` test and the send, `EAOrchestrator` (`EAOrchestrator.mqh:3571`) calls `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)`. Returning false drops the candidate exactly like a veto; returning true rewrites `candidate.lotSize` before `CTradeExecutor::Execute`.
 - **Order matters and is preserved:** consensus → `CUnifiedRiskManager` pre-trade gate → lot sizing in `BuildCandidate` → authority resolve → authority scale → send. The ladder multiplies a size the risk manager already approved and can only shrink it (top rung 1.0; `PROVEN_AI`'s raise is clamped to the 0.75 promoted cap), so it cannot bypass AGENTS.md §3.1 or break the Batch 152 post-size re-gate.
 - **Broker minimum is now a refusal, not a round-up.** The step floor is applied by hand against `SYMBOL_VOLUME_STEP` (8-digit normalization, `MathFloor(v/step + 1e-9)`), not through `CPositionSizer::NormalizeVolume`, which clamps *up* to `SYMBOL_VOLUME_MIN` (`PositionSizer.mqh:659`) and would silently return the entire reduction. A sub-minimum result logs `[AUTHORITY-REJECT]` twice, writes an `AuthorityReject` JSON event, and increments per-symbol and session counters.
 - **Booked risk tracks the lot.** `candidate.riskPercent` is scaled by the same ratio before the send, so `RegisterExecutedTradeRisk` charges the daily entry budget for the risk actually taken rather than the pre-shrink intent.
@@ -1166,7 +1194,7 @@ The Batch 172 scope limit above was closed by operator decision: "apply the full
 - **`costScore` authority bonus was inverted.** `if(costScore <= 0.3) authorityScore += 0.05; // Low cost` paid authority points to the most expensive trades: `costScore` is quality-shaped (`SignalPipelineWeighter` adds it into the weighted score as `costScore * 0.0543`), so higher means cheaper. Now `if(costScore >= m_authorityMinCostScore)`. Expensive trades no longer collect the bonus they were wrongly paid.
 - **Readiness and context bonuses** use the configured floors instead of the literals 0.6 / 0.55.
 - **Verification surface added:** `[LiveAuthorityResolver]` status now prints the effective thresholds plus per-strategy `pf=` and `eligible=Y|N`, so a live session can show whether the gate is armed rather than leaving it inferred from the absence of `PROVEN_AI`.
-- **Scope limit found mid-batch, and not silently patched over:** at the time, the resolved multiplier reached nothing. `authority.riskMultiplier` was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, while the multiplier itself reached the lot through `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3531`) from Batch 205, and `result.allowed` is assigned `true` unconditionally at the end of `Resolve()` — so the only live authority effects are the `INDICATOR_ONLY` / `AI_ONLY_MODE_NO_AI` mode vetoes and `LOW_CONFIDENCE`. The score ladder, the bootstrap cap, `PROVEN_AI` and every bonus therefore change what is logged, not what is traded. Batch 172 makes the promotion branch reachable and its log honest about which branch was taken; making the magnitude act requires multiplying it into `CPositionSizer`, where `CVPINLotModifier` / `CADXLotModifier` / `CVolatilityTargetingModifier` already scale the same base size. That is a live-sizing decision, left open. **Closed by Batch 173 (section above); the ladder, the bonuses and the bootstrap cap became lot arithmetic in Batch 205, and the unread struct copy was deleted in Batch 236.**
+- **Scope limit found mid-batch, and not silently patched over:** at the time, the resolved multiplier reached nothing. `authority.riskMultiplier` was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, while the multiplier itself reached the lot through `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3571`) from Batch 205, and `result.allowed` is assigned `true` unconditionally at the end of `Resolve()` — so the only live authority effects are the `INDICATOR_ONLY` / `AI_ONLY_MODE_NO_AI` mode vetoes and `LOW_CONFIDENCE`. The score ladder, the bootstrap cap, `PROVEN_AI` and every bonus therefore change what is logged, not what is traded. Batch 172 makes the promotion branch reachable and its log honest about which branch was taken; making the magnitude act requires multiplying it into `CPositionSizer`, where `CVPINLotModifier` / `CADXLotModifier` / `CVolatilityTargetingModifier` already scale the same base size. That is a live-sizing decision, left open. **Closed by Batch 173 (section above); the ladder, the bonuses and the bootstrap cap became lot arithmetic in Batch 205, and the unread struct copy was deleted in Batch 236.**
 - **Still missing, not built here:** per-family demotion to shadow, and the trial-tracking the dead `authorityTrialHorizonSeconds` / `authorityMaxTrackedTrials` / `nonAIPromotedRiskMultiplier` inputs imply. `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` appear in no source file. Building trial windows and demotion rules would be inventing policy, so §2.9.1 of SYSTEM_STRUCTURE.md now states plainly what is implemented and what is not.
 
 ## Batch 170 Engine Send Governance, Min-Lot Ceiling, Volume Honesty (2026-10-09)

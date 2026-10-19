@@ -1093,7 +1093,16 @@ m_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
 m_tickSafetyMonitor.SetMinMarginLevel(150.0);
 m_tickSafetyMonitor.SetEmergencyStop(false);
 
-m_spikeMonitor.Initialize(m_tradeManager, m_unifiedRiskManager, m_tickSafetyMonitor);
+for(int swIdx = 0; swIdx < m_managerCount; swIdx++)
+{
+    if(m_enterpriseManagerSymbols[swIdx] != "")
+        m_spikeMonitor.RegisterSymbol(m_enterpriseManagerSymbols[swIdx]);
+}
+PrintFormat("[SPIKE-MONITOR] %d synthetic symbol(s) watched | velMult=%.1f | confirmWindows=%d | pauseSeconds=%d | action=pause_entries(open positions untouched)",
+            m_spikeMonitor.GetRegisteredSymbolCount(),
+            m_config.syntheticSpikeVelocityMultiplier,
+            m_config.spikeConfirmWindows,
+            m_config.syntheticSpikePauseSeconds);
 
 if(m_config.enableAIMode)
 {
@@ -1514,6 +1523,9 @@ bool InitializeComponents()
     // Resolve() is called for every candidate regardless of this input; it gated only this log line.
     PrintFormat("[AUTHORITY-GATE] live authority resolver ACTIVE on every risk-approved candidate | InpEnableLiveAuthorityGate=%s is not consulted by the sizing path",
                 m_config.enableLiveAuthorityGate ? "true" : "false");
+
+    PrintFormat("[ENTRY-BOUNDS] maxSendsPerCycle=%d | maxPositionsTotal=%d (positions at cycle start + sends this cycle) | minSecondsBetweenTrades=%d (measured once per cycle)",
+                MathMax(1, m_config.maxTradeSendsPerCycle), m_config.maxPositionsTotal, m_config.minSecondsBetweenTrades);
 
     if(!m_positionManager.Initialize(&m_tradeManager, NULL, &m_riskTierManager,
     &m_safeMode, &m_fullMarginMode, NULL,
@@ -2844,7 +2856,10 @@ if(m_dashboardBridge != NULL && m_dashboardBridge.IsEnabled() && m_bridgesReady
     m_dashboardBridge.PollCommands();
 }
 
-m_spikeMonitor.ReleasePauseIfExpired();
+// OnTick delivers no tick when the chart symbol is quiet, and the spike windows cover the whole traded
+// universe, so the 1 s timer drives the same path. The per-symbol window gate keeps the cost at one
+// volume read per watched symbol per second either way.
+ProcessTickSafetyLoop();
 
 // Periodic chart object cleanup (every 5 minutes)
 {
@@ -3180,9 +3195,15 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
 
 void ProcessTickSafetyLoop()
 {
-    // Intentional stub: drawdown halt, pause expiry and margin health are live in CRiskCircuitBreaker,
-    // m_spikeMonitor's cycle gate and CRiskMarginHealth. Wiring the spike monitor's HandleEmergencyDrawdown
-    // here would add a second flatten authority on thresholds no input configures.
+    m_spikeMonitor.ReleasePauseIfExpired();
+
+    // Drawdown halt and the flatten sweep live in CRiskCircuitBreaker and OnTick's emergency-close
+    // sites: this path holds new entries only, so a spike event cannot become a second flatten authority.
+    int alarms = m_spikeMonitor.EvaluateSpikes(m_config.syntheticSpikeVelocityMultiplier,
+                                               m_config.spikeConfirmWindows,
+                                               m_config.syntheticSpikePauseSeconds);
+    if(alarms > 0)
+        m_heartbeat.IncSyntheticSpikeEvents((ulong)alarms);
 }
 
 // OnTradeTransaction forwarder: confirms filled async scalp orders into the position tracker (no-op when none pending).
@@ -3442,11 +3463,14 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
     bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted() || m_basketEquityStop.IsHaltActive());
 
+    static datetime s_lastGateLog = 0;
+    int sendsThisCycle = 0;
+    const int cycleSendCap = MathMax(1, m_config.maxTradeSendsPerCycle);
+
     // Six independent refusals fused into one flag, and the only sign of any of them used to be the absence
     // of a trade. The blocking flag now names itself, throttled so a held cycle cannot flood the journal.
     if(!canOpenNewTrades)
     {
-        static datetime s_lastGateLog = 0;
         if(TimeCurrent() - s_lastGateLog >= 15)
         {
             s_lastGateLog = TimeCurrent();
@@ -3479,6 +3503,22 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         if(!newBarSignals[i].valid)
         {
             m_heartbeat.IncNoSignalCount();
+            continue;
+        }
+
+        // Both bounds are consumed by the sends below: `eaPositions` was read before the first order went
+        // out, so one cycle could otherwise order every slot against a book measured at 14/15. Tested here
+        // rather than at the send because a held slot must not reserve risk no position will ever take.
+        if(sendsThisCycle >= cycleSendCap || eaPositions + sendsThisCycle >= m_config.maxPositionsTotal)
+        {
+            if(TimeCurrent() - s_lastGateLog >= 15)
+            {
+                s_lastGateLog = TimeCurrent();
+                PrintFormat("[ENTRY-GATE] entry held mid-cycle | reason=%s | eaPositions=%d +%d/%d | sends=%d/%d",
+                            (sendsThisCycle >= cycleSendCap) ? "cycle_send_cap" : "position_total",
+                            eaPositions, sendsThisCycle, m_config.maxPositionsTotal,
+                            sendsThisCycle, cycleSendCap);
+            }
             continue;
         }
 
@@ -3545,6 +3585,8 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
                 if(execResult.executed)
                 {
+                    // Only a fill consumes the cycle budget: a refused or deduped send creates no exposure.
+                    sendsThisCycle++;
                     m_lastTradeTime = TimeCurrent();
                     m_heartbeat.IncSignalsSent();
                     // Book executed risk into the daily entry budget: RegisterExecutedTradeRisk is

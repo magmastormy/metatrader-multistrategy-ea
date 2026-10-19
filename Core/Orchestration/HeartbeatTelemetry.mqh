@@ -84,7 +84,7 @@ public:
     void IncSignalsRiskApproved()   { m_signalsRiskApproved++; }
     void IncSignalsSent()           { m_signalsSent++; }
     void IncTradesOpened()          { m_tradesOpened++; }
-    void IncSyntheticSpikeEvents()  { m_syntheticSpikeEvents++; }
+    void IncSyntheticSpikeEvents(const ulong count = 1) { m_syntheticSpikeEvents += count; }
 
     ulong GetScansAttempted()        const { return m_scansAttempted; }
     ulong GetIntrabarScansExecuted() const { return m_intrabarScansExecuted; }
