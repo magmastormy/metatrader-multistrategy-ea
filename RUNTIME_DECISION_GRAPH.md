@@ -338,6 +338,34 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 238: Twelve Inputs That Bound Nothing, One That Could Block Startup (2026-10-19)
+
+No trading decision moved, because nothing these fields fed was connected to a decision. What did change on a decision
+path is the OnInit validator.
+
+- **Removed edge: `[VALIDATION]` could refuse to start the EA over values that reach nothing.** The block at
+  `MultiStrategyAutonomousEA.mq5:919` (as it stood before this batch) ran when `InpEnableAutoModeSwitch` was on - and
+  on the default roster it is - then set `valid = false` if `InpConservativeBaseRiskPct >= InpAggressiveBaseRiskPct`, or
+  `InpModeSwitchDrawdownPct` fell outside `[1.0, 20.0]`, or `InpModeSwitchWinStreak` fell outside `[2, 20]`. All four
+  inputs wrote config fields with no reader, and `enableAutoModeSwitch` gated `UpdateAutoModeSwitch()`, whose body was
+  the comment "Auto mode switching is not implemented". So an operator who set the conservative base equal to the
+  aggressive base - a change with zero effect on any lot - could not attach the EA. The block is gone with the fields.
+- **Removed: `ENUM_AUTO_SWITCH_MODE`, `m_currentTradingMode`, `UpdateAutoModeSwitch()` and its call** in
+  `RefreshRuntimeState`. The live mode authority is `CRiskAdaptiveTuner` (which only ever scales the active per-trade
+  risk *down* from `baseRiskPerTradePercent`, written from `InpMaxRiskPerTrade` at `EAOrchestrator.mqh:838`) plus the
+  two-of-five conservative trigger vote in `PerfAnalyticsRiskTriggers.mqh:124-138`. There is no "aggressive" direction
+  in this EA, and adding one through these inputs would have been a second base-risk authority over one lot.
+- **Changed edge: the NN attribution self-test is now an entry point.** `RunNNAttributionSelfTest` had no caller and its
+  enable flag was written by a setter nobody reached, so the prediction-id/comment round trip it checks - the same map
+  Batch 203 made the net's online learning depend on - was never exercised. It now runs at init when
+  `InpRunNNAttributionSelfTest` is on, and prints `[NN-DIAG] Self-test passed|failed`. `InpEnableNNAttributionDiagnostics`
+  default moved `false -> true` because `true` is what every build has printed; wiring at `false` would have deleted the
+  `[NN-DIAG] Summary (deinit)` line rather than gating it.
+- **Deleted class: `Core/Processing/TickSafetyMonitor.mqh`** (164 lines, 12 files' worth of nothing). After Batch 237 no
+  code called `ValidateTick`, `IsTradingAllowed`, `IsSpreadAcceptable`, `HasTickGap` or `IsEmergencyActive`; the member
+  received three setter calls with literals at init and was never read. Margin and drawdown refusal stays with
+  `CRiskMarginHealth`, `CRiskCircuitBreaker` and `CUnifiedRiskManager`, all of which are consulted per request.
+
 ## Batch 237: The Send Loop Got Its Own Budget, and the Spike Pause Got Its Detector (2026-10-19)
 
 Both changes sit on the entry edge, and both were declared in the inputs dialog while binding nothing.
@@ -365,7 +393,7 @@ Both changes sit on the entry edge, and both were declared in the inputs dialog 
   positions; deleted rather than wired, because `CRiskCircuitBreaker` already owns the halt and `CTradeManager`
   already has the three emergency-close call sites (`:2593`, `:2659`, `:2984`). `CSyntheticSpikeMonitor` keeps no
   `CTradeManager*`, no `CUnifiedRiskManager*` and no `CTickSafetyMonitor*` any more - the last of those was the only
-  caller of `CTickSafetyMonitor`'s checks, so that class is now read by nothing.
+  caller of `CTickSafetyMonitor`'s checks; Batch 238 deleted that class (164 lines, no reader left).
 
 ## Batch 236: Thirty Doc Pointers That Could Not Point, and the Candidate Copy That Followed One (2026-10-19)
 
@@ -740,7 +768,7 @@ New/refused log lines: `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`,
 
 Left as constants, with their own comments saying so: `CRiskMarginHealth` 200% floor and 0.8 free-margin
 usage (`SetMinMarginLevel` / `SetMaxFreeMarginUsage` have no callers; the `SetMinMarginLevel(150.0)` at
-`EAOrchestrator.mqh:1094` belongs to `CTickSafetyMonitor`, a different object), and
+`EAOrchestrator.mqh:1094` belonged to `CTickSafetyMonitor`, a different object - that class is deleted in Batch 238), and
 `CPortfolioRiskManager::m_cvarMaxRisk = 0.10` with no setter and no input, failing open under 20 samples.
 
 
@@ -1957,10 +1985,11 @@ No decision path or ownership boundary changed: strategies still vote through `C
 - Existing positions remain managed (trailing, breakeven, etc.) during profit halt
 
 ### Auto Mode Switching
-- `InpEnableAutoModeSwitch`: enables automatic risk mode switching
-- Three modes: CONSERVATIVE, AGGRESSIVE, EMERGENCY
-- Switching triggers: drawdown percentage and consecutive win streak
-- Each mode has configurable risk parameters (`InpConservativeBaseRiskPct`, `InpAggressiveBaseRiskPct`, `InpModeSwitchDrawdownPct`, `InpModeSwitchWinStreak`)
+
+Does not exist, and said so in the code. The three-mode enum, `m_currentTradingMode`, the `UpdateAutoModeSwitch()` stub
+whose body read "not implemented", and the five inputs that fed it were deleted in Batch 238. The live authority is
+`CRiskAdaptiveTuner` (scales the base per-trade risk **down** only, from `InpMaxRiskPerTrade`) plus the two-of-five
+conservative trigger vote in `PerfAnalyticsRiskTriggers.mqh:124-138`. There is no upward mode and no win-streak trigger.
 
 ## Execution Hardening
 - Fill policy is configurable via EA input (`IOC` default).

@@ -47,14 +47,9 @@ input double   InpKellyFraction = 0.25;
 input int      InpEquityCurveEmaPeriod = 20;
 input double   InpEquityCurveReductionFactor = 0.50;
 
-input group "Compounding & Auto Mode-Switch";
+input group "Compounding Tiers";
 input bool     InpEnableCompoundingTiers = true;
 input int      InpCompoundingTierCheckIntervalSec = 60;
-input bool     InpEnableAutoModeSwitch = true;
-input double   InpConservativeBaseRiskPct = 0.5;  // PHASE0 recalibration (was 1.0)
-input double   InpAggressiveBaseRiskPct = 1.5;  // PHASE0 recalibration (was 3.0)
-input double   InpModeSwitchDrawdownPct = 5.0;
-input int      InpModeSwitchWinStreak = 5;
 
 input group "Portfolio & Position Limits";
 input int      InpMaxPositionsTotal = 15;
@@ -204,19 +199,16 @@ input bool     InpEnableNNPseudoLabeling = true;
 input int      InpNNPseudoLabelBarsAhead = 10;
 input int      InpNNSampleIntervalSeconds = 15;
 input int      InpNNCheckpointEveryLabeled = 3;
-input bool     InpEnableNNAttributionDiagnostics = false;
-input bool     InpRunNNAttributionSelfTest = false;
+input bool     InpEnableNNAttributionDiagnostics = true;   // Batch 238: the setter is wired now; true is what every build has printed
+input bool     InpRunNNAttributionSelfTest = false;        // Batch 238: callable now; runs the prediction-comment and map round trip at init
 
 input group "AI/ML - Authority & Live Gating";
 input bool     InpEnableLiveAuthorityGate = false;
-input bool     InpAllowAIWarmStartLive = true;
 input bool     InpAllowHybridAIStandalone = true;
 input double   InpAIStandaloneMinConfidence = 0.65;
 input double   InpAIStandaloneRelaxedConfidence = 0.60;
 input int      InpHybridGateRelaxAfterCycles = 5;
 input int      InpAuthorityMinSamples = 12;
-input int      InpAuthorityTrialHorizonSeconds = 900;
-input int      InpAuthorityMaxTrackedTrials = 256;
 input double   InpAuthorityMinExpectancyR = 0.03;
 input double   InpAuthorityMinProfitFactor = 1.10;
 input double   InpAuthorityMinCostScore = 0.50;
@@ -224,11 +216,8 @@ input double   InpAuthorityMinReadinessScore = 0.52;
 input double   InpAuthorityMinContextScore = 0.48;
 input double   InpAIBootstrapRiskMultiplier = 0.50;
 input double   InpAIPromotedRiskMultiplier = 1.00;
-input double   InpNonAIPromotedRiskMultiplier = 0.65;
 
 input group "Hybrid Cadence & Intrabar Scan";
-input bool     InpEnableHybridCadence = true;
-input bool     InpIntrabarChartSymbolOnly = false;
 input bool     InpIntrabarDynamicQuorumEnabled = true;
 input int      InpMaxSignalEvaluationsPerCycle = 8;
 input int      InpReadinessReuseTtlSeconds = 60;
@@ -307,7 +296,6 @@ input group "Emergency & Unprotected Remediation";
 input bool     InpEmergencyFlattenAllAccountPositions = false; // true = emergency flatten may close positions this EA did not open (manual trades / other EAs). Off by default (Batch 168).
 input int      InpUnprotectedRemediationIntervalSec = 15;
 input int      InpUnprotectedMaxRestoreAttempts = 3;
-input bool     InpCloseUnprotectedOnRemediationFailure = true;
 
 input group "Synthetic Spike";
 input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
@@ -499,14 +487,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.dashboardControlEnabled = InpDashboardControlEnabled;
     
     config.enableLiveAuthorityGate = InpEnableLiveAuthorityGate;
-    config.allowAIWarmStartLive = InpAllowAIWarmStartLive;
     config.allowHybridAIStandalone = InpAllowHybridAIStandalone;
     config.aiStandaloneMinConfidence = InpAIStandaloneMinConfidence;
     config.aiStandaloneRelaxedConfidence = InpAIStandaloneRelaxedConfidence;
     config.hybridGateRelaxAfterCycles = InpHybridGateRelaxAfterCycles;
     config.authorityMinSamples = InpAuthorityMinSamples;
-    config.authorityTrialHorizonSeconds = InpAuthorityTrialHorizonSeconds;
-    config.authorityMaxTrackedTrials = InpAuthorityMaxTrackedTrials;
     config.authorityMinExpectancyR = InpAuthorityMinExpectancyR;
     config.authorityMinProfitFactor = InpAuthorityMinProfitFactor;
     config.authorityMinCostScore = InpAuthorityMinCostScore;
@@ -514,14 +499,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.authorityMinContextScore = InpAuthorityMinContextScore;
     config.aiBootstrapRiskMultiplier = InpAIBootstrapRiskMultiplier;
     config.aiPromotedRiskMultiplier = InpAIPromotedRiskMultiplier;
-    config.nonAIPromotedRiskMultiplier = InpNonAIPromotedRiskMultiplier;
     
     config.enableNNAttributionDiagnostics = InpEnableNNAttributionDiagnostics;
     config.runNNAttributionSelfTest = InpRunNNAttributionSelfTest;
     
     // Runtime cadence
-    config.enableHybridCadence = InpEnableHybridCadence;
-    config.intrabarChartSymbolOnly = InpIntrabarChartSymbolOnly;
     config.intrabarDynamicQuorumEnabled = InpIntrabarDynamicQuorumEnabled;
     config.pipelineMinConfidence = InpPipelineMinConfidence;
     config.pipelineIntrabarConfidenceCap = InpPipelineIntrabarConfidenceCap;
@@ -595,7 +577,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.emergencyFlattenAllAccountPositions = InpEmergencyFlattenAllAccountPositions;
     config.unprotectedRemediationIntervalSec = InpUnprotectedRemediationIntervalSec;
     config.unprotectedMaxRestoreAttempts = InpUnprotectedMaxRestoreAttempts;
-    config.closeUnprotectedOnRemediationFailure = InpCloseUnprotectedOnRemediationFailure;
     config.syntheticSpikeVelocityMultiplier = InpSyntheticSpikeVelocityMultiplier;
     config.syntheticSpikePauseSeconds = InpSyntheticSpikePauseSeconds;
     
@@ -675,13 +656,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.profitTrailFactor = InpProfitTrailFactor;
     config.profitTargetHardFloorRatio = InpProfitTargetHardFloorRatio;
     config.dailyHaltCooldownMinutes = InpDailyHaltCooldownMinutes;
-    
-    // Dual-mode auto-switching
-        config.enableAutoModeSwitch = InpEnableAutoModeSwitch;
-        config.conservativeBaseRiskPct = InpConservativeBaseRiskPct;
-        config.aggressiveBaseRiskPct = InpAggressiveBaseRiskPct;
-        config.modeSwitchDrawdownPct = InpModeSwitchDrawdownPct;
-        config.modeSwitchWinStreak = InpModeSwitchWinStreak;
     
         // Symbol Validation (L7-003)
         config.symbolMaxSpreadPoints = InpSymbolMaxSpreadPoints;
@@ -913,27 +887,6 @@ bool ValidateInputs()
     if(InpEnableTransformer || InpEnableEnsemble)
     {
         Print("[VALIDATION] WARNING: Experimental AI family enabled (Transformer/Ensemble) - ensure models are trained");
-    }
-    
-    // --- Dual-mode validation (L7-016) ---
-    if(InpEnableAutoModeSwitch)
-    {
-        if(InpConservativeBaseRiskPct >= InpAggressiveBaseRiskPct)
-        {
-            PrintFormat("[VALIDATION] ERROR: InpConservativeBaseRiskPct (%.2f) >= InpAggressiveBaseRiskPct (%.2f)", 
-                          InpConservativeBaseRiskPct, InpAggressiveBaseRiskPct);
-            valid = false;
-        }
-        if(InpModeSwitchDrawdownPct < 1.0 || InpModeSwitchDrawdownPct > 20.0)
-        {
-            PrintFormat("[VALIDATION] ERROR: InpModeSwitchDrawdownPct=%.2f out of range [1.0, 20.0]", InpModeSwitchDrawdownPct);
-            valid = false;
-        }
-        if(InpModeSwitchWinStreak < 2 || InpModeSwitchWinStreak > 20)
-        {
-            PrintFormat("[VALIDATION] ERROR: InpModeSwitchWinStreak=%d out of range [2, 20]", InpModeSwitchWinStreak);
-            valid = false;
-        }
     }
     
     // --- Log level clamp (L7-017) ---

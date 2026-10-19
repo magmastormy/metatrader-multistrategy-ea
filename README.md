@@ -294,7 +294,7 @@ The EA enforces a **multi-layer pre-trade risk gate** before any order reaches t
 - **Init logs a new `[AUTHORITY-CONFIG]` pair.** `effective:` lists the thresholds in force; `clamped:` names any `InpAuthority*` input that was looser than the documented floor. On stock defaults six names clamp — `authorityMinSamples` (12→30), `authorityMinExpectancyR` (0.03→0.3), `authorityMinProfitFactor` (1.10→1.2), `aiPromotedRiskMultiplier` (1.00→0.75), `authorityMinReadinessScore` (0.52→0.60) and `authorityMinContextScore` (0.48→0.55). The last two land on the literals the code already used, so only the first four represent a real policy choice.
 - **Configured authority values can only tighten a gate, never loosen one.** The floors are `AUTHORITY_MIN_*` defines in `LiveAuthorityResolver.mqh`. Making promotion easier is a deliberate source edit, not a slider in the inputs dialog.
 - **The `[LiveAuthorityResolver]` status block prints `pf=` and `eligible=Y|N` per tracked AI strategy**, so the gate's arming is observable rather than inferred from an absent `PROVEN_AI`.
-- **Not fixed, and not silently:** per-family demotion to shadow, and the trial tracking implied by `InpAuthorityTrialHorizonSeconds` / `InpAuthorityMaxTrackedTrials` / `InpNonAIPromotedRiskMultiplier`, do not exist. The `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` tags named in SYSTEM_STRUCTURE.md appear in no source file and never have.
+- **Not fixed, and not silently:** per-family demotion to shadow, and the trial tracking those three inputs used to imply, do not exist (Batch 238 deleted the inputs; there was never a trial store). The `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` tags named in SYSTEM_STRUCTURE.md appear in no source file and never have.
 
 ### What the operator will notice after Batch 173 (authority now sets the lot)
 
@@ -631,6 +631,41 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 238: twelve inputs removed from your dialog because they changed nothing
+
+The audit that found the dead spike monitor also checked every field the two EAs write into the orchestrator config.
+Fourteen had a writer and no reader. Twelve are deleted; two are wired. What this means for you is that the inputs
+gone from the dialog are inputs that never did anything, and the two that remain now do.
+
+Deleted, with the reason each one could not be wired honestly:
+
+| Input | Why it is gone |
+|---|---|
+| `InpAllowAIWarmStartLive` | the live-authority resolver has no warm-start concept to receive it |
+| `InpAuthorityTrialHorizonSeconds`, `InpAuthorityMaxTrackedTrials` | there is no trial store: the resolver's config takes eleven values and none is a window or a cap |
+| `InpNonAIPromotedRiskMultiplier` | one promotion branch exists and it is AI-only; a second promoted multiplier would be a second authority over one lot |
+| `InpEnableHybridCadence`, `InpIntrabarChartSymbolOnly` | scan cadence is the bar gate plus `evalBudget`, which `[SCAN-POLICY]` prints |
+| `InpCloseUnprotectedOnRemediationFailure` | escalation 3 closes because "no position should exist without a stop" is an invariant, not a setting; the off direction had no code |
+| `InpEnableAutoModeSwitch`, `InpConservativeBaseRiskPct`, `InpAggressiveBaseRiskPct`, `InpModeSwitchDrawdownPct`, `InpModeSwitchWinStreak` | the whole auto-mode-switch feature is a stub whose body said "not implemented", and its `[VALIDATION]` block was failing OnInit over relationships between four values that reached nothing |
+
+The risk-mode story the deleted inputs implied is not how this EA behaves, and the real authorities are worth knowing:
+your per-trade risk base is `InpMaxRiskPerTrade`, and `CRiskAdaptiveTuner` only ever scales it *down*; the conservative
+flag comes from a two-of-five trigger vote (rolling win rate under 40, Sharpe under 0.5, drawdown past warning, three
+consecutive losses, profit factor under 1.2). Replacing that with a single drawdown threshold and a bigger "aggressive"
+base would have loosened a risk gate on settings nobody had ever applied - your decision to make deliberately, not a
+cleanup to slip in.
+
+Wired instead of deleted: `InpEnableNNAttributionDiagnostics` and `InpRunNNAttributionSelfTest`. Their setters had no
+caller, so the code's own defaults ran - diagnostics on, self-test never executed. Both are now fed at startup, and the
+self-test (which round-trips the prediction id through the trade comment and the position map the neural net learns
+from) is callable. The diagnostics input's default moves `false -> true` because that is what every build has printed;
+wiring it at `false` would have quietly deleted the `[NN-DIAG]` shutdown summary, and losing evidence to a "cleanup" is
+the mistake this repo has now made and corrected three times.
+
+One dead class went with them: `Core/Processing/TickSafetyMonitor.mqh` (164 lines). After Batch 237 nothing called any
+of its checks - it was a member that got three configuration calls at startup and was never consulted again. Margin and
+drawdown protection is `CRiskMarginHealth`, `CRiskCircuitBreaker` and `CUnifiedRiskManager`, and those are called.
 
 ### Batch 237: one cycle could order every symbol, and the spike monitor could not see a spike
 
@@ -1127,7 +1162,7 @@ Core/
   Scalp/                        # SpikeHunterEngine, GridRecoveryEngine, ATRScalpingEngine, FastScalpEngine
   Strategy/                     # AI adapters (ONNX, Transformer, Ensemble), StrategyBase, StrategyRegistry
   AI/                           # AIFeatureVectorBuilder, PipelineScaler, NNModelStorage
-  Processing/                   # TickSafetyMonitor, DerivAssetProfiler, MultiAssetProfiler
+  Processing/                   # DerivAssetProfiler, MultiAssetProfiler
   Signals/                      # SignalDiagnostics, TimeframeConsistency
   Monitoring/                   # PerformanceAnalytics
   Visualization/                # VisualDashboard, ChartDrawingManager

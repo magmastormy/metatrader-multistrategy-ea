@@ -1705,6 +1705,29 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 238 Dead Inputs and the Dead Tick-Safety Class Removed; NN Self-Test Gets an Entry Point (2026-10-19)
+
+- **Init sequence:** two calls added at the attribution init site (`SetNNDiagnosticsEnabled` / `SetRunSelfTest`, then
+  `RunNNAttributionSelfTest`). The test touches only in-memory maps under a synthetic ticket (999001) and a fixed
+  prediction id, and it is off by default, so a normal start is byte-identical to the previous build.
+- **OnInit validation:** the dual-mode block is gone. Before this batch it could set `valid = false` - which aborts the
+  start - from comparisons between four inputs whose config fields no line reads. That is the only refusal path this
+  batch removed, and it removed a false refusal rather than a protection: the values compared gate nothing.
+- **Ownership:** `CEAOrchestrator` no longer holds a `CTickSafetyMonitor`, and `Core/Processing/TickSafetyMonitor.mqh`
+  is deleted. Nothing else referenced the class after Batch 237 removed the spike monitor's pointer to it. No
+  transitive include broke: `<Trade\AccountInfo.mqh>` is included by `EAOrchestrator.mqh:79` and `<Trade\SymbolInfo.mqh>`
+  by `TradeManager.mqh:12` and `SessionManager.mqh:6`.
+- **Deinit:** unchanged, and §3.5 still holds - `CIndicatorManager::DestroyInstance()` is called on deinit. The deleted
+  class had no handles to release (its ATR/margin reads were `CAccountInfo`/`CSymbolInfo` value objects).
+- **Inputs removed from both root EAs:** twelve declarations, twelve config writes each, and their `input group`
+  headings ("Compounding & Auto Mode-Switch" is now "Compounding Tiers"). Nothing was renamed or repurposed, so a saved
+  `.set` file referencing them is silently ignored by the terminal rather than misread.
+- **§3 invariants:** all five preserved. Every entry still passes `CUnifiedRiskManager`; execution stays
+  `CTradeManager`-owned; lifecycle stays EA-loop-owned; decisioning stays symbol-scoped manager consensus.
+- **Compile note worth keeping:** the first run of this batch failed with `error 214: cannot access private member
+  function` - `RunNNAttributionSelfTest` was declared in the class's private block, so wiring it also required moving
+  the declaration to public. The harness reported `OVERALL FAILED` with exit 1, which is the Batch 228 behaviour.
+
 ## Batch 237 Send Budget Per Slot, Spike Detector On The Timer Path (2026-10-19)
 
 - **Init:** `CSyntheticSpikeMonitor::Initialize(CTradeManager&, CUnifiedRiskManager&, CTickSafetyMonitor&)` is gone,

@@ -150,14 +150,11 @@ struct SOrchestratorConfig
     bool    dashboardControlEnabled;
 
     bool    enableLiveAuthorityGate;
-    bool    allowAIWarmStartLive;
     bool    allowHybridAIStandalone;
     double  aiStandaloneMinConfidence;
     double  aiStandaloneRelaxedConfidence;
     int     hybridGateRelaxAfterCycles;
     int     authorityMinSamples;
-    int     authorityTrialHorizonSeconds;
-    int     authorityMaxTrackedTrials;
     double  authorityMinExpectancyR;
     double  authorityMinProfitFactor;
     double  authorityMinCostScore;
@@ -165,14 +162,11 @@ struct SOrchestratorConfig
     double  authorityMinContextScore;
     double  aiBootstrapRiskMultiplier;
     double  aiPromotedRiskMultiplier;
-    double  nonAIPromotedRiskMultiplier;
 
     bool    enableNNAttributionDiagnostics;
     bool    runNNAttributionSelfTest;
 
     // Runtime cadence
-    bool    enableHybridCadence;
-    bool    intrabarChartSymbolOnly;
     bool    intrabarDynamicQuorumEnabled;
     double  pipelineMinConfidence;
     double  pipelineIntrabarConfidenceCap;
@@ -251,7 +245,6 @@ struct SOrchestratorConfig
     bool    emergencyFlattenAllAccountPositions;
     int     unprotectedRemediationIntervalSec;
     int     unprotectedMaxRestoreAttempts;
-    bool    closeUnprotectedOnRemediationFailure;
     double  syntheticSpikeVelocityMultiplier;
     int     syntheticSpikePauseSeconds;
 
@@ -333,11 +326,6 @@ struct SOrchestratorConfig
     int     dailyHaltCooldownMinutes;
 
     // Dual-mode auto-switching
-    bool    enableAutoModeSwitch;
-    double  conservativeBaseRiskPct;
-    double  aggressiveBaseRiskPct;
-    double  modeSwitchDrawdownPct;
-    int     modeSwitchWinStreak;
 
     // Symbol Validation
     long    symbolMaxSpreadPoints;
@@ -475,14 +463,11 @@ struct SOrchestratorConfig
         dashboardControlEnabled = false;
 
         enableLiveAuthorityGate = false;
-        allowAIWarmStartLive = true;
         allowHybridAIStandalone = true;
         aiStandaloneMinConfidence = 0.65;
         aiStandaloneRelaxedConfidence = 0.60;
         hybridGateRelaxAfterCycles = 5;
         authorityMinSamples = 12;
-        authorityTrialHorizonSeconds = 900;
-        authorityMaxTrackedTrials = 256;
         authorityMinExpectancyR = 0.03;
         authorityMinProfitFactor = 1.10;
         authorityMinCostScore = 0.50;
@@ -490,13 +475,10 @@ struct SOrchestratorConfig
         authorityMinContextScore = 0.48;
         aiBootstrapRiskMultiplier = 0.50;
         aiPromotedRiskMultiplier = 1.00;
-        nonAIPromotedRiskMultiplier = 0.65;
 
         enableNNAttributionDiagnostics = false;
         runNNAttributionSelfTest = false;
 
-        enableHybridCadence = true;
-        intrabarChartSymbolOnly = false;
         intrabarDynamicQuorumEnabled = true;
         pipelineMinConfidence = 0.55;
         pipelineIntrabarConfidenceCap = 0.05;
@@ -571,7 +553,6 @@ struct SOrchestratorConfig
         emergencyFlattenAllAccountPositions = false;
         unprotectedRemediationIntervalSec = 15;
         unprotectedMaxRestoreAttempts = 3;
-        closeUnprotectedOnRemediationFailure = true;
         syntheticSpikeVelocityMultiplier = 3.0;
         syntheticSpikePauseSeconds = 30;
 
@@ -646,11 +627,6 @@ struct SOrchestratorConfig
         profitTargetHardFloorRatio = 0.50;
         dailyHaltCooldownMinutes = 30;
 
-        enableAutoModeSwitch = true;
-        conservativeBaseRiskPct = 1.0;
-        aggressiveBaseRiskPct = 3.0;
-        modeSwitchDrawdownPct = 5.0;
-        modeSwitchWinStreak = 5;
 
         symbolMaxSpreadPoints = 1500;
         symbolMinDailyVolumeLots = 1000;

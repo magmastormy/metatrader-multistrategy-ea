@@ -21,7 +21,6 @@ class CPositionLifecycleManager;
 class CSafeMode;
 class CFullMarginMode;
 class CIntelligentSLGuard;
-class CTickSafetyMonitor;
 class CSpikeMonitor;
 
 // Engine Registry

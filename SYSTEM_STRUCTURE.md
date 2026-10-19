@@ -560,7 +560,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 - Not implemented (documented here so the gap is visible rather than implied):
   - `result.allowed` is still set `true` unconditionally at the end of `Resolve()`, so the only *vetoes* remain the two mode checks and `LOW_CONFIDENCE`; the score ladder acts through size, not through permission
   - per-family demotion back to shadow when forward evidence degrades — an unproven contributor is capped each cycle, but a promoted one is never demoted except through the `consecutiveLosses < 4` test at evaluation time
-  - trial-window tracking: `InpAuthorityTrialHorizonSeconds`, `InpAuthorityMaxTrackedTrials` and `InpNonAIPromotedRiskMultiplier` reach `config` and are read by nothing
+  - trial-window tracking: never implemented, and Batch 238 deleted the three inputs that implied it
   - `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` telemetry — these tags appear in no source file and will never appear in a log
 - Related but separate: VPIN order-flow toxicity affects size through `CVPINLotModifier` in the `CPositionSizer` modifier chain, not through this resolver (**true only from Batch 213**: the modifier had been reading a `CVPINFilter` it created itself, which nothing feeds ticks to, so `IsWarmedUp()` was false forever and every lot passed through unchanged; it now reads the math hub's per-symbol filters, registered from the engine-injection loop, and `[SIZING-CHAIN] vpin_filters=N` says whether any are present). Since Batch 174 it also vetoes: `CPostConsensusValidator::CheckVPINFilter` calls `CVPINFilter::ShouldBlockNewPositions()` and returns false at the filter's configured EXTREME level, reading the regime from the filter instead of the 0.85/0.95 literals that sat above it. `m_lastVPINMultiplier` is a diagnostic mirror of the modifier's value, not a sizing input.
 - Sizing chain ownership (Batch 174): `BuildCandidate`'s modifier chain is `ApplyDrawdownScaling` → `ApplyMomentumScaling` → broker-minimum floor → post-size re-gate → `ScaleLotByLiveAuthority`. The four steps that used to sit in that chain and return their input untouched (`ApplySkewStepScaling`, `ApplyFullMarginStacking`, `ApplySafeModeRestrictions`, `EvaluateEAModeAdmission`) are deleted; skew-step, full-margin and safe-mode each have a real owner elsewhere or need a hook that does not exist yet, and are tracked as open rather than faked in the sizing path.
@@ -789,7 +789,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 - EA-level risk controls in `MultiStrategyAutonomousEA.mq5`:
 - Min R:R enforcement: 2.0 default, 1.5 for MEAN\_REVERSION\_CLUSTER (`CandidateBuilder.Configure(2.0, 1.5, ...)`, reachable only from Batch 219)
   - Portfolio profit target: `InpDailyProfitTargetPercent` with `InpProfitTrailFactor` trailing floor
-  - Auto mode switching: `InpEnableAutoModeSwitch` with CONSERVATIVE/AGGRESSIVE/EMERGENCY modes based on drawdown and win streak
+  - Auto mode switching: does not exist. The stub that its input gated is deleted in Batch 238; the live mode authority is `CRiskAdaptiveTuner` (scales the base per-trade risk down) plus the two-of-five conservative trigger vote in `PerfAnalyticsRiskTriggers.mqh:124-138`
 
 ### 2.20 Equity Curve Manager domain (Batch 99)
 
@@ -1488,6 +1488,24 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   windows driven from `OnTick` and the 1 s timer, alarm holds entries only; the flatten loops and their
   `Alert()`/`Comment()` affordances are gone. Its counting method was also wrong before it was unreachable: it counted
   its own calls, which is the chart symbol's tick callback, not the market - and for a chart attached to EURUSD, nothing.
+
+- **A validator can police values that gate nothing and still own the gate on startup** (Batch 238). The dual-mode
+  `[VALIDATION]` block compared four inputs whose config fields had no reader and set `valid = false`, which aborts
+  `OnInit`, while the feature it was checking was a two-line stub whose body said "not implemented". Deleting dead
+  inputs therefore has a live effect even where no trade path reads them: it removes a way for the EA to refuse to start
+  over a comparison that describes nothing. Delete-vs-wire still turned on one authority per domain - the base per-trade
+  risk is `InpMaxRiskPerTrade` through `CRiskAdaptiveTuner`, which only scales it down, and the conservative flag is a
+  two-of-five trigger vote - so a conservative/aggressive *pair* of base risks was a second authority, not a missing
+  feature.
+
+- **An input's default can be recording what the build does rather than prescribing it** (Batch 238).
+  `InpEnableNNAttributionDiagnostics = false` read like an off switch, but its setter had no caller, so the struct
+  default (`true`) is what every build printed and the `[NN-DIAG]` shutdown summary was live. Wiring the setter at that
+  `false` would have deleted the line - the same "made invisible by a wiring fix" trap Batch 233 records. The default
+  moved to `true`, so the wiring is behaviour-preserving and the switch is real in both directions. Corollary: a dead
+  setter's field default is the running value, and the input is the lie; and a dead control's *implementation* may be
+  sound (the NN self-test round-trips the prediction id through the trade comment and the map Batch 203 made
+  load-bearing) which is the argument for wiring it rather than deleting it.
 
 - **A write-only table keeps only what a future decision needs** (Batch 234). The per-strategy timeframe table
   (`SStrategyTimeframeConfig`, 23 slots) is read by nothing - `GetStrategyTimeframeConfig` has no caller on either

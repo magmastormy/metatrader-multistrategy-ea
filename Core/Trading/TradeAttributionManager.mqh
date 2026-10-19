@@ -125,11 +125,15 @@ public:
     //--- [NN-DIAG] summary; EAOrchestrator prints it with context "deinit" before releasing the managers.
     void   NNDiagPrintSummary(const string context = "");
 
+    //--- Round-trips the prediction id through the trade comment and the position map; called at init when
+    //--- InpRunNNAttributionSelfTest is on. Batch 203 made both halves load-bearing, so a mismatch here is
+    //--- a live net-learning break, not a test-only failure.
+    bool   RunNNAttributionSelfTest();
+
     void   ClearAll();
 
 private:
     void   NNDiagLog(const string message);
-    bool   RunNNAttributionSelfTest();
 
     int    GetNNDiagEntryMapCount()     const { return m_nnDiagEntryMapCount; }
     int    GetNNDiagCloseByIdCount()    const { return m_nnDiagCloseByIdCount; }

@@ -8,6 +8,56 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 238: twelve inputs that wrote a config field and bound nothing, and the dead class one of them served
+
+The Batch-237 audit swept every `SOrchestratorConfig` field for a reader. Fourteen had a writer in both root EAs and
+no consumer; each was then decided individually rather than by list, because two of them were worth wiring.
+12 added / 286 deleted across six files, including one whole class file.
+
+**Deleted - no consumer, and no single authority to attach them to.**
+`allowAIWarmStartLive` (`CLiveAuthorityResolver` has no warm-start concept: its AI path is the bootstrap-then-promoted
+ladder at `LiveAuthorityResolver.mqh:116`/`:265`), `authorityTrialHorizonSeconds` and `authorityMaxTrackedTrials` (the
+resolver's `Configure(...)` takes eleven arguments and none of them is a trial window or a tracked-trials cap - there
+is no trial store to size), `nonAIPromotedRiskMultiplier` (one promotion branch exists, it is AI-only, and its value
+comes from `aiPromotedRiskMultiplier`; a second promoted multiplier would be a second authority over one lot),
+`enableHybridCadence` and `intrabarChartSymbolOnly` (the cadence authority is the bar gate plus `evalBudget`, printed as
+`[SCAN-POLICY]`; Batch 215 deleted the scheduler these described), `closeUnprotectedOnRemediationFailure` (the tracker
+closes at escalation 3 - `UnprotectedPositionTracker.mqh:327-349` - under the comment "no position should exist without
+SL", which is an invariant, not a preference; the input's off direction had no code).
+
+**Deleted - a feature that was never written.** `enableAutoModeSwitch` gated `UpdateAutoModeSwitch()`, a two-line stub
+whose body was the comment "Auto mode switching is not implemented: no mode or risk parameters are applied here."
+Along with it: `conservativeBaseRiskPct`, `aggressiveBaseRiskPct`, `modeSwitchDrawdownPct`, `modeSwitchWinStreak`, the
+`ENUM_AUTO_SWITCH_MODE` enum, `m_currentTradingMode`, and the `[VALIDATION]` block at `MultiStrategyAutonomousEA.mq5:919`
+that policed them - which had been *failing OnInit* on relationships between four values that reached nothing. The live
+mode authority is elsewhere and is not this shape: `CRiskAdaptiveTuner` scales the active per-trade risk down from
+`baseRiskPerTradePercent`, whose only writer is `InpMaxRiskPerTrade` through `EAOrchestrator.mqh:838`, and the
+conservative flag is set by a two-of-five trigger vote (`PerfAnalyticsRiskTriggers.mqh:124-138`: win rate < 40, Sharpe
+< 0.5, drawdown > warning, 3 consecutive losses, PF < 1.2). Wiring the deleted fields would have replaced that with a
+single drawdown switch and added a second base risk - loosening a risk gate on inputs nobody had been applying, which is
+operator policy, not cleanup.
+
+**Wired, not deleted - the two NN attribution inputs.** `enableNNAttributionDiagnostics` and `runNNAttributionSelfTest`
+do have consumers (`TradeAttributionManager.mqh:592`/`:598`/`:616`); what was missing was the call.
+`SetNNDiagnosticsEnabled`/`SetRunSelfTest` had zero call sites, so the struct defaults ran (`true`/`true`), and
+`RunNNAttributionSelfTest` - a real round-trip test of the prediction-comment id and the position map Batch 203 made
+load-bearing - had no caller either. The orchestrator now feeds both at the attribution init site and calls the test.
+`InpEnableNNAttributionDiagnostics` default flips `false -> true` because that is what every build has printed: leaving
+it `false` would have silently deleted the `[NN-DIAG] Summary (deinit)` line, the same "made invisible by a wiring fix"
+shape Batch 233 warns about. `InpRunNNAttributionSelfTest` stays `false`, so behaviour is identical and the switch is
+real in both directions.
+
+**Deleted: `Core/Processing/TickSafetyMonitor.mqh` (164 lines).** Batch 237 removed its last reference - the spike
+monitor's `m_tickSafetyMonitor`, which was the only caller of `ValidateTick`, `IsTradingAllowed`, `IsSpreadAcceptable`
+and `HasTickGap`. What remained was a member, three setters called with literals at init (`SetMinFreeMarginPercent(20.0)`,
+`SetMinMarginLevel(150.0)`, `SetEmergencyStop(false)`) and a forward declaration: a class configured and never consulted.
+`Emergency stop` in that class never halted anything because `IsEmergencyActive()` had no reader either. Margin and
+drawdown protection live in `CRiskMarginHealth`, `CRiskCircuitBreaker` and `CUnifiedRiskManager`, which are called.
+No transitive include broke: `EAOrchestrator.mqh:79` includes `<Trade\AccountInfo.mqh>` itself, and
+`TradeManager.mqh:12`/`SessionManager.mqh:6` include `<Trade\SymbolInfo.mqh>`.
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:` line, 0 errors / 0 warnings (5.3 / 2.7 / 4.2 / 6.4 / 181.8 / 393.9 / 100.1 / 5.1 s), harness exit 0, every `.ex5` newer than the sources and the synced copies byte-identical to the tree. The first run of this batch failed - `error 214: cannot access private member function` at the new `RunNNAttributionSelfTest` call, because the declaration sat in the class's private block - and the harness reported `OVERALL FAILED` with exit 1 rather than a green, which is the Batch 228 behaviour doing its job. Not runtime-observed: newest journal 2026-09-23.
+
 ### Batch 237: the entry loop's own send budget, and a spike monitor that had no driver
 
 Two controls in the path that puts money on were declared, wired into `SOrchestratorConfig`, printed in the dialog and

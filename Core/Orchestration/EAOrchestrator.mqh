@@ -24,7 +24,6 @@
 #include "../../Core/Risk/RiskTierManager.mqh"
 #include "../../Core/Risk/SafeModeConfig.mqh"
 #include "../../Core/Risk/FullMarginMode.mqh"
-#include "../../Core/Processing/TickSafetyMonitor.mqh"
 #include "../../Core/Processing/SyntheticSpikeMonitor.mqh"
 #include "../../Core/Trading/TradeAttributionManager.mqh"
 #include "../../Core/Engines/AIEngine.mqh"
@@ -159,7 +158,6 @@ class CEAOrchestrator
     CTradeAttributionManager    m_attributionManager;
     CPositionSizer              m_positionSizer;
     CInstrumentRegistry         m_instrumentRegistry;
-    CTickSafetyMonitor          m_tickSafetyMonitor;
     CSyntheticSpikeMonitor      m_spikeMonitor;
         // ONNX session init retry/backoff state machine (Core/AI/ONNXInitManager.mqh).
         CONNXInitManager            m_onnxInit;
@@ -263,9 +261,6 @@ class CEAOrchestrator
     CSymbolHealthMonitor     m_symbolHealth;
     string                   m_currentCorrId;
 
-    enum ENUM_AUTO_SWITCH_MODE { AUTO_MODE_CONSERVATIVE = 0, AUTO_MODE_AGGRESSIVE = 1, AUTO_MODE_EMERGENCY = 2 };
-    ENUM_AUTO_SWITCH_MODE m_currentTradingMode;
-
     // Dormancy cooldown tracking per symbol
     int    m_dormantConsecutiveCount[];
     datetime m_dormantCooldownUntil[];
@@ -298,7 +293,6 @@ class CEAOrchestrator
         m_currentRegime(MARKET_REGIME_UNKNOWN),
         m_totalActivePositions(0),
         m_zeroSignalFallbackThreshold(20),
-        m_currentTradingMode(AUTO_MODE_CONSERVATIVE),
         m_lastCvarLogTime(0), m_shuttingDown(false), m_bridgesReady(false), m_lastPush(0),
         m_recoveryStateLoaded(false),
         m_savedEquityBaseline(0.0), m_savedPeakEquity(0.0),
@@ -1089,9 +1083,6 @@ if(m_diagnosticsManager.Initialize(&m_unifiedRiskManager, &m_riskTierManager, &m
 else
 Print("[INIT] WARNING: DiagnosticsManager initialization failed");
 
-m_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
-m_tickSafetyMonitor.SetMinMarginLevel(150.0);
-m_tickSafetyMonitor.SetEmergencyStop(false);
 
 for(int swIdx = 0; swIdx < m_managerCount; swIdx++)
 {
@@ -1424,6 +1415,13 @@ void WireAndValidateDependencies()
 
     // SetPositionManager takes a reference, so pass the sub-object directly.
     m_attributionManager.SetPositionManager(m_positionManager);
+
+    // Both flags were written by inputs whose setters no caller reached, so the struct defaults ran: the
+    // [NN-DIAG] summary printed and the self-test never existed. Fed from the inputs now, and the test is
+    // callable because something finally calls it.
+    m_attributionManager.SetNNDiagnosticsEnabled(m_config.enableNNAttributionDiagnostics);
+    m_attributionManager.SetRunSelfTest(m_config.runNNAttributionSelfTest);
+    m_attributionManager.RunNNAttributionSelfTest();
 
     // Lifecycle manager gets the per-symbol enterprise managers, only once it is up.
     if(m_lifecycleManager.IsInitialized())
@@ -3005,9 +3003,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         m_unifiedRiskManager.RefreshRuntimeState();
 
         UpdateDailyProfitTarget();
-
-        UpdateAutoModeSwitch();
-
         m_unprotectedTracker.AttemptRemediation();
 
         // Persist circuit-breaker state on the runtime cadence (30 s throttle inside) for crash recovery.
@@ -3410,13 +3405,6 @@ void ProcessScalpFastPath()
 void UpdateDailyProfitTarget()
 {
     m_profitGuard.UpdateDailyProfitTarget(m_config);
-}
-
-void UpdateAutoModeSwitch()
-{
-    if(!m_config.enableAutoModeSwitch) return;
-
-    // Auto mode switching is not implemented: no mode or risk parameters are applied here.
 }
 
 void ProcessNewBars()
