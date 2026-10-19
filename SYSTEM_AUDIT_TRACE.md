@@ -1705,6 +1705,27 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 232 Removing the Intrabar-Eligibility Mirror and an Unreachable By-Name Policy API (2026-10-19)
+
+- **State removed:** `StrategyEntry::intrabarEligible` (field, `CStrategyMgrRoster::GetStrategyIntrabarEligible` +
+  the manager forwarder, `SetStrategyIntrabarEligible` on both owners, the registration write and the by-name write).
+  It was a derived copy of `intrabarPolicy == INTRABAR_POLICY_LIVE` with two writers and, after Batch 231, zero
+  readers. `SetStrategyIntrabarPolicyByName` and `SetStrategyIntrabarEligibilityByName` (manager + `CIntrabarPolicy`)
+  are gone as a declared-defined-forwarded-never-called chain; the live write path is
+  `EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`.
+- **Log surface:** `[EnterpriseStrategyManager] Intrabar policy updated:` loses its only emitter, which no caller
+  could reach. No doc cited it.
+- **Lifecycle:** unchanged. Registration, `SyncEnabledWithRegistry`, deinit and `CIndicatorManager::DestroyInstance()`
+  behave as before; `TrainingDataExporter.mq5`'s registration argument comment now names `intrabarPolicy = OFF`,
+  which is what that `false` actually is, and the append comment loses its miscounted "35-field" label.
+- **Open, filed as Batch 233:** the eleven `InpIntrabarEligibility*` inputs now reach only the stored policy, which
+  only the strategy report reads. `SStrategyTimeframeConfig::intrabarEnabled` is written 22 times and read nowhere.
+  Every enabled live voter therefore participates intrabar today, including the eight catalog rows whose
+  `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF`. Enforcement is a restriction of those eight rows, so it is
+  operator policy with the arithmetic on record, not a cleanup.
+- **Verification:** `sync_and_compile.ps1 -All`, eight programs, each with its own `Result:` line, all
+  0 errors / 0 warnings, script exit 0, binaries newer than sources.
+
 ## Batch 231 Unreachable Evaluators, the Sibling Forwarders Beside Them, and a Seven-Input Chain (2026-10-19)
 
 - **State removed:** `EvaluateConsensusTwoTier` / `...TwoTierInternal` and `EvaluateConsensusProbeOnlyInternal`

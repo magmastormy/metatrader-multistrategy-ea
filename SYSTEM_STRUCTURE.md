@@ -1432,6 +1432,19 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   readers of those three quantities are `SPipelineEvidence` -> `SConsensusDecisionContext` (Batch 205), which is
   what sizes a trade.
 
+- **A derived mirror needs a reader or it goes** (Batch 232). `StrategyEntry::intrabarEligible` was
+  `intrabarPolicy == INTRABAR_POLICY_LIVE` stored as a second boolean: written at registration and by the by-name
+  policy setter, read by nothing once the unreachable policy-resolution copies died in Batch 231. Deleted with its
+  getter, setter, forwarder and both writes, and with `SetStrategyIntrabarPolicyByName` /
+  `...EligibilityByName` on both owners - a declared, defined, forwarded chain with no caller, since the live write
+  path is positional (`SetStrategyIntrabarPolicyConfig` from the `StrategyConfigBuilder` rows). What the sweep
+  exposed and deliberately left alone: the stored `intrabarPolicy` is now read only by the strategy report's
+  `Intrabar:` field, `GetStrategyIntrabarPolicyConfig` has no caller, and
+  `SStrategyTimeframeConfig::intrabarEnabled` is written 22 times and read nowhere - so the eleven
+  `InpIntrabarEligibility*` inputs gate no entry, and enforcing the stored policy would strip eight catalog rows
+  whose `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF` from sub-bar voting. Restriction is operator policy
+  (Batch 233); the one authority that remains is `intrabarPolicy`, the integer.
+
 - **A reader is not reachability** (Batch 231, and the correction of Batch 230's own note). The probe path was
   recorded as live because its getters had readers; the readers were inside
   `EvaluateConsensusProbeOnlyInternal`, which no code can enter, and whose eligibility test read

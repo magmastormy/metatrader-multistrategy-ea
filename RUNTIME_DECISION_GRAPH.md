@@ -339,6 +339,28 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 232: The Intrabar-Eligibility Mirror and the By-Name Policy API (2026-10-19)
+
+No decision edge changed. `SStrategyEntry.intrabarEligible` - a boolean mirror of
+`intrabarPolicy == INTRABAR_POLICY_LIVE`, written at registration and by the by-name policy setter, read by nothing
+once Batch 231 removed the two policy-resolution copies - is deleted with its roster getter, manager forwarder,
+setter and both writes. `SetStrategyIntrabarPolicyByName` and its `...EligibilityByName` shim go too (manager +
+`CIntrabarPolicy` copies): declared, defined, forwarded, never called, because the live path is positional -
+`EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)` from the `StrategyConfigBuilder` rows.
+
+Log surface: `[EnterpriseStrategyManager] Intrabar policy updated: <name> => <policy>` has no emitter now, and never
+had one that could be reached - it printed only from the uncalled by-name method.
+
+**The finding this batch leaves open (Batch 233).** With those copies gone, nothing on a decision path reads the
+stored intrabar policy: `GetStrategyIntrabarPolicyRaw` survives only as the argument to the strategy report's
+`Intrabar:` field (`StrategyRegistryState.mqh:128`), `GetStrategyIntrabarPolicyConfig` has no caller, and
+`SStrategyTimeframeConfig::intrabarEnabled` - the second output of the same eleven inputs, written 22 times in
+`StrategyConfigBuilder.mqh` - has **no reader at all**. So the eleven `InpIntrabarEligibility*` inputs gate no
+entry today, and every enabled live-voting strategy votes in the intrabar path. Enforcing the stored policy would
+remove eight rows whose `defaultPolicy` is hardcoded `INTRABAR_POLICY_OFF` (Statistical Arbitrage, FVG Scalper,
+Turtle Soup, Breaker Block, NY Open Gap, Asian Range Break, Liquidity Sweep, Range Compression) from sub-bar voting -
+a restriction, not a repair, and therefore an operator decision with the arithmetic on record.
+
 ## Batch 231: Two More Evaluators With No Entry Point, and the Seven Inputs That Configured Them (2026-10-19)
 
 Batch 230's "what the live graph keeps" bullet below is wrong: the probe path was never reachable. The check that

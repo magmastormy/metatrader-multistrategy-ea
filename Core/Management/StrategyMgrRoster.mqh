@@ -89,8 +89,6 @@ public:
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].timeframe : fallback; }
     int    GetStrategyIntrabarPolicyRaw(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarPolicy : (int)INTRABAR_POLICY_OFF; }
-    bool   GetStrategyIntrabarEligible(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarEligible : false; }
 
     //--- Writes the entry weight and pushes it to the strategy object, but deliberately
     //--- does NOT touch the health monitor.
@@ -154,10 +152,8 @@ public:
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].liveVotingEnabled = enabled; }
     void SetStrategyIntrabarPolicyRaw(const int index, const int policy)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].intrabarPolicy = policy; }
-    void SetStrategyIntrabarEligible(const int index, const bool eligible)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].intrabarEligible = eligible; }
 
-    //--- 35-field StrategyEntry append. Order matters: fill the entry -> health
+    //--- StrategyEntry append. Order matters: fill the entry -> health
     //--- monitor RegisterStrategy(weight) -> ++m_strategyCount.
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                        double weight, ENUM_STRATEGY_TIER tier,
@@ -225,7 +221,6 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].strategy = strategy;
     m_strategies[m_strategyCount].name = name;
     m_strategies[m_strategyCount].enabled = enabled;
-    m_strategies[m_strategyCount].intrabarEligible = (intrabarPolicy == INTRABAR_POLICY_LIVE);
     m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
     m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
     m_strategies[m_strategyCount].role = (int)role;

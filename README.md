@@ -632,6 +632,35 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 232: a second copy of the intrabar policy that nothing consulted
+
+Removing the dead evaluators left `SStrategyEntry.intrabarEligible` in the shape this project keeps finding: two
+places write it, nothing reads it. It is a boolean mirror of `intrabarPolicy == INTRABAR_POLICY_LIVE`, and the policy
+integer is what every live path actually uses. Field, getter, manager forwarder, setter and both writes are gone —
+one quantity, one authority.
+
+The by-name policy API went with it: `SetStrategyIntrabarPolicyByName` and its `...EligibilityByName` shim exist on
+both the manager and the policy class and no code calls them. Strategies are configured positionally, from the
+catalog rows through `SetStrategyIntrabarPolicyConfig`. One consequence worth knowing as an operator: the
+`[EnterpriseStrategyManager] Intrabar policy updated: <name> => <policy>` line those methods print has **never
+appeared in any journal** and never could, because nothing could reach the code that prints it. If you want to flip
+one strategy's intrabar policy at runtime, that is now a real feature request rather than a switch you expected to
+work — the inputs that exist are the eleven `InpIntrabarEligibility*` per-strategy policies, and they do bind.
+
+52 lines deleted across five files; no policy value, threshold or eligibility decision moved, so what a symbol may do
+inside a bar is unchanged. Verified by the eight-program compile at 0 errors / 0 warnings with each program's own
+`Result:` line.
+
+What this batch's sweep exposed is bigger than what it deleted, and is filed as Batch 233 rather than fixed here:
+the eleven `InpIntrabarEligibility*` inputs reach a stored per-strategy policy that **no decision consults**. They
+do bind to the value printed as `Intrabar:` in the strategy report, and they do select the policy recorded at
+registration — but the only code that ever tested it (the probe and two-tier voters, and the policy-resolution
+helpers) was unreachable and is now gone. So every enabled live-voting strategy votes intrabar today, including the
+eight rows whose policy is `OFF` by hardcoded default (Statistical Arbitrage, FVG Scalper, Turtle Soup, Breaker
+Block, NY Open Gap, Asian Range Break, Liquidity Sweep, Range Compression). Turning the control on is a *restriction*
+of eight strategies' sub-bar participation, which is your risk policy, not a cleanup — so it gets visibility first and
+your decision second.
+
 ### Batch 231: two more consensus evaluators nothing could call, and the seven inputs that configured them
 
 Batch 230 said the intrabar *probe* path was live and that seven-ish quorum inputs were a decision waiting for you.

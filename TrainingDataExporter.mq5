@@ -299,7 +299,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
             weights[i],
             tiers[i],                   // tier
             timeframe,                  // tf
-            false,                      // intrabarEligible
+            false,                      // intrabarPolicy = OFF
             PRIMARY_ALPHA,              // role
             clusters[i],
             true                        // liveVotingEnabled

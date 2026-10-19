@@ -8,6 +8,35 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 232: the intrabar-eligibility mirror, and the by-name policy API no input reaches
+
+Batch 231 deleted the two functions that read `SStrategyEntry.intrabarEligible`, which left the field on the exact
+shape this repository keeps finding: **written by everything, read by nothing**. Two writers remain and both are
+correct in themselves - registration at `StrategyMgrRoster.mqh` sets it to `intrabarPolicy == INTRABAR_POLICY_LIVE`
+and `SetStrategyIntrabarPolicyByName` writes it beside the policy - while the only getter chain
+(`CStrategyMgrRoster::GetStrategyIntrabarEligible` and the manager forwarder) had no caller once the fallback and
+the policy-resolution copies were gone. Deleted: field, getter, forwarder, setter (`SetStrategyIntrabarEligible`,
+manager + roster), the registration write and the by-name write. The policy is `intrabarPolicy`, one authority - the
+bool was a second copy of a derived value that nothing consulted.
+
+The same sweep found the by-name API itself unreachable: `SetStrategyIntrabarPolicyByName` and its eligibility shim
+`SetStrategyIntrabarEligibilityByName` are declared, defined, and forwarded by the manager, and nothing calls the
+manager. The live path is positional - `EAOrchestrator.mqh:1991` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`
+from `StrategyConfigBuilder`'s catalog rows. Both pairs (manager + `CIntrabarPolicy`) are gone, with the
+`[EnterpriseStrategyManager] Intrabar policy updated:` print inside them - a line that could never have appeared in
+a journal, because nothing could reach it.
+
+Also corrected: `TrainingDataExporter.mq5:302` passed `false` under the comment `// intrabarEligible` for a parameter
+that is `ENUM_INTRABAR_POLICY intrabarPolicy`. The value was right (`false` == `INTRABAR_POLICY_OFF`) and the comment
+named a field that no longer existed; it now says `// intrabarPolicy = OFF`. And the append comment that called
+`StrategyEntry` a "35-field" struct - it holds 40 members, and held 44 before Batch 230 - loses the number, keeping
+the ordering fact that matters.
+
+**Verification:** `sync_and_compile.ps1 -All` - eight programs, each with its own `Result:` line, all
+0 errors / 0 warnings (13.4 / 6.5 / 11.0 / 9.0 / 193.4 / 163.6 / 49.0 / 3.1 s), script exit 0, binaries newer than
+sources. 52 lines deleted / 2 added across five files. No policy value, threshold or eligibility decision changed:
+the deleted getter had no reader, so what a symbol may do intrabar is exactly what it did before.
+
 ### Batch 231: two more consensus evaluators no caller could reach, the four sibling entry points beside them, and the seven inputs that configured all of it
 
 #### The Batch 230 note that was wrong

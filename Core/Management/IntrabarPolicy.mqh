@@ -34,8 +34,6 @@ public:
     ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
 
-    bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
-    bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
 };
 
 CIntrabarPolicy::CIntrabarPolicy() : m_src(NULL)
@@ -75,28 +73,6 @@ ENUM_INTRABAR_POLICY CIntrabarPolicy::GetIntrabarPolicyHelper(int idx)
     // rows those two strategies actually own. The legacy 9/10 literals were removed.
     if(idx == 7 || idx == 8) return INTRABAR_POLICY_LIVE;
     return INTRABAR_POLICY_OFF;
-}
-
-// By-name eligibility shim (LIVE when enabled, OFF otherwise)
-bool CIntrabarPolicy::SetStrategyIntrabarEligibilityByName(const string name, bool enabled)
-{
-    return SetStrategyIntrabarPolicyByName(name, enabled ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-}
-
-bool CIntrabarPolicy::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = m_src.GetStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyIntrabarPolicyRaw(index, (int)policy);
-    m_src.SetStrategyIntrabarEligible(index, (policy == INTRABAR_POLICY_LIVE));
-    PrintFormat("[EnterpriseStrategyManager] Intrabar policy updated: %s => %s",
-                name, IntrabarPolicyToString(policy));
-    return true;
 }
 
 #endif // INTRABAR_POLICY_MQH

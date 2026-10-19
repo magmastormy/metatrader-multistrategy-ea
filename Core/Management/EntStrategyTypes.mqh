@@ -12,7 +12,6 @@ struct StrategyEntry
     IStrategy* strategy;
     string name;
     bool enabled;
-    bool intrabarEligible;
     int intrabarPolicy;
     bool liveVotingEnabled;
     int role;

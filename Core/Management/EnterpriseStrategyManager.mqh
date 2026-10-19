@@ -334,8 +334,6 @@ public:
 
     int    GetStrategyIntrabarPolicyRaw(const int index) const
            { return m_roster.GetStrategyIntrabarPolicyRaw(index); }
-    bool   GetStrategyIntrabarEligible(const int index) const
-           { return m_roster.GetStrategyIntrabarEligible(index); }
 
     int    GetIntrabarMinQuorum() const              { return m_quorumConfig.GetIntrabarMinQuorum(); }
     bool   IsIntrabarDynamicQuorumEnabled() const    { return m_quorumConfig.IsIntrabarDynamicQuorumEnabled(); }
@@ -406,7 +404,6 @@ public:
     void SetStrategyCluster(int index, int cluster);
     void SetStrategyLiveVotingEnabled(int index, bool enabled);
     void SetStrategyIntrabarPolicyRaw(int index, int policy);
-    void SetStrategyIntrabarEligible(int index, bool eligible);
 
     //--- Single StrategyEntry append writer: only CStrategyRegistryState::RegisterStrategy() calls it via m_src.
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
@@ -435,8 +432,6 @@ public:
     int  GetMinQuorum() const;
     int  GetEnforcedMinVoters(const bool intrabar) const;
     bool UpdateStrategyWeightByName(const string name, const double weight);
-    bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
-    bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
     bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
     bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
     bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
@@ -867,16 +862,6 @@ bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, c
     return m_roster.UpdateStrategyWeightByName(name, weight, m_infra.GetHealthMonitor());
 }
 
-bool CEnterpriseStrategyManager::SetStrategyIntrabarEligibilityByName(const string name, bool enabled)
-{
-    return m_intrabarPolicy.SetStrategyIntrabarEligibilityByName(name, enabled);
-}
-
-bool CEnterpriseStrategyManager::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
-{
-    return m_intrabarPolicy.SetStrategyIntrabarPolicyByName(name, policy);
-}
-
 bool CEnterpriseStrategyManager::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
 {
     return m_registryState.SetStrategyRoleByName(name, role);
@@ -910,11 +895,6 @@ void CEnterpriseStrategyManager::SetStrategyLiveVotingEnabled(int index, bool en
 void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyRaw(int index, int policy)
 {
     m_roster.SetStrategyIntrabarPolicyRaw(index, policy);
-}
-
-void CEnterpriseStrategyManager::SetStrategyIntrabarEligible(int index, bool eligible)
-{
-    m_roster.SetStrategyIntrabarEligible(index, eligible);
 }
 
 void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
