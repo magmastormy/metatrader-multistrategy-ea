@@ -1881,8 +1881,9 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.SetQuorumThreshold(quorumThreshold);
     manager.SetConflictDeadband(MathMax(0.0, MathMin(0.50, m_config.consensusConflictDeadband)));
     manager.SetMinReadyWeightRatio(MathMax(0.10, MathMin(1.0, m_config.consensusMinReadyWeightRatio)));
-    manager.SetSupportFloors(MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorNewBar)),
-    MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorIntrabar)));
+    double inputSupportFloorNewBar = MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorNewBar));
+    double inputSupportFloorIntrabar = MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorIntrabar));
+    manager.SetSupportFloors(inputSupportFloorNewBar, inputSupportFloorIntrabar);
     manager.SetSparseIntrabarThresholds(sparseIntrabarMinQuality,
     sparseIntrabarMinSupportRatio,
     sparseIntrabarMinReadyCoverage);
@@ -1890,6 +1891,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.SetIntrabarDynamicQuorumEnabled(m_config.intrabarDynamicQuorumEnabled);
     manager.SetIntrabarSingleVoterMinConfidence(intrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(m_config.deadlockAttributionIntervalSec);
+
+    // The profile owns min quorum, quorum threshold, both support floors and the intrabar dynamic-quorum
+    // switch, and runs after the setters so InpQuorumProfile wins over those four inputs. enforced= applies
+    // MIN_CONSENSUS_VOTERS on top; the per-decision number is [CONSENSUS-QUORUM] minVoters=.
     manager.ApplyQuorumProfile(m_config.quorumProfile);
 
     // Batch 175: safe mode is an override that may only tighten, and ApplyQuorumProfile has just
@@ -1907,6 +1912,22 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
             MathMax(0.01, MathMin(filters.regimeCostGate.maxSpreadToAtrRatio, sm.maxSpreadATRRatio));
         manager.SetPipelineFilters(filters);
     }
+
+    string profileName = "BALANCED";
+    if(m_config.quorumProfile == CEnterpriseStrategyManager::QUORUM_CONSERVATIVE)
+        profileName = "CONSERVATIVE";
+    else if(m_config.quorumProfile == CEnterpriseStrategyManager::QUORUM_AGGRESSIVE)
+        profileName = "AGGRESSIVE";
+    PrintFormat("[QUORUM-PRECEDENCE] %s | profile=%s | minQuorum input=%d stored=%d enforced=%d | intrabarMinQuorum input=%d stored=%d enforced=%d | quorumThreshold input=%.2f -> manager=%.2f | supportFloor_newbar input=%.2f -> manager=%.2f | supportFloor_intrabar input=%.2f -> manager=%.2f | intrabarDynamicQuorum input=%s -> manager=%s",
+                symbol,
+                profileName,
+                minLiveVoters, manager.GetMinQuorum(), manager.GetEnforcedMinVoters(false),
+                minLiveVoters, manager.GetIntrabarMinQuorum(), manager.GetEnforcedMinVoters(true),
+                quorumThreshold, manager.GetQuorumThreshold(),
+                inputSupportFloorNewBar, manager.GetSupportFloorNewBar(),
+                inputSupportFloorIntrabar, manager.GetSupportFloorIntrabar(),
+                m_config.intrabarDynamicQuorumEnabled ? "true" : "false",
+                manager.IsIntrabarDynamicQuorumEnabled() ? "true" : "false");
 
     // Batch 175: CPostConsensusValidator::SetValidatorConfig existed with no call site anywhere in
     // the repository, so every arm below ran on the constructor's defaults. InpEnableOFIProxy and
@@ -1943,10 +1964,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     symbolClass,
     symbolProfile,
     filters.trend.enabled ? "true" : "false",
-    quorumThreshold,
-    minLiveVoters,
-    MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorNewBar)),
-    MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorIntrabar)),
+    manager.GetQuorumThreshold(),
+    manager.GetMinQuorum(),
+    manager.GetSupportFloorNewBar(),
+    manager.GetSupportFloorIntrabar(),
     m_config.allowSparseIntrabarSingleVoter ? "true" : "false",
     sparseIntrabarMinQuality,
     sparseIntrabarMinSupportRatio,

@@ -35,6 +35,16 @@ public:
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
+    // One definition of the voter floor: MIN_CONSENSUS_VOTERS binds on top of whatever the quorum config
+    // holds, so a profile's 1 can never make a one-voter committee. Used by the decision and by the init
+    // print, which is why it is not spelled out a second time at either call site.
+    int EnforcedMinVoters(const bool intrabar) const
+    {
+        if(m_src == NULL)
+            return MIN_CONSENSUS_VOTERS;
+        return MathMax(intrabar ? m_src.GetIntrabarMinQuorum() : m_src.GetMinQuorum(), MIN_CONSENSUS_VOTERS);
+    }
+
     // Entry funnel: only the WithConfluenceMode variant has a runtime caller (SignalGenerator,
     // PositionLifecycleManager, TrainingDataExporter); the sibling forwarders are never called.
     ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
@@ -726,12 +736,10 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
     if(m_src == NULL)
         return;
 
-    int baseMinQuorum = (evalMode == EVAL_MODE_INTRABAR) ? m_src.GetIntrabarMinQuorum() : m_src.GetMinQuorum();
     double baseQuorumThreshold = m_src.GetQuorumThreshold();
 
     // Never capped by the eligible voter count: capping it made one lone voter 100% consensus.
-    effectiveMinVoters = MathMax(baseMinQuorum, MIN_CONSENSUS_VOTERS);
-
+    effectiveMinVoters = EnforcedMinVoters(evalMode == EVAL_MODE_INTRABAR);
     supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_src.GetSupportFloorIntrabar() : m_src.GetSupportFloorNewBar();
 
     double pipelineConfFloor = 0.0;

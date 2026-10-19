@@ -462,6 +462,7 @@ public:
     void ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile);
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
     int  GetMinQuorum() const;
+    int  GetEnforcedMinVoters(const bool intrabar) const;
     bool UpdateStrategyWeightByName(const string name, const double weight);
     bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
     bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
@@ -750,6 +751,11 @@ void CEnterpriseStrategyManager::SetConsensusDiagnosticsIntervalSeconds(const in
 int CEnterpriseStrategyManager::GetMinQuorum() const
 {
     return m_quorumConfig.GetMinQuorum();
+}
+
+int CEnterpriseStrategyManager::GetEnforcedMinVoters(const bool intrabar) const
+{
+    return m_consensusEngine.EnforcedMinVoters(intrabar);
 }
 
 //--- Consensus entry points; the decision core is CConsensusEngine.
