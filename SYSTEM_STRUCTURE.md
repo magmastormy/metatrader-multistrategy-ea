@@ -1414,6 +1414,18 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   shipped is visibility: a `filter=quality_gate` refusal now prints `conviction=` (the unweighted mean
   confidence) beside `quality=`, and the gap between them is the weight inflation.
 
+- **One authority per risk means one *reachable* authority** (Batch 226). `CPositionSizer` held a complete
+  second correlation reduction behind a flag no writer ever set true. It was deleted rather than enabled:
+  the pipeline's REDUCE tier already scales the lot and, since Batch 224, every book adopts that result -
+  switching the sizer's copy on would have multiplied two shrink factors against one lot, which is the
+  Batch 213 double-ADX defect in a different class. The general test applied here: a dormant duplicate of a
+  live control is not a spare, it is a future double-application, so it goes.
+- **A limit that can act must name its own measurement** (Batch 226). The asset-class drawdown ceiling
+  compares an account-wide peak drawdown with a per-class limit and can halt a symbol because of losses on
+  another. That is the design in `SAssetProfile`, so the numbers stay; what changed is that the refusal now
+  prints both quantities and says which is account-wide, so the policy is readable in the journal instead of
+  inferable from silence.
+
 - **An input either reaches the gate or it goes** (Batch 225). `InpAIStandaloneRelaxedConfidence` fed a log
   line while the resolver tested its own configured floor; `InpPortfolioMaxPositionsPerSymbol` and
   `CRiskTieredCorrelation`'s reduce/block copies were state that existed so a control could look configured.

@@ -339,14 +339,19 @@ public:
         return result;
     }
 
-    // Per-symbol drawdown override can reject before the global breaker trips, but only while it is tighter
-    // than drawdownCriticalPercent; a looser override is never reached here.
+    // The ceiling is this symbol's asset-class drawdown limit (SAssetProfile.maxDrawdownPercent: Forex 10,
+    // Metals 12, Deriv volatility 10, Step 8) and it rejects before the global breaker only while tighter than
+    // drawdownCriticalPercent; a looser override is never reached here. The measured quantity is the ACCOUNT-wide
+    // peak drawdown, so unrelated positions' losses can halt this entry below InpMaxDrawdown - both numbers print.
     double familyMaxDD = m_host.GetEffectiveMaxDrawdown(request.symbol);
     if(familyMaxDD < m_config.drawdownCriticalPercent && m_circuitBreaker.GetMaxDrawdownFromPeak() >= familyMaxDD)
     {
-        result.message = StringFormat("Family drawdown limit reached for %s: %.2f%% >= %.1f%%",
-                                      request.symbol, m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD);
+        result.message = StringFormat("Account drawdown %.2f%% reached the %.1f%% asset-class ceiling for %s",
+                                      m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD, request.symbol);
         result.severity = ERROR_LEVEL_WARNING;
+        PrintFormat("[RISK-ASSET-DD] %s | accountDD=%.2f%% >= ceiling=%.1f%% | criticalLimit=%.1f%% | entry refused",
+                    request.symbol, m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD,
+                    m_config.drawdownCriticalPercent);
         CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "FAMILY_DRAWDOWN_LIMIT",
             StringFormat("Family DD=%.2f%% >= family limit=%.1f%%", m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD),
             m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD, corrId);

@@ -1705,6 +1705,23 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 226 Deleting a Control That Could Not Act, and Making One That Can Act Visible (2026-10-17)
+
+- **`[PositionSizer] Correlation adjustment` and `[PositionSizer] Correlation engine linked` no longer exist,
+  and nothing was lost.** Both described a shrink gated by a flag that only ever held `false`, so no journal
+  ever showed the line alongside an actual lot change. A pre-226 build cannot emit it either way; the tag was
+  reachable only if the flag were set, which no path did.
+- **Correlation now has exactly one lot-reducing line to read:** the pipeline's REDUCE tier, surfacing as
+  `[RISK-GATE-REJECT] ... reason=correlation_reduce_below_min_lot` when the reduced lot falls under the
+  broker minimum, and as an adopted `adjustedLotSize` otherwise. If a future build adds a second correlation
+  reduction anywhere in the sizing chain, the two multiply - Batch 213 is the precedent for what that costs.
+- **A drawdown halt is now a journal event.** `[RISK-ASSET-DD]` prints the account drawdown, the asset-class
+  ceiling and the configured critical limit at the moment of refusal, and it fires per candidate, so a book
+  being halted by an unrelated symbol's loss shows up as a stream of these lines rather than as silence plus a
+  JSON file. `[HEARTBEAT] validator_reject` climbing with no other explanation is what this line exists to
+  answer.
+
+
 ## Batch 225 Inputs That Reached a Printer, and State Nobody Read (2026-10-17)
 
 - **`[HYBRID-GATE-RELAXED]` / `[HYBRID-GATE-RESTORED]` are now statements about the gate.** Read

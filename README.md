@@ -632,6 +632,24 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 226: a correlation shrink that could never run, and a halt that now says what it measures
+
+The position sizer carried its own correlation-based lot reduction - measure the average positive
+correlation to your other open positions, scale the lot by `1 - that`, floored at 0.25. It was switched off by
+the only thing that ever set the flag (`false` in the constructor, `false` from the orchestrator, no other
+writer), so it never touched a lot while still printing lines that implied it did. Deleted: both methods, the
+engine pointer and its setter, and a threshold setter with no callers. It was not switched on, because
+correlation already shrinks the lot exactly once - in the risk pipeline's REDUCE tier, which every book now
+honours - and two reductions multiplied against one lot is the ADX-doubling bug from Batch 213 in a different
+class. `useVolatilityAdjustment` went with it: written `true` once, read nowhere, not even initialised.
+
+The per-asset drawdown ceiling compared the **account's** peak drawdown against a symbol's class limit
+(Forex 10%, Metals 12%, Step 8%) and called the result "Family drawdown limit reached for EURUSD" with no
+journal line at all. It now prints `[RISK-ASSET-DD] ... accountDD= ceiling= criticalLimit=` and says which two
+numbers were compared. The thresholds themselves are untouched: with `InpMaxDrawdown = 15` you can be stopped
+at 10% on a class ceiling, which is what the profiles say, and changing a halt is your decision - but it will
+not be invisible.
+
 ### Batch 225: an input that only moved a log line, plus four pieces of state nothing read
 
 `InpAIStandaloneRelaxedConfidence = 0.60` is the bar the EA is supposed to fall back to when a symbol's

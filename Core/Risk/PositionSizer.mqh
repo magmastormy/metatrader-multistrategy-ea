@@ -34,16 +34,12 @@ struct SPositionSizingParams
     bool useKellySizing;
     bool useVolatilityTargeting;
     bool useEquityCurveScaling;
-    bool useCorrelationAdjustment;           // Correlation can only reduce size
-        double correlationBlockThreshold;        // Correlation threshold to block trade
-        double correlationReduceThreshold;       // Correlation threshold to reduce size
         double kellyWinRate;
         double kellyPayoffRatio;
         double kellyFraction;                    // Kelly fraction (0.25 = quarter Kelly)
         double kellyMaxCap;
         double volatilityTarget;                 // Target annualized volatility
         double volatilityLookback;
-        bool useVolatilityAdjustment;
         int atrPeriod;
         double atrMultiplier;
         double equityCurveLookback;
@@ -61,9 +57,6 @@ struct SPositionSizingParams
         useKellySizing(false),
         useVolatilityTargeting(false),
         useEquityCurveScaling(false),
-        useCorrelationAdjustment(false),
-        correlationBlockThreshold(0.7),
-        correlationReduceThreshold(0.4),
         kellyWinRate(0.55),
         kellyPayoffRatio(1.5),
         kellyFraction(0.25),
@@ -92,7 +85,6 @@ private:
     double m_dailyRiskUsed;
     int m_openPositions;
     
-    CCorrelationEngine* m_correlationEngine;
     
     CIndicatorManager* m_indicatorManager;
     
@@ -111,9 +103,7 @@ private:
     double CalculateFixedRiskSize(const string symbol, double stopLossPips);
     double CalculateVolatilityTargetSize(const string symbol, double stopLossPips);
     double CalculateEquityCurveSize(const string symbol, double stopLossPips);
-        double CalculateCorrelationAdjustedSize(const string symbol, double baseSize);
         double ApplyModifiers(double baseSize, const string symbol, double stopLossPips, double confidence, const string corrId = "");
-            int CountHighlyCorrelatedPositions(const string symbolParam, double threshold);
             double GetATR(const string symbol, int period, ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT);
         void UpdateRiskMetrics();
     void InvalidateATRHandle(const string symbol);
@@ -126,7 +116,6 @@ public:
     
     bool IsInitialized() const { return m_initialized; }
     
-    void SetCorrelationEngine(CCorrelationEngine* engine);
     void RegisterVPINFilter(const string symbol, CVPINFilter* filter);
     int  VPINFilterCount() const;
     string DescribeModifiers() const;
@@ -166,7 +155,6 @@ public:
     double GetRiskDenominator(void);
     double CalculateRiskPerLot(const string symbol, const double stopLossPips);
     
-        void SetCorrelationThresholds(double blockThreshold, double reduceThreshold);
     
         double NormalizeVolume(const string symbolParam, double volume);
     
@@ -186,7 +174,6 @@ CPositionSizer::CPositionSizer() :
     m_portfolioRisk(0.0),
     m_dailyRiskUsed(0.0),
     m_openPositions(0),
-    m_correlationEngine(NULL),
     m_indicatorManager(NULL),
     m_errorHandler(NULL),
     m_performanceAnalytics(NULL),
@@ -298,12 +285,6 @@ string CPositionSizer::DescribeModifiers() const
     return names;
 }
 
-void CPositionSizer::SetCorrelationEngine(CCorrelationEngine* engine)
-{
-    m_correlationEngine = engine;
-    Print("[PositionSizer] Correlation engine linked");
-}
-
 void CPositionSizer::SetIndicatorManager(CIndicatorManager* manager)
 {
     m_indicatorManager = manager;
@@ -372,11 +353,6 @@ double CPositionSizer::CalculatePositionSize(const string symbol, double stopLos
         default:
             baseSize = CalculateFixedRiskSize(symbol, stopLossPips);
             break;
-    }
-    
-    if(m_params.useCorrelationAdjustment && m_correlationEngine != NULL)
-    {
-        baseSize = CalculateCorrelationAdjustedSize(symbol, baseSize);
     }
     
         double finalSize = ApplyModifiers(baseSize, symbol, stopLossPips, confidence);
@@ -505,79 +481,6 @@ double CPositionSizer::CalculateEquityCurveSize(const string symbol, double stop
     
     double baseSize = CalculateFixedRiskSize(symbol, stopLossPips);
     return m_equityCurveModifier.AdjustLotSize(baseSize, symbol, 1.0);
-}
-
-double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, double baseSize)
-{
-    if(m_correlationEngine == NULL)
-        return baseSize;
-    
-    int correlatedCount = CountHighlyCorrelatedPositions(symbol, m_params.correlationBlockThreshold);
-    
-    // Prefer measured correlations over the count-based fallback
-    double avgCorrelation = 0.0;
-    int validCorrelations = 0;
-    
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0 || !PositionSelectByTicket(ticket))
-            continue;
-        
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
-        if(posSymbol == symbol)
-            continue;
-        
-        double corr = m_correlationEngine.GetCorrelation(symbol, posSymbol);
-        if(corr > 0.0) // Only positive correlations enter the average
-        {
-            avgCorrelation += corr;
-            validCorrelations++;
-        }
-    }
-    
-    if(validCorrelations > 0)
-    {
-        avgCorrelation /= validCorrelations;
-        // Risk-parity scale 1 - avgCorrelation, floored at 0.25 so the position is never cancelled outright
-        double reduction = MathMax(0.25, 1.0 - avgCorrelation);
-        baseSize *= reduction;
-        
-        PrintFormat("[PositionSizer] Correlation adjustment | symbol=%s | avgCorr=%.2f | reduction=%.2f | size=%.2f",
-                    symbol, avgCorrelation, reduction, baseSize);
-    }
-    else if(correlatedCount > 0)
-    {
-        // Count-based fallback when the engine returned no positive correlation
-        double reduction = 1.0 / (1.0 + correlatedCount * 0.5);
-        reduction = MathMax(0.25, reduction);
-        baseSize *= reduction;
-    }
-    
-    return baseSize;
-}
-
-int CPositionSizer::CountHighlyCorrelatedPositions(const string symbolParam, double threshold)
-{
-    if(m_correlationEngine == NULL)
-        return 0;
-    
-    int count = 0;
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0 || !PositionSelectByTicket(ticket))
-            continue;
-        
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
-        if(posSymbol == symbolParam)
-            continue;
-        
-        double corr = m_correlationEngine.GetCorrelation(symbolParam, posSymbol);
-        if(corr > threshold)
-            count++;
-    }
-    return count;
 }
 
 double CPositionSizer::ApplyModifiers(double baseSize, const string symbol, double stopLossPips, double confidence, const string corrId = "")
@@ -823,12 +726,6 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
     }
 
     return riskPerLot;
-}
-
-void CPositionSizer::SetCorrelationThresholds(double blockThreshold, double reduceThreshold)
-{
-    m_params.correlationBlockThreshold = MathMax(0.0, MathMin(1.0, blockThreshold));
-    m_params.correlationReduceThreshold = MathMax(0.0, MathMin(1.0, reduceThreshold));
 }
 
 double CPositionSizer::GetATR(const string symbol, int period, ENUM_TIMEFRAMES timeframe)

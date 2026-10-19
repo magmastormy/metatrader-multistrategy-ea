@@ -8,6 +8,46 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-15
 
+### Batch 226: a second correlation shrink that could never run, and a drawdown halt that never said what it measured
+
+#### The sizer's correlation path was unreachable by its own switch
+`CPositionSizer::CalculateCorrelationAdjustedSize` averaged the measured positive correlation between the
+request symbol and every other open position and scaled the lot by `max(0.25, 1 - avgCorr)`, with a
+count-based fallback when the engine returned no reading. Only the branch at `PositionSizer.mqh:377` called it,
+gated by `m_params.useCorrelationAdjustment` - which the constructor sets `false` and
+`EAOrchestrator.mqh:876` also sets `false`, with no other writer anywhere. The shrink never applied to a lot,
+while the `[PositionSizer] Correlation adjustment` line and `[PositionSizer] Correlation engine linked`
+existed to describe it.
+
+Deleted with the branch: both methods (72 lines), `m_correlationEngine` and its setter,
+`SetCorrelationThresholds` (zero call sites) and the three params it wrote
+(`useCorrelationAdjustment`, `correlationBlockThreshold`, `correlationReduceThreshold`).
+
+Not wired, deliberately: correlation already has one sizing authority - the pipeline's REDUCE tier
+(`RiskValidationPipeline.mqh:678-694`), whose `adjustedLotSize` every book now adopts (Batch 224). Switching
+the sizer's own shrink on would multiply two reductions against one lot, which is the Batch 213 defect
+(`CADXLotModifier` registered twice, 1.3 -> 1.69 lots) one layer down. One authority, one shrink.
+
+`useVolatilityAdjustment` went with it: a struct field with no constructor initialiser, written `true` by the
+orchestrator once and read by nothing. The volatility knob that actually exists is `useVolatilityTargeting`,
+and Batch 217 already recorded both of its implementations as inert.
+
+#### The asset-class drawdown ceiling said "family", measured the account
+`ValidateTradeRequest` compared `m_circuitBreaker.GetMaxDrawdownFromPeak()` - peak-equity drawdown of the
+whole account - against `GetEffectiveMaxDrawdown(symbol)`, which is that symbol's asset-class ceiling
+(`SAssetProfile.maxDrawdownPercent`: Forex 10, Metals 12, Deriv volatility 10, Step 8) clamped against
+`InpMaxDrawdown`. So a loss on XAUUSD can halt an EURUSD entry at 10% while the configured critical limit is
+15%, and until now the refusal had no journal line of its own: it surfaced only as `result.message` and a
+`FAMILY_DRAWDOWN_LIMIT` record in `MQL5/Files`.
+
+The message now names both quantities and the new line prints them -
+`[RISK-ASSET-DD] <symbol> | accountDD= | ceiling= | criticalLimit= | entry refused`. The ceiling itself is
+left where the profiles put it: loosening or tightening a halt threshold is operator policy, and the rule
+Batches 222 and 223 set is that a limit may stay strict but must not stay silent.
+
+**Verification:** compile 8 root programs, 0 errors / 0 total warnings. No lot, threshold or gate moved - the
+removed path was unreachable, so no trade that used to be sized one way is sized another.
+
 ### Batch 225: a threshold that only ever reached the log, and four fields with no reader
 
 #### `InpAIStandaloneRelaxedConfidence` moved a printed number, not the gate

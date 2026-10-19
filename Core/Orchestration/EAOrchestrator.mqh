@@ -872,8 +872,6 @@ bool InitializeSubsystems()
     sizingParams.atrMultiplier    = 1.5;
     sizingParams.maxLotSize       = MAX_LOT_SIZE;
     sizingParams.minLotSize       = MIN_LOT_SIZE;
-    sizingParams.useVolatilityAdjustment = true;
-    sizingParams.useCorrelationAdjustment = false;
 
     if(!m_positionSizer.SetParameters(sizingParams))
     {
@@ -890,8 +888,8 @@ m_config.maxDailyRisk, m_config.maxPortfolioRisk,
 m_config.maxDrawdown * 0.7, m_config.maxDrawdown,
 m_config.dailyLossLimitPercent);
 
-// Wire the correlation engine BEFORE applying the tier to PositionSizer
-m_positionSizer.SetCorrelationEngine(m_unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
+// Correlation sizing lives in the risk pipeline's REDUCE tier only: the sizer's own correlation
+// shrink was gated by useCorrelationAdjustment, which nothing ever set true.
 m_positionSizer.SetLogLevel(m_config.logLevel);
 m_positionSizer.SetAllowMinLotRoundUp(m_config.allowMinLotRoundUp);
 m_positionSizer.SetMinLotRiskMultiplier(m_config.minLotRiskMultiplier);

@@ -339,6 +339,30 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 226: An Unreachable Second Correlation Shrink, and the Drawdown Halt Made Visible (2026-10-17)
+
+Removed from `CPositionSizer` (all unreachable, not disabled):
+
+| Symbol | Why it never ran |
+|---|---|
+| `if(m_params.useCorrelationAdjustment && ...)` at `:377` | constructor sets the flag false, `EAOrchestrator.mqh:876` sets it false, no other writer |
+| `CalculateCorrelationAdjustedSize` / `CountHighlyCorrelatedPositions` | only caller is that branch |
+| `m_correlationEngine`, `SetCorrelationEngine` (+ its `[PositionSizer] Correlation engine linked` print) | fed only the dead path |
+| `SetCorrelationThresholds` and the three params it wrote | zero call sites |
+| `useVolatilityAdjustment` | no ctor initialiser, written `true` once by the orchestrator, read by nothing |
+
+Correlation sizing stays single-authority: `RiskValidationPipeline.mqh:678-694` REDUCE tier ->
+`adjustedLotSize`, adopted by the consensus builder, the fast scalp (Batch 192) and, from Batch 224, the ATR
+scalp, grid and spike books. Wiring the sizer's own shrink back on would stack two reductions on one lot -
+the Batch 213 double-ADX failure one layer down.
+
+Made legible instead of changed: the asset-class drawdown halt compares
+`CUnifiedRiskManager::GetEffectiveMaxDrawdown(symbol)` (from `SAssetProfile.maxDrawdownPercent`, clamped to
+`InpMaxDrawdown`) against the **account** peak drawdown from `CRiskCircuitBreaker::GetMaxDrawdownFromPeak()`.
+New line `[RISK-ASSET-DD] <symbol> | accountDD= | ceiling= | criticalLimit= | entry refused`; the refusal
+message names both numbers rather than calling an account measurement "family".
+
+
 ## Batch 225: The Relaxed AI Floor Reached the Log and Not the Gate (2026-10-17)
 
 `CCandidateBuilder::BuildCandidate` owns the per-symbol hybrid gate flag. Before this batch it read
