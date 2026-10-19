@@ -8,6 +8,56 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 236: thirty stale line pointers in the five docs, and one more write-only candidate field
+
+AGENTS.md section 8 says a citation must be re-pointed in the batch that moves the code. Batches 215-231 moved a lot of
+code and re-pointed only what their own edits broke, so the current-state docs had accumulated pointers that land on
+blank lines, on braces, past end-of-file, or on a file that does not exist. A mechanical pass over every
+`File.mqh:NNN` citation in `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md` and
+`AGENTS.md` found 20 provably-bad pointers; resolving each claim against the tree turned up 10 more that landed on a
+plausible neighbouring line. 26 doc lines rewritten.
+
+**Pointer corrections (claim re-read, then re-anchored):** `RiskMarginHealth.mqh:199/209` -> `179/189` (the two margin
+setters, this file has 196 lines so 199 was past EOF); `UnifiedRiskManager.mqh:225` -> `217`
+(`SetTradingDayStartHour`); `PositionSizer.mqh:489` -> `483` (the equity-curve reader) and `:257` -> the surviving
+registration in the orchestrator at `:939` (Batch 213 deleted the sizer's copy and its comment);
+`SignalGenerator.mqh:352-357` -> `350-356` (the new-bar gate); `EnterpriseStrategyManager.mqh:844` -> `768` and
+`EAOrchestrator.mqh:2409` -> `2425` (the two registration paths that pass the catalog row name);
+`RiskValidationPipeline.mqh:949` -> `958` (`ValidateClusterGovernance`'s early `return true` at cluster `"N"`);
+`EAOrchestrator.mqh:1791` -> `1820` + `EnterpriseStrategyManager.mqh:580` (where `managedMagic` actually comes from);
+`:3483-3487` -> `3501` (`IncValidatorRejects`); `:3500` -> `3517` (`Resolve`); `:3517` -> `3531`
+(`ScaleLotByLiveAuthority`); `:3544` -> `3568` (`AttributeExecutedPosition`); `:3445` -> `3441` (the spike-pause gate);
+`:2607` -> `2593` (`FeedMicrostructure`); `CandidateBuilder.mqh:433-436` -> `373-386` (the contributor flags), `:494` ->
+`:497` (the VPIN-sizing comment), `:767` -> `:768` (`ApplyDrawdownScaling`); `EnterpriseStrategyManager.mqh:1080-1086`
+-> `134-135` (the delegator re-bind); `Core/Utils/LogMacros.mqh:41-42` dropped - those macros no longer exist (Batch 218
+deleted them) and the two tags print literally from `CandidateBuilder.mqh:257`/`:274`/`:288`.
+
+**Two claims, not just pointers, were false.** `EAOrchestrator.mq5:3418` names a file that does not exist, in two
+sentences saying the live-authority multiplier "reaches nothing" and that the mode vetoes and `LOW_CONFIDENCE` are the
+only effects. Batch 205 ended that: the multiplier is applied by `ScaleLotByLiveAuthority`. Both bullets now say what
+was true at the time and what closed it. The README's correlation row still described the sizer path as "explicitly
+disabled at `:886`"; Batch 226 deleted it, and the truth is the comment at `EAOrchestrator.mqh:891-892` plus the
+pipeline's REDUCE shrink at `RiskValidationPipeline.mqh:694`.
+
+**Deleted with that reading:** `STradeCandidate::liveAuthorityRiskMult` - field, constructor initialiser and both writes
+(`CandidateBuilder.mqh` stub, `EAOrchestrator.mqh` post-`Resolve` copy). Two writers, zero readers: the value that
+sizes the trade is `authority.riskMultiplier`, passed as a parameter to `ScaleLotByLiveAuthority`, and the reason the
+refusal prints is `candidate.liveAuthorityReason`, which has three readers. Same treatment and same reasoning as
+`liveAuthorityAllowed` in Batch 225. The stub comment that promised the copy was corrected to name the field that is
+actually overwritten. 8 lines deleted / 4 added across `CandidateBuilder.mqh` and `EAOrchestrator.mqh`; no lot, gate or
+threshold moved.
+
+**Scope left honestly open:** the sweep only concludes on pointers that are mechanically provable wrong (blank, brace,
+past EOF, wrong filename) plus the ones whose claim it could re-anchor by symbol. A citation landing on a plausible
+neighbouring line is not detectable that way, so this is not "the docs are now correct" - it is "the docs no longer
+contain pointers that cannot point anywhere". The `changelogs.md` entries are dated records and were left alone.
+
+**Verification:** `sync_and_compile.ps1 -All` - eight programs, each with its own `Result:` line, 0 errors / 0 warnings
+(11.2 / 6.7 / 9.9 / 10.6 / 118.8 / 109.1 / 40.4 / 1.9 s), script exit 0, every `.ex5` newer than the last source edit.
+The detector that found them checks each cited line for blank, lone brace, past-EOF or missing-file and reported zero
+suspects over the five docs afterwards; that is not a proof every pointer is right, only that none points where nothing
+can be.
+
 ### Batch 235: the training session scored a second, untrained network and reported it as the model's metrics
 
 `CTrainingSession` held **two** neural networks. `m_model_ptr` is the caller's model - the one `Train(model, ...)`

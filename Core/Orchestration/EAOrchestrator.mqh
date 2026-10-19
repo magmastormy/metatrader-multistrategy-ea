@@ -3522,14 +3522,12 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         candidate.costScore, candidate.contributorSummary, strategyIndices,
         authority, cycleCorrId);
 
-        // Batch 173: this multiplier now sets the shipped lot (see ScaleLotByLiveAuthority). It is
-        // shrink-only, and a lot that drops under the broker minimum is refused loudly rather than
-        // rounded back up, so the gate cannot be silently undone by lot normalization.
-        candidate.liveAuthorityRiskMult = authority.riskMultiplier;
         candidate.liveAuthorityReason = authority.reason;
 
         if(!authority.allowed) continue;
 
+        // Batch 173: this multiplier sets the shipped lot. It is shrink-only, and a lot that drops under the
+        // broker minimum is refused loudly rather than rounded back up, so no normalization undoes the gate.
         if(!m_candidateBuilder.ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId))
             continue;
 

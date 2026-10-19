@@ -39,7 +39,6 @@ struct STradeCandidate
     double readinessScore;
     double contextScore;
     double costScore;
-    double liveAuthorityRiskMult;
     string liveAuthorityReason;
     bool hasAIContributor;
     bool hasONNXContributor;
@@ -51,7 +50,7 @@ struct STradeCandidate
     STradeCandidate() : symbol(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
                        takeProfitPips(0), lotSize(0), riskPercent(0), confidence(0),
                        confluence(0), qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
-                       costScore(0), liveAuthorityRiskMult(1.0),
+                       costScore(0),
                        hasAIContributor(false), hasONNXContributor(false),
                        hasNeuralNetContributor(false),
                        hasIndicatorContributor(false), indicatorContributorCount(0),
@@ -738,8 +737,7 @@ public:
     bool ResolveLiveAuthority(const string symbol, STradeCandidate &candidate, double &proposedRisk)
     {
         // Stub: always authorizes at 1.0 and returns true, so it gates nothing. EAOrchestrator
-        // overwrites these two fields from CLiveAuthorityResolver after BuildCandidate returns.
-        candidate.liveAuthorityRiskMult = 1.0;
+        // overwrites liveAuthorityReason from CLiveAuthorityResolver after BuildCandidate returns.
         candidate.liveAuthorityReason = "AUTHORIZED";
         return true;
     }

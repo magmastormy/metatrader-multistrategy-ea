@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`EAOrchestrator.mqh:853-854`); the `CPositionSizer` correlation path is explicitly disabled at `:886`. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:448` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:694`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:891-892` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3517`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3531`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -632,7 +632,32 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 236: thirty doc pointers that could not point anywhere, and one more field written into nothing
+
+This documentation is the instrument you read decisions from, and it is full of `file.mqh:NNNN` pointers. Batches
+215-231 deleted thousands of lines and re-pointed only what their own edits broke, so the rest drifted: a mechanical
+pass over the five current-state docs found 20 citations landing on a blank line, a lone brace, past the end of the
+file, or on a filename that has never existed (`EAOrchestrator.mq5`). Resolving each claim against the tree turned up
+ten more that sat on a plausible neighbouring line. All thirty are re-anchored now, 26 lines in total.
+
+Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
+live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3531`) is what applies it
+to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
+`:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
+records the deletion.
+
+Reading those sentences to find what actually applies the multiplier surfaced one last dead copy:
+`STradeCandidate::liveAuthorityRiskMult` had two writers and no reader — the lot uses the value passed as a parameter,
+and the log line uses `liveAuthorityReason`, which is read in three places. The field, its initialiser and both writes
+are gone, the same way `liveAuthorityAllowed` went in Batch 225. No lot, gate or threshold moved.
+
+What this sweep does *not* claim: a pointer landing on the wrong-but-plausible line is invisible to it. The guarantee
+you get is narrower and real — no citation in the current-state docs now points at something that cannot be there.
+
 ### Batch 235: the trainer measured the model it never trained, and reported that as your validation score
+
+
 
 `CTrainingSession` had two neural networks inside it. One was a pointer to the model your script passes in — the one
 that actually trains. The other was a member network, created when the session was constructed, that no code ever
