@@ -6,7 +6,85 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-15
+## [Unreleased] - 2026-10-19
+
+### Batch 228: the compile harness reported green for builds that never finished
+
+#### The green came from a log with nothing in it yet
+`sync_and_compile.ps1` polled each per-file log for its `Result:` line for 180 s. `MultiStrategyAutonomousEA.mq5`
+takes **251.9 s** (measured this batch), so the poll always gave up, and the fallback then counted
+`NN: error NN:` lines in the *partial* log - a compile still running has no error lines - printed
+`File: 0 errors, 0 warnings`, and the summary concluded `OVERALL SUCCESS`. The next iteration's
+`Stop-Process metaeditor64` (meant to clear a lingering worker) then killed the previous compile mid-write, so
+no `.ex5` was ever produced. Both EA binaries sat at **2026-10-17 17:22 / 17:24** - the compile just before the
+Batch 225 commit at 17:25 - so Batch 226 and Batch 227 were each reported "compile 8 root programs, 0 errors /
+0 warnings" and had never produced a binary, while a terminal attaching the EA loaded the 225 build. How far
+back the same mechanism hid earlier batches cannot be recovered: a partial log keeps no trace of the compile it
+interrupted. The four fast programs (5.6-40.4 s) were genuinely verified throughout; only the two that ship
+money decisions exceeded the deadline.
+
+AGENTS.md §10.1 makes "compile passes" the first condition of Done. A verifier that cannot fail is not a gate -
+this is the same shape the repository keeps hunting elsewhere: a check whose answer is produced by something
+that cannot distinguish pass from never-ran.
+
+#### Fix
+`-MaxCompileWaitSec` (default 420, ~1.7x the measured slowest compile) replaces the hard-coded 180. A log that
+never finalizes is now a failure - red line `no Result: line within 420 s … unverified is not clean`,
+`Errors = 1` for that file - and so is a missing log. The partial-log error count only runs when the `Result:`
+line exists. The script now `exit 1` on any failure, so a caller cannot read success off the exit code alone.
+
+**Verification:** the run that proves the fix - all eight programs emitted their own `Result:` line
+(18.0 / 7.2 / 12.8 / 12.1 / **257.6** / 112.0 / 40.4 / 5.6 s), every one at 0 errors / 0 warnings, and all eight
+`.ex5` files were rewritten. The autonomous EA's 257.6 s is the number the old 180 s deadline could never
+cover, which is why its binary had not moved in two days. Exit code is now 1 on any unfinalized or failed
+compile, so `EXIT=0` from this script means the compiler finished rather than that it was abandoned.
+
+### Batch 227: the config line echoed the inputs the quorum profile had already replaced
+
+#### Four stored values were printed as four input values
+`InitializeEnterpriseManagerForSymbol` sets min quorum, quorum threshold and both support floors from
+`InpMinLiveVoters` / `InpQuorumThreshold` / `InpConsensusSupportFloor*`, then calls
+`ApplyQuorumProfile(m_config.quorumProfile)` - and the profile writes those four again
+(`ConsensusWeightingConfig.mqh:115-132`). `[ENTERPRISE-CONFIG]` printed the step-1 locals, so with the default
+`QUORUM_BALANCED` every session logged `min_live_voters=2 | quorum_threshold=0.60 |
+support_floor_newbar=0.20 | support_floor_intrabar=0.15` while the manager held **1 / 0.50 / 0.25 / 0.20**.
+The error ran both directions at once: two gates looser than the journal claimed, two tighter, and an operator
+who tightened one of those four inputs saw the number they typed echoed back whether or not it reached voting.
+That is the §4.4 failure shape - an input that looks wired while another authority owns the quantity.
+
+#### What the profile holds is not the whole way to the decision
+Reading the fields back is still not the enforced voter count. `CalculateEffectiveQuorumParamsInternal` applies
+`MIN_CONSENSUS_VOTERS = 2` on top of whatever the config holds (`ConsensusEngine.mqh:742`), so BALANCED's and
+AGGRESSIVE's `minQuorum = 1` never produce a one-voter committee and no value of `InpMinLiveVoters` can. That
+is deliberate - Batch 13 closed the "one lone voter is 100% consensus" path - but it means the profile's voter
+floor is inert for two of its three presets, and nothing in the journal said so.
+`CConsensusEngine::EnforcedMinVoters(intrabar)` (`:41`)
+is now the single definition of that `MathMax`, called by the decision and by the init print instead of being
+restated at either.
+
+#### Precedence kept, made readable
+The profile stays applied last. `InpQuorumProfile` is the policy the operator selects and each preset moves the
+set together; letting an individual input win would silently overrule `QUORUM_AGGRESSIVE`'s 0.45 threshold and
+0.15/0.10 floors, which is the relaxation that preset exists to provide. What shipped:
+
+- `[ENTERPRISE-CONFIG]` reads those four back from the manager (`GetQuorumThreshold()`, `GetMinQuorum()`,
+  `GetSupportFloorNewBar()`, `GetSupportFloorIntrabar()`).
+- `[QUORUM-PRECEDENCE] <symbol> | profile=BALANCED | minQuorum input=2 stored=1 enforced=2 |
+  intrabarMinQuorum input=2 stored=2 enforced=2 | quorumThreshold input=0.60 -> manager=0.50 | …` prints once
+  per symbol at init, after the conservative safe-mode clamp. Not behind a `static`: changing an input re-inits
+  the EA, and a once-per-load line would go stale at exactly the moment `InpQuorumProfile` changed. The clamped
+  support-floor inputs became locals so the setter and the log read one expression.
+- `intrabarMinQuorum` is in the line because the profile does **not** own it - it writes `minQuorum` only - so
+  it is the one quorum field that genuinely comes from `InpMinLiveVoters`, and the only one AGGRESSIVE leaves
+  alone.
+
+**Verification:** No threshold, comparison or admission decision moved - the profile was already the last writer
+and `EnforcedMinVoters` is the `MathMax` the decision already applied, so no committee that used to reach a
+decision reaches a different one. Expect `[QUORUM-PRECEDENCE]` once per symbol at init, and different
+`quorum_threshold` / `min_live_voters` / `support_floor_*` numbers in `[ENTERPRISE-CONFIG]` on identical inputs.
+This batch's compile is only countable because Batch 228 fixed the harness first: the file's 257.6 s exceeded
+the old 180 s window, so the run that "reported 0 errors / 0 warnings" for it had in fact never finished. Eight
+programs, eight `Result:` lines, 0 errors / 0 warnings, both EA binaries rewritten.
 
 ### Batch 226: a second correlation shrink that could never run, and a drawdown halt that never said what it measured
 
@@ -47,6 +125,12 @@ Batches 222 and 223 set is that a limit may stay strict but must not stay silent
 
 **Verification:** compile 8 root programs, 0 errors / 0 total warnings. No lot, threshold or gate moved - the
 removed path was unreachable, so no trade that used to be sized one way is sized another.
+
+> **Corrected by Batch 228:** the "0 errors / 0 total warnings" above was reported by a harness that had already
+> abandoned the compile of `MultiStrategyAutonomousEA.mq5` (257.6 s against a 180 s window) and counted error
+> lines in a partial log. This batch produced no binary; the EA running since then is the 2026-10-17 17:22
+> build, which does not contain the `[RISK-ASSET-DD]` line this entry says it prints. The deletion itself is
+> verified in the source and in the eight-program rebuild of 2026-10-19.
 
 ### Batch 225: a threshold that only ever reached the log, and four fields with no reader
 

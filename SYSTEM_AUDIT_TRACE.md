@@ -1705,6 +1705,50 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 228 Build Verification Made Able to Fail (2026-10-19)
+
+- **Lifecycle stage affected:** the Definition of Done's first condition (§10.1, "compile passes"). No runtime
+  state, no decision path, no log surface in the EA.
+- **The mechanism:** per program, the harness launched headless MetaEditor, polled that program's log for its
+  `Result:` line for 180 s, and on timeout counted `NN: error NN:` lines in whatever had been written so far.
+  A compile in progress contains no such lines, so the count came out 0/0, printed as `File: 0 errors, 0
+  warnings`, and the summary concluded success. The next iteration's leftover-worker cleanup
+  (`Stop-Process metaeditor64`) then killed the abandoned compile before it wrote its `.ex5`.
+- **State observed:** both EA binaries were last written 2026-10-17 17:22 / 17:24, immediately before the
+  Batch 225 commit at 17:25. Batches 226 and 227 therefore reported a clean eight-program build and produced no
+  binary; earlier batches cannot be re-checked, because an interrupted compile leaves no trace in a partial log.
+- **Change:** `-MaxCompileWaitSec` (default 420, measured slowest compile 257.6 s) replaces the hard-coded 180;
+  a log without its `Result:` line and a log that never appears are both recorded as failures with a red line;
+  the script exits 1 on any failure. AGENTS.md §7 now states the check a human can do: the `.ex5` must be newer
+  than the sources.
+- **Verification:** eight programs, each with its own `Result:` line, 0 errors / 0 warnings
+  (18.0 / 7.2 / 12.8 / 12.1 / 257.6 / 112.0 / 40.4 / 5.6 s), and all eight `.ex5` rewritten.
+
+## Batch 227 Quorum Configuration Authority Made Legible (2026-10-19)
+
+- **Write order into `CEntStrategyQuorumConfig`, per symbol at init:** explicit setters from `m_config` ->
+  `ApplyQuorumProfile` (rewrites `minQuorum`, `quorumThreshold`, both support floors and
+  `intrabarDynamicQuorum`) -> the conservative safe-mode `MathMax` clamps on `minQuorum`,
+  `intrabarMinQuorum` and `quorumThreshold`. Nothing writes those five afterwards; each manager keeps the
+  result for the life of the process.
+- **What the journal claimed before:** `[ENTERPRISE-CONFIG]` printed the step-1 locals for four of them, so
+  every session described the pre-profile state. On the default `QUORUM_BALANCED` it logged
+  0.60 / 2 / 0.20 / 0.15 while the manager held 0.50 / 1 / 0.25 / 0.20.
+- **State written:** none. `inputSupportFloorNewBar` / `inputSupportFloorIntrabar` became locals so the setter
+  and the log read one expression rather than two copies of it.
+- **New method, one owner:** `CConsensusEngine::EnforcedMinVoters(intrabar)` is the `max(config value,
+  MIN_CONSENSUS_VOTERS)` the decision already applied inline at `ConsensusEngine.mqh:742`, extracted so the
+  init print can name the enforced voter count without restating it. `CalculateEffectiveQuorumParamsInternal`
+  now calls it; the arithmetic a live committee sees is unchanged.
+- **New observability edge:** `[QUORUM-PRECEDENCE] <symbol> | profile=… | minQuorum input=2 stored=1
+  enforced=2 | …`, printed once per symbol at init alongside `[ENTERPRISE-CONFIG]` and after the safe-mode
+  clamp. Deliberately not guarded by a `static` flag: the EA re-inits on an input change, and a print that
+  survives only the first load would go stale exactly when the operator changes `InpQuorumProfile`.
+- **What that line made visible:** the profile's `minQuorum = 1` (BALANCED and AGGRESSIVE) has never reached a
+  decision as 1 - the voter floor lifts it back to 2 - and `intrabarMinQuorum` is the one quorum field the
+  profile does not write, so it is the only one `InpMinLiveVoters` still controls.
+- **Deinit:** unchanged; `CIndicatorManager::DestroyInstance()` still runs (AGENTS.md §3.5).
+
 ## Batch 226 Deleting a Control That Could Not Act, and Making One That Can Act Visible (2026-10-17)
 
 - **`[PositionSizer] Correlation adjustment` and `[PositionSizer] Correlation engine linked` no longer exist,

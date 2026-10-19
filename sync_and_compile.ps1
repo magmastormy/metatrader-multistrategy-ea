@@ -1,13 +1,15 @@
 # sync_and_compile.ps1 — Sync project files to Deriv MT5 terminal and compile
-# Usage: .\sync_and_compile.ps1 [-SkipCompile] [-KeepLog] [-All]
+# Usage: .\sync_and_compile.ps1 [-SkipCompile] [-KeepLog] [-All] [-MaxCompileWaitSec 420]
 #   -SkipCompile : sync only, no compilation
 #   -KeepLog    : keep per-file compile logs
 #   -All        : compile ALL root .mq5 files (default: only the autonomous EA)
+#   -MaxCompileWaitSec : how long to wait for one compile to write its Result: line
 
 param(
     [switch]$SkipCompile = $false,
     [switch]$KeepLog = $false,
-    [switch]$All = $false
+    [switch]$All = $false,
+    [int]$MaxCompileWaitSec = 420
 )
 
 $ErrorActionPreference = "Stop"
@@ -273,10 +275,13 @@ foreach ($srcFile in $projectMq5Files) {
     & $MetaEditor $compileArgs
 
     # MetaEditor spawns a worker that writes the .ex5 + log AFTER the GUI parent exits.
-    # Poll for the log file to APPEAR, then for the "Result:" line (up to 180s), keeping
-    # this script alive so the orphaned worker is not killed mid-write.
+    # Poll for the log file to APPEAR, then for the "Result:" line, keeping this script alive
+    # so the orphaned worker is not killed mid-write. The two EAs need ~250s each (measured:
+    # 251,873 ms for MultiStrategyAutonomousEA.mq5), so a deadline below that makes the next
+    # iteration's Stop-Process kill a live worker: no binary, no Result line, and a partial log
+    # that contains no error lines reads as a clean build.
     $logReady = $false
-    $deadline = (Get-Date).AddSeconds(180)
+    $deadline = (Get-Date).AddSeconds($MaxCompileWaitSec)
     while ((Get-Date) -lt $deadline) {
         if (Test-Path $fileLog) {
             $lc = Get-Content $fileLog -Raw -Encoding Unicode
@@ -285,12 +290,17 @@ foreach ($srcFile in $projectMq5Files) {
         Start-Sleep -Milliseconds 500
     }
     if (-not $logReady) {
-        Write-Host "  [COMPILE] WARNING: log not finalized within 180s for $fileName" -ForegroundColor Yellow
+        Write-Host "  [COMPILE] FAILED: no Result: line within $MaxCompileWaitSec s for $fileName — unverified is not clean" -ForegroundColor Red
     }
 
     $fileErrors = 0
     $fileWarnings = 0
-    if (Test-Path $fileLog) {
+    if (-not $logReady) {
+        # Count it as a failure even if the partial log shows no errors, so the summary cannot
+        # call an unfinished or killed compile a pass.
+        $fileErrors = 1
+    }
+    if ((Test-Path $fileLog) -and $logReady) {
         $logContent = Get-Content $fileLog -Raw
         
         # Parse "Result:" line for accurate error/warning counts
@@ -329,8 +339,10 @@ foreach ($srcFile in $projectMq5Files) {
         if (-not $KeepLog) {
             try { Remove-Item $fileLog -Force -ErrorAction Stop } catch { }
         }
-    } else {
-        Write-Host "  No log file generated for $fileName" -ForegroundColor Yellow
+    } elseif (-not (Test-Path $fileLog)) {
+        # MetaEditor wrote nothing at all: the compile never started, so nothing is verified.
+        Write-Host "  No log file generated for $fileName — treating as a failure" -ForegroundColor Red
+        $fileErrors = [Math]::Max(1, $fileErrors)
     }
 
     $totalErrors += $fileErrors
@@ -352,6 +364,8 @@ foreach ($r in $results) {
 Write-Host ""
 if ($totalErrors -gt 0) {
     Write-Host "[COMPILE] OVERALL FAILED — $totalErrors total errors, $totalWarnings total warnings" -ForegroundColor Red
+    exit 1
 } else {
     Write-Host "[COMPILE] OVERALL SUCCESS — 0 errors, $totalWarnings total warnings" -ForegroundColor Green
+    exit 0
 }

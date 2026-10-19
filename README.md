@@ -632,6 +632,41 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 228: the build script reported success for compiles it had abandoned
+
+`sync_and_compile.ps1` waited 180 s for each compile to write its `Result:` line, and when it didn't arrive it
+counted error lines in the log so far — a compile still running has none — printed `0 errors, 0 warnings` and
+called the build a success. `MultiStrategyAutonomousEA.mq5` needs **257 s**, so that file never passed on
+merit: the script gave up, reported green, and the next iteration's process cleanup killed the compiler before
+it wrote its binary. Both EA `.ex5` files were still from **2026-10-17 17:22 / 17:24** — the compile right
+before the Batch 225 commit — while Batches 226 and 227 each claimed a clean eight-program compile. Attaching
+the EA this week loaded the Batch 225 build: no `[RISK-ASSET-DD]` halt line, no `[QUORUM-PRECEDENCE]`, with a
+changelog saying both existed. How far back this hid cannot be recovered, because an interrupted compile leaves
+no trace in a partial log.
+
+What changed: the wait is `-MaxCompileWaitSec` (default 420), a log that never finalizes is a **failure**
+rather than a silent zero, a missing log is too, and the script exits 1 on any of those so `EXIT=0` means the
+compiler finished. Verified by the run that proved it: all eight programs wrote their own `Result:` line, all
+at 0 errors / 0 warnings (18.0 / 7.2 / 12.8 / 12.1 / 257.6 / 112.0 / 40.4 / 5.6 s), and all eight binaries were
+rewritten. Before you deploy, check the `.ex5` timestamp against your last edit — that comparison is now part of
+the definition of a verified build (AGENTS.md §7).
+
+### Batch 227: the quorum profile, not your four inputs, sets the voting bar
+
+`InpMinLiveVoters`, `InpQuorumThreshold` and the two `InpConsensusSupportFloor*` inputs are applied per symbol
+and then **overwritten** by `InpQuorumProfile`, because a preset moves that set together — BALANCED (the
+default) 1 voter / 0.50 / 0.25 / 0.20, CONSERVATIVE 2 / 0.60 / 0.35 / 0.30, AGGRESSIVE 1 / 0.45 / 0.15 / 0.10.
+The startup line printed the numbers you typed as though they were what ran, so on defaults it claimed a
+stricter voter floor and a looser support floor than the committee held — in opposite directions — and editing
+any of those four showed you the edit rather than the effect. The precedence is kept: letting one input win
+would silently override the relaxation AGGRESSIVE exists to provide. What shipped is that you can read it:
+`[ENTERPRISE-CONFIG]` shows what the manager holds, and a new
+`[QUORUM-PRECEDENCE] EURUSD | profile=BALANCED | minQuorum input=2 stored=1 enforced=2 | …` prints once per
+symbol at start with all three stages of every quorum field. Two facts come out of that line:
+`MIN_CONSENSUS_VOTERS = 2` sits on top of whatever voter floor is stored, so no preset and no input has ever
+been able to trade on a single voter, and `intrabarMinQuorum` is the one field the profile does not write — the
+only quorum number your input still controls. No threshold, comparison or admission decision moved.
+
 ### Batch 226: a correlation shrink that could never run, and a halt that now says what it measures
 
 The position sizer carried its own correlation-based lot reduction - measure the average positive

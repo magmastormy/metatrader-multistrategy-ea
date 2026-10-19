@@ -339,6 +339,67 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 228: The Build Verification Could Not Fail (2026-10-19)
+
+No decision path changed. What changed is what a journal from before this batch is evidence of.
+
+`sync_and_compile.ps1` polled each per-file log for its `Result:` line for 180 s and, on timeout, counted
+`NN: error NN:` lines in the partial log - a compile in progress has none - printed `File: 0 errors, 0
+warnings`, and the summary said `OVERALL SUCCESS`. `MultiStrategyAutonomousEA.mq5` measures 257.6 s, so the
+poll always expired, and the next iteration's `Stop-Process metaeditor64` killed the worker mid-write: no
+binary, and no signal that anything failed. Both EA `.ex5` files were last written **2026-10-17 17:22 / 17:24**,
+under six batch reports of "8 root programs, 0 errors / 0 warnings".
+
+Consequences for reading logs, which is why this belongs here rather than only in the changelog:
+
+- The two EA binaries on disk before this run were written 2026-10-17 **17:22 / 17:24** - the compile that
+  precedes the Batch 225 commit at 17:25. So they carry Batches ≤225 and not Batch 226 or 227. Any journal from
+  that window is missing `[RISK-ASSET-DD]` (226) and `[QUORUM-PRECEDENCE]` (227) because the code that prints
+  them was never compiled, and their absence proves nothing about the gate. Tags from ≤225
+  (`[CONSENSUS-VETOED] … votes=`, `[RISK-DAILY-LIMIT]`, `reason=drawdown_lot_below_min`) do exist in it.
+- How far back the same mechanism hid earlier builds is unknowable from here: a partial log leaves no trace of
+  the compile it interrupted. `[QUORUM-PRECEDENCE]` is therefore the marker to look for first after an attach -
+  it is printed only by a build that contains this batch, so seeing it proves binary and source agree.
+- The four fast programs (5.6-40.4 s) were genuinely verified the whole time; only the two large ones exceeded
+  the deadline, which is exactly the pair that ships money decisions.
+
+Now: `-MaxCompileWaitSec` default 420, unfinalized or missing log = failure with a red line, `exit 1` on any
+failure, and AGENTS.md §7 requires the `.ex5` to be newer than the sources before a batch calls itself compiled.
+
+## Batch 227: The Quorum Profile Is the Last Writer and the Config Line Printed the Inputs (2026-10-19)
+
+`InitializeEnterpriseManagerForSymbol` writes the quorum fields from config, `ApplyQuorumProfile`
+(`ConsensusWeightingConfig.mqh:115-132`) writes four of them again, and the conservative safe-mode clamp can
+raise two of those. `[ENTERPRISE-CONFIG]` printed the step-1 locals, so on the default `QUORUM_BALANCED` the
+journal claimed `quorum_threshold=0.60 | min_live_voters=2 | support_floor_newbar=0.20 |
+support_floor_intrabar=0.15` while the manager held **0.50 / 1 / 0.25 / 0.20** - two gates looser
+than logged, two tighter, and an operator tightening one of those four inputs saw the tightened number echoed
+back regardless.
+
+| Quantity | Input (default) | CONSERVATIVE | BALANCED (default preset) | AGGRESSIVE | What binds at the decision |
+|---|---|---|---|---|---|
+| `minQuorum` | `InpMinLiveVoters` (2) | 2 | 1 | 1 | `max(stored, MIN_CONSENSUS_VOTERS=2)` -> **2 for every preset** |
+| `intrabarMinQuorum` | `InpMinLiveVoters` (2) - the profile does not own this field | 2 | 2 | 2 | same floor -> 2 |
+| `quorumThreshold` | `InpQuorumThreshold` (0.60) | 0.60 | 0.50 | 0.45 | clamped into [0.30, 0.80] after the quality adjustment |
+| `supportFloorNewBar` / `supportFloorIntrabar` | `InpConsensusSupportFloor*` (0.20 / 0.15) | 0.35 / 0.30 | 0.25 / 0.20 | 0.15 / 0.10 | compared directly; a floor <= 0.50 refuses nothing because the winner's share of integer votes exceeds 0.50 by construction (Batch 222), and every preset sits under it |
+| `intrabarDynamicQuorum` | `InpIntrabarDynamicQuorumEnabled` (true) | ON | ON | OFF | gates the +0.10 sparse-voter quality penalty |
+
+Precedence stays as written (profile after the setters): the preset is the policy the operator selects and it
+moves these quantities as a set, so letting an individual input win would silently overrule `QUORUM_AGGRESSIVE`'s
+0.45 / 0.15 / 0.10 relaxation - the reason that preset exists. Legibility is what shipped:
+`[ENTERPRISE-CONFIG]` reads those four back from the manager, and `[QUORUM-PRECEDENCE] <symbol> |
+profile=BALANCED | minQuorum input=2 stored=1 enforced=2 | …` prints input / stored / enforced for the two
+voter counts and `input -> manager` for the rest, once per symbol at init after the safe-mode clamp -
+deliberately not behind a `static`, because changing an input re-inits the EA and a once-per-load line would go
+stale at the exact moment the profile changed. The table's last column is the finding this surfaced:
+`MIN_CONSENSUS_VOTERS = 2` sits on top of the stored quorum, so BALANCED's and AGGRESSIVE's `minQuorum = 1` has
+never been able to produce a one-voter committee and no input can. `CConsensusEngine::EnforcedMinVoters(intrabar)`
+is now the one definition of that `MathMax` - it was inline in the decision - and the init print calls it
+instead of restating it.
+
+No comparison, threshold, weight or admission decision moved.
+
+
 ## Batch 226: An Unreachable Second Correlation Shrink, and the Drawdown Halt Made Visible (2026-10-17)
 
 Removed from `CPositionSizer` (all unreachable, not disabled):
@@ -1895,7 +1956,7 @@ For each family_id (0-17):
 - Unified ICT runtime labeling is normalized (no legacy `Unified ICT/SMC` path labels).
 
 ## Fast Debug Read Order
-1. `[SYMBOL-UNIVERSE]` / `[ENTERPRISE-CONFIG]` / `[RISK-UNIFIED] Initialized`
+1. `[SYMBOL-UNIVERSE]` / `[ENTERPRISE-CONFIG]` / `[QUORUM-PRECEDENCE]` / `[RISK-UNIFIED] Initialized`
 2. `[HEARTBEAT]`
 3. `[HEARTBEAT-FUNNEL]` / `[CONVERSION-RATES]`
 4. `[CONSENSUS-QUORUM]` / `[CONSENSUS-VETOED]` / `[CONSENSUS-REGIME-VETO]` / `[CONSENSUS-DIAG]`
