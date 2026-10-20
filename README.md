@@ -632,6 +632,35 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 243: two collaborators the position manager was handed and never used - and an exit that runs on numbers nobody set
+
+No trading decision moved in this batch. `CPositionManager` kept a `CFullMarginMode*` and a `CIntelligentSLGuard*`, was passed
+`&m_fullMarginMode` and a literal `NULL` for them at init, and asked neither anything, ever; the margin object actually
+consulted is the orchestrator's own (`EAOrchestrator.mqh:970`, read by `CDiagnosticsManager`). Gone: the two members, the two
+`Initialize` parameters, the include that only they needed, and three circuit-breaker getters (`GetTriggeredAt`,
+`GetRecoveryAttempts`, `GetRecoveryLevel`) with no caller anywhere. The recovery ladder still reads that state internally and
+prints it, so the journal is unchanged.
+
+**What the same sweep found, stated plainly because it touches money.** One of the four exit arms this repository's own doc
+row described as "unsettable" is not off - it is running, on constructor defaults:
+
+- `ManageLossMinimization()` executes on every lifecycle pass. Its gate is `IsAdverseMomentumExitEnabled() ||
+  GetConsecutiveLossLimit() > 0`, and `CPosLifecycleLossGuard()` initializes `m_consecutiveLossLimit(3)`, so the second term
+  has been true since the first build.
+- The live effect: any EA-managed position whose price has moved **75% of its own stop distance** against it, while in loss,
+  is closed early and prints `[LOSS-MIN] Position loss limit exit | ticket= | lossRatio= | limit=`. Three such closes arm a
+  1800-second cooldown that pauses the whole guard.
+- You cannot set any of it. `ConfigureLossMinimization` has no caller and no input exists for it, so 75%, 3 and 1800 are the
+  class's constructor, not your choices. Pyramiding, dynamic SL/TP and partial profit taking *are* genuinely off - their
+  flags are `false` and nothing writes them - so `[LOSS-MIN] Adverse momentum exit` cannot print.
+- One message overstates itself: `[LOSS-MIN] Daily loss circuit breaker triggered ... | stopping trading` follows a plain
+  `return` from this path. Entries are stopped by `CRiskCircuitBreaker` and the risk pipeline, not here.
+
+Left in place deliberately, with the reason: changing that threshold or switching the early close off moves realised exits on
+live positions, which is a trading decision rather than a cleanup, and this batch is the one that deletes pointers. The next
+batch owns the decision, and `AGENTS.md` §6 now lists the five `[LOSS-MIN]` lines with which ones can actually fire, so
+absence of a line is evidence again.
+
 ### Batch 242: `Config/live_overrides.json` now actually changes the running EA
 
 **What you thought you had.** `MQL5\Files\Config\live_overrides.json` is described in this repository as the runtime risk

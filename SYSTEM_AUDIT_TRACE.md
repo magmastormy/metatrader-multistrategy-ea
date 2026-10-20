@@ -29,7 +29,7 @@
   - `AIModules/CNeuralCheckpointManager.mqh` (Checkpoint I/O)
 - Risk authority: `Core/Risk/UnifiedRiskManager.mqh`
 - Execution authority: `Core/Trading/TradeManager.mqh`
-- Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
+- Position authority: EA lifecycle loop via `CPositionLifecycleManager::ManagePositions()` → `CTradeManager::ManageAllPositions(...)`. `Core/Position/PositionManager.mqh` owns the position-state registry and the prediction/position maps - its own exit methods have no caller (Batch 243).
 - Python bridge: `Core/Utils/PythonBridge.mqh`, `Python/zmq_server.py`
 - Position lifecycle: `Core/Management/PositionLifecycleManager.mqh`
 - Diagnostics manager: `Core/Management/DiagnosticsManager.mqh`
@@ -175,7 +175,7 @@
   - **CandidateBuilder** (`Core/Orchestration/CandidateBuilder.mqh`): Builds trade candidates from validated signals — SL/TP resolution, position sizing, magic number generation, risk pre-validation.
   - **TradeExecutor** (`Core/Orchestration/TradeExecutor.mqh`): Executes approved candidates through `CTradeManager` — order sending, result handling, attribution mapping, ONNX request tracking.
   - **LiveAuthorityResolver** (`Core/Orchestration/LiveAuthorityResolver.mqh`): Resolves live authority for candidates — AI warm-start, hybrid gate, authority evidence tracking, promotion/demotion logic.
-  - **PositionManager** (`Core/Position/PositionManager.mqh`): Consolidates position queries — EA position counts, per-symbol counts, correlation analysis, cluster exposure tracking.
+  - **PositionManager** (`Core/Position/PositionManager.mqh`): owns the `SPositionState` registry, the prediction-id/position maps and the closed-trade tally that `GetStatusReport` prints. Its exit half - `ManagePositions`, the five `Manage*`, the five `Configure*`, `CheckSignalReversalExit`, `SetDailyRiskBudget` - has no caller on this owner; `CPositionLifecycleManager` is the live exit authority (Batch 243 verified the caller chain, deletion is Batch 244).
   - **StrategyFactory** (`Core/Factory/StrategyFactory.mqh`): Centralized strategy instantiation — eliminates duplicate registration code across 17 strategy types and 3 AI adapters with proper cleanup on failure.
   - **6 Registries** (Batch 121): `CMathematicalEngineRegistry`, `CInstitutionalEngineRegistry`, `CNeuralNetRegistry`, `CDrawingManagerRegistry`, `CScanSchedulerRegistry`, `CSymbolStateTracker` — each consolidating previously scattered per-symbol engine instances into single ownership points with lifecycle management.
   - **Backward Compatibility**: `CSymbolScanScheduler` retained with index-based API. Added dormancy tracking fields (`dormancyWarningCount`, `dormantCooldownUntil`) to `SSymbolScanState`. Added symbol-based `RecordDormancyWarning()`, `IsInDormantCooldown()`, `ClearDormantCooldownOnNewBar()` and index-based overloads.

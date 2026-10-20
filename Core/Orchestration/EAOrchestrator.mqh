@@ -1489,7 +1489,7 @@ bool InitializeComponents()
                 MathMax(1, m_config.maxTradeSendsPerCycle), m_config.maxPositionsTotal, m_config.minSecondsBetweenTrades);
 
     if(!m_positionManager.Initialize(&m_tradeManager, NULL, &m_riskTierManager,
-    &m_safeMode, &m_fullMarginMode, NULL,
+    &m_safeMode,
     (int)m_config.magicNumber))
     {
         Print("[CRITICAL] PositionManager initialization FAILED");

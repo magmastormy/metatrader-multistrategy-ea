@@ -13,7 +13,6 @@
 #include "../Engines/RegimeEngine.mqh"
 #include "../Risk/RiskTierManager.mqh"
 #include "../Risk/SafeModeConfig.mqh"
-#include "../Risk/FullMarginMode.mqh"
 #include "../Utils/Enums.mqh"
 
 //--- Phase I extracted submodules.
@@ -35,8 +34,6 @@ private:
     CRegimeEngine*          m_regimeEngine;
     CRiskTierManager*       m_riskTierManager;
     CSafeMode*              m_safeMode;
-    CFullMarginMode*        m_fullMarginMode;
-    CIntelligentSLGuard*    m_slGuard;
     
     // Configuration
     bool                    m_enabled;
@@ -237,7 +234,7 @@ public:
 
     CPositionManager() :
         m_tradeManager(NULL), m_regimeEngine(NULL), m_riskTierManager(NULL),
-        m_safeMode(NULL), m_fullMarginMode(NULL), m_slGuard(NULL),
+        m_safeMode(NULL),
         m_enabled(true), m_breakevenBufferPts(120.0), m_trailingDistancePts(300.0),
         m_trailingStepPoints(5), m_useATRTrailing(false), m_atrMultiplier(1.5),
         m_magicNumber(0), m_lastManageTimeMs(0),
@@ -254,9 +251,8 @@ public:
     }
     
     // Initialize with dependencies
-    bool Initialize(CTradeManager* tm, CRegimeEngine* regime, CRiskTierManager* rtm, 
-                    CSafeMode* safe, CFullMarginMode* fullMargin, CIntelligentSLGuard* slGuard,
-                    int magicNumber)
+    bool Initialize(CTradeManager* tm, CRegimeEngine* regime, CRiskTierManager* rtm,
+                    CSafeMode* safe, int magicNumber)
     {
         if(tm == NULL || rtm == NULL)
             return false;
@@ -265,8 +261,6 @@ public:
         m_regimeEngine = regime;
         m_riskTierManager = rtm;
         m_safeMode = safe;
-        m_fullMarginMode = fullMargin;
-        m_slGuard = slGuard;
         m_magicNumber = magicNumber;
         
         return true;

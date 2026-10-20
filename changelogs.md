@@ -8,6 +8,61 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-20
 
+### Batch 243: two collaborators `CPositionManager` was handed but never consulted, and three getters no caller could reach
+
+`CPositionManager` stored a `CFullMarginMode*` and a `CIntelligentSLGuard*` (`PositionManager.mqh:38/39`), initialised both
+to `NULL`, wrote them from `Initialize`'s sixth and seventh parameters, and read them nowhere in the tree. The single call
+site passed `&m_fullMarginMode` and a literal `NULL`, so the SL-guard field could only ever have held `NULL` while the margin
+object it did receive was never asked for anything. The live `CFullMarginMode` is the orchestrator's own member: initialized
+at `EAOrchestrator.mqh:970`, handed to `CDiagnosticsManager::SetFullMarginMode` at `:1027`, and read there at
+`DiagnosticsManager.mqh:353`. One holder, one reader - what went was a second pointer that could not speak. `Initialize`
+takes five parameters now, and `#include "../Risk/FullMarginMode.mqh"` went with the members: no file under `Core/Position/`
+names `CFullMarginMode` or `SFullMargin*` after this, `DiagnosticsManager.mqh:17` and `EAOrchestrator.mqh:26` include it
+themselves, and `OrchestratorFwd.mqh` only forward-declares. The eight-program compile is the proof.
+
+`CRiskCircuitBreaker::GetTriggeredAt`, `GetRecoveryAttempts` and `GetRecoveryLevel` were declared, defined, and had zero call
+sites repo-wide. The state they exposed is not gone: `m_cbTriggeredAt`, `m_cbRecoveryAttempts` and `m_cbRecoveryLevel` are
+written and tested inside the breaker's own recovery ladder (the daily roll at `:86-89`, the stable-window release at
+`:176-184`, the level-2/level-1 ramps at `:289-317`), which is what the `[RISK-CIRCUIT-BREAKER]` prints read. Their three
+neighbours - `GetPeakEquity`, `GetMaxDrawdownFromPeak`, `GetDrawdownBreachCount` - have 12, 13 and 4 external callers and
+stay; `GetMaxDrawdownFromPeak` is the quantity Batch 226 made the asset-class ceiling name in its own message.
+
+**The caller-chain test, applied to this class.** Every external occurrence of `ManagePositions`, `CheckSignalReversalExit`,
+the five `Manage*` and the five `Configure*` resolves to `CPositionLifecycleManager` or its own satellites - the live
+authority, configured at `EAOrchestrator.mqh:991/995/1000` and driven at `:3094`. On `CPositionManager` itself those methods
+have no caller, as the file's own comment at `:3092` already said ("never configured ... it still owns the position-state
+registry"). Registry stays: `TradeExecutor.mqh:312` registers position state through it and `TradeAttributionManager.mqh`
+makes nine prediction-map calls on it. Deleting the dead exit half, with the four `PositionMgr*` satellites that only it holds,
+is the next batch and is recorded as task #100 rather than folded into a hygiene pass.
+
+**Doc defect found by the same sweep, and the live exit it under-describes.** `SYSTEM_STRUCTURE.md` §4's unsettable-arms row
+listed three setters and cited `PositionLifecycleManager.mqh:158/163/168`. There are four (`:153/158/163/172`), `168` was the
+loss-guard satellite's own line, and no input in either root EA names any of the four features. Three of the four gates then
+read their satellite's constructor `false` and never run - pyramiding, volatility-scaled SL/TP, partial profit taking. The
+fourth does not, and the row's phrasing hid that: its gate is
+`IsAdverseMomentumExitEnabled() || GetConsecutiveLossLimit() > 0`, and `CPosLifecycleLossGuard()` initializes
+`m_consecutiveLossLimit(3)` (`PosLifecycleLossGuard.mqh:40`), so the right-hand term is true from startup and
+`ManageLossMinimization()` runs every lifecycle pass. What that means in money, with nobody able to set it:
+`m_positionLossLimitPercent = 75.0` closes any managed position whose price has moved 75% of its own SL distance against it
+while in loss (`[LOSS-MIN] Position loss limit exit`), three such closes set a 1800 s cooldown on the whole path, and
+`m_dailyLossCircuitBreakerPercent = 50.0` is armed because `EAOrchestrator.mqh:1006` feeds
+`SetDailyRiskBudgetPercent(m_config.maxDailyRisk)`. Only `m_adverseMomentumExitEnabled` is genuinely off, so
+`[LOSS-MIN] Adverse momentum exit` cannot print. Two further truths the same reading exposes: `m_dailyLossAmount` grows only
+inside those two exit branches, so the "daily loss" the breaker measures is this path's closes and not the account's; and its
+message ends `| stopping trading` while the code only `return`s from `ManageLossMinimization` - entries are gated elsewhere,
+by `CRiskCircuitBreaker` and the risk pipeline, not here. That is a live unconfigured exit plus a message that overstates
+itself, both of which change outcomes if touched, so they are recorded as the next batch's decision rather than adjusted
+beside a set of deletions. The row now says what the four gates actually do.
+
+4 added / 25 deleted across three files (`Core/Position/PositionManager.mqh`, `Core/Risk/RiskCircuitBreaker.mqh`,
+`Core/Orchestration/EAOrchestrator.mqh`). No lot, stop, gate or exit moved: the deleted members had no reader and the deleted
+getters had no caller.
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:` line,
+0 errors / 0 warnings, harness exit 0 read un-piped, all eight `.ex5` newer than the sources. Not runtime-observed: newest
+journal 2026-09-23.
+
+
 ### Batch 242: `live_overrides.json` was read, announced and applied by nobody
 
 `Config/live_overrides.json` is documented in this repository as the canonical runtime risk source - "loaded live every

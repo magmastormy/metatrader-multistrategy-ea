@@ -466,21 +466,6 @@ public:
     {
         return m_drawdownBreachCount;
     }
-
-    datetime GetTriggeredAt() const
-    {
-        return m_cbTriggeredAt;
-    }
-
-    int GetRecoveryAttempts() const
-    {
-        return m_cbRecoveryAttempts;
-    }
-
-    int GetRecoveryLevel() const
-    {
-        return m_cbRecoveryLevel;
-    }
 };
 
 #endif // CORE_RISK_RISK_CIRCUIT_BREAKER_MQH
