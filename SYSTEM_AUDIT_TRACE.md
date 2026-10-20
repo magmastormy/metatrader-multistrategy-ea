@@ -1673,7 +1673,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Silent control made loud:** `[RISK-ENVELOPE]` skipped its own log when only the drawdown-warning threshold was clamped; the term is in the condition and `ddWarn A->B` in the message.
 - **State added:** none. No new fields, files or counters; two log lines changed shape (`[SCALP-RISK-ADJUSTED]` gained lot-from/lot-to/reason, `[COMPOUNDING-TIER]` gained the tier value it clamped from).
 - **§3 invariants:** §3.1 holds with one gate per scalp instead of two; §3.2 execution ownership untouched; §3.3 lifecycle untouched; §3.5 unaffected.
-- **Found by:** Batch 191's comment pass, then verified line by line before being written here — the same report's two other claims (a halt nobody can clear, a CVaR gate with no data) were disproved against `UnifiedRiskManager.mqh:1304` and `:655`.
+- **Found by:** Batch 191's comment pass, then verified line by line before being written here — the same report's two other claims (a halt nobody can clear, a CVaR gate with no data) were disproved against `UnifiedRiskManager.mqh:1320` and `:663`.
 
 ## Batch 193 Registration From the Catalog, Four Restored Entry Paths (2026-10-14)
 

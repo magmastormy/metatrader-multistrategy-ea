@@ -35,6 +35,11 @@ struct SSymbolRiskBudget
 
 #define MAX_SYMBOL_BUDGETS 30
 
+// Wall-clock poll for the margin ladder: TimeCurrent() only advances with ticks, so a tick-gated poll would stall on a
+// quiet symbol exactly when the account is already leveraged. 30 s bounds how long a breach can go unnoticed and how
+// often the entry hold can flap at the 200% boundary.
+#define MARGIN_HEALTH_POLL_MS 30000
+
 // All percent fields in this file use the 0-100 scale (5.0 = 5%), never 0-1 fractions.
 
 // Allows per-symbol risk limits that are lower than global defaults
@@ -94,6 +99,11 @@ private:
     datetime m_lastDailyReset;
     bool m_initialized;
     datetime m_lastPressureLogTime;
+    // The margin ladder's entry hold. In-memory and re-measured every MARGIN_HEALTH_POLL_MS, so a restart cannot
+    // strand a halt the way the persisted circuit-breaker halt can.
+    bool m_marginEntriesHeld;
+    uint m_lastMarginPollMs;
+    ENUM_MARGIN_HEALTH_LEVEL m_marginHealthLevel;
     
     CRiskCircuitBreaker m_circuitBreaker;
 
@@ -253,19 +263,14 @@ public:
     double GetSymbolProfitFactor(const string symbol);
 
     ENUM_MARGIN_HEALTH_LEVEL MonitorMarginHealth();
+    // True while the last margin poll read a level below 200%. The pipeline refuses entries on it; the next poll releases it.
+    bool IsMarginEntriesHeld() const { return m_marginEntriesHeld; }
 
     virtual SDrawdownState GetDrawdownState();
     
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
     double CalculatePositionRiskPercent(ulong ticket);
 
-    bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
-    bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
-    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
-    bool ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk);
-    bool ValidateMarginRequirements(const STradeValidationRequest &request, string &message);
-    bool ValidateAccountHealth(const STradeValidationRequest &request, string &message);
-    bool ValidateClusterGovernance(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     virtual double CalculateTradeRisk(const string symbolParam, const double lotSize, const double stopLossPips) const;
     double CalculateCorrelationRisk(const string symbolParam);
     virtual double CalculatePortfolioRiskAfterTrade(const double additionalRisk);
@@ -462,6 +467,9 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_lastDailyReset(0),
     m_initialized(false),
     m_lastPressureLogTime(0),
+    m_marginEntriesHeld(false),
+    m_lastMarginPollMs(0),
+    m_marginHealthLevel(MARGIN_HEALTH_OK),
     m_lastTradingDayKey(0),
     m_tradingDayStartHour(0),
     m_symbolBudgetCount(0),
@@ -632,6 +640,10 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                 m_config.maxRiskPerTradePercent,
                 m_config.maxDailyRiskPercent,
                 m_config.maxPortfolioRiskPercent);
+
+    // The margin ladder is a constant, not an input: hold under 200%, ask for a flatten under 150%, measure every 30 s.
+    PrintFormat("[RISK-MARGIN] monitor armed | poll_ms=%d | hold_entries_below=200%% | request_flatten_below=150%% | free_margin_use_limit=80%% | min_post_trade_level=200%%",
+                MARGIN_HEALTH_POLL_MS);
     
     PrintFormat("[RISK-CIRCUIT-BREAKER] Enabled | Initial Equity=%.2f | Drawdown Limits: Warning=%.1f%% Critical=%.1f%%",
                 m_circuitBreaker.GetPeakEquity(), m_config.drawdownWarningPercent, m_config.drawdownCriticalPercent);
@@ -657,6 +669,10 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     // Breakers must arm with no candidate in flight, so they run on every cycle here as well as inside the pipeline.
     CheckDrawdownCircuitBreaker();
     CheckDailyLossLimit();
+
+    // Margin ladder, cadence-throttled inside (MARGIN_HEALTH_POLL_MS). Until Batch 240 nothing called this at all,
+    // so no [RISK-MARGIN] line had ever been printed and no margin breach could hold entries or request a flatten.
+    MonitorMarginHealth();
 }
 
 void CUnifiedRiskManager::CheckAndResetDailyLimits()
@@ -1271,9 +1287,22 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     if(!m_initialized)
         return MARGIN_HEALTH_OK;
 
-    bool conservative = m_adaptiveTuner.IsConservativeMode();
-    ENUM_MARGIN_HEALTH_LEVEL level = m_marginHealth.MonitorMarginHealth(m_circuitBreaker, conservative);
-    m_adaptiveTuner.SetConservativeMode(conservative);
+    uint nowMs = GetTickCount();
+    if(m_lastMarginPollMs != 0 && (nowMs - m_lastMarginPollMs) < MARGIN_HEALTH_POLL_MS)
+        return m_marginHealthLevel;
+    m_lastMarginPollMs = nowMs;
+
+    ENUM_MARGIN_HEALTH_LEVEL level = m_marginHealth.MonitorMarginHealth(m_circuitBreaker);
+    bool hold = (level == MARGIN_HEALTH_CRITICAL || level == MARGIN_HEALTH_EMERGENCY);
+    if(hold != m_marginEntriesHeld)
+    {
+        m_marginEntriesHeld = hold;
+        PrintFormat("[RISK-MARGIN] entries %s | level band=%s | poll cadence=%dms",
+                    hold ? "HELD" : "released",
+                    hold ? (level == MARGIN_HEALTH_EMERGENCY ? "emergency" : "critical") : "warning-or-better",
+                    MARGIN_HEALTH_POLL_MS);
+    }
+    m_marginHealthLevel = level;
     return level;
 }
 
@@ -1563,45 +1592,6 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
     }
 
     return adjustedUsedRisk;
-}
-
-// Public-API forwarders into CRiskValidationPipeline. No recursion: the pipeline reaches owner-side helpers (IsSymbolDataValid, CalculateTradeRisk, EstimatePositionRiskPercent, GetDrawdownState, ...) through IRiskPipelineHost, not through these.
-bool CUnifiedRiskManager::ValidateBasicParameters(const STradeValidationRequest &request, string &message)
-{
-    return m_validationPipeline.ValidateBasicParameters(request, message);
-}
-
-bool CUnifiedRiskManager::ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent)
-{
-    return m_validationPipeline.ValidateRiskLimits(request, message, riskPercent);
-}
-
-bool CUnifiedRiskManager::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message)
-{
-    return m_validationPipeline.ValidatePortfolioRisk(request, tradeRiskPercent, message);
-}
-
-// The pipeline supplies maxPositionsSameBase and eaMagicNumber to the tiered-correlation gate because both change at runtime (ApplyTierOverrides / SetEAMagicNumber).
-bool CUnifiedRiskManager::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
-{
-    return m_validationPipeline.ValidateCorrelationLimits(request, message, correlationRisk);
-}
-
-bool CUnifiedRiskManager::ValidateMarginRequirements(const STradeValidationRequest &request, string &message)
-{
-    return m_validationPipeline.ValidateMarginRequirements(request, message);
-}
-
-bool CUnifiedRiskManager::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
-{
-    return m_validationPipeline.ValidateAccountHealth(request, message);
-}
-
-bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationRequest &request,
-                                                    const double tradeRiskPercent,
-                                                    string &message)
-{
-    return m_validationPipeline.ValidateClusterGovernance(request, tradeRiskPercent, message);
 }
 
 double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips) const

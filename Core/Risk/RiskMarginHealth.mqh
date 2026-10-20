@@ -1,14 +1,11 @@
-// Free-margin / margin-level pre-flight checks and the runtime margin-health monitor
-// with protective de-risking actions.
-// The <150% emergency halt mutates state this class does not own (circuit breaker, shared
-// conservative-mode flag); the forwarder passes both in as parameters.
+// Free-margin / margin-level pre-flight checks and the runtime margin-health monitor.
+// This class measures and requests; closing belongs to the circuit breaker's emergency flag and
+// sizing belongs to CRiskAdaptiveTuner, so it holds neither.
 #ifndef CORE_RISK_RISK_MARGIN_HEALTH_MQH
 #define CORE_RISK_RISK_MARGIN_HEALTH_MQH
 
 #include "../Utils/Enums.mqh"
-#include "../Utils/TradeJournal.mqh"
 #include "RiskCircuitBreaker.mqh"
-#include <Trade/Trade.mqh>
 
 class CRiskMarginHealth
 {
@@ -27,17 +24,17 @@ public:
     {
     }
 
-// Both gates are pinned constants (80% free-margin usage, 200% margin level): no input feeds
-// them and SetMaxFreeMarginUsage / SetMinMarginLevel have no callers; rejections print the ceiling in force.
+// Both gates are pinned constants (80% free-margin usage, 200% margin level): a threshold here is
+// operator policy, not a cleanup, so they stay literals and rejections print the ceiling in force.
 
-    //--- Free-margin headroom + post-trade margin-level check behind CUnifiedRiskManager::ValidateMarginRequirements.
+    //--- Free-margin headroom + post-trade margin-level check, behind CRiskValidationPipeline::ValidateMarginRequirements.
     bool CheckFreeMarginAndLevel(const double marginRequired,
                                  const bool isHedging,
                                  string &message) const
     {
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
 
-        if(marginRequired > freeMargin * m_maxFreeMarginUsage) // Fixed at construction: SetMaxFreeMarginUsage has no caller and no input feeds it
+        if(marginRequired > freeMargin * m_maxFreeMarginUsage)
         {
             message = StringFormat("Insufficient margin: required %.2f, available %.2f (threshold: %.0f%%) [mode: %s]",
                                  marginRequired, freeMargin, m_maxFreeMarginUsage * 100.0,
@@ -58,10 +55,13 @@ public:
 
 // Runtime monitoring
 
-    //--- Checks margin level and takes protective action.
-    //--- `breaker` receives the emergency halt; `conservativeMode` is the owner's shared flag.
-    ENUM_MARGIN_HEALTH_LEVEL MonitorMarginHealth(CRiskCircuitBreaker &breaker,
-                                                 bool &conservativeMode)
+//--- The margin ladder measures and requests; it does not close and it does not size.
+//--- EMERGENCY (<150%) asks the circuit breaker to flatten, which the orchestrator's single emergency-close path
+//--- executes; CRITICAL (150-200%) is the owner's entry hold, applied by CUnifiedRiskManager from the returned level.
+//--- Closing belongs to CTradeManager and conservative sizing belongs to CRiskAdaptiveTuner, so neither is written here:
+//--- the version of this method that called PositionClose() itself was a second flatten authority, and the version that
+//--- set conservativeMode latched it, because CRiskAdaptiveTuner only clears that flag when it was not already set.
+    ENUM_MARGIN_HEALTH_LEVEL MonitorMarginHealth(CRiskCircuitBreaker &breaker)
     {
         double margin = AccountInfoDouble(ACCOUNT_MARGIN);
         if(margin <= 0.0)
@@ -69,127 +69,43 @@ public:
 
         double equity = AccountInfoDouble(ACCOUNT_EQUITY);
         if(equity <= 0.0)
-            return MARGIN_HEALTH_EMERGENCY;
-
-        double marginLevel = (equity / margin) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale (margin level %)
-
-        // Emergency: margin level < 150% — close all positions immediately
-        if(marginLevel < 150.0)
         {
-            PrintFormat("[RISK-MARGIN] EMERGENCY | Margin Level=%.1f%% < 150%% | Closing ALL positions immediately",
-                       marginLevel);
-
-            int totalPositions = PositionsTotal();
-            for(int i = totalPositions - 1; i >= 0; i--)
-            {
-                ulong ticket = PositionGetTicket(i);
-                if(ticket > 0 && PositionSelectByTicket(ticket))
-                {
-                    // Journal before close for crash recovery
-                    ENUM_ORDER_TYPE closeType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
-                    double closeVol = PositionGetDouble(POSITION_VOLUME);
-                    double closePrice = PositionGetDouble(POSITION_PRICE_OPEN);
-                    double closeSL = PositionGetDouble(POSITION_SL);
-                    double closeTP = PositionGetDouble(POSITION_TP);
-                    long closeMagic = PositionGetInteger(POSITION_MAGIC);
-                    double closeProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-                    string closeSymbol = PositionGetString(POSITION_SYMBOL);
-                    CTrade emergencyTrade;
-                    if(emergencyTrade.PositionClose(ticket))
-                    {
-                        string journalReason = "emergency_margin_breach | P&L=" + DoubleToString(closeProfit, 2);
-                        WriteTradeJournalEntry("CLOSE", ticket, closeSymbol, closeType, closeVol,
-                                               0.0, closeSL, closeTP, closeMagic, journalReason);
-                    }
-                }
-            }
-
-            breaker.HaltForMarginEmergency();
+            breaker.RequestEmergencyClose();
+            Print("[RISK-MARGIN] EMERGENCY | equity <= 0 while margin is in use | flatten requested");
             return MARGIN_HEALTH_EMERGENCY;
         }
 
-        // Critical: margin level < 200% — close worst position, block new entries
+        double marginLevel = (equity / margin) * 100.0;
+
+        if(marginLevel < 150.0)
+        {
+            breaker.RequestEmergencyClose();
+            PrintFormat("[RISK-MARGIN] EMERGENCY | Margin Level=%.1f%% < 150%% | flatten requested(circuit breaker owns closing) | equity=%.2f margin=%.2f",
+                        marginLevel, equity, margin);
+            return MARGIN_HEALTH_EMERGENCY;
+        }
+
         if(marginLevel < 200.0)
         {
-            PrintFormat("[RISK-MARGIN] CRITICAL | Margin Level=%.1f%% < 200%% | Closing worst position, blocking new entries",
-                       marginLevel);
-
-            double worstProfit = 0.0;
-            ulong worstTicket = 0;
-            int totalPositions = PositionsTotal();
-            for(int i = 0; i < totalPositions; i++)
-            {
-                ulong ticket = PositionGetTicket(i);
-                if(ticket > 0 && PositionSelectByTicket(ticket))
-                {
-                    double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-                    if(profit < worstProfit || worstTicket == 0)
-                    {
-                        worstProfit = profit;
-                        worstTicket = ticket;
-                    }
-                }
-            }
-
-            if(worstTicket > 0 && PositionSelectByTicket(worstTicket))
-            {
-                ENUM_ORDER_TYPE critType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
-                double critVol = PositionGetDouble(POSITION_VOLUME);
-                double critSL = PositionGetDouble(POSITION_SL);
-                double critTP = PositionGetDouble(POSITION_TP);
-                long critMagic = PositionGetInteger(POSITION_MAGIC);
-                string critSymbol = PositionGetString(POSITION_SYMBOL);
-                CTrade criticalTrade;
-                criticalTrade.PositionClose(worstTicket);
-                string critJournalReason = "emergency_margin_critical | P&L=" + DoubleToString(worstProfit, 2);
-                WriteTradeJournalEntry("CLOSE", worstTicket, critSymbol, critType, critVol,
-                                       0.0, critSL, critTP, critMagic, critJournalReason);
-                PrintFormat("[RISK-MARGIN] Closed worst position | ticket=%I64u | profit=%.2f", worstTicket, worstProfit);
-            }
-
-            conservativeMode = true;
+            PrintFormat("[RISK-MARGIN] CRITICAL | Margin Level=%.1f%% < 200%% | entries held(open positions untouched) | equity=%.2f margin=%.2f",
+                        marginLevel, equity, margin);
             return MARGIN_HEALTH_CRITICAL;
         }
 
-        // Warning: margin level < 300% — reduce position sizes on next entries
         if(marginLevel < 300.0)
         {
             static datetime s_lastMarginWarning = 0;
             datetime now = TimeCurrent();
             if(s_lastMarginWarning == 0 || (now - s_lastMarginWarning) >= 60)
             {
-                PrintFormat("[RISK-MARGIN] WARNING | Margin Level=%.1f%% < 300%% | Reducing position sizes on next entries",
-                           marginLevel);
+                PrintFormat("[RISK-MARGIN] WARNING | Margin Level=%.1f%% < 300%% | advisory only", marginLevel);
                 s_lastMarginWarning = now;
             }
-            conservativeMode = true;
             return MARGIN_HEALTH_WARNING;
         }
 
         return MARGIN_HEALTH_OK;
-    }
-
-// Accessors
-
-    double GetMaxFreeMarginUsage() const
-    {
-        return m_maxFreeMarginUsage;
-    }
-
-    void SetMaxFreeMarginUsage(const double value)
-    {
-        m_maxFreeMarginUsage = value;
-    }
-
-    double GetMinMarginLevel() const
-    {
-        return m_minMarginLevel;
-    }
-
-    void SetMinMarginLevel(const double value)
-    {
-        m_minMarginLevel = value;
-    }
+}
 };
 
 #endif // CORE_RISK_RISK_MARGIN_HEALTH_MQH

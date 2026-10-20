@@ -8,6 +8,72 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-19
 
+### Batch 240: margin was priced on a lot the trade never shipped, and the margin ladder had no driver
+
+**1. The margin gate tested a different lot than the one it approved.** `ValidateMarginRequirements` runs on
+`request.lotSize` (`RiskValidationPipeline.mqh:480`), and the lot floor raises `result.adjustedLotSize` to the broker
+minimum *after* that (`:522`). Both numbers then travel in one result: the builders and the four engine books adopt
+`adjustedLotSize`, so a sub-minimum lot was approved on margin calculated for the smaller size. The file's own comment at
+`:1124` had recorded half of this ("Margin is checked on request.lotSize, not the adjustedLotSize the lot floor may still
+raise below") and left the consequence unowned. Now the lot is re-priced where it is final: a raise triggers
+`ValidateMarginRequirements` again on a request copy carrying `adjustedLotSize`, and failure refuses with
+`[RISK-GATE-REJECT] <symbol> | reason=lot_floor_margin | lot=A -> B` plus a `LOT_FLOOR_MARGIN` record, releasing the
+virtual reservation like every other refusal. Shrink-only adjustments do not re-run the check - a smaller lot cannot
+need more margin.
+
+**2. `CRiskMarginHealth::MonitorMarginHealth` had no caller, so the account had no margin protection.** Its only entry
+point, `CUnifiedRiskManager::MonitorMarginHealth()`, was declared, defined and never called - which means the tiers that
+flatten under 150%, cut the worst position under 200% and de-risk under 300% have never once run, and no `[RISK-MARGIN]`
+line exists in any journal on this machine. `ACCOUNT_MARGIN_LEVEL` was read in two places in the whole tree: this dead
+monitor, and a dashboard JSON field. The drawdown and daily-loss breakers arm from `RefreshRuntimeState()`; the margin
+ladder now joins them there, on its own wall-clock throttle (`MARGIN_HEALTH_POLL_MS` 30000, `GetTickCount()` because
+`TimeCurrent()` only advances with ticks and a quiet symbol is exactly when a leveraged account needs the check).
+`[RISK-MARGIN] monitor armed | poll_ms=30000 | hold_entries_below=200% | request_flatten_below=150% |
+free_margin_use_limit=80% | min_post_trade_level=200%` prints at init, because three batches of unwired protectors have
+taught that a silent latch is indistinguishable from an absent one.
+
+**Wiring it required changing what it does, not only calling it.** The old monitor closed positions itself: a
+`CTrade::PositionClose()` loop over every position at the emergency tier and a second one picking the worst ticket at the
+critical tier, each with its own journal write. That is a second flatten authority beside `CRiskCircuitBreaker`, the exact
+shape Batch 237 deleted from the spike monitor, and AGENTS section 3 names `CTradeManager`/the EA loop as execution
+owner. It now *requests*: `CRiskCircuitBreaker::RequestEmergencyClose()` raises the flag that the orchestrator's three
+existing `IsEmergencyCloseRequested()` consumers already act on. Second, it wrote the shared `conservativeMode` flag at
+both tiers, and that flag latches: `CRiskAdaptiveTuner::UpdateAdaptiveRiskLevel` captures it first and clears it only
+`else if(!conservativeHeld)`, so one margin write would have kept the account in conservative sizing until a drawdown
+recovery happened to clear it - a sizing authority hostage to a margin reading. Sizing is left to the tuner, and with it
+goes the ladder's third tier: below 300% the monitor now prints `[RISK-MARGIN] WARNING | ... | advisory only` at most once
+a minute and changes nothing, because the only action that tier had was the latching write. What the margin tier does own
+is an entries hold: `m_marginEntriesHeld` in the manager, set while the poll reads CRITICAL or
+EMERGENCY, cleared by the next poll that reads better, and consulted by the pipeline as a refusal of its own
+(`[RISK-MARGIN] <symbol> | entry refused | marginLevel=... | margin=... equity=...`, `:342`). It is deliberately
+in-memory: the persisted circuit-breaker halt can be restored without a releasable owner (`ResetCircuitBreaker()` has no
+caller), and a margin hold must not outlive the measurement that made it.
+
+**Sweep in the same files.** Seven `Validate...` forwarders on `CUnifiedRiskManager` (`ValidateBasicParameters`,
+`ValidateRiskLimits`, `ValidatePortfolioRisk`, `ValidateCorrelationLimits`, `ValidateMarginRequirements`,
+`ValidateAccountHealth`, `ValidateClusterGovernance`) were declared, defined, forwarded to the pipeline's own method of
+the same name, and had no caller - every pre-trade gate calls its own copy inside `CRiskValidationPipeline`, and none of
+them is in `IRiskPipelineHost`. `CRiskMarginHealth`'s four threshold accessors went with them (`Get/SetMaxFreeMarginUsage`,
+`Get/SetMinMarginLevel`: zero readers, and Batch 223 already recorded the two constants as operator policy that stays
+literal). `HaltForMarginEmergency()` is replaced by `RequestEmergencyClose()`, so `m_tradingEnabled` is no longer written
+from outside the breaker's own drawdown logic - the only path that can strand a halt the recovery ladder cannot lift.
+
+**Recorded, not wired:** `CFullMarginMode` is initialized at `EAOrchestrator.mqh:1007`, holds a config of its own
+(`maxStackedPositions`, `stackLotScale`, `minMarginLevelPct` 200, `dailyLossLimitPct` 25, a session lockout after two
+breaches) and `PrintDiagnostics()` is the only method anything calls. `CanStackPosition`, `GetStackedLotSize`,
+`GetStackLevel`, `CheckSafeguards`, `CheckFullMarginCircuitBreaker`, `IsInCooldown` and `IsSessionLocked` have no caller,
+so the full-margin tier trades with none of its stated rules. That is a trading-mode decision - which tier activates it,
+what stacking may cost - not a dead-code cleanup, and it is the same judgement the intrabar policy got in Batch 233.
+
+Docs corrected: README's new operational section, `SYSTEM_STRUCTURE.md` (authority table rows for breaker evaluation and
+a new margin-protection row), `RUNTIME_DECISION_GRAPH.md` (ownership map line, two dated sections), `SYSTEM_AUDIT_TRACE.md`
+and AGENTS section 6, which listed `[RISK-MARGIN]` nowhere because the code could never print it. Verification:
+`sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:` line, 0 errors /
+0 warnings (7.0 / 4.8 / 9.4 / 7.0 / 168.5 / 146.0 / 38.1 / 2.6 s), every `.ex5` newer than every source; the one source
+edit after that run is a line number inside a comment this batch wrote, so it changes no binary. Not runtime-observed:
+newest journal 2026-09-23, so no `[RISK-MARGIN]` line has ever been seen firing - which is the point of the init
+announcement.
+
 ### Batch 239: an open position was charged to the risk caps twice for a minute after every fill
 
 `ValidateTradeRequest` reserves portfolio budget before the gates (`RiskValidationPipeline.mqh:385-393`), releases it on

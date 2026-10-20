@@ -31,6 +31,8 @@ Defines the authoritative runtime decision path and ownership boundaries between
   - `CNeuralCheckpointManager` - Atomic checkpoint operations
   - `CSymbolEmbedding` - Learnable symbol embeddings in transformer
 - Risk veto: `CUnifiedRiskManager`
+- Margin-level ladder: `CRiskMarginHealth` measures on a 30 s poll inside `CUnifiedRiskManager::RefreshRuntimeState()`
+  and holds entries; closing belongs to `CRiskCircuitBreaker`'s emergency flag and `CTradeManager` (Batch 240)
 - Execution: `CTradeManager`
 - Position lifecycle: `CPositionLifecycleManager` (via EAOrchestrator loop) + `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
 - Indicator cache lifecycle: `CIndicatorManager`
@@ -338,6 +340,49 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 240: The Margin Ladder Got a Driver, and the Margin Gate Got the Lot It Prices (2026-10-19)
+
+- **New edge: entries refused on account margin level.** `CRiskValidationPipeline::Run` refuses at `:342`, immediately
+  after the drawdown breaker, when `m_host.IsMarginEntriesHeld()` is true - the manager's in-memory flag set by a
+  `MonitorMarginHealth()` poll that read below 200% and cleared by the next poll that reads better. It is not the
+  persisted circuit-breaker halt: `ResetCircuitBreaker()` has no caller, so a halt written there can outlive its cause,
+  and a margin reading must not.
+- **New edge: the lot floor can no longer raise a lot that was never margin-checked.** Margin requirements are computed
+  on `request.lotSize` at `:480`; the floor raises `result.adjustedLotSize` at `:522`. A raise now re-runs
+  `ValidateMarginRequirements` on a request copy carrying the shipped lot (`:752-771`) and refuses with
+  `[RISK-GATE-REJECT] ... reason=lot_floor_margin`. Shrinks do not re-run it: less volume cannot need more margin.
+- **Driver added.** `CUnifiedRiskManager::RefreshRuntimeState()` calls `MonitorMarginHealth()` (`:675`) on a
+  `GetTickCount()`-based 30 s throttle (`MARGIN_HEALTH_POLL_MS`, `:41`). Until this batch that forwarder had no caller at
+  all, so every tier of the margin ladder - flatten under 150%, hold under 200%, advise under 300% - was unreachable, and
+  `RefreshRuntimeState` is the same continuous path the drawdown and daily-loss breakers already arm from.
+- **Ownership moved.** The monitor no longer closes positions. It raises `CRiskCircuitBreaker::RequestEmergencyClose()`
+  (`RiskCircuitBreaker.mqh:425`), which the three existing `IsEmergencyCloseRequested()` consumers in `EAOrchestrator`
+  act on, so execution stays `CTradeManager`-owned (section 3). It also no longer writes `conservativeMode`:
+  `CRiskAdaptiveTuner::UpdateAdaptiveRiskLevel` clears that flag only when it was not already set, so a margin write
+  would latch conservative sizing. Sizing stays the tuner's; margin gets entries.
+- **Removed without a caller:** seven `Validate...` forwarders on `CUnifiedRiskManager`, and `CRiskMarginHealth`'s four
+  threshold accessors. `HaltForMarginEmergency()` became `RequestEmergencyClose()`.
+- **Not wired, with the reason:** `CFullMarginMode` (`EAOrchestrator.mqh:1007`) keeps stacking limits, a 200% margin floor,
+  a 25% daily-loss stop and a session lockout that nothing reads except `PrintDiagnostics()`. Running it is a trading-mode
+  decision, the same shape as the intrabar policy in Batch 233.
+
+## Batch 239: A Filled Trade Was Charged to the Caps Twice (2026-10-19)
+
+- **Same node, second ending.** `Reserve virtual risk and stage approved candidate` used to end only on the 60 s TTL.
+  `CVirtualPositionBook::PruneStale()` (`VirtualPosition.mqh:59`) now also runs `PruneCoveredByPositions()` (`:89`), which
+  discharges a reservation once an open position with that symbol, that direction, `POSITION_MAGIC != 0`,
+  `POSITION_TIME >= reservedAt` and `POSITION_VOLUME >= lotSize` exists - one position per reservation, oldest
+  reservation selected first by `reservedAt` because the swap-remove compaction leaves the book unordered.
+- **Why the caps saw two trades.** `CPortfolioRiskManager::GetPortfolioRisk()` counts the open position from the fill,
+  and the reservation still carried the same risk, so every projection on `reservedRisk + openExposureRisk` -
+  `RiskValidationPipeline.mqh:377-380`, `:778`, `:959-962` and `CUnifiedRiskManager`'s remaining-budget and snapshot
+  fields - read one trade as two for up to a minute.
+- **The lot had to travel with the risk.** `UpdateVirtualPositionRisk` now takes `result.adjustedLotSize` at `:816`, so a
+  correlation-shrunk or min-lot-floored fill can still match its own reservation. Without it the fix would have missed
+  exactly the adjusted trades.
+- **Refusal branches unchanged.** Every reject still releases its reservation; approvals still keep it, because the gap it
+  bridges ends at the fill, which is now the event that ends it.
+
 ## Batch 238: Twelve Inputs That Bound Nothing, One That Could Block Startup (2026-10-19)
 
 No trading decision moved, because nothing these fields fed was connected to a decision. What did change on a decision
@@ -377,7 +422,7 @@ Both changes sit on the entry edge, and both were declared in the inputs dialog 
   roster could send against one stale measurement; `InpMaxTradeSendsPerCycle` had no reader anywhere in the tree.
   Only an executed send decrements the budget (`:3589`), so a deduped or broker-refused send does not spend it. The
   test sits before validation deliberately: an approved candidate keeps a virtual portfolio reservation
-  (`RiskValidationPipeline.mqh:385-393`, TTL 60 s at `VirtualPosition.mqh:242`) whose owner tag embeds
+  (`RiskValidationPipeline.mqh:403-411`, TTL 60 s at `VirtualPosition.mqh:242`) whose owner tag embeds
   `GetMicrosecondCount()` and is therefore unreconstructable by the caller, so a slot validated then held would reserve
   risk for a minute against no position. Batch 239 added the other ending: `PruneCoveredByPositions()` (`:89`)
   discharges a reservation once an open position covers it, because `GetPortfolioRisk()` counts that position and the
@@ -409,7 +454,7 @@ pointed at a plausible neighbour - and surfaced only while re-anchoring the clai
   (`EAOrchestrator.mqh:3571`) applies it, shrink-only. The bullets now separate what was true when written from what
   closed it, in the same way Batch 231 marked the probe-path correction.
 - **The README's correlation row** described a `CPositionSizer` path "explicitly disabled at `:886`". Batch 226 deleted
-  that path; the row now cites `RiskValidationPipeline.mqh:448` -> the REDUCE shrink at `:694`, and the comment at
+  that path; the row now cites `RiskValidationPipeline.mqh:466` -> the REDUCE shrink at `:694`, and the comment at
   `EAOrchestrator.mqh:891-892` that records the deletion.
 - **Field deleted:** `STradeCandidate::liveAuthorityRiskMult` - two writers (`CandidateBuilder.mqh`'s stub and the
   orchestrator after `Resolve`), zero readers. The value that sizes the trade is the parameter handed to
@@ -607,7 +652,7 @@ What the live graph keeps:
 ## Batch 229: One Unused Collaborator, and Two Comment Claims That Were Wrong (2026-10-19)
 
 No decision edge changed. `CRiskValidationPipeline` no longer stores `CRiskAdaptiveTuner*` — field, constructor
-initialiser, `Initialize` parameter, assignment, the argument at `UnifiedRiskManager.mqh:518` and the
+initialiser, `Initialize` parameter, assignment, the argument at `UnifiedRiskManager.mqh:524` and the
 `#include "RiskAdaptiveTuner.mqh"` are gone. The pipeline never read the pointer, so no gate's arithmetic moved,
 and the tuner itself is unchanged: the risk manager reads it at fourteen sites, `ApplyPnlRiskAdjustment`
 (`rawUsedRisk - max(0, profit x factor)`) among them.
@@ -698,7 +743,7 @@ Removed from `CPositionSizer` (all unreachable, not disabled):
 | `SetCorrelationThresholds` and the three params it wrote | zero call sites |
 | `useVolatilityAdjustment` | no ctor initialiser, written `true` once by the orchestrator, read by nothing |
 
-Correlation sizing stays single-authority: `RiskValidationPipeline.mqh:678-694` REDUCE tier ->
+Correlation sizing stays single-authority: `RiskValidationPipeline.mqh:696-712` REDUCE tier ->
 `adjustedLotSize`, adopted by the consensus builder, the fast scalp (Batch 192) and, from Batch 224, the ATR
 scalp, grid and spike books. Wiring the sizer's own shrink back on would stack two reductions on one lot -
 the Batch 213 double-ADX failure one layer down.
@@ -741,7 +786,7 @@ sole reader multiplied confidence by it), `SPositionSizingParams::correlationAdj
 
 | Path | What was wrong | Change |
 |---|---|---|
-| `RiskValidationPipeline.mqh:603` family cap | `DERIV_UNKNOWN` is the "not a Deriv synthetic" answer, and it was counted as a family: six of thirteen default symbols shared one 3-position bucket | cap runs only for a real family; the non-Deriv half is bounded by the per-symbol and total caps |
+| `RiskValidationPipeline.mqh:621` family cap | `DERIV_UNKNOWN` is the "not a Deriv synthetic" answer, and it was counted as a family: six of thirteen default symbols shared one 3-position bucket | cap runs only for a real family; the non-Deriv half is bounded by the per-symbol and total caps |
 | `ATRScalpEntry.mqh:165` / `GridRecoveryExecution.mqh:69` / `SpikeHunterExecutor.mqh:229` | printed `reason=` from `SValidationResult.reason` (never assigned anywhere in `Core/Risk/`) and read only `.approved`, discarding `adjustedLotSize` / `riskPercent` | print `.message`; adopt the shrink-only lot with `[ATR-SCALP-RISK-ADJUSTED]` / `[GRID-RISK-ADJUSTED]` / `[SPIKE-RISK-ADJUSTED]` |
 | `GridRecoveryExecution.mqh:49` | `PassesRiskValidation` took `lotSize` by value, so it could not pass an adjustment back | takes `double &lotSize`; the engine records the level lot after the send, so table and position agree |
 
@@ -760,8 +805,8 @@ Path touched: `CCandidateBuilder::BuildCandidate` sizing block -> `CUnifiedRiskM
 
 | Limit | Comparison | Why it could not bind | Change |
 |---|---|---|---|
-| min-lot round-up ceiling, `CandidateBuilder.mqh:790` | `floorMult = brokerMinLot / lotSize <= m_minLotRiskMultiplier` | `lotSize > brokerMinLot` in the enclosing branch forces `floorMult < 1.0`; ceiling 15.0 | compare `brokerMinLot / newLot`, refuse above it, stop before the round-up at `:502` |
-| post-adjustment daily risk, `RiskValidationPipeline.mqh:738` | `projectedDailyRisk > maxDailyRiskPercent` | the getter clamps to `maxDailyRiskPercent`, so `>` is impossible | `>=` (matches `:365`) plus `[RISK-DAILY-LIMIT]` |
+| min-lot round-up ceiling, `CandidateBuilder.mqh:790` | `floorMult = brokerMinLot / lotSize <= m_minLotRiskMultiplier` | `lotSize > brokerMinLot` in the enclosing branch forces `floorMult < 1.0`; ceiling 15.0 | compare `brokerMinLot / newLot`, refuse above it, stop before the round-up at `:520` |
+| post-adjustment daily risk, `RiskValidationPipeline.mqh:778` | `projectedDailyRisk > maxDailyRiskPercent` | the getter clamps to `maxDailyRiskPercent`, so `>` is impossible | `>=` (matches `:365`) plus `[RISK-DAILY-LIMIT]` |
 | per-cluster risk cap, `RiskClusterBudget.mqh` | `"T" -> 10.0`, `"R" -> 5.0` absolute | a stored percent replaces `m_maxClusterRiskPercent`, which only `InpRiskMaxClusterExposurePct` writes | factors 2.0x / 1.0x of the configured cap; dead `SetClusterRiskCap` pair deleted |
 
 New/refused log lines: `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`,
@@ -837,7 +882,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
   `Core/Utils/LogMacros.mqh` had no call site, so eight tags - `[HEARTBEAT]` first among them, the one
   AGENTS.md section 6 asks for first - could not appear in a journal whatever the runtime did. Each now prints
   from the same values at the same call site; the two per-symbol profile lines stay behind `ShouldLogVerbose()`.
-- `[RISK-FAMILY-POS]` prints at the per-family position cap (`RiskValidationPipeline.mqh:629`). That gate
+- `[RISK-FAMILY-POS]` prints at the per-family position cap (`RiskValidationPipeline.mqh:647`). That gate
   already refused the entry and released its virtual reservation, but through the JSON log alone, so a capped
   family was indistinguishable from a strategy that had stopped voting.
 - 29 macros with no call site are deleted: ten duplicate format strings for tags the code prints literally,
@@ -1099,7 +1144,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **New edge:** `consensus accepted -> SetLastSignalContributors(winners, role, cluster, clusterCode)` (`ConsensusEngine.mqh:754`) -> candidate tags, attribution, cluster governance and authority learning all read from it. Before this batch the writer did not exist, so every downstream consumer ran on an empty contributor list.
 - **Second new edge:** `send executed -> positionId known -> AttributeExecutedPosition(positionId, winners)` (`EAOrchestrator.mqh:3610`). Attribution is keyed to the fill, not to whatever decision the cache holds at `DEAL_ENTRY_IN`; the old in-deal upsert is removed. Provenance now records every executed trade, not only AI ones (`[AUTHORITY-LEARN]` was unreachable because `hasAIContributor` was computed from the empty list).
 - **Revived loop:** `close -> PopPositionAttribution -> UpdatePerformance -> successCount/failCount/totalTrades/healthScore -> GetStrategyReliabilityMultiplier`. Indicator strategies sat on the registration default (0.75 -> multiplier 1.025) for every vote forever; AI rows were the only ones that moved, via `UpdateAIPerformanceMetrics`. So the indicator book was immune to its own results while the AI book was not.
-- **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:958`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
+- **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:999`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
 - **Tightened first:** `HasOpposingReservation` treated *same*-cluster opposing reservations as no conflict and *different*-cluster ones as a conflict - unreachable while every code was empty, and a loosening the moment codes arrived. The cluster term is removed: an opposing reservation on the same symbol is a conflict. The unused `clusterCode` parameter went with it.
 - **Engine books excluded:** `OnTradeTransaction` now returns for a deal whose comment is an engine tag or whose magic is in a Batch 197 band, so a scalp fill can no longer be scored as the strategies in the cached context (the gap Batch 197 recorded rather than shipped).
 - **Behaviour direction:** more refusals possible, never fewer; entry count can only drop, weighting quality is what improves. No ceiling, lot, stop, magic or send changed.
@@ -1153,7 +1198,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **Fast-scalp gate count: two -> one.** `ShouldEnterScalp` -> `CFastScalpEntry::ValidateRiskAndAdjust` (tag `"scalp"`) -> `FinalizeLotSize` (margin cap, can only shrink or refuse) -> `Execute`. The second `ValidateTradeRequest` inside `Execute` (tag `"scalp-pretrade"`) is gone; it repeated the same symbol/side/lot/stops check on a lot the first gate had already approved, and each approval keeps its own virtual reservation until the TTL prunes it, so one scalp double-counted portfolio and daily-budget risk and double-filed `RecordApproval`.
 - **Why this one survived:** the entry-stage request sets `strategyRole`, `strategyCluster` and `clusterCode = "T"`; the pre-send request left them unset, so keeping the entry-stage call preserves cluster governance's grouping key.
 - **Lot adoption is shrink-only and logged.** `if(result.adjustedLotSize > 0.0) lotSize = result.adjustedLotSize;` would have accepted the pipeline's round-up to `SYMBOL_VOLUME_MIN`; it now requires `< lotSize` and prints `[SCALP-RISK-ADJUSTED] ... lot A -> B | reason=...`.
-- **Compounding tier -> sizer is clamped.** `ApplyTierToPositionSizer` now takes the risk manager and clamps the tier's `riskPerTradeOverride` to `GetActiveRiskPerTradePercent()`, which `UnifiedRiskManager.mqh:371` sets from the envelope-clamped base risk. Previously the raw tier number went into `CPositionSizer::SetParameters` (which clamps nothing) and the per-trade cap check refused the trade — a tier that looked active traded nothing, and the refusal looked like a signal drought. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamp when it binds.
+- **Compounding tier -> sizer is clamped.** `ApplyTierToPositionSizer` now takes the risk manager and clamps the tier's `riskPerTradeOverride` to `GetActiveRiskPerTradePercent()`, which `UnifiedRiskManager.mqh:374` sets from the envelope-clamped base risk. Previously the raw tier number went into `CPositionSizer::SetParameters` (which clamps nothing) and the per-trade cap check refused the trade — a tier that looked active traded nothing, and the refusal looked like a signal drought. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamp when it binds.
 - **`[RISK-ENVELOPE]` fires on a warning-only clamp.** The condition omitted `clampedDdWarning`, so an envelope cutting only the drawdown warning threshold applied silently.
 - **Unreachable, recorded not wired:** FastScalp's `[AI-VOTE]` block at `FastScalpEntry.mqh:167` — the only `Initialize` call site leaves `aiAdapter` NULL, and inventing an adapter to produce the log would be fabricating the evidence AGENTS.md §4.2 asks for.
 - **§3 invariants:** unchanged and better served — the scalp path still passes `CUnifiedRiskManager` (§3.1) once, on the lot it sends.

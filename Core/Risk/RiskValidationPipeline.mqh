@@ -89,6 +89,9 @@ public:
 
     virtual bool   CheckDailyLossLimit() = 0;
     virtual bool   CheckDrawdownCircuitBreaker() = 0;
+    // Margin ladder's entry hold, measured outside the pipeline on MARGIN_HEALTH_POLL_MS. Distinct from the drawdown
+    // breaker: this one is lifted by the next margin poll, not by the drawdown-graded auto-recovery.
+    virtual bool   IsMarginEntriesHeld() const = 0;
     virtual void   CheckAndResetDailyLimits() = 0;
     virtual double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent) = 0;
     virtual SDrawdownState GetDrawdownState() = 0;
@@ -330,6 +333,21 @@ public:
         CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DRAWDOWN_CIRCUIT_BREAKER",
             StringFormat("Drawdown %.2f%% triggered circuit breaker", m_circuitBreaker.GetMaxDrawdownFromPeak()),
             m_circuitBreaker.GetMaxDrawdownFromPeak(), 0.0, corrId);
+        CJsonLogger::ClearCorrelationId();
+        return result;
+    }
+
+    // Margin ladder hold, measured on the runtime cadence. Printed here rather than only in the monitor because the
+    // refusal and the entry it refuses belong in the same place, and the level is read live instead of restated.
+    if(m_host.IsMarginEntriesHeld())
+    {
+        double marginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+        result.message = StringFormat("Trading paused: account margin level %.1f%% is below 200%%", marginLevel);
+        result.severity = ERROR_LEVEL_CRITICAL;
+        PrintFormat("[RISK-MARGIN] %s | entry refused | marginLevel=%.1f%% | margin=%.2f equity=%.2f",
+                    request.symbol, marginLevel, AccountInfoDouble(ACCOUNT_MARGIN), AccountInfoDouble(ACCOUNT_EQUITY));
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "MARGIN_HEALTH_HOLD",
+            StringFormat("Margin level %.1f%% below 200%%", marginLevel), marginLevel, 200.0, corrId);
         CJsonLogger::ClearCorrelationId();
         return result;
     }
@@ -729,6 +747,28 @@ public:
         double riskDenom = CRiskMath::GetRiskDenominator();
         if(tradeRiskReduced > 0.0 && riskDenom > 0.0)
             result.riskPercent = (tradeRiskReduced / riskDenom) * 100.0;
+    }
+
+    // The margin gate above priced request.lotSize, and the lot floor at :522 can have raised it since. Re-check on the
+    // lot the candidate actually ships, so a round-up to the broker minimum cannot be approved on margin never verified.
+    if(result.adjustedLotSize > request.lotSize)
+    {
+        STradeValidationRequest finalLotRequest = request;
+        finalLotRequest.lotSize = result.adjustedLotSize;
+        string finalLotMarginMessage = "";
+        if(!ValidateMarginRequirements(finalLotRequest, finalLotMarginMessage))
+        {
+            result.approved = false;
+            result.severity = ERROR_LEVEL_WARNING;
+            result.message = StringFormat("Margin insufficient at the raised minimum lot: %s", finalLotMarginMessage);
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_floor_margin | lot=%.3f -> %.3f | %s",
+                        request.symbol, request.lotSize, result.adjustedLotSize, finalLotMarginMessage);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "LOT_FLOOR_MARGIN",
+                finalLotMarginMessage, result.adjustedLotSize, request.lotSize, corrId);
+            CJsonLogger::ClearCorrelationId();
+            if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
+            return result;
+        }
     }
 
     double projectedDailyRisk = m_host.GetEffectiveDailyRiskUsedPercent(reservedRisk + MathMax(0.0, result.riskPercent));

@@ -420,14 +420,12 @@ public:
         return true;
     }
 
-    //--- Hard halt requested by the margin-health monitor when the account
-    //--- margin level breaches the emergency threshold.
-    void HaltForMarginEmergency()
+    //--- Raised by a protector that measured a breach but does not own closing: the orchestrator's
+    //--- IsEmergencyCloseRequested() consumer is the only path that sends closes (AGENTS section 3).
+    void RequestEmergencyClose()
     {
-        m_tradingEnabled = false;
-        m_cbTriggeredAt = TimeCurrent();
+        m_emergencyCloseRequested = true;
     }
-
 
     bool IsTradingEnabled() const
     {

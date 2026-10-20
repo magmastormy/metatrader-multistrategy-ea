@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:448` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:694`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:891-892` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:466` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:696`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:891-892` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -369,7 +369,7 @@ The pre-trade gate used to be called before the position was sized, with `lotSiz
 - **A risk-manager lot cut is now visible:** `[SCALP-RISK-ADJUSTED] XAUUSD | lot 0.05 -> 0.03 | reason=...`. Adoption is shrink-only — the pipeline can round a reduction up to the broker minimum, and that is no longer taken.
 - **Compounding tiers can no longer size above the envelope.** A tier wrote its raw risk percent straight into the position sizer, which does not clamp, while the envelope clamp applies only on the risk-manager path: the per-trade cap check then refused the entries, so a tier could look applied and trade nothing. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamped value when it binds.
 - **`[RISK-ENVELOPE]` no longer skips a warning-only clamp,** and the line gained `ddWarn A->B`.
-- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1304`), and the CVaR gate is fed by the equity-curve buffer (`:655`). Neither was "fixed".
+- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1320`), and the CVaR gate is fed by the equity-curve buffer (`:663`). Neither was "fixed".
 
 ### Batch 193: five things that were stopping valid trades, and one strategy that could never start
 
@@ -631,6 +631,45 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 240: margin was checked on a lot the trade never shipped, and the margin ladder had no driver at all
+
+Two findings on the same subject - whether the account can actually afford what it sends.
+
+**The margin gate priced a lot that was not the lot it approved.** `ValidateTradeRequest` runs its free-margin and
+margin-level checks on `request.lotSize`, and *after* that the lot floor can raise the size to the broker minimum
+(`[RISK-LOT-FLOOR] ... Adjusted 0.004 -> 0.010`). The trade then ships the raised lot, which had never been priced for
+margin. The gate now re-checks on the lot the candidate actually ships and refuses with
+`[RISK-GATE-REJECT] <symbol> | reason=lot_floor_margin | lot=A -> B`, so a round-up cannot pass on margin it never used.
+This matters most on a small account, where the broker minimum is the lot most often raised.
+
+**The margin-level ladder had no driver.** `CRiskMarginHealth` measures account margin level and is written to react:
+under 150% flatten everything, under 200% cut the worst position and hold entries, under 300% de-risk. Its only entry
+point, `CUnifiedRiskManager::MonitorMarginHealth()`, had no caller anywhere - so no `[RISK-MARGIN]` line has ever been
+in a journal, and none of that protection has ever run while the EA held positions. It is now polled every 30 seconds
+from the runtime-state refresh the timer already drives, and it says so at startup:
+`[RISK-MARGIN] monitor armed | poll_ms=30000 | hold_entries_below=200% | request_flatten_below=150% | free_margin_use_limit=80% | min_post_trade_level=200%`.
+
+Wiring it meant fixing what it does, not just calling it. The old code closed positions itself, from inside a risk
+class - a second flatten authority beside `CRiskCircuitBreaker`, which is exactly the shape Batch 237 removed from the
+spike monitor. It now *requests*: below 150% it raises the breaker's emergency-close flag and the existing
+orchestrator path does the closing, which keeps the single owner of execution. It also used to set the shared
+conservative-mode flag, and that one is a trap: `CRiskAdaptiveTuner` only clears the flag when it was not already set,
+so a margin write would have latched the account into conservative sizing permanently - one temporary 250% reading and
+every trade is half size until a drawdown recovery happens to clear it. The margin ladder no longer touches sizing;
+below 200% it holds new entries through a flag the same poll releases.
+
+What you will see if the account gets leveraged: `[RISK-MARGIN] CRITICAL | Margin Level=178.4% < 200% | entries held(open positions untouched)`,
+then `[RISK-MARGIN] entries released | ...`, and if it goes under 150%, `[RISK-MARGIN] EMERGENCY | ... flatten requested(circuit breaker owns closing)`
+followed by the ordinary close-out receipts. Entries refused by the hold print `[RISK-MARGIN] <symbol> | entry refused | marginLevel=...`.
+
+Also removed by the sweep in the same files: seven `Validate...` forwarders on `CUnifiedRiskManager`
+(`ValidateBasicParameters`, `ValidateRiskLimits`, `ValidatePortfolioRisk`, `ValidateCorrelationLimits`,
+`ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
+every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
+four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
+initialized at `EAOrchestrator.mqh:1007`, keeps its own config and de-risks nothing, because none of its methods is
+called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
 
