@@ -91,10 +91,10 @@ public:
             static datetime lastCooldownLog = 0;
             if(now - lastCooldownLog > 60)
             {
-                PrintFormat("[LOSS-MIN] In consecutive loss cooldown | cooldown until %s", TimeToString(m_consecutiveLossCooldownUntil));
+                PrintFormat("[LOSS-MIN] In consecutive loss cooldown | cooldown until %s | action=guard-exits-skipped", TimeToString(m_consecutiveLossCooldownUntil));
                 lastCooldownLog = now;
             }
-            return;  // Skip trading during cooldown
+            return;  // This path's exits only; entries are gated elsewhere
         }
 
         if(m_dailyLossCircuitBreakerPercent > 0 && m_dailyRiskBudgetPercent > 0)
@@ -110,7 +110,7 @@ public:
                 static datetime lastCircuitLog = 0;
                 if(now - lastCircuitLog > 60)
                 {
-                    PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered | loss=%.2f limit=%.2f (budget %.2f%% of %.2f x %.0f%%) | stopping trading",
+                    PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered | guardLoss=%.2f limit=%.2f (budget %.2f%% of %.2f x %.0f%%) | action=guard-exits-skipped-for-day(entries are gated by CRiskCircuitBreaker and the risk pipeline, not here)",
                                 m_dailyLossAmount, dailyLossLimit, m_dailyRiskBudgetPercent,
                                 denominator, m_dailyLossCircuitBreakerPercent);
                     lastCircuitLog = now;

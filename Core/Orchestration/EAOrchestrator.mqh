@@ -1001,6 +1001,19 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
     m_config.maxHoldHoursIntraday,
     m_config.maxHoldHoursSwing,
     m_config.maxHoldOnlyIfLoss);
+    m_lifecycleManager.ConfigureLossMinimization(m_config.lossGuardAdverseMomentumExit,
+    m_config.lossGuardAdverseMomentumATRMultiplier,
+    m_config.lossGuardConsecutiveLossLimit,
+    m_config.lossGuardConsecutiveLossCooldownSec,
+    m_config.lossGuardDailyLossCircuitBreakerPercent,
+    m_config.lossGuardPositionLossLimitPercent);
+    PrintFormat("[LOSS-GUARD] adverseMomentum=%s atrMult=%.2f | consecutiveLossLimit=%d cooldown=%ds | dailyBreaker=%.0f%% of the %.2f%% budget | positionLossLimit=%.0f%% of own SL | armed=%s",
+                m_config.lossGuardAdverseMomentumExit ? "on" : "off",
+                m_config.lossGuardAdverseMomentumATRMultiplier,
+                m_config.lossGuardConsecutiveLossLimit, m_config.lossGuardConsecutiveLossCooldownSec,
+                m_config.lossGuardDailyLossCircuitBreakerPercent, m_config.maxDailyRisk,
+                m_config.lossGuardPositionLossLimitPercent,
+                (m_config.lossGuardAdverseMomentumExit || m_config.lossGuardConsecutiveLossLimit > 0) ? "yes" : "no");
     // The loss guard's daily-loss circuit breaker compares realised losses against
     // maxDailyRisk x its own trigger percent; without this writer it could never arm.
     m_lifecycleManager.SetDailyRiskBudgetPercent(m_config.maxDailyRisk);

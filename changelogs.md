@@ -8,6 +8,52 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-20
 
+### Batch 244: the loss guard has been closing positions on its constructor's numbers, and now the dialog owns them
+
+`[LOSS-MIN] Position loss limit exit` has been a live line since the first build, and nothing in the program could set the
+threshold behind it. `CPositionLifecycleManager::ManagePositions()` gates the guard on
+`m_lossGuard.IsAdverseMomentumExitEnabled() || m_lossGuard.GetConsecutiveLossLimit() > 0`; the left term has no writer, the
+right term comes from `CPosLifecycleLossGuard()`'s `m_consecutiveLossLimit(3)` (`PosLifecycleLossGuard.mqh:40`), so the guard
+ran every lifecycle pass while `ConfigureLossMinimization` (`PositionLifecycleManager.mqh:163`) had zero callers and no input
+in either root EA named any of it. What that did with money, on numbers nobody chose: any lifecycle-managed position whose
+price moved **75% of its own SL distance** against it while in loss was closed early; three such closes set
+`m_consecutiveLossCooldownSec = 1800` and paused the whole guard; the daily breaker was armed because
+`EAOrchestrator.mqh:1019` already feeds `SetDailyRiskBudgetPercent(m_config.maxDailyRisk)`, so 50% of the daily budget in
+guard-realized losses stopped this path for the day. `m_adverseMomentumATRMultiplier = 0.5` sat behind a flag that could not
+turn on, so `[LOSS-MIN] Adverse momentum exit` remained unprintable.
+
+**What ships.** Six inputs in both root EAs -> six `SOrchestratorConfig` fields -> `ConfigureLossMinimization` called at init,
+and `[LOSS-GUARD] adverseMomentum= | atrMult= | consecutiveLossLimit= | cooldown=s | dailyBreaker=% of the % budget |
+positionLossLimit=% of own SL | armed=yes|no` printed once beside the existing `[INIT] ... dailyRiskBudget=` line. The six
+defaults ARE the constructor's values (`false / 0.5 / 3 / 1800 / 50.0 / 75.0`), so a normal start closes exactly what it
+closed before - what changed is that the numbers are answerable to the operator, that `armed=no` is reachable for the first
+time (`limit 0` with the flag off puts the path to sleep), and that the init journal states the guard's real settings instead
+of leaving them implicit in a class constructor. No threshold was retuned: 75/3/1800/50/0.5 stay, because moving a live exit
+is a trading decision, and Batch 243's rule is that a limit may become settable without becoming different.
+
+**The two messages that claimed more than the code did.** `[LOSS-MIN] Daily loss circuit breaker triggered ... | stopping
+trading` follows a plain `return` from `ManageLossMinimization`, and entries are gated by `CRiskCircuitBreaker` and the risk
+pipeline, not here - the line now reads `| action=guard-exits-skipped-for-day(entries are gated by CRiskCircuitBreaker and
+the risk pipeline, not here)`. The cooldown line gained `| action=guard-exits-skipped`, and the comment above the `return`
+said "Skip trading during cooldown", naming an action this path does not take. `m_dailyLossAmount` grows only inside the two
+exit branches, so the "daily loss" this breaker measures is the guard's own closes; the message field is now `guardLoss=`
+for exactly that reason.
+
+**Left off deliberately, with the reason.** Pyramiding, volatility-scaled SL/TP and partial profit taking keep their
+constructor `false` and their uncalled setters. Giving them inputs would add position layers, moved stops and partial closes
+that no operator has asked for, which is a feature launch rather than a wiring fix; the gate expression, the setter line and
+the fact that they are off are now written down in `SYSTEM_STRUCTURE.md` §4 and `README.md`, so nobody has to re-derive it.
+The never-called exit half of `CPositionManager` and the satellites only it holds stay queued too.
+
+62 added / 3 deleted across five files (`Core/Orchestration/OrchestratorConfig.mqh`, `Core/Orchestration/EAOrchestrator.mqh`,
+`Core/Management/PosLifecycleLossGuard.mqh`, `MultiStrategyAutonomousEA.mq5`, `MultiStrategyTestingEA.mq5`).
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped, eight programs each with its own
+`Result:` line, 0 errors / 0 warnings (8.4 / 3.9 / 7.4 / 7.3 / 110.7 / 113.9 / 37.3 / 3.2 s), harness exit 0, all eight `.ex5` newer than the sources. Not runtime-observed: newest
+journal 2026-09-23, so `[LOSS-GUARD]` has not been seen in a journal yet; on the first live start it must appear, and its
+`armed=` field is the answer to whether this path is running.
+
+
 ### Batch 243: two collaborators `CPositionManager` was handed but never consulted, and three getters no caller could reach
 
 `CPositionManager` stored a `CFullMarginMode*` and a `CIntelligentSLGuard*` (`PositionManager.mqh:38/39`), initialised both

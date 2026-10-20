@@ -242,6 +242,15 @@ struct SOrchestratorConfig
     int     maxHoldHoursSwing;
     bool    maxHoldOnlyIfLoss;
 
+    // The loss guard has run on its constructor numbers since the first build: ConfigureLossMinimization
+    // had no caller. These defaults are those same numbers, so binding them changes nothing until asked.
+    bool    lossGuardAdverseMomentumExit;
+    double  lossGuardAdverseMomentumATRMultiplier;
+    int     lossGuardConsecutiveLossLimit;
+    int     lossGuardConsecutiveLossCooldownSec;
+    double  lossGuardDailyLossCircuitBreakerPercent;
+    double  lossGuardPositionLossLimitPercent;
+
     bool    emergencyFlattenAllAccountPositions;
     int     unprotectedRemediationIntervalSec;
     int     unprotectedMaxRestoreAttempts;
@@ -547,6 +556,13 @@ struct SOrchestratorConfig
         maxHoldHoursIntraday = 24;
         maxHoldHoursSwing = 120;
         maxHoldOnlyIfLoss = true;
+
+        lossGuardAdverseMomentumExit = false;
+        lossGuardAdverseMomentumATRMultiplier = 0.5;
+        lossGuardConsecutiveLossLimit = 3;
+        lossGuardConsecutiveLossCooldownSec = 1800;
+        lossGuardDailyLossCircuitBreakerPercent = 50.0;
+        lossGuardPositionLossLimitPercent = 75.0;
 
         // Opt-in only: true flattens EVERY position on the account, manual trades and other EAs'
         // included. Default is EA-scoped; set true only on a single-strategy account you control.

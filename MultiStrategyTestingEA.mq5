@@ -311,6 +311,14 @@ input int      InpMaxHoldHoursIntraday = 24;
 input int      InpMaxHoldHoursSwing = 120;
 input bool     InpMaxHoldOnlyIfLoss = true;
 
+input group "=== LOSS GUARD (unconfigurable until Batch 244) ==="
+input bool     InpLossGuardAdverseMomentumExit = false;          // off is what every build has done: the flag had no writer
+input double   InpLossGuardAdverseMomentumATR = 0.5;             // close when price moves this x ATR(14) against the entry
+input int      InpLossGuardConsecutiveLossLimit = 3;             // >0 also ARMS the whole guard: 0 and the flag off = path dormant
+input int      InpLossGuardConsecutiveLossCooldownSec = 1800;    // pause on the guard after that many guard-realized losses
+input double   InpLossGuardDailyLossCircuitBreakerPct = 50.0;    // of InpMaxDailyRisk, counted from guard closes only
+input double   InpLossGuardPositionLossLimitPct = 75.0;          // close at this fraction of the position's own SL distance
+
 input group "=== EMERGENCY PROTOCOLS ==="
 input bool     InpEmergencyFlattenAllAccountPositions = false; // Batch 168: opt-in account-wide flatten
 input int      InpUnprotectedRemediationIntervalSec = 15;
@@ -1230,6 +1238,13 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.maxHoldHoursIntraday = InpMaxHoldHoursIntraday;
     config.maxHoldHoursSwing = InpMaxHoldHoursSwing;
     config.maxHoldOnlyIfLoss = InpMaxHoldOnlyIfLoss;
+
+    config.lossGuardAdverseMomentumExit = InpLossGuardAdverseMomentumExit;
+    config.lossGuardAdverseMomentumATRMultiplier = InpLossGuardAdverseMomentumATR;
+    config.lossGuardConsecutiveLossLimit = InpLossGuardConsecutiveLossLimit;
+    config.lossGuardConsecutiveLossCooldownSec = InpLossGuardConsecutiveLossCooldownSec;
+    config.lossGuardDailyLossCircuitBreakerPercent = InpLossGuardDailyLossCircuitBreakerPct;
+    config.lossGuardPositionLossLimitPercent = InpLossGuardPositionLossLimitPct;
 
     config.emergencyFlattenAllAccountPositions = InpEmergencyFlattenAllAccountPositions;
     config.unprotectedRemediationIntervalSec = InpUnprotectedRemediationIntervalSec;
