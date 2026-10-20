@@ -8,6 +8,51 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-20
 
+### Batch 245: `CPositionManager` stops claiming to be the exit authority, and 229 lines of it go
+
+Batch 243 proved by caller chain that this class's exit surface had no caller; this batch deletes it. Seventeen methods went:
+`ManagePositions`, `CheckSignalReversalExit`, `ManageBreakevenAndTrailing`, `ManagePyramiding`, `ManageDynamicSLTP`,
+`ManageLossMinimization`, `ManagePartialProfitTaking`, the six `Configure*` (SRE, Lifecycle, Pyramiding, DynamicSL,
+LossMinimization, PartialProfitTaking), `SetDailyRiskBudget`, the `IsEAOwnedMagic` forwarder and the `SafeDelete` template
+helper. Every one of those names exists on `CPositionLifecycleManager` too, which is why a name-level grep says "live": the
+only calls on *this owner* are `RegisterPositionState` (`TradeExecutor.mqh:312`), `RecordClosedTrade`
+(`EAOrchestrator.mqh`), `GetStatusReport` (`OrchestratorStatusReporter.mqh:119`), `GetPositionStateCount`
+(`TradeAttributionManager.mqh:606`) and the nine prediction-map accessors (`:276-324`). Those are what the class is now.
+
+**`Initialize` went with them, because keeping it would have re-created the defect this file just reported.** Once the exit
+methods were gone, `m_tradeManager`, `m_regimeEngine`, `m_riskTierManager`, `m_safeMode` and `m_magicNumber` were written by
+`Initialize` and read by nothing - Batch 243's write-only-collaborator shape again, this time produced by my own deletion. So
+the parameters went too, the constructor collapsed to `m_enabled(true)`, and the fourteen config fields (`m_breakevenBufferPts`,
+`m_trailingDistancePts`, `m_trailingStepPoints`, `m_useATRTrailing`, `m_atrMultiplier`, `m_lastManageTimeMs`,
+`m_partialProfitTakingEnabled`, `m_partialProfitATRMultiplier`, `m_partialProfitPercent` and the four pointers plus
+`m_magicNumber`) left with their readers. `m_enabled` stays on purpose: `GetStatusReport` prints it, and the comment now says
+the one setter that could write it (`ConfigureLifecycle`) never had a caller, so it has read `true` for the whole life of the
+class. `[INIT] PositionManager initialized` became `[INIT] PositionManager registry ready | position-state + prediction maps,
+no exit authority`, and `[CRITICAL] PositionManager initialization FAILED` has no printer now: nothing cited it, and its
+branch was unreachable because the call passed `&m_tradeManager` and `&m_riskTierManager` - both never `NULL`.
+
+**The trap that nearly cost a live file.** `PositionMgrMagicFilter.mqh` looked like residue of the deleted magic-number
+forwarder, but `BasketEquityStop.mqh:103` calls `CPositionMgrMagicFilter::IsEAOwnedMagic` on a live path, so that file stays.
+The four satellites `GetStatusReport` still reads (`CPositionMgrSRE/Pyramid/DynamicSL/LossGuard`) are held back for the same
+reason in reverse: deleting them means rewriting a report an operator can see, and five of its nine fields are constants
+today (`Pyramid=N | DynamicSL=N | LossMin=N | SRE=N | PyramidStates=0 | VolRegimes=0` - their writers were in the block this
+batch deleted). That is the next step, with the report change stated when it happens.
+
+The file's own header said "SINGLE AUTHORITY for all position lifecycle management / Replaces:
+TradeManager::ManageAllPositions + PositionLifecycleManager ... The public API of CPositionManager is UNCHANGED". All three
+clauses were false before this batch and the third became false in 2022's decomposition; it now names what the class
+actually holds.
+
+13 added / 237 deleted across two files (`Core/Position/PositionManager.mqh` 405 -> 186 lines,
+`Core/Orchestration/EAOrchestrator.mqh`).
+
+Verification: the first run came back **6 errors** - one line of my replacement comment lost its `//` prefix and MQL5 parsed
+prose as code (`error 154: 'the' - semicolon expected`), which is what the eight-program harness is for; fixed and re-run.
+`sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped, eight programs each with its own `Result:` line,
+0 errors / 0 warnings (18.5 / 5.6 / 9.9 / 18.1 / 247.7 / 154.5 / 57.3 / 3.8 s), harness exit 0, all eight `.ex5` newer than the sources. Not runtime-observed: newest journal
+2026-09-23.
+
+
 ### Batch 244: the loss guard has been closing positions on its constructor's numbers, and now the dialog owns them
 
 `[LOSS-MIN] Position loss limit exit` has been a live line since the first build, and nothing in the program could set the

@@ -1,9 +1,8 @@
-// SINGLE AUTHORITY for all position lifecycle management
-// Replaces: TradeManager::ManageAllPositions + PositionLifecycleManager
-// Phase I decomposition: cohesive clusters were extracted into
-// sibling PositionMgr*.mqh modules. The public API of
-// CPositionManager is UNCHANGED - every former method survives as
-// a thin forwarder with its original signature.
+// Position-state and prediction-map registry for the positions this EA owns.
+// It is not an exit authority and has not been one since the batch that deleted its Manage*/Configure*/
+// Initialize surface: no caller reached any of it, and CPositionLifecycleManager is the live exit path
+// (EAOrchestrator::ManageOpenPositions). What survives is what TradeExecutor and TradeAttributionManager
+// actually call: RegisterPositionState, the SPositionState registry and the prediction-id/position maps.
 #property strict
 
 #ifndef CORE_POSITION_POSITION_MANAGER_MQH
@@ -30,25 +29,10 @@
 class CPositionManager
 {
 private:
-    CTradeManager*          m_tradeManager;
-    CRegimeEngine*          m_regimeEngine;
-    CRiskTierManager*       m_riskTierManager;
-    CSafeMode*              m_safeMode;
-    
-    // Configuration
+    // The four collaborator pointers and the trailing/pyramiding/partial-profit config were read only by the
+    // exit methods that had no caller. m_enabled stays because GetStatusReport prints it - and no caller ever
+    // reached the one setter that wrote it, so it has been true for the whole life of this class.
     bool                    m_enabled;
-    double                  m_breakevenBufferPts;
-    double                  m_trailingDistancePts;
-    int                     m_trailingStepPoints;
-    bool                    m_useATRTrailing;
-    double                  m_atrMultiplier;
-    int                     m_magicNumber;
-    uint                    m_lastManageTimeMs;
-    
-    // Partial profit taking config
-    bool                    m_partialProfitTakingEnabled;
-    double                  m_partialProfitATRMultiplier;
-    double                  m_partialProfitPercent;
     
     //--- Extracted submodules (owned BY VALUE, zero-initialised by their ctors)
     CPositionMgrStateStore  m_stateStore;   // SPositionState registry
@@ -57,120 +41,6 @@ private:
     CPositionMgrDynamicSL   m_dynamicSL;    // volatility regimes + dynamic SL/TP
     CPositionMgrLossGuard   m_lossGuard;    // loss minimization + daily budget
 
-    // Safe delete helper
-    template<typename T>
-    void SafeDelete(T* &ptr)
-    {
-        if(CheckPointer(ptr) == POINTER_DYNAMIC)
-        {
-            delete ptr;
-            ptr = NULL;
-        }
-    }
-    
-    // --- SRE: Signal Reversal Exit (forwarder -> CPositionMgrSRE) ---
-    bool CheckSignalReversalExit()
-    {
-        return m_sre.CheckSignalReversalExit(m_tradeManager, m_magicNumber);
-    }
-    
-    void ManageBreakevenAndTrailing()
-    {
-        if(!m_enabled) return;
-        
-        uint nowMs = GetTickCount();
-        if(m_lastManageTimeMs != 0 && (nowMs - m_lastManageTimeMs) < 500)
-            return;
-        
-        // Check regime - pause trailing in ranging markets
-        bool pauseTrailing = false;
-        if(m_regimeEngine != NULL)
-        {
-            SRegimeSnapshot snap = m_regimeEngine.GetSnapshot();
-            if(snap.state == REGIME_RANGE)
-                pauseTrailing = true;
-        }
-        
-        if(pauseTrailing)
-        {
-            // Only breakeven in ranging markets
-            for(int i = PositionsTotal() - 1; i >= 0; i--)
-            {
-                ulong ticket = PositionGetTicket(i);
-                if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-                if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
-                
-                double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-                double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-                double currentSL = PositionGetDouble(POSITION_SL);
-                ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-                double point = SymbolInfoDouble(PositionGetString(POSITION_SYMBOL), SYMBOL_POINT);
-                if(point <= 0) point = 0.00001;
-                
-                bool isBuy = (type == POSITION_TYPE_BUY);
-                double buffer = m_breakevenBufferPts * point;
-                
-                if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
-                {
-                    double newSL = NormalizeDouble(openPrice + buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
-                    if(newSL > currentSL)
-                        m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
-                }
-                else if(!isBuy && currentPrice <= openPrice - buffer && (currentSL > openPrice || currentSL == 0))
-                {
-                    double newSL = NormalizeDouble(openPrice - buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
-                    if(newSL < currentSL || currentSL == 0)
-                        m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
-                }
-            }
-        }
-        else
-        {
-            // Full management via TradeManager
-            m_tradeManager.ManageAllPositions(m_breakevenBufferPts, m_trailingDistancePts, m_trailingStepPoints, m_useATRTrailing, m_atrMultiplier);
-        }
-        
-        // Safe mode partial profit taking
-        if(m_riskTierManager != NULL && m_riskTierManager.GetCurrentTier() == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
-        {
-            m_safeMode.ManageSafeModePositions(m_tradeManager);
-        }
-        
-        m_lastManageTimeMs = nowMs;
-    }
-    
-    // --- Pyramiding (forwarder -> CPositionMgrPyramid) ---
-    void ManagePyramiding()
-    {
-        m_pyramid.ManagePyramiding(m_tradeManager, m_magicNumber);
-    }
-    
-    // --- Dynamic SL/TP (forwarder -> CPositionMgrDynamicSL) ---
-    void ManageDynamicSLTP()
-    {
-        m_dynamicSL.ManageDynamicSLTP(m_tradeManager, m_magicNumber);
-    }
-    
-    // --- Loss Minimization (forwarder -> CPositionMgrLossGuard) ---
-    void ManageLossMinimization()
-    {
-        m_lossGuard.ManageLossMinimization(m_tradeManager, m_magicNumber);
-    }
-    
-    void ManagePartialProfitTaking()
-    {
-        if(!m_partialProfitTakingEnabled) return;
-        
-        // Implementation would check if position has moved X ATR in favor
-        // and close partial percentage
-    }
-    
-    // --- Magic number check (forwarder -> CPositionMgrMagicFilter) ---
-    bool IsEAOwnedMagic(long magic) const
-    {
-        return CPositionMgrMagicFilter::IsEAOwnedMagic(magic);
-    }
-    
     // --- Position State Tracking (forwarders -> CPositionMgrStateStore) ---
     int FindPositionStateIndex(const ulong positionId)
     {
@@ -232,14 +102,7 @@ public:
     // IsPositionStateInitialized / PrintPositionStateDebugInfo /
     // ClearAllPositionStateMaps were removed - zero callers repo-wide.
 
-    CPositionManager() :
-        m_tradeManager(NULL), m_regimeEngine(NULL), m_riskTierManager(NULL),
-        m_safeMode(NULL),
-        m_enabled(true), m_breakevenBufferPts(120.0), m_trailingDistancePts(300.0),
-        m_trailingStepPoints(5), m_useATRTrailing(false), m_atrMultiplier(1.5),
-        m_magicNumber(0), m_lastManageTimeMs(0),
-        m_partialProfitTakingEnabled(false), m_partialProfitATRMultiplier(1.0),
-        m_partialProfitPercent(25.0)
+    CPositionManager() : m_enabled(true)
     {
         // Submodule state (pyramid ledger, volatility regimes, position states,
         // SRE config, loss tracking) is zero-initialised by each submodule ctor.
@@ -250,89 +113,7 @@ public:
         // Arrays auto-cleanup
     }
     
-    // Initialize with dependencies
-    bool Initialize(CTradeManager* tm, CRegimeEngine* regime, CRiskTierManager* rtm,
-                    CSafeMode* safe, int magicNumber)
-    {
-        if(tm == NULL || rtm == NULL)
-            return false;
-        
-        m_tradeManager = tm;
-        m_regimeEngine = regime;
-        m_riskTierManager = rtm;
-        m_safeMode = safe;
-        m_magicNumber = magicNumber;
-        
-        return true;
-    }
-    
-    // Configuration setters
-    void ConfigureSRE(bool enabled, double minConf, bool profitGuard, double minLossR, double maxLossR, int minTimeSec, bool structuralInv)
-    {
-        m_sre.Configure(enabled, minConf, profitGuard, minLossR, maxLossR, minTimeSec, structuralInv);
-    }
-    
-    void ConfigureLifecycle(bool enabled, double beBuffer, double trailDist, int trailStep, bool useATR, double atrMult)
-    {
-        m_enabled = enabled; m_breakevenBufferPts = beBuffer; m_trailingDistancePts = trailDist;
-        m_trailingStepPoints = trailStep; m_useATRTrailing = useATR; m_atrMultiplier = atrMult;
-    }
-    
-    void ConfigurePyramiding(bool enabled, double stepPips, double sizeMult, int maxLayers)
-    {
-        m_pyramid.Configure(enabled, stepPips, sizeMult, maxLayers);
-    }
-    
-    void ConfigureDynamicSL(bool enabled, double slMult, double tpMult, bool volAdjust)
-    {
-        m_dynamicSL.Configure(enabled, slMult, tpMult, volAdjust);
-    }
-    
-    void ConfigureLossMinimization(bool adverseExit, double adverseMult, int consecLimit, int consecCooldown, double dailyCB, double posLimit)
-    {
-        m_lossGuard.Configure(adverseExit, adverseMult, consecLimit, consecCooldown, dailyCB, posLimit);
-    }
-    
-    void ConfigurePartialProfitTaking(bool enabled, double atrMult, double percent)
-    {
-        m_partialProfitTakingEnabled = enabled; m_partialProfitATRMultiplier = atrMult; m_partialProfitPercent = percent;
-    }
-    
-    void SetDailyRiskBudget(double budget)
-    {
-        m_lossGuard.SetDailyRiskBudget(budget);
-    }
-    
-    // Main entry point - call from OnTick or OnTimer
-    void ManagePositions()
-    {
-        if(!m_enabled || PositionsTotal() <= 0)
-            return;
-        
-        // Reset daily loss tracking on new day
-        datetime now = TimeCurrent();
-        m_lossGuard.ResetDailyIfNeeded(now);
-        
-        CheckSignalReversalExit();
-        ManageBreakevenAndTrailing();
-        
-        if(m_pyramid.IsEnabled())
-            ManagePyramiding();
-        
-        if(m_dynamicSL.IsEnabled())
-            ManageDynamicSLTP();
-        
-        if(m_lossGuard.ShouldRunLossMinimization())
-            ManageLossMinimization();
-        
-        if(m_partialProfitTakingEnabled)
-            ManagePartialProfitTaking();
-        
-        // Update daily loss tracking
-        double dailyPnL = 0;
-        // Would calculate from closed positions
-    }
-    
+
     // Record closed trade for loss tracking
     void RecordClosedTrade(double profit)
     {

@@ -1501,14 +1501,9 @@ bool InitializeComponents()
     PrintFormat("[ENTRY-BOUNDS] maxSendsPerCycle=%d | maxPositionsTotal=%d (positions at cycle start + sends this cycle) | minSecondsBetweenTrades=%d (measured once per cycle)",
                 MathMax(1, m_config.maxTradeSendsPerCycle), m_config.maxPositionsTotal, m_config.minSecondsBetweenTrades);
 
-    if(!m_positionManager.Initialize(&m_tradeManager, NULL, &m_riskTierManager,
-    &m_safeMode,
-    (int)m_config.magicNumber))
-    {
-        Print("[CRITICAL] PositionManager initialization FAILED");
-        return false;
-    }
-    Print("[INIT] PositionManager initialized");
+    // No dependencies left to hand over: Initialize took a trade manager, a regime engine, a tier manager,
+    // a safe-mode pointer and the magic number, and nothing that received them was ever read.
+    Print("[INIT] PositionManager registry ready | position-state + prediction maps, no exit authority");
 
     m_signalDiagnostics = new CSignalDiagnostics();
     if(m_signalDiagnostics != NULL)
