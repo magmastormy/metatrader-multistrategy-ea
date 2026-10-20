@@ -38,6 +38,7 @@ struct SUnifiedRiskConfig
     double drawdownCriticalPercent;
     double dailyLossLimitPercent;
     double minLotRiskMultiplier;        // Max risk multiplier when rounding up to broker min lot (e.g., 2.0 = 2x)
+    bool allowMinLotRoundUp;            // InpAllowMinLotRoundUp: when false a sub-minimum lot is refused, never widened
     int adaptationMinTrades;
     bool enableAdaptiveSizing;
     bool enableAuditLogging;
@@ -509,13 +510,29 @@ public:
     result.severity = ERROR_LEVEL_INFO;
 
     // Lot floor: a sub-SYMBOL_VOLUME_MIN lot is clamped UP to the minimum (CPositionSizer::NormalizeVolume behaviour, not
-    // CTradeMgrPricing's 0.0-and-refuse), riskPercent scaled by that ratio, and only while the ratio <= minLotRiskMultiplier.
+    // CTradeMgrPricing's 0.0-and-refuse), riskPercent scaled by that ratio, and only while the ratio <= minLotRiskMultiplier
+    // and the operator has allowed the round-up at all.
     double brokerMinLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MIN);
     if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
     if(result.adjustedLotSize > 0.0 && result.adjustedLotSize < brokerMinLot)
     {
         double riskRatio = brokerMinLot / result.adjustedLotSize;
-        if(riskRatio <= m_config.minLotRiskMultiplier)
+        if(!m_config.allowMinLotRoundUp)
+        {
+            result.approved = false;
+            result.message = StringFormat("Lot %.3f below broker minimum %.3f and InpAllowMinLotRoundUp is false.",
+                                          result.adjustedLotSize, brokerMinLot);
+            result.severity = ERROR_LEVEL_WARNING;
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_below_min_roundup_disabled | lot=%.3f | min_lot=%.3f | uplift=%.1fx | phase=%s",
+                        request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, phaseTag);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "LOT_BELOW_MIN_ROUNDUP_DISABLED",
+                StringFormat("Lot %.3f < min %.3f, round-up refused by the operator", result.adjustedLotSize, brokerMinLot),
+                riskRatio, brokerMinLot, corrId);
+            CJsonLogger::ClearCorrelationId();
+            if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
+            return result;
+        }
+        else if(riskRatio <= m_config.minLotRiskMultiplier)
         {
             PrintFormat("[RISK-LOT-FLOOR] %s | Adjusted %.3f -> %.3f (broker min, risk %.1fx <= %.1fx cap)",
                         request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier);

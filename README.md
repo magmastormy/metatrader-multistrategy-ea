@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:466` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:696`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:891-892` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:892-893` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3571`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3567`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -369,7 +369,7 @@ The pre-trade gate used to be called before the position was sized, with `lotSiz
 - **A risk-manager lot cut is now visible:** `[SCALP-RISK-ADJUSTED] XAUUSD | lot 0.05 -> 0.03 | reason=...`. Adoption is shrink-only — the pipeline can round a reduction up to the broker minimum, and that is no longer taken.
 - **Compounding tiers can no longer size above the envelope.** A tier wrote its raw risk percent straight into the position sizer, which does not clamp, while the envelope clamp applies only on the risk-manager path: the per-trade cap check then refused the entries, so a tier could look applied and trade nothing. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamped value when it binds.
 - **`[RISK-ENVELOPE]` no longer skips a warning-only clamp,** and the line gained `ddWarn A->B`.
-- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1320`), and the CVaR gate is fed by the equity-curve buffer (`:663`). Neither was "fixed".
+- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1337`), and the CVaR gate is fed by the equity-curve buffer (`:680`). Neither was "fixed".
 
 ### Batch 193: five things that were stopping valid trades, and one strategy that could never start
 
@@ -498,7 +498,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1624` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1625` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -632,6 +632,41 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 241: rounding a lot up to the broker minimum could cost fifteen times the risk you configured
+
+**The problem.** When the sized lot falls under `SYMBOL_VOLUME_MIN`, the EA can round it up - and that round-up
+multiplies the risk the gate just approved, because sizing happens after the gate. To keep that bounded there is a hard
+ceiling, `MAX_MIN_LOT_RISK_MULTIPLIER = 3.0`: a lot that needs more than a 3x uplift is refused instead of traded. The
+clamp only ever guarded one of the three places that touch a lot - the position sizer. The **risk gate** and the
+**candidate builder** each read the operator's own number, and the shipped default of `InpMinLotRiskMultiplier` was
+**15.0**. So on the path that decides the money, one position could be widened to fifteen times its approved risk: at
+`InpMaxRiskPerTrade = 1.0`, a single trade could risk 15% of the account. The sizer refused the same lot at 5x.
+
+**What changed.** One ceiling, read by all three consumers, defined next to the other hard risk limits in
+`Core/Utils/Enums.mqh`. The effective value is clamped to `[1.0, 3.0]` before it reaches the risk gate, the sizer or the
+builder, and if your input asks for more, startup says so:
+`[RISK-ROUNDUP-CEILING] asked=15.0x | enforced=3.0x | ceiling=MAX_MIN_LOT_RISK_MULTIPLIER`. `InpMinLotRiskMultiplier`
+now defaults to `3.0` (a larger ask can no longer be honoured, so the dialog should not suggest one), and
+`Config/live_overrides.json` is corrected to match.
+
+**Two more controls that did not do what they said.**
+- `InpAllowMinLotRoundUp = false` was obeyed by the sizer and ignored by the gate, which widened the lot anyway. The gate
+  now refuses with `[RISK-GATE-REJECT] <symbol> | reason=lot_below_min_roundup_disabled`.
+- `UpdateRiskParametersFromInputs` took nine risk parameters and applied eight. Your per-trade risk appeared only in its
+  `[RISK-INPUT-UPDATE]` line: neither the gate's base risk nor the sizer's risk percent was updated. It now re-runs the
+  same sequence initialization uses (operator base risk, then the tier, then the sizer), and the line reports
+  `roundupCap=X enforced`.
+- `CCandidateBuilder` was configured with a literal `5.0` for max risk per trade while the dialog shipped `1.0`, and that
+  field is the fallback whenever a signal asks for no risk - so a quiet request was sized at five times your ceiling.
+
+If you run a small account where the broker minimum binds, expect a new refusal where the EA used to trade an oversized
+position: `[RISK-LOT-FLOOR] ... REJECTED: ... risk 8.0x > 3.0x cap`. Widen the stop so the sized lot needs less uplift.
+Raising the ceiling is a deliberate source edit, not a forgotten one - `MAX_MIN_LOT_RISK_MULTIPLIER` in
+`Core/Utils/Enums.mqh` is the one number all three consumers now read, and `[RISK-ROUNDUP-CEILING]` says what is in force.
+Note that this reverses a 2026-08-06 decision ("keep risk up to 15x, not 1x", Batch 142), which a later audit batch
+overturned for the sizer and never reconciled with the gate: fifteen times the approved risk on one position is the
+exposure this repository was audited to remove.
+
 ### Batch 240: margin was checked on a lot the trade never shipped, and the margin ladder had no driver at all
 
 Two findings on the same subject - whether the account can actually afford what it sends.
@@ -668,7 +703,7 @@ Also removed by the sweep in the same files: seven `Validate...` forwarders on `
 `ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
 every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
 four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
-initialized at `EAOrchestrator.mqh:1007`, keeps its own config and de-risks nothing, because none of its methods is
+initialized at `EAOrchestrator.mqh:1008`, keeps its own config and de-risks nothing, because none of its methods is
 called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
@@ -777,7 +812,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3571`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3567`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

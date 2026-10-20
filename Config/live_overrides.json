@@ -6,7 +6,7 @@
     "maxDrawdown": 15.0,
     "dailyLossLimitPercent": 4.0,
     "allowMinLotRoundUp": true,
-    "minLotRiskMultiplier": 15.0,
+    "minLotRiskMultiplier": 3.0,
     "enableCompoundingTiers": true,
     "riskTier": 1
   },

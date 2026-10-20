@@ -266,6 +266,11 @@ double ClampRiskPercentGlobal(double riskPercent)
 #define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level (Blueprint 10.4: 0-100 scale)
 #define DRAWDOWN_WARNING 5.0            // Warning drawdown level (Blueprint 10.4: 0-100 scale)
 #define MAX_RISK_PER_TRADE 50.0       // Maximum risk per trade as percentage (Blueprint 10.4: 0-100 scale)
+// Ceiling on rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN: the uplift multiplies the risk the gate approved,
+// so it bounds every consumer that sizes or gates a lot, not only CPositionSizer.
+#ifndef MAX_MIN_LOT_RISK_MULTIPLIER
+#define MAX_MIN_LOT_RISK_MULTIPLIER 3.0
+#endif
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 

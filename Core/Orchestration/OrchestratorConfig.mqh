@@ -651,6 +651,14 @@ struct SOrchestratorConfig
         // not by this constructor; only the count is set here.
         strategyConfigCount = 0;
     }
+
+    // One ceiling for the min-lot round-up, shared by the sizer, the risk gate and the candidate builder:
+    // InpMinLotRiskMultiplier shipped at 15.0 while only CPositionSizer clamped to 3.0, so the two consumers
+    // that decide the shipped lot widened a position up to fifteen times the risk the gate had approved.
+    double EffectiveMinLotRiskMultiplier() const
+    {
+        return MathMin(MathMax(1.0, minLotRiskMultiplier), MAX_MIN_LOT_RISK_MULTIPLIER);
+    }
 };
 
 #endif // ORCHESTRATOR_CONFIG_MQH

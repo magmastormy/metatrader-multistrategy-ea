@@ -6,7 +6,76 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-19
+## [Unreleased] - 2026-10-20
+
+### Batch 241: the min-lot round-up had two ceilings, and the looser one was the gate that decides the lot
+
+`MAX_MIN_LOT_RISK_MULTIPLIER` (3.0) existed to bound a specific danger: rounding a sub-`SYMBOL_VOLUME_MIN` lot up to
+the broker minimum multiplies the risk the pre-trade gate approved, because sizing runs after it. The clamp was applied
+in one place - `CPositionSizer::SetMinLotRiskMultiplier` - and the two consumers that actually decide the shipped lot
+never saw it. `CRiskValidationPipeline` raised the lot while `riskRatio <= m_config.minLotRiskMultiplier`, and
+`CCandidateBuilder::ApplyDrawdownScaling` refused a round-up only above its own `m_minLotRiskMultiplier`. Both were fed
+`InpMinLotRiskMultiplier`, whose shipped default in `MultiStrategyAutonomousEA.mq5` was **15.0**. So the sizer refused a
+5x round-up while the gate approved it, and at the configured 1%/trade the gate could ship a position risking 15% of
+equity on one symbol - the exact exposure Batch 223 recorded as clamped away, one layer up.
+
+- **One ceiling, read by all three consumers.** The `#define` moved to `Core/Utils/Enums.mqh`, where `MAX_RISK_PER_TRADE`
+already lives, keeping `CPositionSizer`'s `#ifndef` as a fallback. `SOrchestratorConfig::EffectiveMinLotRiskMultiplier()`
+clamps to `[1.0, 3.0]` and now feeds the risk config, the sizer and the candidate builder; `CUnifiedRiskManager::Initialize`
+clamps its own copy and prints `[RISK-ROUNDUP-CEILING] asked= | enforced= | ceiling=MAX_MIN_LOT_RISK_MULTIPLIER` when an
+ask exceeds it. `InpMinLotRiskMultiplier` default `15.0 -> 3.0` because 15.0 could never be the running value again, and
+`Config/live_overrides.json` from `15.0 -> 3.0` with it (that file is documented as the canonical VPS source).
+- **The gate now obeys `InpAllowMinLotRoundUp`.** `allowMinLotRoundUp` reached only the sizer; the gate widened a
+sub-minimum lot whatever the operator set, so "false" meant nothing on the path that prices the trade. The refusal prints
+`[RISK-GATE-REJECT] <symbol> | reason=lot_below_min_roundup_disabled | lot= | min_lot= | uplift=` and releases the virtual
+reservation like any other reject.
+- **`UpdateRiskParametersFromInputs` applied nine parameters and printed a tenth.** `maxRiskPerTrade` appeared only in the
+`[RISK-INPUT-UPDATE]` line: neither the gate's `baseRiskPerTradePercent` nor the sizer's `riskPercent` was updated, and
+`m_config.maxRiskPerTrade` kept the old value, so every later reader of it saw the previous session's number. The method
+now writes `m_config` and re-runs the init sequence in init order - `SetBaseRiskPerTrade`, `SetTier`,
+`ApplyToRiskManager`, `ApplyToPositionSizer` - so the compounding tier can still scale risk down after the operator's
+figure is set, and the print reads `roundupCap=X enforced`. New `CUnifiedRiskManager::SetMinLotRoundupPolicy` carries the
+round-up pair into the gate's copy, which previously only `Initialize` could write.
+- **`CCandidateBuilder::Configure` was handed a literal `5.0` for max risk per trade** while the dialog shipped 1.0, and
+that field is the fallback when a signal asks for no risk (`if(requestedRisk <= 0) requestedRisk = m_maxRiskPerTrade`), so
+a quiet request was sized at five times the configured ceiling. It takes `m_config.maxRiskPerTrade` now.
+
+Behaviour: with the new defaults nothing moves for a correctly configured account; what changes is that a 15x ask cannot
+be honoured by any consumer, an entry needing a round-up between 3x and 15x is refused rather than traded over-risk, and
+`InpAllowMinLotRoundUp = false` and `InpMaxRiskPerTrade` now mean what they say. Restricting direction, never widening.
+
+**This reverses a recorded operator decision, and that is the reason it is written here rather than left as a cleanup.**
+Batch 142 (2026-08-06, `docs/changelogs_batch102-169.md:823`) restored a 15x round-up tolerance in three places on the
+instruction "keep risk up to 15x, not 1x". A later audit batch replaced that with `MAX_MIN_LOT_RISK_MULTIPLIER = 3.0`
+because "the round-up happens in the sizer, *after* the pre-trade gate approved the sized lot, so one position could risk
+15% of equity against a 1% setting". The two decisions were never reconciled: the newest clamp landed only in the sizer,
+while the gate and the builder kept the 15x ask, so the account has been running the older answer on the path that
+decides the lot and the newer answer on the path that refuses. This batch sides with the newer clamp because it is the
+one written after the money audit and because the exposure it bounds is the one this repository exists to remove; the
+number is a `#define` in `Core/Utils/Enums.mqh`, so restoring 15x is one deliberate edit rather than a silent drift, and
+`[RISK-ROUNDUP-CEILING]` prints which is in force. A symbol whose sized lot needs more than a 3x uplift now prints
+`[RISK-LOT-FLOOR] ... REJECTED: ... risk X.Xx > 3.0x cap` instead of shipping over-risk - if a book goes quiet after
+this batch, that line is the difference between a dark symbol and a strategy that stopped voting.
+
+Not fixed, with the reason: `SOrchestratorConfig`'s own constructor still carries the pre-Phase-0 numbers
+(`maxDailyRisk = 40.0`, `maxPortfolioRisk = 60.0`, `maxRiskPerTrade = 5.0`); every root EA overwrites all three before
+anything reads them, so they are inert today, but a new caller that forgets one gets 40% daily risk - left for the
+config-ownership pass rather than silently rewriting defaults nobody reads. Also found and left for the next batch:
+`Config/live_overrides.json` is documented as "loaded live every 30 s", but all four `CLiveConfigReloader` callbacks
+(`Risk`, `Weights`, `Thresholds`, `Symbols`) receive their section JSON and print "`<section>` section reloaded" without
+reading it, so the hot-reload channel has never applied a single value - which is why this batch corrected the file by
+hand instead of relying on it.
+
+Docs: 69 `file.mqh:NNN` pointers in the five docs moved by the insertions and were re-pointed by delta, then 24 were
+re-anchored by content because they were already stale - three of them naming `CPositionSizer::NormalizeVolume` at
+`PositionSizer.mqh:659`, which is `SetMinLotRiskMultiplier`, the actual definition being `:572`. 71 added / 15 deleted
+across eight files (`Enums.mqh`, `OrchestratorConfig.mqh`, `EAOrchestrator.mqh`, `PositionSizer.mqh`,
+`RiskValidationPipeline.mqh`, `UnifiedRiskManager.mqh`, `MultiStrategyAutonomousEA.mq5`, `Config/live_overrides.json`).
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:`
+line, 0 errors / 0 warnings (9.3 / 5.5 / 9.7 / 9.7 / 152.3 / 125.9 / 45.5 / 2.7 s), harness exit 0, all eight `.ex5`
+newer than the sources. Not runtime-observed: newest
+journal 2026-09-23, so neither `[RISK-ROUNDUP-CEILING]` nor `reason=lot_below_min_roundup_disabled` has been seen firing.
+
 
 ### Batch 240: margin was priced on a lot the trade never shipped, and the margin ladder had no driver
 

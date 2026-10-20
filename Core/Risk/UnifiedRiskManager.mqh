@@ -266,6 +266,14 @@ public:
     // True while the last margin poll read a level below 200%. The pipeline refuses entries on it; the next poll releases it.
     bool IsMarginEntriesHeld() const { return m_marginEntriesHeld; }
 
+    // Live round-up policy: the ceiling is applied here, so neither the dialog nor the override file can widen
+    // the gate past MAX_MIN_LOT_RISK_MULTIPLIER.
+    void SetMinLotRoundupPolicy(const bool allow, const double multiplier)
+    {
+        m_config.allowMinLotRoundUp = allow;
+        m_config.minLotRiskMultiplier = MathMin(MathMax(1.0, multiplier), MAX_MIN_LOT_RISK_MULTIPLIER);
+    }
+
     virtual SDrawdownState GetDrawdownState();
     
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
@@ -503,7 +511,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.drawdownWarningPercent = 17.5;   // 70% of the 25% max
     m_config.drawdownCriticalPercent = 25.0;  // matches input InpMaxDrawdown
     m_config.dailyLossLimitPercent = 15.0;    // sized for small accounts, where one trade can be ~10%
-    m_config.minLotRiskMultiplier = 15.0;     // tolerates a min-lot round-up of up to 15x intended risk
+    m_config.minLotRiskMultiplier = MAX_MIN_LOT_RISK_MULTIPLIER;  // ceiling is the ceiling; see Initialize's clamp
+    m_config.allowMinLotRoundUp = true;
     m_config.adaptationMinTrades = 20;
     m_config.enableAdaptiveSizing = true;
     m_config.enableAuditLogging = true;
@@ -580,6 +589,14 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
         m_config.drawdownCriticalPercent = m_config.drawdownWarningPercent + 4.0;
     if(m_config.minLotRiskMultiplier <= 0.0)
         m_config.minLotRiskMultiplier = 1.0;
+    // One ceiling for the round-up: CPositionSizer has clamped to MAX_MIN_LOT_RISK_MULTIPLIER all along while this
+    // gate took the raw input, and this gate is the one that decides the lot the position ships at.
+    if(m_config.minLotRiskMultiplier > MAX_MIN_LOT_RISK_MULTIPLIER)
+    {
+        PrintFormat("[RISK-ROUNDUP-CEILING] asked=%.1fx | enforced=%.1fx | ceiling=MAX_MIN_LOT_RISK_MULTIPLIER",
+                    m_config.minLotRiskMultiplier, MAX_MIN_LOT_RISK_MULTIPLIER);
+        m_config.minLotRiskMultiplier = MAX_MIN_LOT_RISK_MULTIPLIER;
+    }
 
     // Snapshot the operator envelope after the clamps above and before any tier can overwrite it; captured once because ApplyTierOverrides mutates m_config in place, so re-snapshotting would let the ceiling drift.
     if(!m_envelopeCaptured)

@@ -18,8 +18,8 @@ class CEnhancedErrorHandler;
 class CPositionSizer;
 class CPerformanceAnalytics;
 
-// Hard ceiling on the min-lot round-up multiplier: rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies
-// the risk the pre-trade gate approved, because sizing happens after that gate.
+// Fallback for the ceiling defined in ../Utils/Enums.mqh, which the risk gate and the candidate builder read too.
+// Rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies the risk the pre-trade gate approved.
 #ifndef MAX_MIN_LOT_RISK_MULTIPLIER
 #define MAX_MIN_LOT_RISK_MULTIPLIER 3.0
 #endif

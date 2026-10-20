@@ -844,7 +844,8 @@ bool InitializeSubsystems()
     unifiedRiskConfig.enableAdaptiveSizing    = m_config.useEnhancedRisk;
     unifiedRiskConfig.enableAuditLogging      = true;
     unifiedRiskConfig.auditLogFile            = "risk_audit_" + _Symbol + ".log";
-    unifiedRiskConfig.minLotRiskMultiplier    = m_config.minLotRiskMultiplier;
+    unifiedRiskConfig.minLotRiskMultiplier    = m_config.EffectiveMinLotRiskMultiplier();
+    unifiedRiskConfig.allowMinLotRoundUp      = m_config.allowMinLotRoundUp;
     unifiedRiskConfig.dailyLossLimitPercent   = m_config.dailyLossLimitPercent;
 
     if(!m_unifiedRiskManager.Initialize(unifiedRiskConfig, &m_performanceAnalytics))
@@ -886,7 +887,7 @@ m_config.dailyLossLimitPercent);
 // shrink was gated by useCorrelationAdjustment, which nothing ever set true.
 m_positionSizer.SetLogLevel(m_config.logLevel);
 m_positionSizer.SetAllowMinLotRoundUp(m_config.allowMinLotRoundUp);
-m_positionSizer.SetMinLotRiskMultiplier(m_config.minLotRiskMultiplier);
+m_positionSizer.SetMinLotRiskMultiplier(m_config.EffectiveMinLotRiskMultiplier());
 
 m_riskTierManager.ApplyToPositionSizer(m_positionSizer, m_config.maxRiskPerTrade);
 m_riskTierManager.ApplyToTradeManager(m_tradeManager);
@@ -1510,8 +1511,8 @@ bool InitializeComponents()
         PrintFormat("[SAFE-MODE] noStacking enforced through the per-symbol position cap | max_positions_per_symbol %d -> 1",
                     m_config.maxPositionsPerSymbol);
     }
-    m_candidateBuilder.Configure(2.0, 1.5, 5.0,
-                                 0.15, m_config.minLotRiskMultiplier, m_config.aiDrawdownSizingLimit,
+    m_candidateBuilder.Configure(2.0, 1.5, m_config.maxRiskPerTrade,
+                                 0.15, m_config.EffectiveMinLotRiskMultiplier(), m_config.aiDrawdownSizingLimit,
                                  true, safeModeMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
@@ -2956,21 +2957,29 @@ double dailyLossLimitPercent,
 bool allowMinLotRoundUp, double minLotRiskMultiplier,
 bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 {
-    // Update RiskTierManager tier - this will apply overrides to UnifiedRiskManager
+    // Same order as initialization: the operator's per-trade risk becomes the base, then the tier may scale it down.
+    // Until now maxRiskPerTrade reached only the print below - neither the gate's copy nor the sizer was updated.
+    m_config.maxRiskPerTrade = maxRiskPerTrade;
+    m_config.allowMinLotRoundUp = allowMinLotRoundUp;
+    m_config.minLotRiskMultiplier = minLotRiskMultiplier;
+    m_unifiedRiskManager.SetBaseRiskPerTrade(maxRiskPerTrade);
+
     m_riskTierManager.SetTier(riskTier);
     m_riskTierManager.ApplyToRiskManager(m_unifiedRiskManager, &m_performanceAnalytics,
     maxDailyRisk, maxPortfolioRisk,
     maxDrawdown * 0.7, maxDrawdown,
     dailyLossLimitPercent);
+    m_riskTierManager.ApplyToPositionSizer(m_positionSizer, maxRiskPerTrade);
 
     m_positionSizer.SetAllowMinLotRoundUp(allowMinLotRoundUp);
-    m_positionSizer.SetMinLotRiskMultiplier(minLotRiskMultiplier);
+    m_positionSizer.SetMinLotRiskMultiplier(m_config.EffectiveMinLotRiskMultiplier());
+    m_unifiedRiskManager.SetMinLotRoundupPolicy(allowMinLotRoundUp, minLotRiskMultiplier);
 
     m_compoundingTierManager.SetAutoSwitch(enableCompoundingTiers);
 
-    PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s multiplier=%.1f compounding=%s tier=%d",
+    PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s roundupCap=%.1f enforced compounding=%s tier=%d",
         maxRiskPerTrade, maxDailyRisk, maxPortfolioRisk, maxDrawdown, dailyLossLimitPercent,
-        allowMinLotRoundUp ? "true" : "false", minLotRiskMultiplier,
+        allowMinLotRoundUp ? "true" : "false", m_config.EffectiveMinLotRiskMultiplier(),
         enableCompoundingTiers ? "true" : "false", (int)riskTier);
     }
 
