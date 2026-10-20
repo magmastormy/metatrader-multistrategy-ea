@@ -257,6 +257,9 @@ class CEAOrchestrator
     uint     m_lastStatePersistTime; // GetTickCount() ms, wall clock
 
     CLiveConfigReloader      m_configReloader;
+    // Edge state for the live-config circuit-breaker reset ask: a file left at true must not re-arm trading
+    // on an unrelated edit, so the reset fires only on a false->true transition.
+    bool                     m_liveCfgBreakerResetSeen;
     CRiskDashboardPanel      m_riskDashboard;
     CSymbolHealthMonitor     m_symbolHealth;
     string                   m_currentCorrId;
@@ -301,7 +304,7 @@ class CEAOrchestrator
         m_lastStatePersistTime(0),
         m_aiBrainReady(false), m_aiEngineReady(false), m_aiFeedbackReady(false),
         m_aiTopologyLogged(false),
-        m_adxModifier(NULL)
+        m_adxModifier(NULL), m_liveCfgBreakerResetSeen(false)
         // m_onnxInit initialises itself (disabled=false, retryCount=0, lastAttempt=0).
         {
             ArrayResize(m_enterpriseManagers, 0);
@@ -754,51 +757,10 @@ if(!InitializeComponents())
 
     m_configReloader.Init("Config/live_overrides.json", 30);
     
-    class CRiskConfigCallback : public IConfigCallback
-    {
-    public:
-        virtual void OnConfigChange(string section, string json) override {
-            Print("[LIVE-CONFIG] Risk section reloaded");
-        }
-        virtual string GetSectionName() const override { return "Risk"; }
-    };
-    
-    class CWeightsConfigCallback : public IConfigCallback
-    {
-    public:
-        virtual void OnConfigChange(string section, string json) override {
-            Print("[LIVE-CONFIG] Weights section reloaded");
-        }
-        virtual string GetSectionName() const override { return "Weights"; }
-    };
-    
-    class CThresholdsConfigCallback : public IConfigCallback
-    {
-    public:
-        virtual void OnConfigChange(string section, string json) override {
-            Print("[LIVE-CONFIG] Thresholds section reloaded");
-        }
-        virtual string GetSectionName() const override { return "Thresholds"; }
-    };
-    
-    class CSymbolsConfigCallback : public IConfigCallback
-    {
-    public:
-        virtual void OnConfigChange(string section, string json) override {
-            Print("[LIVE-CONFIG] Symbols section reloaded");
-        }
-        virtual string GetSectionName() const override { return "Symbols"; }
-    };
-    
-    CRiskConfigCallback* riskCb = new CRiskConfigCallback();
-    CWeightsConfigCallback* weightsCb = new CWeightsConfigCallback();
-    CThresholdsConfigCallback* thresholdsCb = new CThresholdsConfigCallback();
-    CSymbolsConfigCallback* symbolsCb = new CSymbolsConfigCallback();
-    
-    m_configReloader.RegisterCallback(riskCb);
-    m_configReloader.RegisterCallback(weightsCb);
-    m_configReloader.RegisterCallback(thresholdsCb);
-    m_configReloader.RegisterCallback(symbolsCb);
+    // The four IConfigCallback stubs that lived here printed "[LIVE-CONFIG] <section> section reloaded" and
+    // discarded the JSON they were handed; a class declared inside a method cannot reach this owner, so no
+    // callback at that seam could have applied a value. The owner consumes the reload from OnTimer now.
+    Print("[LIVE-CONFIG] live overrides armed | applied=risk section(absent key keeps the running value) | report-only=weights,thresholds,symbols,ai,engines");
     
     m_riskDashboard.Init(ChartID(), CORNER_RIGHT_UPPER, 10, 10);
     
@@ -2926,6 +2888,8 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     }
     
     m_configReloader.CheckAndReload();
+    if(m_configReloader.ConsumeReloaded())
+        ApplyLiveConfigOverrides(m_configReloader.GetCurrentConfig());
     m_riskDashboard.OnTimer();
     m_symbolHealth.OnTick(_Symbol);
     m_symbolHealth.CheckAllSymbols(m_config.symbolsToTrade);
@@ -2962,6 +2926,14 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     m_config.maxRiskPerTrade = maxRiskPerTrade;
     m_config.allowMinLotRoundUp = allowMinLotRoundUp;
     m_config.minLotRiskMultiplier = minLotRiskMultiplier;
+    // Each parameter this method applies is written to m_config as well: a reader of the config would
+    // otherwise keep the previous values while the gate and the sizer moved.
+    m_config.maxDailyRisk = maxDailyRisk;
+    m_config.maxPortfolioRisk = maxPortfolioRisk;
+    m_config.maxDrawdown = maxDrawdown;
+    m_config.dailyLossLimitPercent = dailyLossLimitPercent;
+    m_config.enableCompoundingTiers = enableCompoundingTiers;
+    m_config.riskTier = riskTier;
     m_unifiedRiskManager.SetBaseRiskPerTrade(maxRiskPerTrade);
 
     m_riskTierManager.SetTier(riskTier);
@@ -2982,6 +2954,52 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         allowMinLotRoundUp ? "true" : "false", m_config.EffectiveMinLotRiskMultiplier(),
         enableCompoundingTiers ? "true" : "false", (int)riskTier);
     }
+
+    // Apply MQL5\Files\Config\live_overrides.json after a detected content change. Every key is read with the
+    // running value as its default, so a file that omits a key cannot zero a ceiling it never mentions.
+    void ApplyLiveConfigOverrides(const string json)
+    {
+        if(json == "")
+            return;
+
+        double riskPerTrade = CLiveConfigReloader::GetDouble(json, "risk.maxRiskPerTrade", m_config.maxRiskPerTrade);
+        double dailyRisk = CLiveConfigReloader::GetDouble(json, "risk.maxDailyRisk", m_config.maxDailyRisk);
+        double portfolioRisk = CLiveConfigReloader::GetDouble(json, "risk.maxPortfolioRisk", m_config.maxPortfolioRisk);
+        double maxDD = CLiveConfigReloader::GetDouble(json, "risk.maxDrawdown", m_config.maxDrawdown);
+        double dailyLoss = CLiveConfigReloader::GetDouble(json, "risk.dailyLossLimitPercent", m_config.dailyLossLimitPercent);
+        bool roundUp = CLiveConfigReloader::GetBool(json, "risk.allowMinLotRoundUp", m_config.allowMinLotRoundUp);
+        double roundupCap = CLiveConfigReloader::GetDouble(json, "risk.minLotRiskMultiplier", m_config.minLotRiskMultiplier);
+        bool compounding = CLiveConfigReloader::GetBool(json, "risk.enableCompoundingTiers", m_config.enableCompoundingTiers);
+        ENUM_RISK_TIER tier = (ENUM_RISK_TIER)CLiveConfigReloader::GetInt(json, "risk.riskTier", (int)m_config.riskTier);
+
+        PrintFormat("[LIVE-CONFIG-RISK] perTrade=%.2f->%.2f | daily=%.1f->%.1f | portfolio=%.1f->%.1f | maxDD=%.1f->%.1f | dailyLoss=%.1f->%.1f | roundUp=%s->%s | cap=%.1f->%.1f | compounding=%s->%s | tier=%d->%d",
+                    m_config.maxRiskPerTrade, riskPerTrade,
+                    m_config.maxDailyRisk, dailyRisk,
+                    m_config.maxPortfolioRisk, portfolioRisk,
+                    m_config.maxDrawdown, maxDD,
+                    m_config.dailyLossLimitPercent, dailyLoss,
+                    m_config.allowMinLotRoundUp ? "yes" : "no", roundUp ? "yes" : "no",
+                    m_config.minLotRiskMultiplier, roundupCap,
+                    m_config.enableCompoundingTiers ? "yes" : "no", compounding ? "yes" : "no",
+                    (int)m_config.riskTier, (int)tier);
+
+        // An operator who just edited a weight needs to be told it did not land, or the reload reads as success.
+        Print("[LIVE-CONFIG] weights/thresholds/symbols/ai/engines | applied=no(report-only sections, no consumer reads them)");
+
+        UpdateRiskParametersFromInputs(riskPerTrade, dailyRisk, portfolioRisk, maxDD, dailyLoss,
+                                      roundUp, roundupCap, compounding, tier);
+
+        // Edge-triggered so a file left at true cannot re-arm trading while the operator edits something else.
+        bool resetAsk = CLiveConfigReloader::GetBool(json, "risk.resetCircuitBreaker", false);
+        if(resetAsk && !m_liveCfgBreakerResetSeen)
+        {
+            m_unifiedRiskManager.ResetCircuitBreaker();
+            PrintFormat("[RISK-CIRCUIT-BREAKER] manual reset via live config | equity=%.2f re-baselined as peak | trading re-armed | set risk.resetCircuitBreaker false before the next edit",
+                        AccountInfoDouble(ACCOUNT_EQUITY));
+        }
+        m_liveCfgBreakerResetSeen = resetAsk;
+    }
+
 
     bool PreflightChecks(const string corrId)
     {

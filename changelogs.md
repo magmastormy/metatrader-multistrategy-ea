@@ -8,6 +8,90 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-20
 
+### Batch 242: `live_overrides.json` was read, announced and applied by nobody
+
+`Config/live_overrides.json` is documented in this repository as the canonical runtime risk source - "loaded live every
+30 s", and Phase-0's recalibration was mirrored into it precisely so a running EA would pick it up. It has never applied
+a value, in three independent ways, each of which alone was enough:
+
+1. **The file could not be opened.** `Init` built `TerminalInfoString(TERMINAL_DATA_PATH) + "\MQL5\Files\" + path` and
+   passed that absolute path to `FileOpen`, which does not accept one: paths resolve inside the sandbox, and only
+   `FILE_COMMON` relaxes that. So `GetFileWriteTime` returned 0 and `ReadFileToString` returned "".
+2. **Nothing could even try.** `CheckAndReload` compared `currentModified <= m_lastModified`, and with both at 0 that is
+   `0 <= 0` - true. It returned before the read, so no `[LIVE-CONFIG] ERROR: Failed to read config file` ever printed
+   either. The channel was not failing loudly; it was silent, which reads as "the file has not changed".
+3. **The callbacks had nothing to apply.** The four registered `IConfigCallback`s - `CRiskConfigCallback`,
+   `CWeightsConfigCallback`, `CThresholdsConfigCallback`, `CSymbolsConfigCallback`, declared inside
+   `InitializeSubsystems` - printed `[LIVE-CONFIG] <section> section reloaded` and discarded the JSON they were handed.
+   A class declared inside a method cannot reach the enclosing object in MQL5, so no callback at that seam could ever
+   have applied a value: the stubs were not a half-finished wiring, they were an impossible one. The `ai` and `engines`
+   sections had no callback at all.
+
+**What ships instead.** The reloader now detects the change and hands it to its owner: the path passed to `FileOpen` is
+the relative form the operator wrote (absolute kept only for the log line), the 30 s throttle runs on
+`GetTickCount()` because `TimeCurrent()` advances only with ticks and a quiet market is exactly when someone reaches for
+this file, and an unreadable file says so once - `[LIVE-CONFIG] file not readable | path= | live overrides inactive`.
+`ConsumeReloaded()` returns true once per detected content change and `CEAOrchestrator::ApplyLiveConfigOverrides` applies
+the `risk` section through `UpdateRiskParametersFromInputs`, the route Batch 241 made real. Every key is read with the
+*running value* as its default, so a file that omits a key cannot zero a ceiling it never mentions. The applied pairs
+print as `[LIVE-CONFIG-RISK] perTrade=a->b | daily=a->b | portfolio=a->b | maxDD=a->b | dailyLoss=a->b | roundUp=a->b |
+cap=a->b | compounding=a->b | tier=a->b`, and the sections with no consumer announce themselves on every reload rather
+than implying one: `[LIVE-CONFIG] weights/thresholds/symbols/ai/engines | applied=no(report-only sections, no consumer
+reads them)`. An operator who just edited a weight has to be told it did not land, or the reload reads as a success.
+
+**The manual reset the breaker keeps asking for.** `[RISK-CIRCUIT-BREAKER] Max recovery attempts reached (3/3) | Manual
+reset required` prints every five minutes, and `ResetCircuitBreaker()` - declared, defined, forwarded - had zero callers,
+so the promised action did not exist anywhere in the runtime. `risk.resetCircuitBreaker` in the override file is now that
+action: it re-arms trading, clears conservative mode and re-baselines the peak exactly as the method says, and prints
+`[RISK-CIRCUIT-BREAKER] manual reset via live config | equity= re-baselined as peak | trading re-armed`. It is
+edge-triggered on a false->true transition, so a file left at `true` cannot re-arm trading when the operator edits
+something else. Two automatic releases of the attempt counter stay the normal route (`UnifiedRiskManager.mqh:709` on the
+trading-day roll, and 60 stable minutes under half the warning drawdown), which is why this is an escape hatch, not a
+loosening.
+
+**Proof that a nested read cannot grab the wrong section's number.** `JsonExtractValue` finds a key by plain string search,
+which is only safe if it descends into the parent object first. `ReadFileToString` uses `FILE_TXT`, and `FileReadString`
+drops the line terminators, so the parser runs on text with no newlines at all. Ported to Python and run against the real
+`Config/live_overrides.json` in that stripped form: all nine `risk.*` keys return their own scalars (`1.0 / 4.0 / 12.0 /
+15.0 / 4.0 / true / 3.0 / true / 1`), the absent `risk.resetCircuitBreaker` returns "" so every ceiling starts from the
+*running* value, and `weights.EURUSD.Momentum` descends two levels correctly. The nine numbers equal what Batch 241 shipped,
+so a reload on the first timer tick is a no-op rather than a surprise change to live risk. An out-of-range `riskTier`
+(only reachable through this file - the dialog input is an enum) cannot widen risk: `SetTier`'s `default:` branch installs
+the Moderate preset, and `m_tier` is read afterwards only by `GetTierName()` and the `[RISK-TIER]` print, never by a
+threshold. Left as is, with the reason: the value that lands is the conservative middle, and the print shows the number.
+
+**Sweep in the same files.** `IConfigCallback`, `CConfigCallbackBase`, `RegisterCallback`, `NotifyCallbacks`,
+`GetSection`/`JsonGetSection`, `SetEnabled`/`IsEnabled` and `ForceReload` are gone: with the four stubs deleted, nothing
+registered a callback, nothing read `IsEnabled`, and the `m_enabled` field could only ever be true. In the orchestrator,
+`UpdateRiskParametersFromInputs` now writes all six risk fields it applies into `m_config` (it wrote three), so a live
+change no longer leaves the config disagreeing with the gate that consumes it. Left in place, inherited: when
+`FileGetInteger(handle, FILE_MODIFY_DATE)` returns nothing, `GetFileWriteTime` answers `TimeCurrent()`, so the 30 s poll
+would see a "new" mtime every time and print `File changed, reloading...` plus `Config unchanged (same content)` forever.
+That is noise, not exposure - the content comparison still refuses to apply anything - and inventing a second failure
+message for an API that has never failed here is not this batch's call.
+
+Docs: 54 `EAOrchestrator.mqh:NNN` pointers moved by the -38/-36/+15 region shifts were re-pointed by delta and then
+re-anchored by content, which found six more that had been stale for batches - the `ScaleLotByLiveAuthority` call, the
+second `EVAL_MODE_NEW_BAR` site, the ADX `AddModifier` registration, the `SScalpConfig` period literals, the
+`RegisterCatalogAIAdapter` name read and the live microstructure feed. The Batch 226 table row that pointed at the
+deleted correlation branch now names the method instead of a line number that cannot exist. Adding the report-only print
+shifted every pointer below it by three again; a full pass over all 223 citations in the five current-state docs found
+four that landed on a plausible neighbour instead of their claim, and they are re-anchored by content here: the
+`AttributeExecutedPosition` call (`:3625`), the `IncValidatorRejects` arm (`:3556`), and both copies of the second entry
+`EVAL_MODE_NEW_BAR` site (`:3551`, which two docs had as `:3536`). Every tag the three live-config doc sections quote
+now has a `Print` call site, and the three deleted callback lines have none.
+
+121 added / 200 deleted across two files (`Core/Config/LiveConfigReloader.mqh`, `Core/Orchestration/EAOrchestrator.mqh`).
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600`, eight programs each with its own `Result:`
+line, 0 errors / 0 warnings (6.1 / 3.7 / 6.1 / 6.7 / 108.8 / 129.7 / 37.1 / 3.4 s), harness exit 0 read un-piped, all
+eight `.ex5` newer than the
+sources. Note for the next session: `exit 0` is only
+meaningful if the harness output is not piped - a pipe reports the exit code of `tail`, and this batch's first run
+printed `OVERALL FAILED` through a `| tail` while the shell still reported success. Not runtime-observed: newest journal
+2026-09-23, so `[LIVE-CONFIG] live overrides armed` has not been seen in a journal, and neither has a reload.
+
+
 ### Batch 241: the min-lot round-up had two ceilings, and the looser one was the gate that decides the lot
 
 `MAX_MIN_LOT_RISK_MULTIPLIER` (3.0) existed to bound a specific danger: rounding a sub-`SYMBOL_VOLUME_MIN` lot up to

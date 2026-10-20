@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:892-893` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:854-855` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3567`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3586`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -498,7 +498,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1625` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1587` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -632,6 +632,38 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 242: `Config/live_overrides.json` now actually changes the running EA
+
+**What you thought you had.** `MQL5\Files\Config\live_overrides.json` is described in this repository as the runtime risk
+source - the file you edit when you want to cut risk during a drawdown without touching the chart. Editing it changed
+nothing. Three separate defects made the channel dead: the reader asked MetaEditor for a file by absolute path, which the
+file sandbox does not allow; the change test compared two file timestamps that were both zero, so it concluded "not
+modified" forever and never even printed an error; and the four reload callbacks it did register printed
+"`<section>` section reloaded" and threw the parsed values away.
+
+**What you have now.** The file is opened by its sandbox-relative path, the poll runs on wall-clock time (a quiet market
+no longer suspends the check), and a missing or unreadable file says so once:
+`[LIVE-CONFIG] file not readable | path=... | live overrides inactive`. When you save a change you get
+`[LIVE-CONFIG-RISK] perTrade=1.00->0.50 | daily=4.0->2.0 | portfolio=12.0->12.0 | maxDD=... | dailyLoss=... |
+roundUp=yes->yes | cap=3.0->3.0 | compounding=yes->yes | tier=1->1` followed by the ordinary
+`[RISK-TIER]`/`[RISK-INPUT-UPDATE]` receipts, because the values go through the same path the dialog inputs use.
+
+Two rules worth knowing:
+- **A key you leave out keeps the running value.** The file does not have to be complete; deleting a line is not the same
+  as setting it to zero.
+- **Only the `risk` section is applied.** `weights`, `thresholds`, `symbols`, `ai` and `engines` are read and announced as
+  `applied=no(report-only sections, no consumer reads them)`. They are per-strategy or per-symbol configuration whose
+  owners are built once at initialization, so making them live means rebuilding rosters mid-session - a real design
+  decision, not a line to delete.
+
+**The circuit-breaker reset you can now reach.** After three automatic re-arms the EA prints
+`[RISK-CIRCUIT-BREAKER] Max recovery attempts reached (3/3) | Manual reset required` and waits for a manual reset that
+did not exist anywhere in the program. Put `"resetCircuitBreaker": true` in the `risk` block and save: trading re-arms,
+the peak equity re-baselines to the current equity, and the journal prints
+`[RISK-CIRCUIT-BREAKER] manual reset via live config | ... | set risk.resetCircuitBreaker false before the next edit`.
+It fires on the transition from false to true, so leaving it `true` will not silently re-arm on your next unrelated edit
+- and it should stay a deliberate act, because the same reset clears the conservative-mode sizing step.
+
 ### Batch 241: rounding a lot up to the broker minimum could cost fifteen times the risk you configured
 
 **The problem.** When the sized lot falls under `SYMBOL_VOLUME_MIN`, the EA can round it up - and that round-up
@@ -703,7 +735,7 @@ Also removed by the sweep in the same files: seven `Validate...` forwarders on `
 `ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
 every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
 four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
-initialized at `EAOrchestrator.mqh:1008`, keeps its own config and de-risks nothing, because none of its methods is
+initialized at `EAOrchestrator.mqh:970`, keeps its own config and de-risks nothing, because none of its methods is
 called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
@@ -812,7 +844,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3567`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3586`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

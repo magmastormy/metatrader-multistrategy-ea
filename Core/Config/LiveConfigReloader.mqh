@@ -3,135 +3,103 @@
 #ifndef CORE_CONFIG_LIVE_CONFIG_RELOADER_MQH
 #define CORE_CONFIG_LIVE_CONFIG_RELOADER_MQH
 
-#include <Arrays/ArrayObj.mqh>
 #include "../Utils/StructuredLogger.mqh"
 #include "../Utils/LogMacros.mqh"
 
-// Callback interface for config changes
-class IConfigCallback : public CObject
-{
-public:
-    virtual void OnConfigChange(string section, string json) = 0;
-    virtual string GetSectionName() const = 0;
-    virtual ~IConfigCallback() {}
-};
-
-// Callback implementation - users derive from this class
-class CConfigCallbackBase : public IConfigCallback
-{
-protected:
-    string m_sectionName;
-    
-public:
-    CConfigCallbackBase(string section) : m_sectionName(section) {}
-    
-    virtual void OnConfigChange(string section, string json) override {
-        // Override in derived class
-    }
-    
-    virtual string GetSectionName() const override { return m_sectionName; }
-};
-
+// Detects a content change in MQL5\Files\Config\live_overrides.json and hands the parsed text to its owner.
+// It applies nothing itself: the callback seam this class used to expose was four stubs that printed
+// "<section> section reloaded" and discarded the JSON, and MQL5 does not let a class declared inside a
+// method reach its owner, so no callback there could ever have applied a value.
 class CLiveConfigReloader
 {
 private:
-    string m_configPath;
-    datetime m_lastCheck;
+    string m_configPath;           // path as the operator wrote it, relative to MQL5\Files
+    string m_displayPath;          // absolute form, for the log line only
+    uint   m_lastCheckMs;
     datetime m_lastModified;
-    bool   m_enabled;
     int    m_checkIntervalSec;
-    
-    CArrayObj* m_callbacks;
-    
+    bool   m_pendingReload;
+    bool   m_unreadableReported;
+
     // Parsed config cache
     string m_lastJson;
-    
+
 public:
-    CLiveConfigReloader() : m_lastCheck(0), m_lastModified(0), m_enabled(false), 
-                            m_checkIntervalSec(30) {
-        m_callbacks = new CArrayObj();
-    }
+    CLiveConfigReloader() : m_lastCheckMs(0), m_lastModified(0),
+                            m_checkIntervalSec(30),
+                            m_pendingReload(false),
+                            m_unreadableReported(false) {}
     
-    ~CLiveConfigReloader() {
-        if(CheckPointer(m_callbacks) == POINTER_DYNAMIC) delete m_callbacks;
-    }
-    
-    // Initialize with config file path
+    // Initialize with the path as the operator wrote it, relative to MQL5\Files.
+    // FileOpen cannot take an absolute path, and the absolute form this class used to build made both the mtime
+    // probe and the read fail forever: m_lastModified stayed 0, so "currentModified <= m_lastModified" was always
+    // true and no reload could ever be detected.
     void Init(string path = "Config/live_overrides.json", int checkIntervalSec = 30) {
-        string dataPath = TerminalInfoString(TERMINAL_DATA_PATH);
-        m_configPath = dataPath + "\\MQL5\\Files\\" + path;
+        m_configPath = path;
+        m_displayPath = TerminalInfoString(TERMINAL_DATA_PATH) + "\\MQL5\\Files\\" + path;
         m_checkIntervalSec = checkIntervalSec;
-        
-        // Get initial file modification time
+
         m_lastModified = GetFileWriteTime(m_configPath);
-        m_enabled = true;
-        
-        Print("[LIVE-CONFIG] Watching: ", m_configPath, " (interval: ", m_checkIntervalSec, "s)");
-        g_structLog.LogInfo("LIVE-CONFIG", "Initialized watching " + m_configPath);
+        Print("[LIVE-CONFIG] Watching: ", m_displayPath, " (interval: ", m_checkIntervalSec, "s)");
+        g_structLog.LogInfo("LIVE-CONFIG", "Initialized watching " + m_displayPath);
     }
-    
-    // Register callback for config section
-    void RegisterCallback(IConfigCallback* callback) {
-        if(callback != NULL) {
-            m_callbacks.Add(callback);
-            Print("[LIVE-CONFIG] Registered callback object for section: ", callback.GetSectionName());
-        }
-    }
-    
-    // Enable/disable
-    void SetEnabled(bool enabled) { m_enabled = enabled; }
-    bool IsEnabled() const { return m_enabled; }
-    
-    // Main check function - call from OnTimer
+
+    // Main check function - call from OnTimer. Throttled on GetTickCount(): TimeCurrent() advances only with
+    // ticks, and a quiet market is exactly when an operator reaches for the override file.
     void CheckAndReload() {
-        if(!m_enabled) return;
-        if(TimeCurrent() - m_lastCheck < m_checkIntervalSec) return;
-        m_lastCheck = TimeCurrent();
-        
+        uint nowMs = GetTickCount();
+        if(m_lastCheckMs != 0 && (nowMs - m_lastCheckMs) < (uint)(m_checkIntervalSec * 1000))
+            return;
+        m_lastCheckMs = nowMs;
+
         datetime currentModified = GetFileWriteTime(m_configPath);
-        if(currentModified <= m_lastModified) {
+        if(currentModified == 0)
+        {
+            if(!m_unreadableReported)
+            {
+                m_unreadableReported = true;
+                Print("[LIVE-CONFIG] file not readable | path=", m_displayPath, " | live overrides inactive");
+                g_structLog.LogError("LIVE-CONFIG", "File not readable: " + m_displayPath);
+            }
             return;
         }
-        
+        m_unreadableReported = false;
+
+        if(currentModified <= m_lastModified)
+            return;
+
         m_lastModified = currentModified;
-        
+
         Print("[LIVE-CONFIG] File changed, reloading...");
         g_structLog.LogInfo("LIVE-CONFIG", "File modified, reloading config");
-        
+
         string json = ReadFileToString(m_configPath);
         if(json == "") {
             Print("[LIVE-CONFIG] ERROR: Failed to read config file");
             g_structLog.LogError("LIVE-CONFIG", "Failed to read config file");
             return;
         }
-        
-        // Validate JSON structure (basic)
+
         if(!ValidateJson(json)) {
             Print("[LIVE-CONFIG] ERROR: Invalid JSON structure");
             g_structLog.LogError("LIVE-CONFIG", "Invalid JSON structure");
             return;
         }
-        
-        // Check if actually changed
+
         if(json == m_lastJson) {
             Print("[LIVE-CONFIG] Config unchanged (same content)");
             return;
         }
         m_lastJson = json;
-        
-        // Parse and notify callbacks
-        NotifyCallbacks(json);
-        
-        Print("[LIVE-CONFIG] Reload complete, ", m_callbacks.Total(), " callbacks notified");
-        g_structLog.LogInfo("LIVE-CONFIG", "Reload complete, callbacks=" + IntegerToString(m_callbacks.Total()));
+        m_pendingReload = true;
+
+        Print("[LIVE-CONFIG] Reload complete | owner applies the risk section");
+        g_structLog.LogInfo("LIVE-CONFIG", "Reload complete");
     }
-    
-    // Force reload (e.g., from dashboard command)
-    void ForceReload() {
-        m_lastModified = 0; // Force reload
-        CheckAndReload();
-    }
-    
+
+    // True once per detected content change; the owner then reads GetCurrentConfig() and applies it.
+    bool ConsumeReloaded() { bool pending = m_pendingReload; m_pendingReload = false; return pending; }
+
     string GetCurrentConfig() const { return m_lastJson; }
     
     // Parse helpers for common types
@@ -151,10 +119,6 @@ public:
         return JsonGetString(json, path, defaultVal);
     }
     
-    // Get object section
-    static string GetSection(string json, string section) {
-        return JsonGetSection(json, section);
-    }
 
 private:
     // Get file write time using MQL5 file functions
@@ -195,36 +159,6 @@ private:
         return openBraces == closeBraces && openBraces > 0;
     }
     
-    void NotifyCallbacks(string json) {
-        // Parse top-level sections
-        string riskJson = GetSection(json, "risk");
-        string weightsJson = GetSection(json, "weights");
-        string thresholdsJson = GetSection(json, "thresholds");
-        string symbolsJson = GetSection(json, "symbols");
-        string aiJson = GetSection(json, "ai");
-        string engineJson = GetSection(json, "engines");
-        
-        // Notify each callback with relevant section
-        for(int i = 0; i < m_callbacks.Total(); i++) {
-            IConfigCallback* cb = m_callbacks.At(i);
-            if(cb == NULL) continue;
-            
-            string section = cb.GetSectionName();
-            string sectionJson = "";
-            
-            if(section == "Risk" || section == "risk") sectionJson = riskJson;
-            else if(section == "Weights" || section == "weights") sectionJson = weightsJson;
-            else if(section == "Thresholds" || section == "thresholds") sectionJson = thresholdsJson;
-            else if(section == "Symbols" || section == "symbols") sectionJson = symbolsJson;
-            else if(section == "AI" || section == "ai") sectionJson = aiJson;
-            else if(section == "Engines" || section == "engines") sectionJson = engineJson;
-            else sectionJson = json; // Full config
-            
-            if(sectionJson != "") {
-                cb.OnConfigChange(section, sectionJson);
-            }
-        }
-    }
 };
 
 // JSON parsing helpers (MQL5 Json functions are limited)
@@ -256,37 +190,6 @@ string JsonGetString(string json, string path, string defaultVal) {
         return StringSubstr(valueStr, 1, StringLen(valueStr) - 2);
     }
     return valueStr;
-}
-
-string JsonGetSection(string json, string section) {
-    // Extract "section": { ... } as string
-    string search = "\"" + section + "\"";
-    int start = StringFind(json, search);
-    if(start < 0) return "";
-    
-    start = StringFind(json, ":", start);
-    if(start < 0) return "";
-    start++; // Skip :
-    
-    // Skip whitespace
-    while(start < StringLen(json) && (json[start] == ' ' || json[start] == '\t' || json[start] == '\n' || json[start] == '\r')) start++;
-    if(start >= StringLen(json)) return "";
-    
-    if(json[start] != '{') return "";
-    
-    // Find matching closing brace
-    int depth = 0;
-    int end = start;
-    for(; end < StringLen(json); end++) {
-        if(json[end] == '{') depth++;
-        else if(json[end] == '}') {
-            depth--;
-            if(depth == 0) break;
-        }
-    }
-    
-    if(depth != 0) return "";
-    return StringSubstr(json, start, end - start + 1);
 }
 
 string JsonExtractValue(string json, string path) {
