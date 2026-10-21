@@ -66,7 +66,6 @@
 #include "../../Core/Processing/MultiAssetProfiler.mqh"
 #include "../../IndicatorManager.mqh"
 #include "../../Core/Registry/RegistryAggregator.mqh"
-#include "OrchestratorStatusReporter.mqh"
 #include "../../Core/Strategy/StrategyRegistry.mqh"
 #include "../../Core/Management/SymbolUniverseBuilder.mqh"
 #include "../../Core/Utils/StructuredLogger.mqh"
@@ -200,9 +199,6 @@ class CEAOrchestrator
     CPositionManager            m_positionManager;
 
     CRegistryAggregator             m_registryAggregator;
-
-    // Heartbeat status text. Wired once by WireAndValidateDependencies(); read-only, no trading impact.
-    COrchestratorStatusReporter     m_statusReporter;
 
     // Live equity/PnL state is owned by CPerformanceAnalytics and CUnifiedRiskManager.
 
@@ -1409,12 +1405,6 @@ void WireAndValidateDependencies()
     // DiagnosticsManager takes the per-symbol enterprise managers (consensus diagnostics).
     m_diagnosticsManager.SetManagers(m_enterpriseManagers, ArraySize(m_enterpriseManagers));
 
-    // Status reporter: heartbeat status text only, no trading impact. Slot 0 is passed only
-    // once the manager array is populated (the reporter NULL-checks it either way).
-    m_statusReporter.SetManagers(GetPointer(m_registryAggregator),
-                                 GetPointer(m_liveAuthority),
-                                 (ArraySize(m_enterpriseManagers) > 0 ? m_enterpriseManagers[0] : NULL));
-
     // Every check runs (no short-circuit) so a misconfigured build reports ALL missing deps at once.
     bool ok = true;
 
@@ -2544,10 +2534,6 @@ void ReleaseEnterpriseManagers()
     }
     ArrayResize(m_enterpriseManagers, 0);
     ArrayResize(m_enterpriseManagerSymbols, 0);
-
-    // Drop the status reporter's borrowed slot-0 pointer so it cannot outlive the deleted
-    // manager; heartbeat status then skips that report section.
-    m_statusReporter.ClearEnterpriseManager();
 }
 
 void OnTick()
@@ -3675,21 +3661,6 @@ bool IsEAOwnedMagic(long magic) const
 double CalculateDailyPnLPercent()
 {
     return COrchestratorProfitGuard::CalculateDailyPnLPercent();
-}
-
-// Status assembly lives in COrchestratorStatusReporter (deps injected in WireAndValidateDependencies).
-// MQL5 cannot take the per-cycle counters by pointer, so they are forwarded on each call.
-string GetStatusReport() const
-{
-    return m_statusReporter.GetStatusReport(m_systemInitialized,
-                                            m_tradingEnabled,
-                                            m_managerCount,
-                                            m_callCount,
-                                            m_heartbeat.GetScansAttempted(),
-                                            m_heartbeat.GetSignalsValidated(),
-                                            m_heartbeat.GetSignalsSent(),
-                                            GetEAPositionCount(),
-                                            m_config.maxPositionsTotal);
 }
 
 // AI cleanup helper: called on init failure and from Shutdown().

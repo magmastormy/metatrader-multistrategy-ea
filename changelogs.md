@@ -8,6 +8,48 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-21
 
+### Batch 247: the status-report chain had no entry point, so the whole of it goes
+
+Batch 246 found the entry point dead - `CEAOrchestrator::GetStatusReport()` has no call in any `.mq5` or `.mqh` - and
+deleted the position side of the chain. This one deletes the rest: `Core/Orchestration/OrchestratorStatusReporter.mqh`
+(114 lines) with its orchestrator member, `SetManagers` call and the `ClearEnterpriseManager()` call that existed only to
+keep that class's borrowed enterprise-manager pointer from outliving the object, plus eight collaborator reports that
+answered to it: `CLiveAuthorityResolver`, `CTradeExecutor`, `CCandidateBuilder`, `CPostConsensusValidator` (and the
+`CEnterpriseStrategyManager` forwarder that only delegated to it), and the five engine registries.
+
+Two of those deletions correct a documented falsehood rather than just removing code:
+- `README.md`'s Batch 172 bullet and `SYSTEM_STRUCTURE.md`'s LiveAuthorityResolver row both say the
+  `[LiveAuthorityResolver]` status block *prints* `pf=` / `eligible=` per tracked AI strategy, and that this makes the
+  promotion gate's arming observable. It could never print. The observable surfaces are `[AUTHORITY-CONFIG]` at init and
+  `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` per decision, and both rows now name those.
+- `CHeartbeatTelemetry`'s eighteen getters had zero callers each - `Emit()` hands the counters to
+  `CDiagnosticsManager::UpdateCounters` positionally and that is what builds `[HEARTBEAT]`. Three of the eighteen were
+  read by the reporter, so §8's chain test was already being met through a dead link.
+
+Write-only state this uncovered, deleted with its last reader: `CTradeExecutor`'s `m_totalSubmitted` / `m_totalConfirmed`
+/ `m_totalRejected` / `m_totalTimeout` and their four `++` sites (the events still print individually via
+`[EXECUTION-TIMEOUT]` / `[EXECUTION-CONFIRMED-BY-POSITION]`, and `[CANDIDATE-BUILDER]` authority refusals read the ledger
+that stays); `CCandidateBuilder::GetAuthorityBlockedTotal`; `CNeuralNetRegistry::GetActiveCount`;
+`CDrawingManagerRegistry::GetTotalObjectCount`; and `CPostConsensusValidator::m_lastVPINMultiplier`, a field its own
+comment labelled "diagnostic mirror", written in three branches and read by the deleted validator report alone.
+
+Engine presence per symbol remains visible through `[WIRE-STATUS]`, which is on a live init path - that is why the
+registry reports were duplicates rather than the only evidence.
+
+Measurable effect beyond line count: 6 added / 378 deleted across fifteen files, and the compile stops parsing eight heavy
+headers through an aggregator nobody calls. `MultiStrategyAutonomousEA.mq5` measured 48.0 s against 129.3 s (Batch 246)
+and 247.7 s (Batch 245); `MultiStrategyTestingEA.mq5` 60.3 s; `TrainingDataExporter.mq5` 20.2 s.
+
+Deliberately not shipped as a replacement: a re-wired status line. Printing one is a feature choice (which numbers, init
+or deinit, journal or chart comment), and the deleted chain answers no such ask. Asked and it is a dozen lines.
+
+Docs: `README.md`, `SYSTEM_STRUCTURE.md` (the ScanSchedulerRegistry row, the LiveAuthorityResolver responsibility row),
+`RUNTIME_DECISION_GRAPH.md`, AGENTS metadata. Pointer hygiene: 99 `EAOrchestrator.mqh`/
+`ConsensusEngine.mqh`/`EnterpriseStrategyManager.mqh`/`PostConsensusValidator.mqh`/`TradeExecutor.mqh` citations moved by
+these deletions and re-pointed across the five current-state docs, then two `PostConsensusValidator.mqh` ATR rows
+re-anchored by content (`:258` crisis comparison, `:270` the 1.5 band) because they had drifted to a comment line and a
+neighbouring branch, and `PositionManager.mqh`'s header pointer to `TradeExecutor.mqh:301`.
+
 ### Batch 246: four satellites and a status report nobody has ever printed
 
 Batch 245 kept four small classes alive for one reason - `CPositionManager::GetStatusReport()` read them. Following that
@@ -30,7 +72,7 @@ caller, `BasketEquityStop.mqh:103`, includes it directly); `CPositionMgrStateSto
 private forwarder that no caller could reach; the reporter's `Init`/`IsWired` pair, its borrowed `CPositionManager*` and
 the `SetManagers` argument that filled it; and `EAOrchestrator.mqh`'s `m_positionManager.RecordClosedTrade(netProfit)`.
 
-Kept, with the reason: `CPerformanceAnalytics::RecordClosedTrade` (`EAOrchestrator.mqh:3379`) is the closed-trade feed that
+Kept, with the reason: `CPerformanceAnalytics::RecordClosedTrade` is the closed-trade feed that
 actually has consumers - win rate, profit factor, momentum lot scaling, the `[AUTHORITY-LEARN]` outcome path - so the
 duplicate consecutive-loss tally in the position class went and the real one stayed. `PositionMgrMagicFilter.mqh` stays for
 the same reason as in 245. Nothing about an entry, exit, stop, lot or risk ceiling moved.

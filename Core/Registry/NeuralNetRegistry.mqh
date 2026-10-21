@@ -151,27 +151,6 @@ public:
                 m_entries[i].neuralNet.TickOnlineLearning();
         }
     }
-    
-    int GetActiveCount() const
-    {
-        int count = 0;
-        for(int i = 0; i < m_entryCount; i++)
-            if(m_entries[i].active) count++;
-        return count;
-    }
-    
-    string GetStatusReport() const
-    {
-        string report = "[NeuralNetRegistry] Active networks: " + IntegerToString(GetActiveCount()) + "/" + IntegerToString(m_entryCount) + "\n";
-        for(int i = 0; i < m_entryCount; i++)
-        {
-            if(!m_entries[i].active) continue;
-            report += "  " + m_entries[i].symbol + ": NN=" + (m_entries[i].neuralNet ? "OK" : "NULL");
-            report += " Adapter=" + (m_entries[i].aiAdapter ? "OK" : "NULL");
-            report += " TF=" + EnumToString(m_entries[i].timeframe) + "\n";
-        }
-        return report;
-    }
 };
 
 #endif // CORE_REGISTRY_NEURAL_NET_REGISTRY_MQH

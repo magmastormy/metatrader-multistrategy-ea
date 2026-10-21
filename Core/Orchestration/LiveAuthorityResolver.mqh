@@ -382,37 +382,6 @@ public:
         }
         return STRATEGY_CUSTOM;
     }
-    
-    string GetStatusReport() const
-    {
-        string report = "[LiveAuthorityResolver] ";
-        report += "EA_Mode=" + EnumToString(m_effectiveEAMode);
-        report += " | AI_Conf=" + DoubleToString(m_aiStandaloneMinConfidence, 2);
-        report += " | TrackedStrategies=" + IntegerToString(m_perfCount) + "\n";
-        report += "  thresholds: minSamples=" + IntegerToString(m_authorityMinSamples)
-                + " minExpectancyR=" + DoubleToString(m_authorityMinExpectancyR, 3)
-                + " minProfitFactor=" + DoubleToString(m_authorityMinProfitFactor, 2)
-                + " minCostScore=" + DoubleToString(m_authorityMinCostScore, 2)
-                + " bootstrapMult=" + DoubleToString(m_aiBootstrapRiskMultiplier, 2)
-                + " promotedMult=" + DoubleToString(m_aiPromotedRiskMultiplier, 2) + "\n";
-        
-        for(int i = 0; i < m_perfCount; i++)
-        {
-            report += "  " + m_strategyPerf[i].name + ": ";
-            report += "trades=" + IntegerToString(m_strategyPerf[i].totalTrades);
-            report += " winrate=" + DoubleToString(m_strategyPerf[i].totalTrades > 0 ? 
-                                                   (double)m_strategyPerf[i].winningTrades / m_strategyPerf[i].totalTrades * 100 : 0, 1) + "%";
-            report += " expR=" + DoubleToString(m_strategyPerf[i].expectancyR, 3);
-            report += " pf=" + DoubleToString(m_strategyPerf[i].profitFactor, 2);
-            report += " eligible=" + (m_strategyPerf[i].totalTrades >= m_authorityMinSamples &&
-                                      m_strategyPerf[i].expectancyR >= m_authorityMinExpectancyR &&
-                                      m_strategyPerf[i].profitFactor >= m_authorityMinProfitFactor &&
-                                      m_strategyPerf[i].consecutiveLosses < 4 ? "Y" : "N");
-            report += " consecLoss=" + IntegerToString(m_strategyPerf[i].consecutiveLosses) + "\n";
-        }
-        
-        return report;
-    }
 };
 
 #endif // CORE_ORCHESTRATION_LIVE_AUTHORITY_RESOLVER_MQH

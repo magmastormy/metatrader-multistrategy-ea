@@ -185,21 +185,6 @@ public:
         //     m_slots[idx].cvd.Calculate();
         // }
     }
-    
-    string GetStatusReport() const
-    {
-        string report = "[InstitutionalEngineRegistry] Active symbols: " + IntegerToString(m_slotCount) + "\n";
-        for(int i = 0; i < m_slotCount; i++)
-        {
-            if(!m_slots[i].HasAnyEngine()) continue;
-            report += "  " + m_slots[i].symbol + ": ";
-            if(m_slots[i].vwap) report += "VWAP ";
-            if(m_slots[i].vp) report += "VP ";
-            if(m_slots[i].cvd) report += "CVD ";
-            report += "\n";
-        }
-        return report;
-    }
 };
 
 #endif // CORE_REGISTRY_INSTITUTIONAL_ENGINE_REGISTRY_MQH

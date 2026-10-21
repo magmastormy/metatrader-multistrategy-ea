@@ -2,7 +2,6 @@
 // SyncEnabledWithRegistry() has a live caller in EAOrchestrator.
 // m_lastDecisionContext: one writer (EvaluateConsensusInternal); consumers are the post-consensus
 // validator quality gate and StrategyStateReporter.
-// m_lastVPINMultiplier is owned by CPostConsensusValidator, not here.
 #ifndef CONSENSUS_ENGINE_MQH
 #define CONSENSUS_ENGINE_MQH
 

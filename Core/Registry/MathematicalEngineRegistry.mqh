@@ -459,30 +459,6 @@ private:
         }
     }
     
-    // Diagnostic
-    string GetStatusReport() const
-    {
-        string report = "[MathEngineRegistry] Active symbols: " + IntegerToString(m_slotCount) + "\n";
-        for(int i = 0; i < m_slotCount; i++)
-        {
-            if(!m_slots[i].HasAnyEngine()) continue;
-            report += "  " + m_slots[i].symbol + ": ";
-            if(m_slots[i].hurst) report += "Hurst ";
-            if(m_slots[i].ou) report += "OU ";
-            if(m_slots[i].ofi) report += "OFI ";
-            if(m_slots[i].vpin) report += "VPIN ";
-            if(m_slots[i].kalman) report += "Kalman ";
-            if(m_slots[i].cpd) report += "CPD ";
-            if(m_slots[i].fourState) report += "4State ";
-            if(m_slots[i].volTarget) report += "VolTgt ";
-            if(m_slots[i].exitOptimizer) report += "ExitOpt ";
-            if(m_slots[i].liquiditySweep) report += "LiqSweep ";
-            if(m_slots[i].rangeComp) report += "RangeComp ";
-            report += "\n";
-        }
-        return report;
-    }
-    
 void OnTickAll(const string symbol, double price, double volume, double bid, double ask)
     {
         int idx = GetSlotIndex(symbol, false);

@@ -118,7 +118,6 @@ public:
                                             int confluence, ENUM_SIGNAL_EVAL_MODE evalMode,
                                             const SConsensusDecisionContext& ctx,
                                             ulong scanCycleId, const string corrId = "");
-    string GetValidationStatusReport() const;
 
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
                            bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
@@ -1327,11 +1326,6 @@ SPostConsensusValidation CEnterpriseStrategyManager::ValidateSignal(const string
 {
     return m_postConsensusValidator.ValidateSignal(symbol, signal, confidence, confluence,
                                                    evalMode, ctx, scanCycleId, corrId);
-}
-
-string CEnterpriseStrategyManager::GetValidationStatusReport() const
-{
-    return m_postConsensusValidator.GetValidationStatusReport();
 }
 
 void CEnterpriseStrategyManager::SetValidatorConfig(double intrabarMinQuality,

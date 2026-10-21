@@ -90,24 +90,6 @@ private:
         }
     }
     
-    int GetTotalObjectCount() const
-    {
-        int total = 0;
-        for(int i = 0; i < m_entryCount; i++)
-            total += m_entries[i].objectCount;
-        return total;
-    }
-    
-    string GetStatusReport() const
-    {
-        string report = "[DrawingManagerRegistry] Active symbols: " + IntegerToString(m_entryCount) + " | Total objects: " + IntegerToString(GetTotalObjectCount()) + "\n";
-        for(int i = 0; i < m_entryCount; i++)
-        {
-            report += "  " + m_entries[i].symbol + ": " + IntegerToString(m_entries[i].objectCount) + " objects\n";
-        }
-        return report;
-    }
-    
     int GetIndex(const string symbol, bool createIfMissing = true)
     {
         for(int i = 0; i < m_entryCount; i++)

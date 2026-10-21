@@ -86,25 +86,6 @@ public:
     void IncTradesOpened()          { m_tradesOpened++; }
     void IncSyntheticSpikeEvents(const ulong count = 1) { m_syntheticSpikeEvents += count; }
 
-    ulong GetScansAttempted()        const { return m_scansAttempted; }
-    ulong GetIntrabarScansExecuted() const { return m_intrabarScansExecuted; }
-    ulong GetNoSignalCount()         const { return m_noSignalCount; }
-    ulong GetValidatorRejects()      const { return m_validatorRejects; }
-    ulong GetRiskRejects()           const { return m_riskRejects; }
-    ulong GetEntryBlocked()          const { return m_entryBlocked; }
-    ulong GetSizingRejects()         const { return m_sizingRejects; }
-    ulong GetQuietNoNewBar()         const { return m_quietNoNewBar; }
-    ulong GetQuietCadenceHold()      const { return m_quietCadenceHold; }
-    ulong GetQuietMissingManager()   const { return m_quietMissingManager; }
-    ulong GetSignalsGenerated()      const { return m_signalsGenerated; }
-    ulong GetSignalsAfterPipeline()  const { return m_signalsAfterPipeline; }
-    ulong GetSignalsAfterQuorum()    const { return m_signalsAfterQuorum; }
-    ulong GetSignalsValidated()      const { return m_signalsValidated; }
-    ulong GetSignalsRiskApproved()   const { return m_signalsRiskApproved; }
-    ulong GetSignalsSent()           const { return m_signalsSent; }
-    ulong GetTradesOpened()          const { return m_tradesOpened; }
-    ulong GetSyntheticSpikeEvents()  const { return m_syntheticSpikeEvents; }
-
 // UpdateCounters takes 18 positional arguments: the order below must match the
 // manager's parameter list exactly. NULL diag is tolerated (no-op). tradingPaused comes
 // from CSyntheticSpikeMonitor, the only holder of that state.

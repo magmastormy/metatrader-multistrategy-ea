@@ -1,4 +1,4 @@
-// Position-state and prediction-map registry: TradeExecutor registers each fill (TradeExecutor.mqh:312) and
+// Position-state and prediction-map registry: TradeExecutor registers each fill (TradeExecutor.mqh:301) and
 // TradeAttributionManager reads the maps back by ticket (TradeAttributionManager.mqh:606). Exits belong to
 // CPositionLifecycleManager; this class holds no exit logic and no status reporting.
 #property strict

@@ -173,11 +173,11 @@ private:
         }
     }
 
-    // Symbols the live-authority ladder sizes under SYMBOL_VOLUME_MIN, counted for the status report.
+    // Symbols the live-authority ladder sizes under SYMBOL_VOLUME_MIN, counted per symbol for the refusal line.
     string m_authorityBlockSymbols[];
     int    m_authorityBlockCounts[];
     int    m_authorityBlockedTotal;
-    // Count kept separately: GetStatusReport() is const and ArraySize() binds its argument by reference.
+    // Count kept separately: ArraySize() binds its argument by reference, so a const method cannot read it.
     int    m_authorityBlockSymbolsCount;
 
     int NoteAuthorityBlock(const string symbol)
@@ -299,7 +299,6 @@ public:
         return true;
     }
 
-    int GetAuthorityBlockedTotal() const { return m_authorityBlockedTotal; }
 
     void SetDependencies(CUnifiedRiskManager* risk, CPositionSizer* sizer, CTradeManager* trade,
                          CPerformanceAnalytics* perf, CDerivAssetProfiler* derivProf)
@@ -844,48 +843,7 @@ public:
             if(CatalogContributorIsAIKind(contributors[i], CAT_AI_NEURAL_NET)) return true;
         return false;
     }
-    
-        string GetStatusReport() const
-        {
-            string report = "[CandidateBuilder] Config:\n";
-            report += "  MinRRDefault=" + DoubleToString(m_minRRDefault, 1);
-            report += " | MinRRMeanRev=" + DoubleToString(m_minRRMeanReversion, 1) + "\n";
-            report += "  MaxRiskPerTrade=" + DoubleToString(m_maxRiskPerTrade, 1) + "%\n";
-            report += "  HybridGateRelaxCycles=" + IntegerToString(m_hybridGateRelaxAfterCycles);
-            report += " | AIStandaloneConf=" + DoubleToString(m_aiStandaloneMinConfidence, 2);
-            report += " | AIRelaxedConf=" + DoubleToString(m_aiStandaloneRelaxedConfidence, 2) + "\n";
-            for(int i = 0; i < m_symbolCycleCount; i++)
-            {
-                string symbol = m_symbolCyclesSinceIndicator[i];
-                if(symbol == "") continue;
-                int cycles = m_symbolCyclesSinceIndicatorValues[i];
-                bool relaxed = false;
-                for(int j = 0; j < m_symbolHybridGateRelaxedCount; j++)
-                {
-                    if(m_symbolHybridGateRelaxedKeys[j] == symbol)
-                    {
-                        relaxed = m_symbolHybridGateRelaxedValues[j];
-                        break;
-                    }
-                }
-                report += "  " + symbol + ": cycles=" + IntegerToString(cycles) + " relaxed=" + (relaxed ? "YES" : "NO") + "\n";
-            }
-            // Without this a symbol the ladder sized out of existence looks like one with no signals.
-            report += "  authorityLotRefusals total=" + IntegerToString(m_authorityBlockedTotal);
-            if(m_authorityBlockedTotal > 0)
-            {
-                report += "\n";
-                for(int k = 0; k < m_authorityBlockSymbolsCount; k++)
-                {
-                    if(m_authorityBlockCounts[k] <= 0) continue;
-                    report += "    " + m_authorityBlockSymbols[k] + " refused=" + IntegerToString(m_authorityBlockCounts[k]) +
-                              " (authority lot < SYMBOL_VOLUME_MIN)\n";
-                }
-            }
-            else
-                report += "\n";
-            return report;
-        }
+
 };
 
 #endif // CORE_ORCHESTRATION_CANDIDATE_BUILDER_MQH

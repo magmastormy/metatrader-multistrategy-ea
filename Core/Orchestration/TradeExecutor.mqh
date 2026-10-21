@@ -43,12 +43,6 @@ private:
     int m_pendingCount;
     int m_maxPending;
     
-    // Statistics
-    ulong m_totalSubmitted;
-    ulong m_totalConfirmed;
-    ulong m_totalRejected;
-    ulong m_totalTimeout;
-
 public:
     struct SExecutionResult
     {
@@ -66,8 +60,7 @@ public:
     };
     
     CTradeExecutor() : m_tradeManager(NULL), m_attributionManager(NULL), m_positionManager(NULL),
-                       m_neuralNetRegistry(NULL), m_pendingCount(0), m_maxPending(50), m_totalSubmitted(0), m_totalConfirmed(0),
-                       m_totalRejected(0), m_totalTimeout(0)
+                       m_neuralNetRegistry(NULL), m_pendingCount(0), m_maxPending(50)
     {
         ArrayResize(m_pendingConfirmations, m_maxPending);
     }
@@ -126,7 +119,6 @@ public:
         
         if(!executed)
         {
-            m_totalRejected++;
             result.retcode = m_tradeManager.GetLastRetcode();
             result.reason = GetTradeErrorDescription(m_tradeManager.GetLastRetcode());
             CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED", 
@@ -136,7 +128,6 @@ public:
             return result;
         }
         
-        m_totalSubmitted++;
         result.executed = true;
         
         STradeExecutionReceipt receipt;
@@ -204,7 +195,6 @@ public:
                     MapToNeuralNetPrediction(m_pendingConfirmations[i].candidate, dealTicket);
                     
                     resolved = true;
-                    m_totalConfirmed++;
                     break;
                 }
             }
@@ -216,7 +206,6 @@ public:
                     PrintFormat("[EXECUTION-TIMEOUT] %s | order=%I64u | attempts=%d | no deal found",
                                 m_pendingConfirmations[i].symbol, m_pendingConfirmations[i].orderTicket,
                                 m_pendingConfirmations[i].checkAttempts);
-                    m_totalTimeout++;
                 }
                 
                 RemovePendingAt(i);
@@ -406,18 +395,6 @@ public:
         // PLACED labeled "Invalid volume", 10009 DONE labeled "Market closed"),
         // poisoning rejection reasons. Delegate to the authoritative descriptor.
         return CTradeDescriptor::GetTradeErrorDescription(errorCode);
-    }
-    
-    // Diagnostics
-    string GetStatusReport() const
-    {
-        string report = "[TradeExecutor] ";
-        report += "Pending=" + IntegerToString(m_pendingCount);
-        report += " | Submitted=" + IntegerToString(m_totalSubmitted);
-        report += " | Confirmed=" + IntegerToString(m_totalConfirmed);
-        report += " | Rejected=" + IntegerToString(m_totalRejected);
-        report += " | Timeout=" + IntegerToString(m_totalTimeout);
-        return report;
     }
 };
 

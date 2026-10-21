@@ -52,15 +52,6 @@ public:
         }
         return false;
     }
-
-    string GetStatusReport() const
-    {
-        string report = "[ScanSchedulerRegistry] Symbols: " + IntegerToString(m_stateCount) + "\n";
-        for(int i = 0; i < m_stateCount; i++)
-            report += "  " + m_states[i].symbol + ": lastBar="
-                    + TimeToString(m_states[i].lastBarTime, TIME_SECONDS) + "\n";
-        return report;
-    }
 };
 
 #endif // CORE_REGISTRY_SCAN_SCHEDULER_REGISTRY_MQH

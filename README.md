@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:854-855` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:850-851` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -293,7 +293,7 @@ The EA enforces a **multi-layer pre-trade risk gate** before any order reaches t
 - **Scope limit you must know.** In `CLiveAuthorityResolver::Resolve`, `result.allowed` is set `true` unconditionally at the end — the only *vetoes* are still the two mode checks and `LOW_CONFIDENCE`. Since Batch 173 the ladder (`1.0 / 0.85 / 0.70 / 0.50 / bootstrap / promoted`), the `PROVEN_AI` vs `BOOTSTRAP_AI` split, and the cost/readiness/context bonuses all set the shipped lot; they just express themselves through size rather than through permission.
 - **Init logs a new `[AUTHORITY-CONFIG]` pair.** `effective:` lists the thresholds in force; `clamped:` names any `InpAuthority*` input that was looser than the documented floor. On stock defaults six names clamp — `authorityMinSamples` (12→30), `authorityMinExpectancyR` (0.03→0.3), `authorityMinProfitFactor` (1.10→1.2), `aiPromotedRiskMultiplier` (1.00→0.75), `authorityMinReadinessScore` (0.52→0.60) and `authorityMinContextScore` (0.48→0.55). The last two land on the literals the code already used, so only the first four represent a real policy choice.
 - **Configured authority values can only tighten a gate, never loosen one.** The floors are `AUTHORITY_MIN_*` defines in `LiveAuthorityResolver.mqh`. Making promotion easier is a deliberate source edit, not a slider in the inputs dialog.
-- **The `[LiveAuthorityResolver]` status block prints `pf=` and `eligible=Y|N` per tracked AI strategy**, so the gate's arming is observable rather than inferred from an absent `PROVEN_AI`.
+- **The `[LiveAuthorityResolver]` status block that was to print `pf=` and `eligible=Y|N` per tracked AI strategy could never print** - its only reader chain dead-ends at `CEAOrchestrator::GetStatusReport()`, which has no caller, and Batch 247 deleted it. What is observable is `[AUTHORITY-CONFIG]` at init and the per-decision `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` lines. `PROVEN_AI`.
 - **Not fixed, and not silently:** per-family demotion to shadow, and the trial tracking those three inputs used to imply, do not exist (Batch 238 deleted the inputs; there was never a trial store). The `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]` tags named in SYSTEM_STRUCTURE.md appear in no source file and never have.
 
 ### What the operator will notice after Batch 173 (authority now sets the lot)
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3592`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3578`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -498,7 +498,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1594` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1584` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -632,6 +632,41 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 247: the rest of the status-report chain is gone, and the EA now compiles five times faster
+
+Batch 246 proved the entry point was unreachable (`CEAOrchestrator::GetStatusReport()` had no caller). This batch deletes
+the whole chain rather than leaving eight more methods that answer to nobody:
+
+- `Core/Orchestration/OrchestratorStatusReporter.mqh` (114 lines), its member in the orchestrator, the `SetManagers` call,
+  and the `ClearEnterpriseManager()` call whose only purpose was keeping the reporter's borrowed pointer from outliving a
+  deleted manager.
+- `CLiveAuthorityResolver::GetStatusReport()` - the per-strategy `pf=` / `eligible=` block three documents described as
+  observability. It has never printed, in any build. `README.md` and `SYSTEM_STRUCTURE.md` now point at what does print:
+  `[AUTHORITY-CONFIG]` at init and `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` per decision.
+- `CTradeExecutor::GetStatusReport()` and the four counters it alone read (`m_totalSubmitted` / `Confirmed` / `Rejected` /
+  `Timeout`), with their `++` sites. The events themselves still print - `[EXECUTION-TIMEOUT]`,
+  `[EXECUTION-CONFIRMED-BY-POSITION]` - so nothing about execution became less visible, only the aggregate that no path
+  could reach.
+- `CCandidateBuilder::GetStatusReport()` and `GetAuthorityBlockedTotal()`. The authority lot-refusal ledger stays, because
+  the refusal line at `CandidateBuilder.mqh:255-276` reads it on a live path; the report's copy of the same numbers went.
+- `CPostConsensusValidator::GetValidationStatusReport()` and the manager forwarder that only delegated to it.
+- The five engine-registry reports (`Mathematical` / `Institutional` / `NeuralNet` / `DrawingManager` / `ScanScheduler`)
+  plus the two helpers only they read (`GetActiveCount`, `GetTotalObjectCount`). Engine presence per symbol is already
+  printed by `[WIRE-STATUS]`, which is on a live init path.
+- `CHeartbeatTelemetry`'s eighteen getters. All eighteen had zero callers - `Emit()` passes the counters to
+  `CDiagnosticsManager::UpdateCounters` directly, and that is what builds `[HEARTBEAT]`. The three the reporter used were
+  dead too, because the reporter was dead.
+- `CPostConsensusValidator::m_lastVPINMultiplier`, a field whose own comment called it "diagnostic mirror", written in
+  three branches and read only by the deleted validator report.
+
+What you get back: 6 added / 378 deleted across fifteen files, and a build that stops recompiling eight heavy headers
+through a translation unit that never needed them. `MultiStrategyAutonomousEA.mq5` measured **48.0 s** against 129.3 s in
+Batch 246 and 247.7 s in Batch 245; `MultiStrategyTestingEA.mq5` 60.3 s. Fewer headers also means `PositionManager.mqh`
+no longer drags `RegimeEngine` / `RiskTierManager` / `SafeModeConfig` into five files that never asked for them.
+
+If you want a status line, say which numbers and where - init or deinit, journal or chart comment - and one small printer
+goes in. What was removed could not be asked for, because there was no way to call it.
+
 ### Batch 246: the position registry dropped three dead satellites - and a status report no build ever printed
 
 Batch 245 left four small classes alive for one reason: `CPositionManager::GetStatusReport()` read them. That report is
@@ -641,7 +676,7 @@ next to them.
 
 The finding worth knowing is bigger than the position class: **no build of this EA has ever printed that status text.**
 The chain is `CPositionManager::GetStatusReport()` <- `COrchestratorStatusReporter::GetStatusReport()` <-
-`CEAOrchestrator::GetStatusReport()` (`EAOrchestrator.mqh:3682`), and that last method has no call anywhere in the
+`CEAOrchestrator::GetStatusReport()` , and that last method has no call anywhere in the
 `.mq5` or `.mqh` tree. The seven other sections the reporter assembles - live authority, the enterprise manager's
 validator block, the five engine registries - are in the same position: a parallel diagnostics API with no entry point.
 That is AGENTS.md §8's "a reader is not a caller" one level up, and the rest of that chain is the next batch.
@@ -653,7 +688,7 @@ What else went:
 - `PositionMgrLossGuard.mqh` (170 lines). Batch 245 orphaned its `ManageLossMinimization()`, which contained a second
   `ClosePosition(ticket, "Position Loss Limit")` beside the lifecycle guard's live one - a latent third exit authority,
   unreachable rather than harmless. Its surviving counters fed only the dead report, so the duplicate consecutive-loss
-  tally goes too. `CPerformanceAnalytics::RecordClosedTrade` (`EAOrchestrator.mqh:3379`) stays as the one closed-trade
+  tally goes too. `CPerformanceAnalytics::RecordClosedTrade` stays as the one closed-trade
   feed with real consumers: momentum lot scaling, win rate and profit factor, the `[AUTHORITY-LEARN]` outcome path.
 - `CPositionManager::RecordClosedTrade`, its call site next to the analytics feed, the class's `m_enabled`, the three
   includes its deleted collaborators needed, and the reporter's never-called `Init`/`IsWired` pair.
@@ -680,9 +715,8 @@ Two things this means for you, and one it does not:
 - The init line changed: `[INIT] PositionManager initialized` is now `[INIT] PositionManager registry ready | position-state +
   prediction maps, no exit authority`. `[CRITICAL] PositionManager initialization FAILED` no longer exists - nothing cited it,
   and it could not have fired, because the call passed two addresses that are never `NULL`.
-- The status report still prints the same fields, and five of them are constants: `Enabled=Y | Pyramid=N | DynamicSL=N |
-  LossMin=N | SRE=N | ... | PyramidStates=0 | VolRegimes=0`. They were constants before this batch too - their setters had no
-  caller - so nothing became misleading here; the four satellites behind them go in the next step, together with those fields.
+- The status report kept printing the same nine fields, five of them constants (`Enabled=Y | Pyramid=N | DynamicSL=N |
+  LossMin=N | SRE=N | ... | PyramidStates=0 | VolRegimes=0`), and Batch 246 deleted the report and the satellites together - see the section above.
 - No exit, stop, lot or entry moved. The live exit path remains `CPositionLifecycleManager::ManagePositions()`, which is what
   has always run.
 
@@ -729,7 +763,7 @@ decision for you, not a cleanup I should make while you are asleep.
 
 No trading decision moved in this batch. `CPositionManager` kept a `CFullMarginMode*` and a `CIntelligentSLGuard*`, was passed
 `&m_fullMarginMode` and a literal `NULL` for them at init, and asked neither anything, ever; the margin object actually
-consulted is the orchestrator's own (`EAOrchestrator.mqh:970`, read by `CDiagnosticsManager`). Gone: the two members, the two
+consulted is the orchestrator's own (`EAOrchestrator.mqh:966`, read by `CDiagnosticsManager`). Gone: the two members, the two
 `Initialize` parameters, the include that only they needed, and three circuit-breaker getters (`GetTriggeredAt`,
 `GetRecoveryAttempts`, `GetRecoveryLevel`) with no caller anywhere. The recovery ladder still reads that state internally and
 prints it, so the journal is unchanged.
@@ -857,7 +891,7 @@ Also removed by the sweep in the same files: seven `Validate...` forwarders on `
 `ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
 every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
 four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
-initialized at `EAOrchestrator.mqh:970`, keeps its own config and de-risks nothing, because none of its methods is
+initialized at `EAOrchestrator.mqh:966`, keeps its own config and de-risks nothing, because none of its methods is
 called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
@@ -966,7 +1000,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3592`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3578`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

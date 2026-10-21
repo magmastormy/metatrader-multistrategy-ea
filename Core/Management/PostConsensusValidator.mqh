@@ -58,7 +58,6 @@ private:
     bool   m_enableVPINFilter;
     double m_baseSpreadATRRatio;
     double m_syntheticSpreadATRRatio;
-    double m_lastVPINMultiplier;   // diagnostic mirror of the toxicity size; the lot is scaled by CVPINLotModifier
 
 public:
     CPostConsensusValidator() : m_src(NULL),
@@ -71,8 +70,7 @@ public:
                                 m_enableOFIProxy(false),
                                 m_enableVPINFilter(false),
                                 m_baseSpreadATRRatio(VALIDATOR_BASE_SPREAD_ATR_RATIO),
-                                m_syntheticSpreadATRRatio(VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO),
-                                m_lastVPINMultiplier(1.0) {}
+                                m_syntheticSpreadATRRatio(VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO) {}
 
     void SetSource(const CEnterpriseStrategyManager* src) { m_src = src; }
 
@@ -95,8 +93,6 @@ public:
     double GetATRCrisisThreshold(const string symbol);
     bool   IsSyntheticSymbolForValidation(const string symbol);
     double GetAdaptiveQualityThreshold(const SConsensusDecisionContext& ctx, ENUM_SIGNAL_EVAL_MODE evalMode);
-    string GetValidationStatusReport() const;
-    double GetLastVPINMultiplier() const { return m_lastVPINMultiplier; }
 
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
                             bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
@@ -382,7 +378,6 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
     // to compare against, which sat above the configured EXTREME line and never fired.
     if(vpinFilter.ShouldBlockNewPositions())
     {
-        m_lastVPINMultiplier = mult;
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | VETO | signal=%s conf=%.2f | VPIN=%.3f >= extreme=%.3f | size_mult=%.3f | new positions blocked until toxicity drops below the threshold",
                     symbol, EnumToString(signal), confidence, vpinValue,
                     vpinFilter.GetExtremeThreshold(), mult);
@@ -391,13 +386,11 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
 
     if(regime >= VPIN_TOXICITY_MEDIUM)
     {
-        m_lastVPINMultiplier = mult;
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_toxic | regime=%s | signal=%s conf=%.2f | VPIN=%.3f | size_mult=%.3f (CVPINLotModifier applies it)",
                     symbol, EnumToString(regime), EnumToString(signal), confidence, vpinValue, mult);
         return true;
     }
 
-    m_lastVPINMultiplier = 1.0;
     return true;
 }
 
@@ -484,19 +477,6 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
         default:
             return baseThreshold;
     }
-}
-
-string CPostConsensusValidator::GetValidationStatusReport() const
-{
-    string report = "[EnterpriseStrategyManager::Validation] Config:\n";
-    report += "  IntrabarMinQuality=" + DoubleToString(m_validatorIntrabarMinQuality, 2);
-    report += " | NewBarMinQuality=" + DoubleToString(m_validatorNewBarMinQuality, 2) + "\n";
-    report += "  HardSpreadCutoff=" + DoubleToString(m_hardSpreadCutoffPoints, 1) + " pts\n";
-    report += "  OFIProxy=" + (m_enableOFIProxy ? "ON" : "OFF");
-    report += " | VPINFilter=" + (m_enableVPINFilter ? "ON" : "OFF");
-    report += " | SpikeHunter=" + (m_spikeHunterEnabled ? "ON" : "OFF") + "\n";
-    report += "  LastVPINMultiplier=" + DoubleToString(m_lastVPINMultiplier, 3) + "\n";
-    return report;
 }
 
 void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
