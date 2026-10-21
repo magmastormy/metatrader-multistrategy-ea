@@ -1413,7 +1413,6 @@ void WireAndValidateDependencies()
     // once the manager array is populated (the reporter NULL-checks it either way).
     m_statusReporter.SetManagers(GetPointer(m_registryAggregator),
                                  GetPointer(m_liveAuthority),
-                                 positionManager,
                                  (ArraySize(m_enterpriseManagers) > 0 ? m_enterpriseManagers[0] : NULL));
 
     // Every check runs (no short-circuit) so a misconfigured build reports ALL missing deps at once.
@@ -3378,7 +3377,6 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
                      + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
 
     m_performanceAnalytics.RecordClosedTrade(trans.deal, netProfit);
-    m_positionManager.RecordClosedTrade(netProfit);
     FeedAuthorityOutcome(positionId, netProfit);
 
     // The neural net's trade-linked label queue: ProcessClosedPositionsForNNTraining drains this

@@ -7,7 +7,6 @@
 #define CORE_ORCHESTRATION_ORCHESTRATOR_STATUS_REPORTER_MQH
 
 #include "LiveAuthorityResolver.mqh"
-#include "../Position/PositionManager.mqh"
 #include "../Registry/RegistryAggregator.mqh"
 #include "../Registry/MathematicalEngineRegistry.mqh"
 #include "../Registry/InstitutionalEngineRegistry.mqh"
@@ -25,14 +24,12 @@ private:
     // Borrowed collaborators (owned by CEAOrchestrator).
     CRegistryAggregator*        m_registryAggregator;
     CLiveAuthorityResolver*     m_liveAuthority;
-    CPositionManager*           m_positionManager;
     CEnterpriseStrategyManager* m_primaryManager;
 
 public:
     COrchestratorStatusReporter()
         : m_registryAggregator(NULL),
           m_liveAuthority(NULL),
-          m_positionManager(NULL),
           m_primaryManager(NULL)
     {
     }
@@ -43,30 +40,14 @@ public:
 // CEAOrchestrator::WireAndValidateDependencies().
 // registryAggregator - registry hub (math/inst/neural/draw/scan)
 // liveAuthority      - AI-vs-indicator authority resolver
-// positionManager    - position lifecycle authority
 // primaryManager     - enterprise manager slot 0, may be NULL
     void SetManagers(CRegistryAggregator*        registryAggregator,
                      CLiveAuthorityResolver*     liveAuthority,
-                     CPositionManager*           positionManager,
                      CEnterpriseStrategyManager* primaryManager)
     {
         m_registryAggregator = registryAggregator;
         m_liveAuthority      = liveAuthority;
-        m_positionManager    = positionManager;
         m_primaryManager     = primaryManager;
-    }
-
-// SetManagers + validity check, for callers that want a
-// pass/fail result. Returns true when every non-optional
-// collaborator is present (primaryManager is optional, exactly
-// as the original NULL-guarded report section was).
-    bool Init(CRegistryAggregator*        registryAggregator,
-              CLiveAuthorityResolver*     liveAuthority,
-              CPositionManager*           positionManager,
-              CEnterpriseStrategyManager* primaryManager)
-    {
-        SetManagers(registryAggregator, liveAuthority, positionManager, primaryManager);
-        return IsWired();
     }
 
 // Drops the borrowed enterprise-manager pointer. Called from
@@ -77,14 +58,6 @@ public:
     void ClearEnterpriseManager()
     {
         m_primaryManager = NULL;
-    }
-
-// IsWired - true when the mandatory collaborators are present
-    bool IsWired() const
-    {
-        return (m_registryAggregator != NULL &&
-                m_liveAuthority      != NULL &&
-                m_positionManager    != NULL);
     }
 
 // Assembles the heartbeat status text. Body moved verbatim from CEAOrchestrator::GetStatusReport(); the value
@@ -115,8 +88,6 @@ public:
             report += m_primaryManager.GetValidationStatusReport();
         if(m_liveAuthority != NULL)
             report += m_liveAuthority.GetStatusReport();
-        if(m_positionManager != NULL)
-            report += m_positionManager.GetStatusReport();
         if(m_registryAggregator == NULL)
             return report;
 

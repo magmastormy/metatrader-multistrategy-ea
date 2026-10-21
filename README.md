@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3594`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3592`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -498,7 +498,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1595` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1594` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -632,6 +632,41 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 246: the position registry dropped three dead satellites - and a status report no build ever printed
+
+Batch 245 left four small classes alive for one reason: `CPositionManager::GetStatusReport()` read them. That report is
+gone now, and with it the fields that were constants (`Enabled=Y`, `Pyramid=N`, `DynamicSL=N`, `SRE=N`, `PyramidStates=0`,
+`VolRegimes=0`), the `LossMin=N` flag whose setter lost its caller in 245, and the consecutive-loss / daily-loss tally
+next to them.
+
+The finding worth knowing is bigger than the position class: **no build of this EA has ever printed that status text.**
+The chain is `CPositionManager::GetStatusReport()` <- `COrchestratorStatusReporter::GetStatusReport()` <-
+`CEAOrchestrator::GetStatusReport()` (`EAOrchestrator.mqh:3682`), and that last method has no call anywhere in the
+`.mq5` or `.mqh` tree. The seven other sections the reporter assembles - live authority, the enterprise manager's
+validator block, the five engine registries - are in the same position: a parallel diagnostics API with no entry point.
+That is AGENTS.md §8's "a reader is not a caller" one level up, and the rest of that chain is the next batch.
+
+What else went:
+- `PositionMgrSRE.mqh`, `PositionMgrPyramid.mqh`, `PositionMgrDynamicSL.mqh` (488 lines). Their behaviour was the exit
+  surface Batch 245 deleted; after that batch they existed only to answer `IsEnabled()` / `GetStateCount()` /
+  `GetRegimeCount()` for a string nobody printed.
+- `PositionMgrLossGuard.mqh` (170 lines). Batch 245 orphaned its `ManageLossMinimization()`, which contained a second
+  `ClosePosition(ticket, "Position Loss Limit")` beside the lifecycle guard's live one - a latent third exit authority,
+  unreachable rather than harmless. Its surviving counters fed only the dead report, so the duplicate consecutive-loss
+  tally goes too. `CPerformanceAnalytics::RecordClosedTrade` (`EAOrchestrator.mqh:3379`) stays as the one closed-trade
+  feed with real consumers: momentum lot scaling, win rate and profit factor, the `[AUTHORITY-LEARN]` outcome path.
+- `CPositionManager::RecordClosedTrade`, its call site next to the analytics feed, the class's `m_enabled`, the three
+  includes its deleted collaborators needed, and the reporter's never-called `Init`/`IsWired` pair.
+- The refactor this area asked for: `PositionMgrStateStore.mqh` had three copies of "evict the oldest slot when full,
+  then append" and two copies of "shift down and shrink". Those are now `AcquireSlot()` and `EraseAt()` - same
+  arithmetic, one place to change.
+
+Kept on purpose: `PositionMgrMagicFilter.mqh` (28 lines), because `BasketEquityStop.mqh:103` calls
+`CPositionMgrMagicFilter::IsEAOwnedMagic` on a live path. It is that file's only caller now.
+
+No entry, exit, stop, lot or risk number moved: 54 added / 870 deleted across eight files, and the position registry is
+119 lines that do one job.
+
 ### Batch 245: `CPositionManager` is a registry now, not a second exit authority
 
 This class had a full set of exit methods - `ManagePositions`, five `Manage*`, six `Configure*`,
@@ -654,6 +689,7 @@ Two things this means for you, and one it does not:
 Kept on purpose: `PositionMgrMagicFilter.mqh`. It looked like residue of the deleted magic-number forwarder, but
 `BasketEquityStop.mqh:103` calls `CPositionMgrMagicFilter::IsEAOwnedMagic` on a live path. That is the difference between a
 name having readers and an owner having callers.
+
 ### Batch 244: the loss-guard exit that had no settings now has six - and its numbers did not move
 
 A live exit path in this EA has been running on a class constructor since the first build. `ManageLossMinimization()` closes
@@ -930,7 +966,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3594`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3592`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

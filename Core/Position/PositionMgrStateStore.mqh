@@ -50,6 +50,33 @@ private:
     SPositionState          m_positionStates[];
     int                     m_positionStateCount;
 
+    //--- One append path for the three writers: evict the oldest slot when full, then hand back the index of a
+    //--- freshly default-constructed tail element.
+    int AcquireSlot()
+    {
+        if(m_positionStateCount >= MAX_POSITION_STATES)
+        {
+            for(int i = 0; i < m_positionStateCount - 1; i++)
+                m_positionStates[i] = m_positionStates[i + 1];
+            m_positionStateCount--;
+            ArrayResize(m_positionStates, m_positionStateCount);
+        }
+
+        ArrayResize(m_positionStates, m_positionStateCount + 1);
+        SPositionState blank;
+        m_positionStates[m_positionStateCount] = blank;
+        return m_positionStateCount++;
+    }
+
+    //--- Shift-down erase, shared by the prediction-id and AI-prediction maps, which remove the same slot.
+    void EraseAt(const int idx)
+    {
+        for(int i = idx; i < m_positionStateCount - 1; i++)
+            m_positionStates[i] = m_positionStates[i + 1];
+        m_positionStateCount--;
+        ArrayResize(m_positionStates, m_positionStateCount);
+    }
+
 public:
     CPositionMgrStateStore() : m_positionStateCount(0)
     {
@@ -84,28 +111,9 @@ public:
             return;
         }
 
-        // Check bounds before adding new state
-        if(m_positionStateCount >= MAX_POSITION_STATES)
-        {
-            // Remove oldest entry to make room
-            for(int i = 0; i < m_positionStateCount - 1; i++)
-            {
-                m_positionStates[i] = m_positionStates[i + 1];
-            }
-            m_positionStateCount--;
-            ArrayResize(m_positionStates, m_positionStateCount);
-        }
-
-        // Create new state
-        ArrayResize(m_positionStates, m_positionStateCount + 1);
-        ZeroMemory(m_positionStates[m_positionStateCount]);
-        SPositionState newState;
-        newState.positionId = positionId;
-        newState.predictionId = predictionId;
-        newState.aiPredictionTime = 0;
-        newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
-        m_positionStates[m_positionStateCount] = newState;
-        m_positionStateCount++;
+        const int slot = AcquireSlot();
+        m_positionStates[slot].positionId = positionId;
+        m_positionStates[slot].predictionId = predictionId;
     }
 
     string GetPositionPredictionId(const ulong positionId)
@@ -121,15 +129,7 @@ public:
         int idx = FindPositionStateIndex(positionId);
         if(idx < 0)
             return;
-
-        // Shift elements
-        for(int i = idx; i < m_positionStateCount - 1; i++)
-        {
-            m_positionStates[i] = m_positionStates[i + 1];
-        }
-
-        m_positionStateCount--;
-        ArrayResize(m_positionStates, m_positionStateCount);
+        EraseAt(idx);
     }
 
     void UpsertPositionAIPrediction(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
@@ -145,27 +145,10 @@ public:
             return;
         }
 
-        // Check bounds before adding new state
-        if(m_positionStateCount >= MAX_POSITION_STATES)
-        {
-            // Remove oldest entry to make room
-            for(int i = 0; i < m_positionStateCount - 1; i++)
-            {
-                m_positionStates[i] = m_positionStates[i + 1];
-            }
-            m_positionStateCount--;
-            ArrayResize(m_positionStates, m_positionStateCount);
-        }
-
-        // Create new state
-        ArrayResize(m_positionStates, m_positionStateCount + 1);
-        SPositionState newState;
-        newState.positionId = positionId;
-        newState.predictionId = "";
-        newState.aiPredictionTime = predictionTime;
-        newState.aiPredictionSignal = predictionSignal;
-        m_positionStates[m_positionStateCount] = newState;
-        m_positionStateCount++;
+        const int slot = AcquireSlot();
+        m_positionStates[slot].positionId = positionId;
+        m_positionStates[slot].aiPredictionTime = predictionTime;
+        m_positionStates[slot].aiPredictionSignal = predictionSignal;
     }
 
     datetime GetPositionAIPredictionTime(const ulong positionId)
@@ -189,23 +172,7 @@ public:
         int idx = FindPositionStateIndex(positionId);
         if(idx < 0)
             return;
-
-        // Shift elements
-        for(int i = idx; i < m_positionStateCount - 1; i++)
-        {
-            m_positionStates[i] = m_positionStates[i + 1];
-        }
-
-        m_positionStateCount--;
-        ArrayResize(m_positionStates, m_positionStateCount);
-    }
-
-    bool GetPositionStateByIndex(const int index, SPositionState &state)
-    {
-        if(index < 0 || index >= m_positionStateCount)
-            return false;
-        state = m_positionStates[index];
-        return true;
+        EraseAt(idx);
     }
 
     void RegisterPositionState(const ulong positionId, const string symbol, ENUM_ORDER_TYPE orderType,
@@ -213,46 +180,19 @@ public:
                                int clusterCode, const string strategyRole)
     {
         if(positionId == 0) return;
+        if(FindPositionStateIndex(positionId) >= 0) return;
 
-        // Check if already exists
-        int idx = FindPositionStateIndex(positionId);
-        if(idx >= 0) return;
-
-        // Check bounds before adding new state
-        if(m_positionStateCount >= MAX_POSITION_STATES)
-        {
-            // Remove oldest entry to make room
-            for(int i = 0; i < m_positionStateCount - 1; i++)
-            {
-                m_positionStates[i] = m_positionStates[i + 1];
-            }
-            m_positionStateCount--;
-            ArrayResize(m_positionStates, m_positionStateCount);
-        }
-
-        // Create new state
-        ArrayResize(m_positionStates, m_positionStateCount + 1);
-        SPositionState newState;
-        newState.positionId = positionId;
-        newState.symbol = symbol;
-        newState.orderType = orderType;
-        newState.volume = volume;
-        newState.price = price;
-        newState.slPips = slPips;
-        newState.tpPips = tpPips;
-        newState.clusterCode = clusterCode;
-        newState.strategyRole = strategyRole;
-        newState.predictionId = "";
-        newState.aiPredictionTime = 0;
-        newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
-        m_positionStates[m_positionStateCount] = newState;
-        m_positionStateCount++;
+        const int slot = AcquireSlot();
+        m_positionStates[slot].positionId = positionId;
+        m_positionStates[slot].symbol = symbol;
+        m_positionStates[slot].orderType = orderType;
+        m_positionStates[slot].volume = volume;
+        m_positionStates[slot].price = price;
+        m_positionStates[slot].slPips = slPips;
+        m_positionStates[slot].tpPips = tpPips;
+        m_positionStates[slot].clusterCode = clusterCode;
+        m_positionStates[slot].strategyRole = strategyRole;
     }
-
-    // Batch 153: ClearAllPositionStates / RemoveStalePositionStates /
-    // GetAllPositionStateIds / IsPositionStateInitialized /
-    // PrintPositionStateDebugInfo were removed - zero callers repo-wide
-    // once the CPositionManager forwarders were deleted.
 
     int GetPositionStateCount() const { return m_positionStateCount; }
 };

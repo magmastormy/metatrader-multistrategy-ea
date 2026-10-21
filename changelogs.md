@@ -6,7 +6,53 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-20
+## [Unreleased] - 2026-10-21
+
+### Batch 246: four satellites and a status report nobody has ever printed
+
+Batch 245 kept four small classes alive for one reason - `CPositionManager::GetStatusReport()` read them. Following that
+reason to its end is what deleted them: the report's only reader is `COrchestratorStatusReporter::GetStatusReport()`, whose
+only reader is `CEAOrchestrator::GetStatusReport()` (`EAOrchestrator.mqh:3682`), and **that method has no call anywhere in
+the `.mq5` or `.mqh` tree**. So `[PositionManager] Enabled=Y | Pyramid=N | DynamicSL=N | LossMin=N | SRE=N | ConsecLoss=0 |
+DailyLoss=0.00 | PyramidStates=0 | VolRegimes=0` could never reach a journal, a `Comment()` or a file, in any build. The
+same is true of the seven other sections that reporter assembles (`CLiveAuthorityResolver`, the enterprise manager's
+validator block, five engine registries) and of `CTradeExecutor::GetStatusReport()`, which has no reader at all. §8's
+"a 'this is live' claim needs a caller chain to an entry point, not a reader" is exactly this mistake one level up, and
+Batch 245's own note named `OrchestratorStatusReporter.mqh:119` as a live consumer because it is a call site.
+
+Deleted: `PositionMgrSRE.mqh`, `PositionMgrPyramid.mqh`, `PositionMgrDynamicSL.mqh` (488 lines - after 245 their behaviour
+was gone and only `IsEnabled()`/`GetStateCount()`/`GetRegimeCount()` remained, answering a string nobody printed);
+`PositionMgrLossGuard.mqh` (170 lines, and with it `ManageLossMinimization()`, which carried a second
+`ClosePosition(ticket, "Position Loss Limit")` beside the lifecycle guard's live one - a latent third exit authority,
+unreachable rather than harmless); `CPositionManager::GetStatusReport()`, `RecordClosedTrade()` and `m_enabled`;
+`CPositionManager`'s four now-unneeded includes (SRE/Pyramid/DynamicSL/LossGuard plus MagicFilter, whose one remaining
+caller, `BasketEquityStop.mqh:103`, includes it directly); `CPositionMgrStateStore::GetPositionStateByIndex()` and the
+private forwarder that no caller could reach; the reporter's `Init`/`IsWired` pair, its borrowed `CPositionManager*` and
+the `SetManagers` argument that filled it; and `EAOrchestrator.mqh`'s `m_positionManager.RecordClosedTrade(netProfit)`.
+
+Kept, with the reason: `CPerformanceAnalytics::RecordClosedTrade` (`EAOrchestrator.mqh:3379`) is the closed-trade feed that
+actually has consumers - win rate, profit factor, momentum lot scaling, the `[AUTHORITY-LEARN]` outcome path - so the
+duplicate consecutive-loss tally in the position class went and the real one stayed. `PositionMgrMagicFilter.mqh` stays for
+the same reason as in 245. Nothing about an entry, exit, stop, lot or risk ceiling moved.
+
+Refactor while here: `PositionMgrStateStore.mqh` held three copies of "evict the oldest slot when the registry is full,
+then append" (in `UpsertPositionPredictionId`, `UpsertPositionAIPrediction`, `RegisterPositionState`) and two identical
+copies of "shift down and shrink" (in the two `Remove...` methods). Those are `AcquireSlot()` and `EraseAt()` now, and the
+new slot is default-constructed rather than `ZeroMemory`-cleared plus a struct copy, so an added field with a non-zero
+default can no longer be quietly zeroed on append. `TRADE_SIGNAL_NONE` is `0` and `ORDER_TYPE_BUY` is `0`, so the shipped
+arithmetic is unchanged; the registry is 202 lines instead of 262 and `PositionManager.mqh` is 119 instead of 186.
+
+Docs corrected against this finding: `RUNTIME_DECISION_GRAPH.md`'s "Documented unwired (product decision pending)" bullet
+claimed `CEnterpriseStrategyManager::OnTradeTransaction` and `CPerformanceAnalytics::RecordClosedTrade` had no call sites -
+Batch 154 wired the fan-out (`EAOrchestrator.mqh:3359`) and 199 the attribution, so the bullet now says what runs - and
+`SYSTEM_AUDIT_TRACE.md`'s component row for PositionManager named the deleted tally. Three stale pointers found by
+re-anchoring rather than shifting: the candidate-builder config call is `:1488` not `:1522`, the indicator-count test is
+`:1601` not `:1594`, and safe-mode `minConfidence` reaches an entry decision at `:1827` not `:1751`. 44 `EAOrchestrator.mqh`
+pointers moved by the two deletions and were re-pointed across the five current-state docs.
+
+Next step, stated rather than left implicit: the rest of that report chain is unreachable for the same reason and gets
+deleted in Batch 247, which will also decide whether the operator wants a status line at all - printing one is a feature
+choice, not a cleanup.
 
 ### Batch 245: `CPositionManager` stops claiming to be the exit authority, and 229 lines of it go
 
