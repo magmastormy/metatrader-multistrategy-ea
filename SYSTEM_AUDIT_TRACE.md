@@ -1,10 +1,10 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-10-09
-- Last Architecture Sync: 2026-10-08
+- Last Updated: 2026-10-21
+- Last Architecture Sync: 2026-10-21
 - Scope: End-to-end lifecycle and logic traces
- - Current Batch: 170
+ - Current Batch: 247
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -36,7 +36,7 @@
 - Unprotected position tracker: `Core/Risk/UnprotectedPositionTracker.mqh`
 - Synthetic spike monitor: `Core/Processing/SyntheticSpikeMonitor.mqh`
 - Trade attribution: `Core/Trading/TradeAttributionManager.mqh`
-- Symbol scan scheduling: `Core/Processing/SymbolScanScheduler.mqh` / `Core/Registry/ScanSchedulerRegistry.mqh`
+- Symbol scan scheduling: `Core/Registry/ScanSchedulerRegistry.mqh` (`Core/Processing/SymbolScanScheduler.mqh` was deleted in Batch 215 - never instantiated)
 - Equity curve manager: `Core/Risk/EquityCurveManager.mqh`
 - Spike hunter engine: `Core/Scalp/SpikeHunterEngine.mqh`
 - Hurst engine: `Core/Engines/HurstEngine.mqh`
@@ -58,7 +58,7 @@
   - `Core/Orchestration/EAOrchestrator.mqh` (primary coordination)
   - ~~`Core/Orchestration/TickProcessor.mqh`~~ / ~~`Core/Orchestration/TimerProcessor.mqh`~~ — DELETED in Batch 151 (zero callers; tick/timer logic inline in the orchestrator)
   - `Core/Orchestration/SignalGenerator.mqh`
-  - `Core/Orchestration/SignalValidator.mqh`
+  - ~~`Core/Orchestration/SignalValidator.mqh`~~ - no such file; post-consensus validation is `Core/Management/PostConsensusValidator.mqh`
   - `Core/Orchestration/CandidateBuilder.mqh`
   - `Core/Orchestration/TradeExecutor.mqh`
   - `Core/Orchestration/LiveAuthorityResolver.mqh`
@@ -71,20 +71,15 @@
   - `Core/Registry/NeuralNetRegistry.mqh`
   - `Core/Registry/DrawingManagerRegistry.mqh`
   - `Core/Registry/ScanSchedulerRegistry.mqh`
-  - `Core/Registry/SymbolStateTracker.mqh`
-  - `Core/Registry/StrategyRegistry.mqh`
-  - `Core/Orchestration/TradeExecutor.mqh`
-  - `Core/Orchestration/LiveAuthorityResolver.mqh`
+  - ~~`Core/Registry/SymbolStateTracker.mqh`~~ - DELETED in Batch 215 (allocated, initialised, printed; seven state methods had no caller)
+  - `Core/Strategy/StrategyRegistry.mqh` (registered-strategy roster; the `Core/Registry/` path it was listed under never existed)
   - `Core/Position/PositionManager.mqh`
-  - `Core/Factory/StrategyFactory.mqh`
-  - `Core/Registry/MathematicalEngineRegistry.mqh`
-  - `Core/Registry/InstitutionalEngineRegistry.mqh`
-  - `Core/Registry/NeuralNetRegistry.mqh`
-  - `Core/Registry/DrawingManagerRegistry.mqh`
-  - `Core/Registry/ScanSchedulerRegistry.mqh`
-  - `Core/Registry/SymbolStateTracker.mqh`
 
-## Current Runtime Evidence
+## Dated Audit Records (Batches 102-158)
+
+Dated records: each entry describes the tree as it was when that batch shipped, so a file or input named here may
+no longer exist (§8). Current-state truth is in `SYSTEM_STRUCTURE.md` (ownership), `RUNTIME_DECISION_GRAPH.md`
+(decision paths) and AGENTS.md §6 (which log lines can actually appear).
 - **Batch 158 (Signal-suppression audit sweep — unaudited strategy files + ATR handle caching, 2026-08-28):** Final sweep of the signal-suppression audit campaign (Batches 155–157 covered strategy emission paths and detector/analyzer layer). Addressed remaining unaudited strategy files and one efficiency defect in S/R strategy's Fibonacci confluence helper. Compile 0 errors / 0 warnings (all 7 root EAs).
   - **TrendEntryTypes.mqh / TrendSignalEnhancers.mqh:** `GetATR()` forming-bar (shift 0) → closed-bar (shift 1). ATR normalization stable intrabar.
   - **FourStateRegimeDetector.mqh:** `Initialize()` / `Update()` reads `iClose(...,0)` → shift 1. KAMA slope + regime classification stable intrabar.

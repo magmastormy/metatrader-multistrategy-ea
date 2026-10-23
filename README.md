@@ -99,7 +99,7 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 
 ## Quick Start
 
-1. **Install** — Copy `MultiStrategyAutonomousEA.mq5`, `Core/`, `Strategies/`, `Resources/`, and `IndicatorManager.mq5` to your MT5 `Experts/` folder
+1. **Install** — Copy `MultiStrategyAutonomousEA.mq5`, `Core/`, `Strategies/`, `Resources/`, and `IndicatorManager.mqh` to your MT5 `Experts/` folder
 2. **Compile** — Build in MetaEditor (MQL5 compiler)
 3. **Attach** — Drag EA onto any chart (e.g., EURUSD M15)
 4. **Configure Symbols** — Set `InpSymbols` to your instrument list (auto-detects asset class)

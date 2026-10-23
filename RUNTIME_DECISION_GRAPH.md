@@ -1,11 +1,11 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-10-09
-- Last Architecture Sync: 2026-08-23
+- Last Updated: 2026-10-21
+- Last Architecture Sync: 2026-10-21
 - Scope: Runtime signal-to-execution flow
 - Source: `Core/Orchestration/EAOrchestrator.mqh`
- - Current Batch: 170
+ - Current Batch: 247
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -18,7 +18,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Fast-Path Tick Processing: inline in `EAOrchestrator` (`ProcessTickSafetyLoop`; TickProcessor.mqh deleted in Batch 151 - zero callers)
 - Heavy Timer Processing: inline in `EAOrchestrator` (`OnTimer` -> `ProcessTradingLogic`; TimerProcessor.mqh deleted in Batch 151 - zero callers)
 - Signal Generation: `Core/Orchestration/SignalGenerator.mqh`
-- Multi-Tier Validation: `Core/Orchestration/SignalValidator.mqh`
+- Multi-Tier Validation: `Core/Management/PostConsensusValidator.mqh` (`Core/Orchestration/SignalValidator.mqh` was merged away before the recorded history; the row named a file that is not in the tree)
 - Candidate Building: `Core/Orchestration/CandidateBuilder.mqh`
 - Trade Execution: `Core/Orchestration/TradeExecutor.mqh`
 - Live Authority Resolution: `Core/Orchestration/LiveAuthorityResolver.mqh`

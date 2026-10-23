@@ -8,6 +8,28 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-21
 
+### Batch 248: the audit trace's "Current Runtime Evidence" was a dated archive, and four of its scope rows named files that are not in the tree
+
+No code changed in this batch, so no compile was run. Verification is an existence scan: every `*.mqh`/`*.mq5` path and
+every `Inp*` name cited in the five current-state documents was tested against the tree and the root EAs' input lists.
+Findings and fixes:
+- `SYSTEM_AUDIT_TRACE.md`'s section titled **"Current Runtime Evidence"** contained dated Batch 102-158 records, nothing
+  else. Renamed to **"Dated Audit Records (Batches 102-158)"** with a line saying current-state truth lives in
+  `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md` and AGENTS.md §6. The stale names inside those records are left as
+  written - that is what §8 means by a dated record - but a reader who trusted the heading had no way to know.
+- Its **Scope** rows named three paths that cannot resolve: `Core/Processing/SymbolScanScheduler.mqh` (deleted Batch 215,
+  never instantiated), `Core/Registry/SymbolStateTracker.mqh` (deleted Batch 215), and
+  `Core/Registry/StrategyRegistry.mqh` - the roster file is `Core/Strategy/StrategyRegistry.mqh` and the Registry path has
+  never existed. `Core/Orchestration/SignalValidator.mqh` was already a merged-away name; the row now points at
+  `Core/Management/PostConsensusValidator.mqh`. Deleted rows use the file's existing strikethrough-plus-reason convention.
+- Ten duplicate bullet lines in the same list (`TradeExecutor`, `LiveAuthorityResolver`, five registries,
+  `SymbolStateTracker` repeated) collapsed to the single unique entry they duplicated.
+- `RUNTIME_DECISION_GRAPH.md`'s Ownership Map had the same `SignalValidator.mqh` claim; corrected to the live owner.
+- `README.md` Quick Start told the operator to copy `IndicatorManager.mq5`. The file is `IndicatorManager.mqh`; the EA
+  would have compiled with a missing include on a fresh install.
+- Document metadata bumped in `SYSTEM_AUDIT_TRACE.md`, `RUNTIME_DECISION_GRAPH.md` and `SYSTEM_STRUCTURE.md`
+  (Last Updated / Last Architecture Sync 2026-10-21, Current Batch 247 - all three still said 170 and 2026-10-09).
+
 ### Batch 247: the status-report chain had no entry point, so the whole of it goes
 
 Batch 246 found the entry point dead - `CEAOrchestrator::GetStatusReport()` has no call in any `.mq5` or `.mqh` - and
