@@ -637,7 +637,7 @@ Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" w
   - Prevents impossible quorum math where inactive strategies inflated weight pool and rejected legitimate votes.
   - Adaptive one-/two-voter quality thresholds now respect the current base quorum so user-lowered quorum profiles are not silently re-hardened by stale fixed fallback thresholds.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
-- `SPARSE_INTRABAR` is a **label on a decision that already passed quorum**, not an admission rule: `ConsensusEngine.mqh:733` sets it when `evalMode == EVAL_MODE_INTRABAR && eligibleLiveVoterCount < 3`, and `PostConsensusValidator.mqh:468` / `StrategyStateReporter.mqh:99` read the label. `InpAllowSparseIntrabarSingleVoter` never gated it - that input had no readers and is deleted by Batch 231. A single-voter entry is refused by `MIN_CONSENSUS_VOTERS = 2`, not by the dialog, and high-confidence AI-only packets route through the live-authority gate instead.
+- `SPARSE_INTRABAR` is a **label on a decision that already passed quorum**, not an admission rule: `ConsensusEngine.mqh:733` sets it when `evalMode == EVAL_MODE_INTRABAR && eligibleLiveVoterCount < 3`, and `PostConsensusValidator.mqh:468` / `StrategyStateReporter.mqh:98` read the label. `InpAllowSparseIntrabarSingleVoter` never gated it - that input had no readers and is deleted by Batch 231. A single-voter entry is refused by `MIN_CONSENSUS_VOTERS = 2`, not by the dialog, and high-confidence AI-only packets route through the live-authority gate instead.
 - **Multi-Tier Signal Validation (Batch 60):**
   - Votes are processed through `CTieredSignalValidator` for tier-based hierarchy.
   - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
@@ -700,7 +700,9 @@ Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" w
   - All array allocations and loop bounds updated consistently to prevent array out of range errors
   - Training example struct `STrainingExample` now uses `inputs[44]` instead of `inputs[25]`
   - File I/O for checkpoint save/load updated to handle 44-element feature vectors
-- **External LLM Lifecycle (Batch 58):**
+- **External LLM Lifecycle (Batch 58):** (surface trimmed by Batch 251 - see that entry; `SetExternalLLMEnabled`,
+  `SynthesizeSignals`, `GenerateTradeExplanation`, `AssessRisk` and `ProvideFeedback` below were written but had no
+  caller in any build, and are deleted)
   - Optional external LLM support via `CAIEngine` with configuration flag `useExternalLLM` (default `false`)
   - HTTP client for Ollama API communication initialized during `ConfigureExternalLLM()`
   - External LLM can be toggled at runtime via `SetExternalLLMEnabled(bool)`
@@ -1705,6 +1707,39 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 251 AI Query Island Deleted, and the Weight Mirrors Below It With It (2026-10-23)
+
+- **Trace of the removal:** none exists. `OnAIQuery`, `InitializeAIEngine`, `CleanupAIEngine` and `g_AIEngine` have no
+  call site in any `.mq5` or `.mqh`, so no lifecycle path - init, tick, timer, trade transaction or deinit - reaches the
+  query methods, the five `Process*Query` bodies, `AI_ModifyWeights`, `AI_ExplainDecision`, `AI_AdaptiveMode`,
+  `SynthesizeSignals`, `GenerateTradeExplanation`, `AssessRisk` or `ProvideFeedback`.
+- **Lifecycle step that never existed:** `consensus scan -> AI confidence threshold`. Batch 201's trace added
+  `m_currentMarketRegime -> AdaptToRegime` between those steps; the regime read was real, but the value it scaled was
+  written to a local and discarded, and the method's manager loop had no body. Deleting it removes no behaviour and
+  closes the trace's claim.
+- **Deinit surface changed:** `~CAIEngine` no longer prints a query/accuracy summary (both were constants). It still
+  emits `[EXT-LLM] SHUTDOWN` with the real external-call counters. No deinit ordering moved, and §3.5's
+  `CIndicatorManager::DestroyInstance()` is untouched.
+- **State deleted with its last reader:** `m_queryCount`, `m_successfulQueries`, `m_pendingMods[20]`,
+  `m_pendingModCount`, `m_recentDecisions[50]`, `m_decisionIndex`, `m_decisionCount`, `m_predictionAccuracy`,
+  `m_totalPredictions`, `m_correctPredictions`; `SAIQueryRequest`, `SAIQueryResponse`, `SAIWeightModification`,
+  `SAIDecisionExplanation`; the four `SAIAdaptiveConfig` fields the orchestrator kept assigning;
+  `StrategyEntry::avgConfidence` and its getter chain; `SStrategyHealthEntry::participationScore` / `avgConfidence` and
+  the seven unread participation thresholds with their seven uncalled setters.
+- **Weight arithmetic proven unchanged:** `CStrategyHealthMonitor::UpdateAllStrategyWeights` still runs on the live
+  adaptation path (`ConsensusWeightingConfig.mqh:57`), and its product went from `originalWeight * healthScore *
+  participationScore` to `originalWeight * healthScore`. `participationScore` was written `1.0` at registration and only
+  ever changed inside `UpdateParticipationScore`, which has no caller - so the deleted factor is 1.0 and every shipped
+  weight is identical.
+- **What still reaches a weight:** `ProcessAdaptation -> CEnterpriseStrategyManager::UpdateStrategyWeights` and, with
+  `InpEnableExternalLLM` on, `MaybeCaptureExternalReasoning -> ReasonStrategyWeights -> ApplyLLMReasoningToWeights ->
+  UpdateStrategyWeight`, which prints `[EXT-LLM] WEIGHT-APPLIED`. `InpEnableAIMode` gates the whole adaptation call.
+- **Recorded, not wired:** `SStrategyHealthEntry::currentWeight` is still written by two live paths
+  (`UpdateAllStrategyWeights` and `StrategyMgrRoster.mqh:275` via `SetStrategyWeight`) and read by nothing outside the
+  class - so the health monitor's weight mirror, and the `RegisterStrategy(weight)` value it is seeded from, feed no
+  vote. Consensus weights live in the roster. That is a second-authority finding with a real decision attached, not a
+  deletion, and it is queued.
+
 ## Batch 250 Reporting Surface Removed With the State Only It Read (2026-10-23)
 
 - **Trace of the removal:** none exists. Every deleted method's call-shaped occurrences were its own manager forwarder
@@ -1728,7 +1763,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Trace:** `CStrategyConfigBuilder::Initialize` -> `m_config.strategyTimeframes[slot]` ->
   `InitializeEnterpriseManagerForSymbol` push (`EAOrchestrator.mqh:1945-1949`) ->
   `CEnterpriseStrategyManager::SetStrategyTimeframeConfig` -> `CIntrabarPolicy::m_timeframeConfig` ->
-  `AutoRegisterStrategies` (`EnterpriseStrategyManager.mqh:713-716`) -> `RegisterStrategy`'s `tf` -> `resolvedTf`
+  `AutoRegisterStrategies` (`EnterpriseStrategyManager.mqh:710-713`) -> `RegisterStrategy`'s `tf` -> `resolvedTf`
   (`StrategyRegistryState.mqh:80`) -> `IStrategy::Init` / `InitializeAI`. The last three links already existed; the
   first four were the missing road.
 - **Lifecycle change:** Momentum and Candlestick objects are now constructed on M5 handles on every symbol instead of the
@@ -2375,7 +2410,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 
 - **How it was found:** the touchpoint census run for task #54 (what must change to add one strategy) listed the places that hold per-strategy knowledge. One of them was `CandidateBuilder`'s contributor-classification predicates - a list of substrings that is a *copy of the catalog row names*. Comparing the two lists is where the drift showed up: four tokens spelled the names differently (`MeanReversion` vs `Mean Reversion`, `StatArb` vs `Statistical Arbitrage`, `NYOpen` vs `NY Open Gap`, `AsianRange` vs `Asian Range Break`) and three rows (`Liquidity Sweep`, `Range Compression`, `Python Bridge AI`) had no token at all.
 - **Traced to money before believing it:** `hasIndicatorContributor` / `indicatorContributorCount` / `hasAIContributor` are consumed by `CLiveAuthorityResolver::Resolve` for the `+0.20` INDICATOR term, the `0.55`-vs-`0.65` confidence bar and the BOOTSTRAP/PROVEN_AI branch - not for a log line. A classification bug here sizes positions and refuses entries.
-- **Verified the precondition rather than assuming it:** contributor strings are `m_roster.GetStrategyName(idx)`, and both registration paths pass `g_strategyCatalog[i].name` (`EnterpriseStrategyManager.mqh:718`, `EAOrchestrator.mqh:2396`), so the row is a valid lookup key. Had the registered name been spelled differently from the row name, containment matching would have *reduced* classification instead of fixing it - that check is why the fix is a row lookup and not five more tokens.
+- **Verified the precondition rather than assuming it:** contributor strings are `m_roster.GetStrategyName(idx)`, and both registration paths pass `g_strategyCatalog[i].name` (`EnterpriseStrategyManager.mqh:715`, `EAOrchestrator.mqh:2396`), so the row is a valid lookup key. Had the registered name been spelled differently from the row name, containment matching would have *reduced* classification instead of fixing it - that check is why the fix is a row lookup and not five more tokens.
 - **Report claims that were checked and were not real:** the touchpoint report's "missing flag slot skips the row with no print" was verified at `OrchestratorStrategyFlagBuilder.mqh:62-66` (the slot switch and its `[CATALOG]` no-input print) before being trusted; its `StrategyFactory` redundancy claim matched §2.2.3. Nothing in the batch was implemented from the report alone.
 - **Kept as-is:** `ExtractAIName` / `GetStrategyTypeByName` already resolve through the live object's `GetType()` rather than a name table, so they were left untouched; whether every adapter's `GetType()` answers one of the three AI types is the §4.4 identity question, already recorded separately.
 - **Verification:** compile 8 programs, 0 errors / 0 total warnings. No journal evidence exists (newest 2026-09-23). The first attach should show `INDICATOR` in authority reasons for trades the six rows voted, fewer `LOW_CONFIDENCE` refusals on those decisions, and a `[TRADE-ATTRIBUTION] contributors=` line that names rows the old tokens could not see.
@@ -2437,8 +2472,15 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## Batch 201 The Regime the AI Acts On Is Now Written, Not Assumed (2026-10-14)
 
 - **Lifecycle step changed:** between `consensus scan` and `AI confidence threshold`, a publication step that never existed: `EvaluateConsensusInternal -> RefreshMarketRegime -> CRegimeEngine snapshot -> m_currentMarketRegime -> AdaptToRegime / explanations`. Entry, risk, execution and exit steps are unchanged; no position, order, stop or magic touched.
-- **State added:** none. One existing field finally has a writer. `m_currentMarketRegime` was constructed as `MARKET_REGIME_UNKNOWN` and read by four consumers, two of which (`AIEngine.mqh:424`, `:495`) turn it into behaviour: the adaptation loop ran every cycle and always hit the `default:` branch, so the trend/range/volatile confidence factors never applied.
-- **Failure mode closed:** an invisible no-op control. `AIEngine.mqh:739` and `:912` printed the regime into reasoning logs, which made the pipeline look regime-aware while it read a constant - the reader that *prints* a value hides the fact that nothing writes it. Same shape as Batch 199's contributor list and Batch 176's VPIN mode twin.
+- **State added:** none. One existing field finally has a writer. `m_currentMarketRegime` was constructed as `MARKET_REGIME_UNKNOWN` and read by four consumers, two of which (`AI_ExplainDecision` and the regime block in `ProcessAdaptation`) turn it into behaviour: the adaptation loop ran every cycle and always hit the `default:` branch, so the trend/range/volatile confidence factors never applied.
+- **Failure mode closed:** an invisible no-op control. `ProcessPredictionQuery` (deleted in Batch 251) and
+  `MaybeCaptureExternalReasoning` printed the regime into reasoning logs, which made the pipeline look regime-aware while it read a constant - the reader that *prints* a value hides the fact that nothing writes it. Same shape as Batch 199's contributor list and Batch 176's VPIN mode twin.
+- **Corrected by Batch 251:** the two `AIEngine` consumers named above did not survive. `AI_ExplainDecision` and
+  `ProcessPredictionQuery` were inside the `OnAIQuery` island, which has no caller in any `.mq5` or `.mqh`, and
+  `AdaptToRegime` - the regime block in `ProcessAdaptation` - computed its threshold into a local, looped over the
+  managers with an empty body and never wrote the value anywhere. So this entry's claim that AI entries became more
+  permissive in a confirmed trend was never true of any build; the publication and `[MARKET-REGIME]` are real, and the
+  method is now deleted with the island.
 - **Two controls left unwired, with the judgement written down:** consensus participation (the 0.35 "no signal" target plus per-call decay 0.85 would discount by-design-rare strategies to a 0.6275 multiplier - a bias invented by the wiring, the exact class Batches 186-190 had to undo) and the lifecycle's ranging-regime trailing pause (per-symbol routing needs a symbol-scoped trailing API; `ManageAllPositions` has none, and this is the path that protects open positions, so it is not reshaped without a live attach).
 - **§3 invariants:** §3.1 untouched. §3.2 and §3.3 untouched. §3.4 served: the symbol-scoped decision is again the only place market state is published, now for both the vote and the AI threshold, from one snapshot. §3.5 unaffected.
 - **Verification:** 8 programs, `OVERALL SUCCESS`, 0 errors / 0 total warnings. Runtime expectation on the next attach: at least one `[MARKET-REGIME]` line per symbol per session, and AI vote counts differing by regime for the first time.

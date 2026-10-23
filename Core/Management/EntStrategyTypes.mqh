@@ -24,7 +24,6 @@ struct StrategyEntry
     int failCount;
     double healthScore;
     double participationScore;
-    double avgConfidence;
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
     datetime lastEvaluationTime;

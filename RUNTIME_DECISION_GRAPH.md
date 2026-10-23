@@ -325,8 +325,10 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
   - Pattern-specific features include: Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
   - Weight matrix dimensions updated to `W1[44][32]` to accommodate expanded input
   - All array allocations and loop bounds updated consistently to prevent array out of range errors
-  - External LLM integration provides optional signal synthesis, trade explanation, risk assessment, and strategy weight reasoning via Ollama API
-  - External LLM is configuration-driven via `useExternalLLM` flag (default `false`) and can be toggled at runtime via `SetExternalLLMEnabled(bool)`
+  - External LLM integration provides strategy weight reasoning via the Ollama API (Batch 251 deleted signal
+    synthesis, trade explanation, risk assessment and the query feedback path: none had a caller)
+  - External LLM is configuration-driven via `useExternalLLM` flag (default `false`), armed from `InpEnableExternalLLM`
+    at init - `SetExternalLLMEnabled` had no caller and is gone
   - External LLM reasoning is now a live, throttled adaptation-time path with explicit `[EXT-LLM]` query and status telemetry instead of a silent helper surface
   - Multi-scale attention infrastructure enables per-head scaling, time window sizes, and learning rates for differential pattern detection
   - Pattern classifier head provides 10-class pattern classification alongside 3-class BUY/SELL/NONE predictions
@@ -339,6 +341,35 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 251: The AI Engine's Query Island Had No Entry Point, and the Weight Mirrors Below It Had No Reader (2026-10-23)
+
+- **Path removed:** `OnInit -> InitializeSubsystems -> CAIEngine.Initialize(managers...) -> ProcessAdaptation()` is the
+  only route into `CAIEngine` that any program takes. `OnAIQuery` had no caller, so every decision path that started
+  there was unreachable (24 methods in all, 26 with the two reachable-but-inert ones below): `ProcessPredictionQuery`, `ProcessSignalQuery`, `ProcessWeightsQuery`, `ProcessStateQuery`,
+  `ProcessExplanationQuery`, `AI_ModifyWeights`, `AI_ExplainDecision`, `AI_AdaptiveMode`, `SynthesizeSignals`,
+  `GenerateTradeExplanation`, `AssessRisk`, `ProvideFeedback`. The whole-module pending-modification store
+  (`m_pendingMods[20]` + `ProcessExpiredModifications`) existed to serve `AI_ModifyWeights` and nothing else.
+- **What the island alone read:** `StrategyEntry::avgConfidence` -> `CStrategyMgrRoster::GetStrategyAvgConfidence` ->
+  `CEnterpriseStrategyManager::GetStrategyAvgConfidence` -> `CStrategyStateReporter::GetEnsembleConfidence`, a weighted
+  mean of a field with no writer, so 0.0. All four went. `CUnifiedSignalPipeline` and the roster keep their own names
+  because other paths read them.
+- **Second mirror removed:** `CStrategyHealthMonitor`'s participation ladder. `UpdateParticipationScore` had no caller,
+  the seven `m_participation*` thresholds were read only inside it, the seven `SetParticipation*` setters had no caller,
+  `SStrategyHealthEntry::participationScore` therefore held its registered 1.0, and `GetStrategyParticipationScore` had
+  no caller either. The live `UpdateAllStrategyWeights` multiply became `originalWeight * healthScore` - arithmetically
+  identical to `* 1.0`, so no weight moved.
+- **Dead adaptation gone:** `AdaptToRegime` computed a regime-scaled confidence threshold, stored it in a local, iterated
+  the managers with an empty body and never wrote the value anywhere. Its accuracy-gated partner in
+  `AdaptToPerformance` (`< 0.4` disable, `> 0.6` re-enable) tested a constant 0.5 because the only writer
+  (`UpdatePredictionAccuracy`) sat behind `ProvideFeedback`. Real parking/re-enable lives in the orchestrator's 60 s
+  governance sweep, which is unchanged.
+- **Log lines that now cannot exist (they never could):** `[AIEngine] shutdown - Queries: 0, Accuracy: 50.00%` and
+  `[AI-ENGINE] Clearing accumulated modifications`. `[EXT-LLM] FEEDBACK` also has no printer; the remaining phases are
+  INIT, CONFIG, QUERY-*, REASONING*, STRATEGY-WEIGHTS, WEIGHT-APPLIED and SHUTDOWN.
+- **Unchanged decisions:** entries, lots, quorum, vetoes, stops and exits are untouched. `InpEnableExternalLLM` and
+  `InpExternalLLMEndpoint` still arm the same reasoning path, which still writes weights through
+  `CEnterpriseStrategyManager::UpdateStrategyWeight`.
 
 ## Batch 250: The Manager's Reporting Surface Lost Its Entry Point, and So Did the State Below It (2026-10-23)
 
@@ -366,8 +397,8 @@ were still compiled and still written to. This batch removes them.
   `[EnterpriseStrategyManager] Strategy DISABLED:` and `[EnterpriseStrategyManager] Intrabar policy updated:` (Batch 232) -
   all three had printers on unreachable paths.
 - **Recorded, not wired:** `StrategyEntry::avgConfidence` has no writer, so `GetEnsembleConfidence()` is structurally 0.0.
-  Its readers live behind `CAIEngine::OnAIQuery`, which has no caller - that query island and the ensemble-confidence
-  writer are separate batches: one is dead-surface deletion, the other changes a reported number.
+  Its readers live behind `CAIEngine::OnAIQuery`, which has no caller - resolved in Batch 251 by deleting the island and
+  the ensemble-confidence chain it alone fed.
 
 ## Batch 249: The Per-Strategy Timeframe Table Got a Reader, and Two Strategies Changed Bar Size (2026-10-23)
 
@@ -376,10 +407,10 @@ getter chain had no caller, so both were dialog-only and every strategy register
 `m_baseTimeframe`. The row value now travels the path Batch 234 said it would need -
 `StrategyConfigBuilder` -> `EAOrchestrator.mqh:1945-1949` (the loop that already sets the intrabar policy) ->
 `CEnterpriseStrategyManager::SetStrategyTimeframeConfig` -> `AutoRegisterStrategies`
-(`EnterpriseStrategyManager.mqh:713-716`) -> the `tf` argument of `RegisterStrategy`, whose `resolvedTf`
+(`EnterpriseStrategyManager.mqh:710-713`) -> the `tf` argument of `RegisterStrategy`, whose `resolvedTf`
 (`StrategyRegistryState.mqh:80`) is what `Init` and `InitializeAI` already receive. No new consumer was written:
 `StrategyEntry::timeframe` already feeds `ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:154` and
-`EnterpriseStrategyManager.mqh:1081`.
+`EnterpriseStrategyManager.mqh:1073`.
 
 - **Precedence:** a row overrides the catalog timeframe only when it names one; `PERIOD_CURRENT` in a row means inherit.
   Slots 0 (Momentum) and 4 (Candlestick) are the only rows that name a timeframe, so those two strategies are the whole
@@ -1176,7 +1207,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 | `hasONNXContributor` (`+0.30`) | matched on `"ONNX"` | matched on `aiKind == CAT_AI_ONNX` |
 | `hasNeuralNetContributor` (label gate, Batch 203) | matched on `"Neural"` | matched on `aiKind == CAT_AI_NEURAL_NET` |
 
-- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:718`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2396`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
+- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:715`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2396`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
 - **Plug-and-play effect:** a new row is classified correctly without touching `CandidateBuilder`, which removes the fifth hand-maintained per-strategy list.
 
 ## Batch 207: Three Phantom Strategy Slots Removed (2026-10-15)
@@ -1240,7 +1271,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 
 ## Batch 201: The AI Confidence Threshold Now Moves With the Market Regime (2026-10-14)
 
-- **New edge:** `EvaluateConsensusInternal -> RefreshMarketRegime -> pipeline.GetRegimeEngine(symbol).GetSnapshot() -> m_currentMarketRegime -> CAIEngine::AdaptToRegime / explanations / reasoning logs`. Before this the field had four readers and no writer, so `AdaptToRegime` reached its `default:` branch on every cycle and the 0.9 / 1.1 / 1.2 per-regime confidence factors never applied to any AI strategy.
+- **New edge:** `EvaluateConsensusInternal -> RefreshMarketRegime -> pipeline.GetRegimeEngine(symbol).GetSnapshot() -> m_currentMarketRegime -> CAIEngine::AdaptToRegime / explanations / reasoning logs` (Batch 251 deleted `AdaptToRegime` - it wrote its scaled threshold to a local and discarded it, so no strategy was ever scaled). Before this the field had four readers and no writer, so `AdaptToRegime` reached its `default:` branch on every cycle and the 0.9 / 1.1 / 1.2 per-regime confidence factors never applied to any AI strategy.
 - **Mapping, and the conservative case:** `REGIME_TREND -> TRENDING`, `REGIME_RANGE -> RANGING`, `REGIME_BREAKOUT`/`REGIME_CHAOS -> VOLATILE`, invalid or warming-up snapshot -> `MARKET_REGIME_UNKNOWN` (no adaptation). Both the vote weighting and the AI threshold now read the *same* `CRegimeEngine` snapshot, so they cannot disagree about the market.
 - **Visible by design:** `[MARKET-REGIME] <symbol> | old -> new | valid=` prints only on a change. If a journal shows AI trades with no such line, the regime engine never validated a snapshot for that symbol - which is a statement about data, not about this wiring.
 - **Not wired, with the reason:** consensus participation (its 0.35 "no signal" target would permanently discount strategies that are supposed to fire rarely) and the lifecycle's ranging-regime trailing pause (`ManageAllPositions` has no symbol filter, so routing per symbol means changing the exit authority - not attempted without a live attach).
@@ -1271,7 +1302,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **Send-time composition changed for five owners, not four.** `fast scalp = base + 6000` (both the async branch and the synchronous `OpenPosition` call, which previously left magic at 0 and let `TradeManager.mqh:1267` stamp the symbol's consensus magic; pending orders previously shipped the bare base), `ATR scalp = base + 6100`, `grid = base + 6200 + level`, `spike = base + 6300`. **Consensus composition also changed:** `SetMagicOffsetForSymbol` registered the asset offset alone, so every symbol in an asset class shipped the same magic (`base + 7000` for all forex pairs); it now registers `assetOffset + symbolIndex * 100`, one per symbol. New consensus positions therefore carry a different number than the ones already on the account.
 - **Why that is safe to change:** every consumer of `POSITION_MAGIC` either tests the ownership *window* (`IsEAOwnedMagic` / `CMagicRange::IsOwned` / `IsLifecycleManaged`, seven sites) or filters by symbol before comparing (the grid's `GridRecoveryExecution.mqh:210`). No gate, cap, lot or exit reads an exact consensus magic, so the re-label moves no decision.
 - **Why the bands sit under 7000:** asset-class offsets run 7000 (ASSET_FOREX) to 9999 (DERIV_UNKNOWN), so an engine can no longer reach a consensus number or the reverse. Only `ASSET_UNIVERSAL` (offset 0) composes below 7000, from slot 60 upward - which is what the init assertion refuses to trade rather than merge two books.
-- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1791` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:537` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
+- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1791` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:534` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
 - **Grid restart edge added:** `init -> RecoverOpenGridLevels() -> for each open position whose comment starts with GRID-RECOVERY -> decode level from magic (new band, or legacy 8000 band via %100) -> refill slot`. Previously the level table started empty every session while the positions stayed open, so `CalculateGridDrawdownPercent`, `CloseAllGrids` and the next-level logic all acted on a grid the engine could not see.
 - **Lifecycle gate widened:** `ManageSignalReversalExit` and the ranging-regime breakeven loop test `IsPositionLifecycleManaged()`, whose window was `base + symbolCount*100 + maxClusterCode` (`base + 1399` on the default 13-symbol universe) against magics shipped at `base + 7000..9400`. Twelve of thirteen symbols were excluded, so both exits never ran with `InpEnableSignalReversalExit = true`. The predicate now delegates to `CMagicRange::IsOwned(magic, base, MagicMax())`, the same authority `CTradeManager`, `CPositionMgrMagicFilter`, `SyntheticSpikeMonitor` and `UnprotectedPositionTracker` use.
 - **Behaviour direction:** more exits, not fewer - signal reversal closes and breakeven SL moves now reach consensus positions. Both are bounded by their own inputs (`InpSignalReversalMinLossR`/`MaxLossR`/`MinTimeSec`, `InpSignalReversalProfitGuard`). No entry gate, risk ceiling, lot or stop distance changed.

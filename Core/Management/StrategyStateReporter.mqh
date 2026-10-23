@@ -52,7 +52,6 @@ public:
                                            ulong &uictOtherFilters,
                                            ulong &intervalReasonTotal);
     int    GetRegisteredStrategyCount() const;
-    double GetEnsembleConfidence() const;
 };
 
 int CStrategyStateReporter::GetActiveStrategyCount() const
@@ -226,29 +225,6 @@ int CStrategyStateReporter::GetRegisteredStrategyCount() const
     if(m_src == NULL)
         return 0;
     return m_src.GetStrategyCount();
-}
-
-double CStrategyStateReporter::GetEnsembleConfidence() const
-{
-    if(m_src == NULL)
-        return 0.0;
-
-    double weightedSum = 0.0;
-    double totalWeight = 0.0;
-    for(int i = 0; i < m_src.GetStrategyCount(); i++)
-    {
-        if(!m_src.IsStrategyEnabled(i) || m_src.GetStrategyPtr(i) == NULL)
-            continue;
-        double weight = MathMax(0.0, m_src.GetStrategyWeight(i));
-        double conf = MathMax(0.0, m_src.GetStrategyAvgConfidence(i));
-        if(weight <= 0.0)
-            continue;
-        weightedSum += (conf * weight);
-        totalWeight += weight;
-    }
-    if(totalWeight <= 0.0)
-        return 0.0;
-    return MathMax(0.0, MathMin(1.0, weightedSum / totalWeight));
 }
 
 #endif // STRATEGY_STATE_REPORTER_MQH

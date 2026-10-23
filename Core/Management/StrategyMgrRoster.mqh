@@ -47,8 +47,6 @@ public:
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].successCount : 0; }
     int    GetStrategyFailCount(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].failCount : 0; }
-    double GetStrategyAvgConfidence(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgConfidence : 0.0; }
     double GetStrategyParticipationScore(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].participationScore : 0.0; }
     double GetStrategyHealthScore(const int index) const
@@ -228,7 +226,6 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].healthScore = 0.75;
     m_strategies[m_strategyCount].participationScore = 0.90;
-    m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
     m_strategies[m_strategyCount].lastEvaluationTime = 0;

@@ -3746,9 +3746,7 @@ if(ArraySize(m_enterpriseManagers) > 0)
 
     SAIAdaptiveConfig aiConfig;
     aiConfig.enabled = true;
-    aiConfig.learningRate = 0.1;
     aiConfig.adaptationInterval = 1;
-    aiConfig.minConfidenceThreshold = ResolveAIRuntimeVoteThreshold(ResolveEffectiveEAMode());
     aiConfig.useExternalLLM = m_config.enableExternalLLM;
 
     CEnterpriseStrategyManager* managers[];

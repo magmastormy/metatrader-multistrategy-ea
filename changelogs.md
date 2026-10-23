@@ -8,6 +8,76 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-23
 
+### Batch 251: the AI engine's query island had no entry point, and the weight mirrors below it had no reader
+
+**Type:** dead-code sweep, behaviour-preserving by construction.
+
+`CAIEngine` is owned by `CEAOrchestrator`, and only three of its methods are reachable from a program entry point:
+`Initialize`, `ProcessAdaptation` (called at `EAOrchestrator.mqh:3043` and `:3451`) and `SetExternalAIEndpoint`.
+`OnAIQuery` has no call in any `.mq5` or `.mqh`, and neither do the free `InitializeAIEngine` / `CleanupAIEngine` pair or
+the `g_AIEngine` global that were the module's other way in - so everything below that entry point was a second copy of
+the Batch 246/247 shape, in the AI domain this time.
+
+- **Query island (24 unreachable methods; 26 deleted).** `OnAIQuery`, `ProcessPredictionQuery`, `ProcessSignalQuery`, `ProcessWeightsQuery`,
+  `ProcessStateQuery`, `ProcessExplanationQuery`, `AI_ModifyWeights`, `AI_ExplainDecision`, `AI_AdaptiveMode`,
+  `SynthesizeSignals`, `GenerateTradeExplanation`, `AssessRisk`, `ProvideFeedback`, `SetExternalLLMEnabled`,
+  `IsExternalLLMEnabled`, `IsInitialized`, `IsAdaptiveModeActive`, `GetPredictionAccuracy`, `GetQueryCount`,
+  `GetAdaptiveConfig`, `BuildQualifiedName`, `UpdatePredictionAccuracy`, `ApplyWeightModification`, and the
+  single-manager `Initialize` overload. With them: `SAIQueryRequest`, `SAIQueryResponse`, `SAIWeightModification`,
+  `SAIDecisionExplanation`, the eight unused forward declarations at the top of the file, and the `g_AIEngine` singleton.
+- **Write-only state deleted with its last reader:** `m_queryCount`, `m_successfulQueries`, `m_pendingMods[20]`,
+  `m_pendingModCount`, `m_recentDecisions[50]`, `m_decisionIndex`, `m_decisionCount`, `m_predictionAccuracy`,
+  `m_totalPredictions`, `m_correctPredictions`, and `ProcessExpiredModifications`, whose counter had no writer.
+- **Four `SAIAdaptiveConfig` fields the orchestrator kept assigning:** `learningRate`, `minConfidenceThreshold`,
+  `useMarketRegimeAdaptation`, `useSentimentAdaptation`. The first two had readers only in the island; the last two had
+  no reader in any build. What `EAOrchestrator.mqh:3748-3750` assigns is now exactly `enabled = true`,
+  `adaptationInterval = 1` and `useExternalLLM = m_config.enableExternalLLM`; `usePerformanceAdaptation` is still the struct
+  default `true` that `ProcessAdaptation` reads, so it is an unsettable constant like the margin ladder thresholds.
+- **Two log lines retired, both of which could only ever have printed a constant.** The deinit summary `AIEngine shutdown
+  - Queries: %d, Accuracy: %.2f%%` read `m_queryCount` (no writer outside `OnAIQuery`) and `m_predictionAccuracy`
+  (constructed at 0.5, written only by `UpdatePredictionAccuracy` behind `ProvideFeedback`), so it was `Queries: 0,
+  Accuracy: 50.00%` in every build. `[AI-ENGINE] Clearing accumulated modifications` is gone with the counter it tested.
+  `[EXT-LLM] FEEDBACK` also has no printer; INIT, CONFIG, QUERY-*, REASONING*, STRATEGY-WEIGHTS, WEIGHT-APPLIED and
+  SHUTDOWN remain, all fed by the live external-LLM path.
+- **Dead adaptation, deleted rather than wired.** `AdaptToRegime` scaled the configured confidence threshold by the
+  regime factor (0.9 trend / 1.1 range / 1.2 volatile), stored it in a local, iterated the managers with an empty body
+  and returned - so the factors never applied to any strategy, including after Batch 201 published the regime value.
+  `AdaptToPerformance`'s `< 0.4` disable / `> 0.6` re-enable pair tested the constant accuracy, and the live governance
+  sweep (`EAOrchestrator.mqh:3106-3119`) is what actually parks and restores strategies. Both are deleted; wiring a
+  regime-scaled AI threshold would be a new entry gate, which is an operator decision, not a cleanup.
+- **Ensemble-confidence chain closed (task #107).** `StrategyEntry::avgConfidence` had one writer - registration setting
+  it to `0` - and its only readers were `CStrategyStateReporter::GetEnsembleConfidence`, which the island called three
+  times. Field, `CStrategyMgrRoster::GetStrategyAvgConfidence`, the manager forwarder and the reporter method are gone,
+  so Batch 250's "recorded, not fixed" note resolves by removal instead of by inventing a running mean that would change
+  a reported number.
+- **Second weight mirror removed:** `CStrategyHealthMonitor`'s participation ladder. `UpdateParticipationScore` had no
+  caller, the seven `m_participation*` thresholds were read only inside it, the seven `SetParticipation*` setters had no
+  caller, `GetStrategyParticipationScore` had no caller, and `SStrategyHealthEntry::participationScore` therefore held
+  the `1.0` it was registered with. The live `UpdateAllStrategyWeights` product went from
+  `originalWeight * healthScore * participationScore` to `originalWeight * healthScore` - the same number, because the
+  deleted factor was 1.0 and could not have become anything else.
+- **Kept, with the reason:** `GetStrategyWeightsJSON` (manager, reporter) - `MaybeCaptureExternalReasoning` feeds it into
+  the LLM prompt on a live path when `InpEnableExternalLLM` is on. `UpdateStrategyWeight` / `UpdateStrategyWeightByName`
+  - `ApplyLLMReasoningToWeights` writes through them. `GetActiveStrategyCount` - the `[ENTERPRISE]` init line reads it.
+- **Recorded, not touched here (task #108):** `SStrategyHealthEntry::currentWeight` is written by two live paths
+  (`UpdateAllStrategyWeights`, and `StrategyMgrRoster.mqh:275` through `SetStrategyWeight`) and read by
+  `GetStrategyWeight`, which has no caller outside the class; `originalWeight` is seeded from the health monitor's own
+  `RegisterStrategy(weight)` and read only by those same two. So the monitor keeps a weight store that feeds no vote -
+  consensus weights live in the roster. Also unexamined here: `CConsensusWeightingConfig::UpdateStrategyWeights` returns
+  inside the `healthMonitor != NULL` branch, so the win-rate scaling loop below it may never have run for indicator
+  strategies. Either resolution touches how a weight is chosen, so it gets its own batch.
+- **Doc surface:** `AdaptToRegime` was cited as live behaviour in four places. README's Batch 201 entry, the
+  `SYSTEM_STRUCTURE.md` regime bullet, `RUNTIME_DECISION_GRAPH.md`'s Batch 201 edge and `SYSTEM_AUDIT_TRACE.md`'s Batch
+  201 trace all said the regime made AI entries more permissive in a trend; §6's `[MARKET-REGIME]` bullet said
+  "adaptation stays off" when `valid=false`. Those claims are corrected in place, the two impossible `AIEngine.mqh:NNN`
+  pointers in the Batch 201 trace are re-anchored by name, and 12 further pointers moved with the per-file line deltas.
+
+- **File sizes:** `AIEngine.mqh` 1095 -> 404, `StrategyHealthMonitor.mqh` 454 -> 383,
+  `StrategyStateReporter.mqh` 254 -> 230, `EnterpriseStrategyManager.mqh` 1173 -> 1165,
+  `StrategyMgrRoster.mqh` 302 -> 299, `EntStrategyTypes.mqh` 142 -> 141. 9 added / 810 deleted across seven files.
+
+**Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its own `Result:` line; 0 errors / 0 warnings (26.8 / 8.9 / 21.4 / 28.7 / 308.3 / 316.1 / 80.7 / 5.7 s); harness exit 0; all eight `.ex5` newer than the sources (14:43-14:56 against a 14:36 source edit); artifacts removed. Load caveat: the same tree measured 169.8 s for the EA program eleven minutes earlier, and every program roughly doubled on this pass, so these are machine-load numbers, not a compile-cost result for this batch. Not runtime-observed: newest journal 2026-09-23.
+
 ### Batch 250: the manager stopped reporting to nobody, and the state only its reports read went too
 
 **Type:** dead-code sweep, behaviour-preserving by construction.

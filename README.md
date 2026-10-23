@@ -447,6 +447,7 @@ No decision path changed: the risk gate, consensus scoring, lot math, stops, mag
 ### Batch 201: AI confidence now adapts to the market regime
 
 `m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its no-op branch every cycle and the per-regime confidence factors (0.9 in a trend, 1.1 in a range, 1.2 when volatile) had never been applied to any AI strategy. The manager now publishes the regime from the same `CRegimeEngine` snapshot that gates strategy votes - an unvalidated snapshot maps to `UNKNOWN`, meaning no adaptation, rather than a guess - and prints `[MARKET-REGIME] <symbol> | old -> new | valid=` on each change. AI entries become slightly more permissive in a confirmed trend and more selective in ranges and volatile expansions; indicator voting, the consensus gate, risk ceilings, lot math, stops and sends are unchanged.
+**Corrected by Batch 251:** that last clause was never true. `AdaptToRegime` scaled the threshold into a local, iterated the managers with an empty body and returned, so the factor reached no strategy on any cycle - publishing the regime made `[MARKET-REGIME]` truthful, not the adaptation. The method is deleted; the entry, lot and risk arithmetic this entry says is unchanged is unchanged for the same reason it always was.
 
 Two nearby findings were **not** wired, each for a stated reason: participation (a 0.35 "no signal" target would permanently discount strategies meant to fire rarely, like the NY open gap) and the ranging-regime trailing pause (`CTradeManager::ManageAllPositions` has no symbol filter, so per-symbol routing means changing the exit authority - not attempted without a live attach). Both are recorded with their reasoning in `SYSTEM_STRUCTURE.md` §4.
 
@@ -632,6 +633,45 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 251: the AI engine's query island had no entry point, and the weight mirrors below it had no reader
+
+`CAIEngine::OnAIQuery` is not called anywhere, and neither are the free `InitializeAIEngine`/`CleanupAIEngine` pair or
+the `g_AIEngine` global that were the only other way in. Everything reachable only from there was a second copy of the
+Batch 246/247 shape, and this time it was the AI domain: 26 methods, 10 members, 4 structs, and the whole
+`SAIAdaptiveConfig` set of knobs the orchestrator was still assigning (`learningRate`, `minConfidenceThreshold`,
+`useMarketRegimeAdaptation`, `useSentimentAdaptation`) into fields that only dead code read.
+
+What the docs had been repeating as live behaviour, and what the code could not actually do:
+
+- `AIEngine shutdown - Queries: %d, Accuracy: %.2f%%` could only ever print `Queries: 0, Accuracy: 50.00%`. Both numbers
+  had writers only inside the island, so the shutdown summary was a constant dressed as telemetry. It is gone; the
+  `[EXT-LLM] SHUTDOWN` line stays because its counters (`queries/ok/fail`) are real.
+- `[AI-ENGINE] Clearing accumulated modifications` had a printer behind a counter (`m_pendingModCount`) whose only writer
+  was `AI_ModifyWeights`, which had no caller. The tag no longer exists in the tree.
+- `AdaptToPerformance` gated strategy parking and re-enabling on `m_predictionAccuracy < 0.4` / `> 0.6`. The only writer,
+  `UpdatePredictionAccuracy`, sat behind `ProvideFeedback`. So the two branches were unreachable arithmetic on a 0.5
+  constant, and what actually parks a strategy has always been the orchestrator's 60 s governance sweep
+  (`EAOrchestrator.mqh:3106-3119`), which is untouched.
+- `AdaptToRegime` multiplied a threshold by the regime factor (0.9 / 1.1 / 1.2), stored it in a local, walked the
+  managers with an empty body, and returned. Batch 201's records - here and in `SYSTEM_STRUCTURE.md` /
+  `RUNTIME_DECISION_GRAPH.md` / `SYSTEM_AUDIT_TRACE.md` - said AI entries became more permissive in a confirmed trend.
+  They never could: nothing wrote the value. The regime publication itself and `[MARKET-REGIME]` are real; the claimed
+  behavioural effect was not, and the method is now deleted.
+- `GetEnsembleConfidence()` averaged `StrategyEntry::avgConfidence`, which no line in the tree wrote, and its only three
+  readers were in the island. Field, roster getter, manager forwarder and reporter method are gone - Batch 250's
+  "recorded, not fixed" note is closed by removal rather than by a writer.
+- The health monitor's participation ladder (`UpdateParticipationScore`, seven `m_participation*` thresholds, seven
+  `SetParticipation*` setters, `GetStrategyParticipationScore`) had no driver and no reader. The live
+  `UpdateAllStrategyWeights` product became `originalWeight * healthScore`, which is the same number as before because
+  the deleted term was registered at 1.0 and never moved.
+
+`CAIEngine` is 404 lines and does three things: it initializes against the symbol managers, it calls
+`UpdateStrategyWeights()` on the adaptation interval, and - when `InpEnableExternalLLM` is on - it asks the configured
+Ollama endpoint for weight commentary and applies the numbers that commentary names through
+`CEnterpriseStrategyManager::UpdateStrategyWeight`. `GetStrategyWeightsJSON` stays for exactly that reason.
+
+No entry, lot, quorum, veto, stop or exit moved. 9 added / 810 deleted across seven files.
+
 ### Batch 250: the manager stopped reporting to nobody
 
 Batch 247 deleted the status chain that had no entry point. This deletes what fed it, and then keeps going down until
@@ -657,6 +697,8 @@ nothing is left that answers to nobody:
 `GetEnsembleConfidence()` averages zeros and has returned `0.0` for its whole life. It is not a money path today - its
 readers live behind `CAIEngine::OnAIQuery`, which has no caller either, and that whole query island is the next batch.
 Giving the field a real running mean is a behaviour change, so it gets its own batch and its own verification.
+*Closed by Batch 251: the island went, and the ensemble-confidence chain went with it - the field's only readers were in
+there, so removal, not a writer, was the answer.*
 
 Nothing here moved a lot, a stop, a threshold or an exit. Every deleted method's only occurrences were its own
 declaration, its definition, and a forwarder no caller could reach - which is the test this repository has now needed

@@ -149,8 +149,6 @@ public:
            { return m_roster.GetStrategySuccessCount(index); }
     int    GetStrategyFailCount(const int index) const
            { return m_roster.GetStrategyFailCount(index); }
-    double GetStrategyAvgConfidence(const int index) const
-           { return m_roster.GetStrategyAvgConfidence(index); }
     double GetStrategyParticipationScore(const int index) const
            { return m_roster.GetStrategyParticipationScore(index); }
     double GetStrategyHealthScore(const int index) const
@@ -458,7 +456,6 @@ public:
     {
         return UpdateStrategyWeightByName(strategyName, newWeight);
     }
-    double GetEnsembleConfidence() const;
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const;
     void RefreshMarketRegime();
     string GetStrategyWeightsJSON() const;
@@ -1043,20 +1040,15 @@ CUnifiedSignalPipeline* CEnterpriseStrategyManager::GetPipeline()
     return m_infra.GetPipeline();
 }
 
-double CEnterpriseStrategyManager::GetEnsembleConfidence() const
-{
-    return m_stateReporter.GetEnsembleConfidence();
-}
-
 ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
 {
     return m_signalContext.GetCurrentMarketRegime();
 }
 
 //--- Before Batch 201 nothing wrote m_currentMarketRegime, so every reader acted on
-//--- MARKET_REGIME_UNKNOWN: AIEngine::AdaptToRegime answers that with no threshold change at
-//--- all, which is why AI regime adaptation looked configured and did nothing. Same source as
-//--- the consensus regime gate, so a vote and an adaptation cannot disagree about the market.
+//--- MARKET_REGIME_UNKNOWN, which is why AI regime adaptation looked configured and did nothing.
+//--- Same source as the consensus regime gate, so a vote and an adaptation cannot disagree about
+//--- the market.
 void CEnterpriseStrategyManager::RefreshMarketRegime()
 {
     CUnifiedSignalPipeline* pipeline = m_infra.GetPipeline();

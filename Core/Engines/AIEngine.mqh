@@ -1,5 +1,6 @@
-// AIEngine.mqh - AI Hooks and Integration Module
-// Provides AI-ready interfaces for external ML model integration
+// AIEngine.mqh - the strategy-weight adaptation driver owned by CEAOrchestrator.
+// Once per adaptation interval it re-weights each symbol manager and, when an external LLM
+// endpoint is configured, asks that endpoint for weight commentary and applies the numbers it names.
 #ifndef AI_ENGINE_MQH
 #define AI_ENGINE_MQH
 
@@ -8,115 +9,17 @@
 #include "../Management/EnterpriseStrategyManager.mqh"
 
 class CEnhancedErrorHandler;
-class CUtilities;
-class CMarketAnalysis;
-class CNextGenStrategyBrain;
-class CTransformerBrain;
-struct SPredictionWithUncertainty;
-class CPositionSizer;
-class CTradeManager;
-class CPerformanceAnalytics;
-// class CEnterpriseStrategyManager;  // Now included via header
-
-struct SAIQueryRequest {
-    string queryType;           // Type of query (prediction, explanation, weights)
-    string symbol;              // Symbol for context
-    ENUM_TIMEFRAMES timeframe;  // Timeframe for context
-    double marketData[50];      // Market data array
-    int dataSize;               // Size of market data
-    string parameters;          // Additional parameters (JSON-like)
-    datetime timestamp;         // Request timestamp
-    
-    SAIQueryRequest() {
-        queryType = "";
-        symbol = "";
-        timeframe = PERIOD_H1;
-        dataSize = 0;
-        parameters = "";
-        timestamp = 0;
-        ArrayInitialize(marketData, 0.0);
-    }
-};
-
-struct SAIQueryResponse {
-    bool success;               // Query successful
-    double prediction;          // Prediction value (0-1)
-    double confidence;          // Confidence level (0-1)
-    string explanation;         // Human-readable explanation
-    string jsonData;            // Additional data in JSON format
-    int processingTimeMs;       // Processing time in milliseconds
-    string errorMessage;        // Error message if failed
-    
-    SAIQueryResponse() {
-        success = false;
-        prediction = 0.0;
-        confidence = 0.0;
-        explanation = "";
-        jsonData = "";
-        processingTimeMs = 0;
-        errorMessage = "";
-    }
-};
-
-struct SAIWeightModification {
-    string strategyName;        // Strategy to modify
-    double newWeight;           // New weight value
-    string reason;              // Reason for modification
-    double confidence;          // AI confidence in this change
-    bool temporary;             // Temporary or permanent change
-    int durationBars;           // Duration in bars (if temporary)
-    
-    SAIWeightModification() {
-        strategyName = "";
-        newWeight = 1.0;
-        reason = "";
-        confidence = 0.5;
-        temporary = true;
-        durationBars = 10;
-    }
-};
-
-struct SAIDecisionExplanation {
-    ENUM_TRADE_SIGNAL signal;         // The signal being explained
-    string primaryReason;             // Main reason for decision
-    string contributingFactors[10];
-    int factorCount;                  // Number of factors
-    double factorWeights[10];         // Weight of each factor
-    string riskAssessment;            // Risk assessment explanation
-    string marketContext;             // Market context explanation
-    double overallConfidence;         // Overall decision confidence
-    
-    SAIDecisionExplanation() {
-        signal = TRADE_SIGNAL_NONE;
-        primaryReason = "";
-        factorCount = 0;
-        riskAssessment = "";
-        marketContext = "";
-        overallConfidence = 0.0;
-        ArrayInitialize(factorWeights, 0.0);
-    }
-};
 
 struct SAIAdaptiveConfig {
     bool enabled;                     // Adaptive mode enabled
-    double learningRate;
     int adaptationInterval;           // Bars between adaptations
-    double minConfidenceThreshold;    // Min confidence to trade
-    double maxRiskMultiplier;         // Max risk multiplier in adaptive mode
-    bool useMarketRegimeAdaptation;
     bool usePerformanceAdaptation;    // Adapt based on performance
-    bool useSentimentAdaptation;      // Adapt based on sentiment (future)
     bool useExternalLLM;              // Use external LLM for advanced reasoning (default: false)
     
     SAIAdaptiveConfig() {
         enabled = true;
-        learningRate = 0.1;
         adaptationInterval = 5;
-        minConfidenceThreshold = 0.6;
-        maxRiskMultiplier = 1.5;
-        useMarketRegimeAdaptation = true;
         usePerformanceAdaptation = true;
-        useSentimentAdaptation = false;
         useExternalLLM = false;  // Default to not using external LLM
     }
 };
@@ -133,20 +36,6 @@ private:
     bool m_initialized;
     bool m_adaptiveModeActive;
     datetime m_lastAdaptation;
-    int m_queryCount;
-    int m_successfulQueries;
-    
-    SAIWeightModification m_pendingMods[20];
-    int m_pendingModCount;
-    
-    SAIDecisionExplanation m_recentDecisions[50];
-    int m_decisionIndex;
-    int m_decisionCount;
-    
-    double m_predictionAccuracy;
-    int m_totalPredictions;
-    int m_correctPredictions;
-    
     bool m_externalAIConnected;
     string m_externalAIEndpoint;
     int m_externalLLMQueryCount;
@@ -192,40 +81,12 @@ private:
         StringReplace(escaped, "\n", "\\n");
         return escaped;
     }
-    
-    string BuildQualifiedName(const string symbol, const string strategyName) const {
-        return symbol + "::" + strategyName;
-    }
-    
-    void UpdatePredictionAccuracy(bool wasCorrect) {
-        m_totalPredictions++;
-        if(wasCorrect) m_correctPredictions++;
-        m_predictionAccuracy = (double)m_correctPredictions / (double)m_totalPredictions;
-    }
-    
-        bool ApplyWeightModification(const string symbol, const string strategyName, const double newWeight) {
-            for(int i = 0; i < m_managerCount; i++) {
-                if(m_managerSymbols[i] == symbol && m_managers[i] != NULL) {
-                    // Pass simple strategy name since each manager is per-symbol
-                    return m_managers[i].UpdateStrategyWeight(strategyName, newWeight);
-                }
-            }
-            return false;
-        }
 
 public:
     CAIEngine() {
         m_initialized = false;
         m_adaptiveModeActive = false;
         m_lastAdaptation = 0;
-        m_queryCount = 0;
-        m_successfulQueries = 0;
-        m_pendingModCount = 0;
-        m_decisionIndex = 0;
-        m_decisionCount = 0;
-        m_predictionAccuracy = 0.5;
-        m_totalPredictions = 0;
-        m_correctPredictions = 0;
         m_externalAIConnected = false;
         m_externalAIEndpoint = "";
         m_externalLLMQueryCount = 0;
@@ -239,8 +100,6 @@ public:
     
     ~CAIEngine() {
         if(m_initialized) {
-            LogAI(ERROR_LEVEL_INFO, StringFormat("AIEngine shutdown - Queries: %d, Accuracy: %.2f%%", 
-                  m_queryCount, m_predictionAccuracy * 100));
             LogExternalLLM("SHUTDOWN",
                            StringFormat("reasoning_cached=%s",
                                         (m_lastExternalReasoning != "") ? "true" : "false"),
@@ -280,203 +139,6 @@ public:
         return true;
     }
     
-    // Backward compatibility: Initialize with single manager
-    bool Initialize(CEnterpriseStrategyManager* manager, const SAIAdaptiveConfig &config) {
-        if(CheckPointer(manager) == POINTER_INVALID) {
-            LogAI(ERROR_LEVEL_ERROR, "Invalid manager pointer");
-            return false;
-        }
-        
-        m_managerCount = 1;
-        ArrayResize(m_managers, 1);
-        ArrayResize(m_managerSymbols, 1);
-        m_managers[0] = manager;
-        m_managerSymbols[0] = "";  // Will be determined from strategy
-        m_adaptiveConfig = config;
-        m_adaptiveModeActive = config.enabled;
-        m_initialized = true;
-        
-        ConfigureExternalLLM();
-        LogExternalLLM("INIT",
-                       m_adaptiveConfig.useExternalLLM ?
-                       "runtime role=adaptation_reasoning_telemetry" :
-                       "disabled by config",
-                       true);
-        
-        LogAI(ERROR_LEVEL_INFO, "AIEngine initialized successfully");
-        return true;
-    }
-    
-// OnAIQuery - External AI Query Interface
-// Main entry point for ML models to query the trading system
-    SAIQueryResponse OnAIQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        datetime queryStartTime = GetTickCount();
-        
-        if(!m_initialized) {
-            response.errorMessage = "AIEngine not initialized";
-            return response;
-        }
-        
-        m_queryCount++;
-        
-        if(request.queryType == "prediction") {
-            response = ProcessPredictionQuery(request);
-        }
-        else if(request.queryType == "signal") {
-            response = ProcessSignalQuery(request);
-        }
-        else if(request.queryType == "weights") {
-            response = ProcessWeightsQuery(request);
-        }
-        else if(request.queryType == "state") {
-            response = ProcessStateQuery(request);
-        }
-        else if(request.queryType == "explanation") {
-            response = ProcessExplanationQuery(request);
-        }
-        else {
-            response.errorMessage = "Unknown query type: " + request.queryType;
-            return response;
-        }
-        
-        response.processingTimeMs = (int)(GetTickCount() - queryStartTime);
-        
-        if(response.success) m_successfulQueries++;
-        
-        return response;
-    }
-    
-    bool AI_ModifyWeights(const SAIWeightModification &modifications[], int modCount) {
-        if(!m_initialized || m_managerCount <= 0) {
-            LogAI(ERROR_LEVEL_WARNING, "Cannot modify weights - not initialized");
-            return false;
-        }
-        
-        int successCount = 0;
-        
-        for(int i = 0; i < modCount && i < 20; i++) {
-            SAIWeightModification mod = modifications[i];
-            
-            if(mod.newWeight < 0.0 || mod.newWeight > 5.0) {
-                LogAI(ERROR_LEVEL_WARNING, StringFormat("Invalid weight %.2f for %s", 
-                      mod.newWeight, mod.strategyName));
-                continue;
-            }
-            
-            if(mod.confidence < 0.3) {
-                LogAI(ERROR_LEVEL_INFO, StringFormat("Low confidence weight mod rejected: %s (%.2f)", 
-                      mod.strategyName, mod.confidence));
-                continue;
-            }
-            
-            // Apply weight modification to all managers (using simple strategy name since each manager is per-symbol)
-                        bool anySuccess = false;
-                        for(int m = 0; m < m_managerCount; m++) {
-                            if(m_managers[m] == NULL) continue;
-                
-                            if(m_managers[m].UpdateStrategyWeightByName(mod.strategyName, mod.newWeight)) {
-                                anySuccess = true;
-                                LogAI(ERROR_LEVEL_INFO, StringFormat("AI modified weight: %s -> %.2f (confidence: %.2f, reason: %s)",
-                                      mod.strategyName, mod.newWeight, mod.confidence, mod.reason));
-                            }
-                        }
-            
-            if(anySuccess) {
-                if(mod.temporary && m_pendingModCount < 20) {
-                    m_pendingMods[m_pendingModCount] = mod;
-                    m_pendingModCount++;
-                }
-                
-                successCount++;
-            }
-        }
-        
-        return (successCount > 0);
-    }
-    
-    SAIDecisionExplanation AI_ExplainDecision(const string &symbol, ENUM_TRADE_SIGNAL signal) {
-        SAIDecisionExplanation explanation;
-        explanation.signal = signal;
-        
-        if(!m_initialized || m_managerCount <= 0) {
-            explanation.primaryReason = "System not initialized";
-            return explanation;
-        }
-        
-        CEnterpriseStrategyManager* manager = NULL;
-        for(int i = 0; i < m_managerCount; i++) {
-            if(m_managers[i] != NULL && m_managerSymbols[i] == symbol) {
-                manager = m_managers[i];
-                break;
-            }
-        }
-        
-        if(manager == NULL && m_managerCount > 0) {
-            manager = m_managers[0];  // Fallback to first manager
-        }
-        
-        if(manager == NULL) {
-            explanation.primaryReason = "Manager not found for symbol";
-            return explanation;
-        }
-        
-        ENUM_MARKET_REGIME regime = manager.GetCurrentMarketRegime();
-        
-        if(signal == TRADE_SIGNAL_NONE) {
-            explanation.primaryReason = "No clear directional signal detected";
-            explanation.marketContext = "Market conditions do not favor entry at this time";
-        }
-        else if(signal == TRADE_SIGNAL_BUY) {
-            explanation.primaryReason = "Bullish consensus from multiple strategies";
-            explanation.contributingFactors[0] = "Positive trend alignment";
-            explanation.contributingFactors[1] = "Favorable market regime: " + EnumToString(regime);
-            explanation.contributingFactors[2] = "Risk parameters within limits";
-            explanation.factorCount = 3;
-            explanation.factorWeights[0] = 0.4;
-            explanation.factorWeights[1] = 0.35;
-            explanation.factorWeights[2] = 0.25;
-        }
-        else if(signal == TRADE_SIGNAL_SELL) {
-            explanation.primaryReason = "Bearish consensus from multiple strategies";
-            explanation.contributingFactors[0] = "Negative trend alignment";
-            explanation.contributingFactors[1] = "Favorable market regime: " + EnumToString(regime);
-            explanation.contributingFactors[2] = "Risk parameters within limits";
-            explanation.factorCount = 3;
-            explanation.factorWeights[0] = 0.4;
-            explanation.factorWeights[1] = 0.35;
-            explanation.factorWeights[2] = 0.25;
-        }
-        
-        double activeStrategyCount = (double)manager.GetActiveStrategyCount();
-        explanation.riskAssessment = StringFormat("Active strategies: %.0f, Regime: %s", 
-                                                      activeStrategyCount, EnumToString(regime));
-        
-        explanation.overallConfidence = manager.GetEnsembleConfidence();
-        
-        m_recentDecisions[m_decisionIndex] = explanation;
-        m_decisionIndex = (m_decisionIndex + 1) % 50;
-        if(m_decisionCount < 50) m_decisionCount++;
-        
-        return explanation;
-    }
-    
-    bool AI_AdaptiveMode(bool enable, const SAIAdaptiveConfig &config) {
-        m_adaptiveConfig = config;
-        m_adaptiveModeActive = enable && config.enabled;
-        
-        if(m_adaptiveModeActive) {
-            LogAI(ERROR_LEVEL_INFO, StringFormat(
-                "Adaptive mode ENABLED - Learning rate: %.2f, Interval: %d bars, Min confidence: %.2f",
-                config.learningRate, config.adaptationInterval, config.minConfidenceThreshold));
-        } else {
-            LogAI(ERROR_LEVEL_INFO, "Adaptive mode DISABLED");
-        }
-        
-        return true;
-    }
-    
-// ProcessAdaptation - Called on each bar to adapt
     void ProcessAdaptation() {
         if(!m_adaptiveModeActive || !m_initialized) return;
         
@@ -488,16 +150,6 @@ public:
         
         m_lastAdaptation = nowTime;
         
-        // Market regime adaptation (use ALL managers, each per-symbol)
-        if(m_adaptiveConfig.useMarketRegimeAdaptation && m_managerCount > 0) {
-            for(int m = 0; m < m_managerCount; m++) {
-                if(m_managers[m] != NULL) {
-                    ENUM_MARKET_REGIME regime = m_managers[m].GetCurrentMarketRegime();
-                    AdaptToRegime(regime);
-                }
-            }
-        }
-        
         if(m_adaptiveConfig.usePerformanceAdaptation) {
             AdaptToPerformance();
         }
@@ -505,8 +157,6 @@ public:
         if(m_adaptiveConfig.useExternalLLM) {
             MaybeCaptureExternalReasoning();
         }
-        
-        ProcessExpiredModifications();
     }
     
     void SetExternalAIEndpoint(const string &endpoint) {
@@ -526,15 +176,6 @@ public:
         } else {
             SetExternalAIEndpoint("");
         }
-    }
-    
-    void SetExternalLLMEnabled(bool enabled) {
-        m_adaptiveConfig.useExternalLLM = enabled;
-        ConfigureExternalLLM();
-    }
-    
-    bool IsExternalLLMEnabled() const {
-        return m_adaptiveConfig.useExternalLLM;
     }
     
     bool QueryExternalLLM(const string &prompt, string &llmResponse) {
@@ -596,103 +237,6 @@ public:
         }
     }
     
-    void ProvideFeedback(ENUM_TRADE_SIGNAL predictedSignal, bool wasCorrect, double profit) {
-        UpdatePredictionAccuracy(wasCorrect);
-        
-        if(m_externalAIConnected) {
-            string feedbackPrompt = StringFormat("Trade result: %s, Correct: %s, Profit: %.2f. Learn from this outcome.",
-                                                  TradeSignalToString(predictedSignal), wasCorrect ? "Yes" : "No", profit);
-            string llmResponse;
-            QueryExternalLLM(feedbackPrompt, llmResponse);
-            LogExternalLLM("FEEDBACK",
-                           StringFormat("signal=%s | correct=%s | profit=%.2f",
-                                        TradeSignalToString(predictedSignal),
-                                        wasCorrect ? "true" : "false",
-                                        profit),
-                           true);
-        }
-    }
-    
-    bool SynthesizeSignals(const string &signals, const string &regime, string &recommendation, double &confidence) {
-        if(!m_externalAIConnected) {
-            return false;
-        }
-        
-        string prompt = StringFormat("Given these trading signals: %s, with current market regime: %s, recommend a trading action (BUY/SELL/NONE) and provide confidence score (0-1).",
-                                      signals, regime);
-        
-        string llmResponse;
-        if(!QueryExternalLLM(prompt, llmResponse)) {
-            return false;
-        }
-        
-        StringToUpper(llmResponse);
-        if(StringFind(llmResponse, "BUY") >= 0) {
-            recommendation = "BUY";
-        } else if(StringFind(llmResponse, "SELL") >= 0) {
-            recommendation = "SELL";
-        } else {
-            recommendation = "NONE";
-        }
-        
-        // Extract confidence score (simple parsing)
-        int confidenceStart = StringFind(llmResponse, "confidence");
-        if(confidenceStart >= 0) {
-            confidenceStart = StringFind(llmResponse, ":", confidenceStart);
-            if(confidenceStart >= 0) {
-                string confidenceStr = StringSubstr(llmResponse, confidenceStart + 1, 4);
-                confidence = StringToDouble(confidenceStr);
-                if(confidence < 0.0 || confidence > 1.0) confidence = 0.5;
-            } else {
-                confidence = 0.5;
-            }
-        } else {
-            confidence = 0.5;
-        }
-        
-        LogAI(ERROR_LEVEL_INFO, "LLM Signal Synthesis: " + recommendation + " @ " + DoubleToString(confidence, 2));
-        return true;
-    }
-    
-    bool GenerateTradeExplanation(const string &signals, const string &decision, string &explanation) {
-        if(!m_externalAIConnected) {
-            explanation = "External LLM not connected";
-            return false;
-        }
-        
-        string prompt = StringFormat("Given these trading signals: %s, and the decision: %s, explain why this trade decision was made in 1-2 sentences.",
-                                      signals, decision);
-        
-        if(!QueryExternalLLM(prompt, explanation)) {
-            explanation = "Failed to get explanation from LLM";
-            return false;
-        }
-        
-        LogAI(ERROR_LEVEL_INFO, "LLM Explanation: " + explanation);
-        return true;
-    }
-    
-    bool AssessRisk(const string &symbol, double entryPrice, double stopLoss, double takeProfit, string &riskReport) {
-        if(!m_externalAIConnected) {
-            riskReport = "External LLM not connected";
-            return false;
-        }
-        
-        double stopLossPct = MathAbs(stopLoss - entryPrice) / entryPrice * 100;
-        double riskRewardRatio = MathAbs(takeProfit - entryPrice) / MathAbs(stopLoss - entryPrice);
-        
-        string prompt = StringFormat("Assess the risk of this trade setup: Symbol %s, Entry %.5f, Stop Loss %.5f (%.2f%%), Take Profit %.5f, Risk:Reward %.2f:1. Provide risk score (0-1) and brief recommendation.",
-                                      symbol, entryPrice, stopLoss, stopLossPct, takeProfit, riskRewardRatio);
-        
-        if(!QueryExternalLLM(prompt, riskReport)) {
-            riskReport = "Failed to get risk assessment from LLM";
-            return false;
-        }
-        
-        LogAI(ERROR_LEVEL_INFO, "LLM Risk Assessment: " + riskReport);
-        return true;
-    }
-    
     bool ReasonStrategyWeights(const string &regime, const string &currentWeights, string &reasoning) {
         if(!m_externalAIConnected) {
             reasoning = "External LLM not connected";
@@ -713,183 +257,7 @@ public:
         return true;
     }
     
-    bool IsInitialized() const { return m_initialized; }
-    bool IsAdaptiveModeActive() const { return m_adaptiveModeActive; }
-    double GetPredictionAccuracy() const { return m_predictionAccuracy; }
-    int GetQueryCount() const { return m_queryCount; }
-    SAIAdaptiveConfig GetAdaptiveConfig() const { return m_adaptiveConfig; }
-    
 private:
-    SAIQueryResponse ProcessPredictionQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        response.success = true;
-        
-        double totalConfidence = 0.0;
-        int totalStrategies = 0;
-        string regimes[];
-        ArrayResize(regimes, 0);
-        string explanationParts[];
-        ArrayResize(explanationParts, 0);
-        
-        for(int m = 0; m < m_managerCount; m++) {
-            if(m_managers[m] == NULL) continue;
-            
-            double conf = m_managers[m].GetEnsembleConfidence();
-            int stratCount = m_managers[m].GetActiveStrategyCount();
-            string regime = EnumToString(m_managers[m].GetCurrentMarketRegime());
-            
-            totalConfidence += conf;
-            totalStrategies += stratCount;
-            
-            // Track unique regimes
-            bool regimeExists = false;
-            for(int r = 0; r < ArraySize(regimes); r++) {
-                if(regimes[r] == regime) { regimeExists = true; break; }
-            }
-            if(!regimeExists && regime != "MARKET_REGIME_UNKNOWN") {
-                int size = ArraySize(regimes);
-                ArrayResize(regimes, size + 1);
-                regimes[size] = regime;
-            }
-            
-            string part = StringFormat("%s: conf=%.2f strategies=%d regime=%s",
-                                       m_managerSymbols[m], conf, stratCount, regime);
-            int size = ArraySize(explanationParts);
-            ArrayResize(explanationParts, size + 1);
-            explanationParts[size] = part;
-        }
-        
-        if(m_managerCount > 0) {
-            response.prediction = totalConfidence / m_managerCount;
-            response.confidence = response.prediction;
-            
-            string regimesStr = "";
-            for(int r = 0; r < ArraySize(regimes); r++) {
-                if(r > 0) regimesStr += ",";
-                regimesStr += regimes[r];
-            }
-            
-            string explanation = "Ensemble predictions: ";
-            for(int p = 0; p < ArraySize(explanationParts); p++) {
-                if(p > 0) explanation += " | ";
-                explanation += explanationParts[p];
-            }
-            if(regimesStr != "") explanation += " | Regimes: " + regimesStr;
-            response.explanation = explanation;
-        }
-        else {
-            response.prediction = 0.5;
-            response.confidence = 0.0;
-            response.explanation = "No managers initialized";
-            response.success = false;
-        }
-        
-        return response;
-    }
-    
-    SAIQueryResponse ProcessSignalQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        response.success = true;
-        
-        double totalConfidence = 0.0;
-        int totalStrategies = 0;
-        string explanationParts[];
-        ArrayResize(explanationParts, 0);
-        
-        for(int m = 0; m < m_managerCount; m++) {
-            if(m_managers[m] == NULL) continue;
-            
-            double conf = m_managers[m].GetEnsembleConfidence();
-            int stratCount = m_managers[m].GetActiveStrategyCount();
-            
-            totalConfidence += conf;
-            totalStrategies += stratCount;
-            
-            string part = StringFormat("%s: conf=%.2f strategies=%d",
-                                       m_managerSymbols[m], conf, stratCount);
-            int size = ArraySize(explanationParts);
-            ArrayResize(explanationParts, size + 1);
-            explanationParts[size] = part;
-        }
-        
-        if(m_managerCount > 0) {
-            double confidence = totalConfidence / m_managerCount;
-            response.prediction = confidence; // Proxy for signal direction not available
-            response.confidence = confidence;
-            
-            string explanation = "Signal Confidence: ";
-            for(int p = 0; p < ArraySize(explanationParts); p++) {
-                if(p > 0) explanation += " | ";
-                explanation += explanationParts[p];
-            }
-            response.explanation = explanation;
-        }
-        else {
-            response.prediction = 0.5;
-            response.confidence = 0.0;
-            response.explanation = "No managers initialized";
-            response.success = false;
-        }
-        
-        return response;
-    }
-    
-    SAIQueryResponse ProcessWeightsQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        response.success = true;
-        
-        string weightsJson = "{";
-        bool first = true;
-        
-        for(int m = 0; m < m_managerCount; m++) {
-            if(m_managers[m] == NULL) continue;
-            
-            string mgrWeights = m_managers[m].GetStrategyWeightsJSON();
-            if(mgrWeights != "") {
-                if(!first) weightsJson += ",";
-                weightsJson += "\"";
-                weightsJson += m_managerSymbols[m];
-                weightsJson += "\":";
-                weightsJson += mgrWeights;
-                first = false;
-            }
-        }
-        
-        weightsJson += "}";
-        response.jsonData = weightsJson;
-        response.explanation = "Current strategy weights per symbol";
-        
-        return response;
-    }
-    
-    SAIQueryResponse ProcessStateQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        response.success = true;
-        
-        response.jsonData = StringFormat("{\"adaptiveMode\":%s,\"accuracy\":%.4f,\"queries\":%d,\"managerCount\":%d}",
-                                         m_adaptiveModeActive ? "true" : "false",
-                                         m_predictionAccuracy, m_queryCount, m_managerCount);
-        response.explanation = "Current AI engine state";
-        
-        return response;
-    }
-    
-    SAIQueryResponse ProcessExplanationQuery(const SAIQueryRequest &request) {
-        SAIQueryResponse response;
-        response.success = true;
-        
-        if(m_decisionCount > 0) {
-            int lastIdx = (m_decisionIndex - 1 + 50) % 50;
-            SAIDecisionExplanation lastDecision = m_recentDecisions[lastIdx];
-            response.explanation = lastDecision.primaryReason + " | " + lastDecision.riskAssessment;
-            response.confidence = lastDecision.overallConfidence;
-        } else {
-            response.explanation = "No recent decisions to explain";
-        }
-        
-        return response;
-    }
-
     void MaybeCaptureExternalReasoning() {
         if(!m_adaptiveConfig.useExternalLLM)
             return;
@@ -1022,74 +390,15 @@ private:
         return "";
     }
     
-    void AdaptToRegime(ENUM_MARKET_REGIME regime) {
-        double adjustedThreshold = m_adaptiveConfig.minConfidenceThreshold;
-        
-        switch(regime) {
-            case MARKET_REGIME_TRENDING:
-                adjustedThreshold *= 0.9;  // Lower threshold in trends
-                break;
-            case MARKET_REGIME_RANGING:
-                adjustedThreshold *= 1.1;  // Higher threshold in ranges
-                break;
-            case MARKET_REGIME_VOLATILE:
-                adjustedThreshold *= 1.2;  // Much higher in volatile
-                break;
-            default:
-                break;
-        }
-
-        if(regime == MARKET_REGIME_UNKNOWN && adjustedThreshold < 0.0)
-            LogAI(ERROR_LEVEL_WARNING, "AdaptToRegime unexpected threshold");
-        
-        for(int m = 0; m < m_managerCount; m++) {
-            if(m_managers[m] == NULL) continue;
-            // AI strategies will pick up new threshold on next evaluation
-        }
-    }
-    
     void AdaptToPerformance() {
-        if(m_managerCount <= 0)
-            return;
-
+        // Parking and re-enabling is the orchestrator's 60 s governance sweep, not this loop: the
+        // accuracy reading those gates tested never had a writer here.
         for(int m = 0; m < m_managerCount; m++) {
             if(m_managers[m] == NULL) continue;
             m_managers[m].UpdateStrategyWeights();
-
-            if(m_predictionAccuracy < 0.4) {
-                m_managers[m].CheckStrategyDisabling();
-            } else if(m_predictionAccuracy > 0.6) {
-                m_managers[m].CheckStrategyReEnabling();
-            }
-        }
-    }
-    
-    void ProcessExpiredModifications() {
-        // In a production system, this would track timestamps properly
-        if(m_pendingModCount > 0) {
-            if(m_pendingModCount >= 18) {
-                PrintFormat("[AI-ENGINE] Clearing accumulated modifications");
-                m_pendingModCount = 0;
-            }
         }
     }
 };
 
-CAIEngine* g_AIEngine = NULL;
-
-bool InitializeAIEngine(CEnterpriseStrategyManager* manager) {
-    if(g_AIEngine == NULL)
-        g_AIEngine = new CAIEngine();
-    
-    SAIAdaptiveConfig defaultConfig;
-    return g_AIEngine.Initialize(manager, defaultConfig);
-}
-
-void CleanupAIEngine() {
-    if(g_AIEngine != NULL) {
-        delete g_AIEngine;
-        g_AIEngine = NULL;
-    }
-}
 
 #endif // __AI_ENGINE_MQH__

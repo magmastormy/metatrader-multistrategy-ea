@@ -416,12 +416,13 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   - Cross-entropy loss training for pattern recognition
   - Xavier initialization for pattern head weights
   - Methods: `ComputePatternProbabilities()`, `UpdatePatternHead()`, `GetPatternPredictions()`, `TrainPatternStep()`
-- **External LLM Integration (Batch 58):** Optional external LLM support via `CAIEngine`:
+- **External LLM Integration:** Optional external LLM support via `CAIEngine`, armed from `InpEnableExternalLLM` at init:
   - HTTP client for Ollama API communication (`http://localhost:11434/api/generate`)
-  - Configuration flag: `useExternalLLM` in `SAIAdaptiveConfig` (default `false`)
-  - Methods: `QueryExternalLLM()`, `SynthesizeSignals()`, `GenerateTradeExplanation()`, `AssessRisk()`, `ReasonStrategyWeights()`, `ProvideFeedback()`
-  - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
-  - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
+  - Configuration flag: `useExternalLLM` in `SAIAdaptiveConfig` (default `false`), read only by `ProcessAdaptation`
+  - Methods (Batch 251 trimmed the surface to what an entry point reaches): `QueryExternalLLM()`,
+    `ReasonStrategyWeights()`, `ConfigureExternalLLM()`, `SetExternalAIEndpoint()`
+  - Runtime observability: `[EXT-LLM]` covers init, endpoint config, query start/success/failure, reasoning capture,
+    weight application and shutdown, so "enabled but unused" states are visible from logs
 
 ### 2.6.1 Offline training tools (Batch 235) - one model, two metric holders
 
@@ -1400,8 +1401,8 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   - `CPositionLifecycleManager::SetRegimeEngine` (`:184`) — stays NULL, so the ranging-regime branch that pauses trailing (`:372`) never runs and positions are trailed in range like any other regime. The per-symbol regime source is live as of Batch 201 (`GetCurrentMarketRegime()`), but routing needs a symbol-scoped trailing call that `CTradeManager::ManageAllPositions` does not offer. Recorded, not shipped.
   - `CVPINFilter::SetClassificationMode` and its `m_classificationMode` shadow field — **deleted in Batch 176**: `ClassifyTick` reads `m_classifyMode` (set by the constructor), while the init log printed the decorative twin, so the line reported a mode that never affected classification.
 - `CStatisticalArbitrageStrategy` abstains (`[STATARB-UNHEDGED]`) because only one leg of a pair signal is executable; `ExecutePairTrade` has no callers.
-- **Consensus participation has never adapted** (recorded Batch 200, left alone in 201). `StrategyMgrRoster.mqh:230` registers `participationScore = 0.90` and `UpdateParticipationScore` / `RecordSignalGenerated` / `RecordSignalFiltered` have no caller, so `GetStrategyParticipationMultiplier` returns the same `0.40 + 0.65*0.90 = 0.985` for every strategy in every vote: the score formula's adaptive term is a constant haircut. Not wired in 201 on purpose - its targets (1.0 signal / 0.65 filtered / **0.35 none**) with decay 0.85 per call would pin intrinsically low-frequency strategies (`NYOpenGapStrategy`, statistical arbitrage) at the floor and scale their votes to 0.6275, which is a bias the wiring would invent rather than a control it restores.
-- **The regime value the AI reads is now written** (Batch 201). `m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its `default:` branch every cycle and the per-regime confidence factors (0.9 trend / 1.1 range / 1.2 volatile) were never applied. `CEnterpriseStrategyManager::RefreshMarketRegime` maps the live `CRegimeEngine` snapshot - the same source as `GetRegimeCategoryMultiplier` - into `ENUM_MARKET_REGIME` at the top of `EvaluateConsensusInternal` and prints `[MARKET-REGIME]` on each change; an invalid snapshot stays `MARKET_REGIME_UNKNOWN`, which is the honest no-adaptation case.
+- **Consensus participation has never adapted** (recorded Batch 200, left alone in 201). `StrategyMgrRoster.mqh:228` registers `participationScore = 0.90` and `RecordSignalGenerated` / `RecordSignalFiltered` have no caller (the health monitor's own `UpdateParticipationScore` ladder was deleted in Batch 251: no caller, and nothing downstream read what it wrote), so `GetStrategyParticipationMultiplier` returns the same `0.40 + 0.65*0.90 = 0.985` for every strategy in every vote: the score formula's adaptive term is a constant haircut. Not wired in 201 on purpose - its targets (1.0 signal / 0.65 filtered / **0.35 none**) with decay 0.85 per call would pin intrinsically low-frequency strategies (`NYOpenGapStrategy`, statistical arbitrage) at the floor and scale their votes to 0.6275, which is a bias the wiring would invent rather than a control it restores.
+- **The regime value the AI reads is now written** (Batch 201). `m_currentMarketRegime` had four readers and no writer, so `CAIEngine::AdaptToRegime` took its `default:` branch every cycle and the per-regime confidence factors (0.9 trend / 1.1 range / 1.2 volatile) were never applied. `CEnterpriseStrategyManager::RefreshMarketRegime` maps the live `CRegimeEngine` snapshot - the same source as `GetRegimeCategoryMultiplier` - into `ENUM_MARKET_REGIME` at the top of `EvaluateConsensusInternal` and prints `[MARKET-REGIME]` on each change; an invalid snapshot stays `MARKET_REGIME_UNKNOWN`, which is the honest no-adaptation case. Batch 251 deleted `AdaptToRegime`: it computed its scaled threshold into a local and never wrote it anywhere, so the 0.9 / 1.1 / 1.2 factors applied to no strategy in any build. The publication stays - the consensus regime gate and the `[EXT-LLM]` reasoning prompt read it.
 - **`CRiskAdaptiveTuner::m_riskReductionFactor` has readers and no writer, and is left that way on purpose** (found Batch 213). `UnifiedRiskManager::ApplyPnlRiskAdjustment` (:1544, :1570) uses it as the fraction of unrealized profit that frees risk budget, so the credit is the constructor's constant 0.5 forever - including while `[RISK-BUDGET-PNL-ADJUSTED] ... factor=0.5` prints as if it were adaptive. `UpdateAdaptiveRiskLevel` does compute a `reductionFactor` (<=0.35 at critical drawdown, <=0.65 at warning, <=0.60 conservative) and applies it to `targetRisk` only. The two numbers are different quantities that happen to move the same way, so storing one into the other would give a single field two meanings - the shape Batch 203 refused for the neural-net labels. Fixing this needs the operator to say what the profit credit should do in drawdown.
 - **The compounding tier ladder is not monotone, and the number is an operator decision** (flagged Batch 213, not changed). Tier 4 ($500-1,000) risks 1.5% per trade and tier 5 ($1,000-5,000) risks **5.0%** - a 3.3x jump at $1,000 - with an inline comment on the tier-5 line reading "5% risk per trade for <$1K equity", which is tier 1's number in the wrong band. Batch 192's clamp caps the applied value at the approved per-trade risk, so the live effect is "full ceiling from $1,000 up" rather than 5%. What that band *should* risk is a decision about how a growing account behaves; guessing it would silently change the sizing character of every trade above $1,000.
 - **Two sizing modifier duplications, told apart in Batch 213.** `CPositionSizer::Initialize` registered a `CADXLotModifier` unconditionally while the orchestrator added its own configured instance to the same chain, so ADX tiers multiplied twice (1.69x / 2.25x) - the sizer's copy is deleted. Its `m_equityCurveModifier` looks similar but is registered only `if(m_params.useEquityCurveScaling)` and has its own reader at `PositionSizer.mqh:483`, so it stayed: a conditional feature with a consumer, not a duplicate.
@@ -1536,11 +1537,30 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   `DisableStrategy` (the only printers of `[EnterpriseStrategyManager] Strategy ENABLED:` / `DISABLED:`), `IsStrategyLiveVoter`
   on both owners, and six forwarders each shadowing a live method its own satellite calls by name. Recorded rather than
   fixed: `GetEnsembleConfidence()` averages a field nobody writes, so it is structurally 0.0 - and its readers sit behind
-  `CAIEngine::OnAIQuery`, which has no caller either.
+  `CAIEngine::OnAIQuery`, which has no caller either. Batch 251 deleted the island, the reporter method, both forwarders
+  and `StrategyEntry::avgConfidence` with it, so the question is closed by removal rather than by a writer.
+- **The AI query surface was an entry point nobody had** (Batch 251). `CAIEngine::OnAIQuery` has no call in any `.mq5`
+  or `.mqh`, and neither did the free `InitializeAIEngine`/`CleanupAIEngine` pair or the `g_AIEngine` global that were the
+  only other way in - so 24 unreachable methods (five `Process*Query`, `AI_ModifyWeights`, `AI_ExplainDecision`,
+  `AI_AdaptiveMode`, `SynthesizeSignals`, `GenerateTradeExplanation`, `AssessRisk`, `ProvideFeedback`, five getters,
+  seven `Set/Is` and name helpers, and the single-manager `Initialize` overload)
+  and the ten members they alone wrote or read (`m_queryCount`, `m_successfulQueries`, `m_pendingMods`,
+  `m_recentDecisions`, `m_predictionAccuracy` and friends) were a second, unreachable copy of the Batch 246/247 shape.
+  Deleting them retired two claims the docs had carried as live: the `[AIEngine] shutdown - Queries: n, Accuracy: x%`
+  line, whose numbers could only ever be 0 and 50.00%, and `[AI-ENGINE] Clearing accumulated modifications`, whose counter
+  had no writer. `AdaptToPerformance`'s disable/re-enable pair went for the same reason (accuracy is a constant 0.5 with
+  nothing able to change it); the live governance sweep at `EAOrchestrator.mqh:3106-3119` is what actually parks and
+  restores strategies. What is left of `CAIEngine` is 404 lines: `Initialize`, `ProcessAdaptation`, `SetExternalAIEndpoint`
+  and the external-LLM reasoning path that applies weights by name. `StrategyEntry::avgConfidence` had no writer and its
+  only readers were in the island, so the field, the roster getter, both forwarders and `GetEnsembleConfidence` went with
+  it; `GetStrategyWeightsJSON` stayed because `MaybeCaptureExternalReasoning` feeds it to the LLM on a live path.
+  File sizes: `AIEngine.mqh` 1095 -> 404, `StrategyHealthMonitor.mqh` 454 -> 383, `StrategyStateReporter.mqh`
+  254 -> 230, `EnterpriseStrategyManager.mqh` 1173 -> 1165, `StrategyMgrRoster.mqh` 302 -> 299,
+  `EntStrategyTypes.mqh` 142 -> 141. 9 added / 810 deleted across seven files.
 - **A bound table is only bound where a reader exists** (Batch 249). Batch 234 kept the per-strategy timeframe table as
   the carrier for a future decision; the decision landed, and what made it small was not the binding but the read set:
   `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:154`,
-  `EnterpriseStrategyManager.mqh:1081`) and `CStrategyRegistryState::RegisterStrategy` already resolved
+  `EnterpriseStrategyManager.mqh:1073`) and `CStrategyRegistryState::RegisterStrategy` already resolved
   `PERIOD_CURRENT -> m_baseTimeframe` at `:90`, so feeding the row value into `RegisterStrategy` was one argument, not a
   new mechanism. `SStrategyTimeframeConfig` is now `ENUM_TIMEFRAMES strategyTimeframes[23]` - `name`, `intrabarTF` and
   `forceHigherOnM1Synthetic` (21 writes, 0 readers each) are gone, and the third was a second holder of the band rule

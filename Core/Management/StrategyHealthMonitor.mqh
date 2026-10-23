@@ -33,8 +33,6 @@ struct SStrategyHealthEntry
     int regimeTrades[5];
     
     double healthScore;
-    double participationScore;
-    double avgConfidence;
     double netProfit;
     
     int consecutiveFilterCount;
@@ -65,8 +63,6 @@ struct SStrategyHealthEntry
             regimeTrades[i] = 0;
         }
         healthScore = 1.0;
-        participationScore = 1.0;
-        avgConfidence = 0.0;
         netProfit = 0.0;
         consecutiveFilterCount = 0;
         originalWeight = 1.0;
@@ -85,14 +81,6 @@ private:
     double m_strategyActivityDecayRate;
     int m_strategyInactiveCounterThreshold;
     
-    // Participation score configuration (L6-008)
-    double m_participationDecayRate;          // Decay when strategy doesn't participate
-    double m_participationRecoveryRate;       // Recovery when strategy participates
-    double m_participationTargetSignal;       // Target when strategy produces signal (1.0)
-    double m_participationTargetFiltered;     // Target when signal filtered (0.65)
-    double m_participationTargetNone;         // Target when strategy returns NONE (0.35)
-    double m_participationMin;                // Minimum participation score
-    double m_participationMax;                // Maximum participation score
     
     // Strategy health entries (indexed by strategy array index)
     SStrategyHealthEntry m_healthEntries[];
@@ -199,13 +187,6 @@ public:
           m_maxDrawdownLimit(0.2),
           m_strategyActivityDecayRate(0.9),
           m_strategyInactiveCounterThreshold(10),
-          m_participationDecayRate(0.85),
-          m_participationRecoveryRate(0.15),
-          m_participationTargetSignal(1.0),
-          m_participationTargetFiltered(0.65),
-          m_participationTargetNone(0.35),
-          m_participationMin(0.0),
-          m_participationMax(1.0),
           m_healthEntryCount(0)
     {
     }
@@ -223,14 +204,6 @@ public:
     void SetStrategyActivityDecayRate(const double rate) { m_strategyActivityDecayRate = MathMax(0.0, MathMin(1.0, rate)); }
     void SetStrategyInactiveCounterThreshold(const int threshold) { m_strategyInactiveCounterThreshold = MathMax(1, threshold); }
     
-    void SetParticipationDecayRate(const double rate) { m_participationDecayRate = MathMax(0.0, MathMin(1.0, rate)); }
-    void SetParticipationRecoveryRate(const double rate) { m_participationRecoveryRate = MathMax(0.0, MathMin(1.0, rate)); }
-    void SetParticipationTargetSignal(const double target) { m_participationTargetSignal = MathMax(0.0, MathMin(1.0, target)); }
-    void SetParticipationTargetFiltered(const double target) { m_participationTargetFiltered = MathMax(0.0, MathMin(1.0, target)); }
-    void SetParticipationTargetNone(const double target) { m_participationTargetNone = MathMax(0.0, MathMin(1.0, target)); }
-    void SetParticipationMin(const double minVal) { m_participationMin = MathMax(0.0, MathMin(1.0, minVal)); }
-    void SetParticipationMax(const double maxVal) { m_participationMax = MathMax(0.0, MathMin(1.0, maxVal)); }
-    
     int RegisterStrategy(double weight = 1.0)
     {
         int idx = m_healthEntryCount;
@@ -239,7 +212,6 @@ public:
         entry.originalWeight = weight;
         entry.currentWeight = weight;
         entry.healthScore = 1.0;
-        entry.participationScore = 1.0;
         m_healthEntries[idx] = entry;
         m_healthEntryCount++;
         return idx;
@@ -272,44 +244,6 @@ public:
     {
         if(index < 0 || index >= m_healthEntryCount) return;
         m_healthEntries[index].consecutiveFilterCount++;
-    }
-    
-    // Update participation score based on signal outcome (L6-008)
-    // signalType: 1=signal produced, 0=filtered, -1=none
-    void UpdateParticipationScore(int index, int signalType)
-    {
-        if(index < 0 || index >= m_healthEntryCount) return;
-        
-        double currentScore = m_healthEntries[index].participationScore;
-        double target;
-        
-        if(signalType == 1)
-        {
-            // Strategy produced a signal
-            target = m_participationTargetSignal;
-        }
-        else if(signalType == 0)
-        {
-            // Signal was filtered by pipeline
-            target = m_participationTargetFiltered;
-        }
-        else
-        {
-            // Strategy returned NONE
-            target = m_participationTargetNone;
-        }
-        
-        // Apply decay/recovery towards target
-        if(currentScore > target)
-        {
-            currentScore = currentScore * m_participationDecayRate + target * (1.0 - m_participationDecayRate);
-        }
-        else
-        {
-            currentScore = currentScore * (1.0 - m_participationRecoveryRate) + target * m_participationRecoveryRate;
-        }
-        
-        m_healthEntries[index].participationScore = MathMax(m_participationMin, MathMin(m_participationMax, currentScore));
     }
     
     void RecordTradeResult(int index, double netProfit)
@@ -367,11 +301,6 @@ public:
     {
         if(index < 0 || index >= m_healthEntryCount) return 0.0;
         return m_healthEntries[index].healthScore;
-    }
-    double GetStrategyParticipationScore(int index) const
-    {
-        if(index < 0 || index >= m_healthEntryCount) return 0.0;
-        return m_healthEntries[index].participationScore;
     }
     
     double GetWinRate(int index) const
@@ -434,9 +363,8 @@ public:
         for(int i = 0; i < m_healthEntryCount; i++)
         {
             double hw = m_healthEntries[i].healthScore;
-            double pw = m_healthEntries[i].participationScore;
             double origW = m_healthEntries[i].originalWeight;
-            m_healthEntries[i].currentWeight = origW * hw * pw;
+            m_healthEntries[i].currentWeight = origW * hw;
         }
     }
     
