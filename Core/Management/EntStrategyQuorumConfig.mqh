@@ -91,10 +91,6 @@ public:
     void SetConflictDeadband(const double deadband);
     void SetMinReadyWeightRatio(const double ratio);
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
-    void SetParticipationFormulaBase(const double base);
-    void SetParticipationFormulaCoeff(const double coeff);
-    void SetParticipationFormulaMin(const double minVal);
-    void SetParticipationFormulaMax(const double maxVal);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
 
     //--- written by CEnterpriseStrategyManager::SetPipelineFilters().
@@ -171,23 +167,6 @@ void CEntStrategyQuorumConfig::SetSupportFloors(const double newBarFloor, const 
 {
     m_supportFloorNewBar = MathMax(0.0, MathMin(1.0, newBarFloor));
     m_supportFloorIntrabar = MathMax(0.0, MathMin(1.0, intrabarFloor));
-}
-
-void CEntStrategyQuorumConfig::SetParticipationFormulaBase(const double base)
-{
-    m_participationFormulaBase = MathMax(0.0, MathMin(1.0, base));
-}
-void CEntStrategyQuorumConfig::SetParticipationFormulaCoeff(const double coeff)
-{
-    m_participationFormulaCoeff = MathMax(0.0, MathMin(2.0, coeff));
-}
-void CEntStrategyQuorumConfig::SetParticipationFormulaMin(const double minVal)
-{
-    m_participationFormulaMin = MathMax(0.0, MathMin(1.0, minVal));
-}
-void CEntStrategyQuorumConfig::SetParticipationFormulaMax(const double maxVal)
-{
-    m_participationFormulaMax = MathMax(0.0, MathMin(2.0, maxVal));
 }
 
 void CEntStrategyQuorumConfig::SetOrchestratorMode(double minWinRate, int maxLosses)

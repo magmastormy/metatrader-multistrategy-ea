@@ -22,52 +22,10 @@ public:
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
-    bool EnableStrategy(const string name);
-    bool DisableStrategy(const string name);
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
 };
-
-bool CStrategyLifecycle::EnableStrategy(const string name)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = m_src.GetStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyEnabledFlag(index, true);
-    m_src.SetStrategyTemporarilyDisabled(index, false);
-    m_src.SetStrategyDisabledUntil(index, 0);
-
-    IStrategy* strategy = m_src.GetStrategyPtr(index);
-    if(strategy != NULL)
-        strategy.SetEnabled(true);
-
-    PrintFormat("[EnterpriseStrategyManager] Strategy ENABLED: %s", name);
-    return true;
-}
-
-bool CStrategyLifecycle::DisableStrategy(const string name)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = m_src.GetStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyEnabledFlag(index, false);
-
-    IStrategy* strategy = m_src.GetStrategyPtr(index);
-    if(strategy != NULL)
-        strategy.SetEnabled(false);
-
-    PrintFormat("[EnterpriseStrategyManager] Strategy DISABLED: %s", name);
-    return true;
-}
 
 void CStrategyLifecycle::CheckStrategyDisabling()
 {

@@ -8,6 +8,54 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-23
 
+### Batch 250: the manager stopped reporting to nobody, and the state only its reports read went too
+
+**Type:** dead-code sweep, behaviour-preserving by construction.
+
+Batch 247 deleted the orchestrator status chain. `CEnterpriseStrategyManager` / `CStrategyStateReporter` kept the surface
+that chain was fed from, and a level of write-only state below that.
+
+- **Reporting chains (9).** `GetStrategyReport`, `GetStrategyListJSON`, `GetConsensusContextJSON`,
+  `GetActiveBrainStrategyCount`, `GetRegisteredStrategyWeight`, `GetRegisteredStrategyRole`,
+  `GetRegisteredStrategyCluster`, `IsRegisteredStrategyLiveVotingEnabled`, and the manager's
+  `ConsensusDecisionClassToString` forwarder. Each was declared in the manager, defined as a one-line forward into the
+  reporter, and had no occurrence outside those two files. The reporter's static is kept: `PostConsensusValidator.mqh:150`
+  and `:156` call `CStrategyStateReporter::ConsensusDecisionClassToString` directly.
+- **By-name governance chains (5).** `SetStrategyRoleByName`, `SetStrategyClusterByName`,
+  `SetStrategyLiveVotingEligibilityByName`, `SetStrategyGovernanceByName`, `SetStrategyConfidenceThresholdByName` -
+  forwarded by the manager, implemented in `CStrategyRegistryState` / `CStrategyMgrRoster`, never called. The live write
+  path is positional, exactly as Batch 232 recorded for the intrabar pair.
+- **By-name enable/disable (2).** `EnableStrategy` / `DisableStrategy` and their `CStrategyLifecycle` bodies. Those two
+  bodies were the only printers of `[EnterpriseStrategyManager] Strategy ENABLED:` / `... DISABLED:`, so neither line has
+  ever existed in a journal. The automatic path is untouched: `CStrategyHealthMonitor` disables and re-enables through
+  `CheckStrategyDisabling` / `CheckStrategyReEnabling`, driven from `EAOrchestrator.mqh:3115-3116`, printing
+  `[Enterprise-Adaptation]`.
+- **Participation-formula setters (4 x 2 owners).** The four values are read live by `ConsensusEngine.mqh:276-279` and
+  have never had a writer, so they are constructor constants: base 0.40, coeff 0.65, min 0.55, max 1.05.
+- **Funnel counters.** `m_totalSignals` (written at the attribution site, read only by the deleted report),
+  `m_successfulSignals` (written on every profitable close, same reader), `m_avgConfidence` (no writer). Deleted with
+  their getters, their increments, both manager forwarders and the two write sites.
+- **Also:** `IsStrategyLiveVoter` / `GetStrategyIsLiveVoter` on both owners (the consensus engine's own copy is live), and
+  six manager forwarders whose only reader was a deleted report - `ApplyFamilyEngineWeights`, `CalculateRecentWinRate`,
+  `CalculateSharpeRatio`, `CalculateStrategyMetrics`, `UpdateRecentPerformance`, `IsPositionIdStillOpen`. Each shadows a
+  live method the owning satellite calls by name, which is why a name-level grep reported them as used.
+- **Recorded, not fixed:** `StrategyEntry::avgConfidence` has no writer, so
+  `CStrategyStateReporter::GetEnsembleConfidence()` has returned 0.0 for its whole life. Its readers sit behind
+  `CAIEngine::OnAIQuery`, which has no caller - that query island (`ProcessPredictionQuery` / `ProcessSignalQuery` /
+  `ProcessWeightsQuery` / `ProcessStateQuery` / `ProcessExplanationQuery`) is the next batch, and a real running mean for
+  the field is a behaviour change that gets its own.
+- **Doc surface:** 26 pointers re-pointed by the per-file line deltas, then 2 re-anchored by content - a
+  `StrategyMgrRoster.mqh` citation that was already ~20 lines off, and a Batch 236 range that straddled
+  `GetStrategyReport`'s forwarder and `SetPipelineFilters`' comment while claiming to verify the flag builder; it now
+  cites `OrchestratorStrategyFlagBuilder.mqh:62-66`, which is what it described.
+- **File sizes:** `EnterpriseStrategyManager.mqh` 1356 -> 1173, `StrategyStateReporter.mqh` 412 -> 254,
+  `StrategyRegistryState.mqh` 246 -> 152, `StrategyLifecycle.mqh` 206 -> 164, `EntStrategyQuorumConfig.mqh` 207 -> 186,
+  `StrategyMgrRoster.mqh` 320 -> 302, `EntStrategySignalContext.mqh` 152 -> 140. 560 deleted / 29 added across twelve files.
+
+**Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its
+own `Result:` line; 0 errors / 0 warnings (4.6 / 2.0 / 4.1 / 3.8 / 90.0 / 146.5 / 66.4 / 3.6 s); harness exit 0; all eight
+`.ex5` newer than the sources; artifacts removed. Not runtime-observed: newest journal 2026-09-23.
+
 ### Batch 249: the two timeframe inputs now choose the timeframe a strategy reads
 
 **Type:** wiring + dead-field removal, with one deliberate behaviour change.

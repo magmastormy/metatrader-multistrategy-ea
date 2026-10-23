@@ -632,6 +632,39 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 250: the manager stopped reporting to nobody
+
+Batch 247 deleted the status chain that had no entry point. This deletes what fed it, and then keeps going down until
+nothing is left that answers to nobody:
+
+- nine read-only reporting chains (`GetStrategyReport`, `GetStrategyListJSON`, `GetConsensusContextJSON`,
+  `GetActiveBrainStrategyCount`, `GetRegisteredStrategyWeight` / `Role` / `Cluster`,
+  `IsRegisteredStrategyLiveVotingEnabled`, and the manager's `ConsensusDecisionClassToString` forwarder) - the reporter's
+  own static stays, because `CPostConsensusValidator` calls it directly;
+- five by-name governance setters (`SetStrategyRoleByName`, `...ClusterByName`, `...LiveVotingEligibilityByName`,
+  `...GovernanceByName`, `...ConfidenceThresholdByName`) declared, forwarded and implemented with no caller;
+- `EnableStrategy(name)` / `DisableStrategy(name)`, which carried the only printers of
+  `[EnterpriseStrategyManager] Strategy ENABLED:` and `... DISABLED:` - no build could ever have written either line.
+  The health monitor's automatic disable stays live: that path prints `[Enterprise-Adaptation]` and runs;
+- four participation-formula setters, on both owners. The formula values are read live by consensus, and nothing has
+  ever written them, so they are constructor constants (base 0.40, coeff 0.65, min 0.55, max 1.05) like the margin
+  ladder's thresholds. A knob that exists only as a setter is not a knob; if you want to tune participation, ask and it
+  becomes an input;
+- the funnel counters the deleted report was the only reader of: total signals, successful signals (written on every
+  profitable close), and an average-confidence field with no writer at all.
+
+**One finding, recorded and not fixed:** `StrategyEntry::avgConfidence` has no writer either, so
+`GetEnsembleConfidence()` averages zeros and has returned `0.0` for its whole life. It is not a money path today - its
+readers live behind `CAIEngine::OnAIQuery`, which has no caller either, and that whole query island is the next batch.
+Giving the field a real running mean is a behaviour change, so it gets its own batch and its own verification.
+
+Nothing here moved a lot, a stop, a threshold or an exit. Every deleted method's only occurrences were its own
+declaration, its definition, and a forwarder no caller could reach - which is the test this repository has now needed
+often enough to write down: a reader is not a caller, and a caller is not an entry point.
+
+**Verification:** eight programs, each with its own `Result:` line, 0 errors / 0 warnings, harness exit 0, all binaries
+newer than the sources; the EA program went 143.0 s (Batch 249) -> 90.0 s. Not runtime-observed: newest journal 2026-09-23.
+
 ### Batch 249: your two timeframe inputs now choose the timeframe a strategy reads
 
 Batch 234 recorded that `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land in a table nothing reads.

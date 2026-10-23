@@ -1,14 +1,11 @@
-// Read-only telemetry / JSON serialization extracted from
-// Holds a const back-pointer to the owning manager and reads its
-// state exclusively through the manager's minimal const accessor
-// surface, so every emitted string is byte-for-byte identical to
-// the original implementation.
+// Read-only telemetry over CEnterpriseStrategyManager: active-strategy counts, the weights JSON the AI
+// adaptation loop reads, and the consensus diagnostics snapshot. Reads go through the manager's const
+// accessors only.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_STATE_REPORTER_MQH
 #define STRATEGY_STATE_REPORTER_MQH
 
-#include "../Utils/Enums.mqh"                    // enums, SConsensusDecisionContext, EscapeJsonString
-#include "../Pipeline/UnifiedSignalPipeline.mqh" // CUnifiedSignalPipeline (pipeline stats)
+#include "../Utils/Enums.mqh"   // enums, SConsensusDecisionContext
 #include "DiagnosticsManager.mqh"                // CDiagnosticsManager, SConsensusDiagnosticsSnapshot
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
@@ -25,17 +22,9 @@ public:
     void SetSource(const CEnterpriseStrategyManager* src) { m_src = src; }
 
     int    GetActiveStrategyCount() const;
-    int    GetActiveBrainStrategyCount() const;
-    string GetStrategyReport() const;
     string GetStrategyWeightsJSON() const;
-    string GetStrategyListJSON() const;
-    string GetConsensusContextJSON() const;
     static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
     string GetRegisteredStrategyName(const int index) const;
-    double GetRegisteredStrategyWeight(const int index) const;
-    string GetRegisteredStrategyRole(const int index) const;
-    string GetRegisteredStrategyCluster(const int index) const;
-    bool   IsRegisteredStrategyLiveVotingEnabled(const int index) const;
     bool   GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void   GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                            ulong &featureSignals,
@@ -80,64 +69,6 @@ int CStrategyStateReporter::GetActiveStrategyCount() const
     return count;
 }
 
-int CStrategyStateReporter::GetActiveBrainStrategyCount() const
-{
-    if(m_src == NULL)
-        return 0;
-
-    int count = 0;
-    for(int i = 0; i < m_src.GetStrategyCount(); i++)
-    {
-        if(!m_src.IsStrategyEnabled(i) || m_src.GetStrategyPtr(i) == NULL)
-            continue;
-
-        ENUM_STRATEGY_TYPE strategyType = m_src.GetStrategyPtr(i).GetType();
-        if(strategyType == STRATEGY_BRAIN || strategyType == STRATEGY_AI_ENHANCED)
-            count++;
-    }
-
-    return count;
-}
-
-string CStrategyStateReporter::GetStrategyReport() const
-{
-    if(m_src == NULL)
-        return "";
-
-    string report = "=== Enterprise Strategy Report ===\n";
-    report += StringFormat("Total Strategies: %d | Active: %d\n", 
-                         m_src.GetStrategyCount(), GetActiveStrategyCount());
-    report += StringFormat("Total Signals: %d | Success Rate: %.1f%%\n",
-                         m_src.GetTotalSignals(), 
-                         m_src.GetTotalSignals() > 0 ? (double)m_src.GetSuccessfulSignals()/m_src.GetTotalSignals()*100 : 0);
-    
-    report += "\nStrategy Performance:\n";
-    for(int i = 0; i < m_src.GetStrategyCount(); i++)
-    {
-        int total = m_src.GetStrategySuccessCount(i) + m_src.GetStrategyFailCount(i);
-        double winRate = total > 0 ? (double)m_src.GetStrategySuccessCount(i)/total*100 : 0;
-        
-        report += StringFormat("- %s: %s | Role: %s | Cluster: %s | LiveVote: %s | Trades: %d | Win Rate: %.1f%% | Avg Conf: %.2f | Participation: %.2f\n",
-                             m_src.GetStrategyName(i),
-                             m_src.IsStrategyEnabled(i) ? "ON" : "OFF",
-                             StrategyRoleToString((ENUM_STRATEGY_ROLE)m_src.GetStrategyRole(i)),
-                             StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_src.GetStrategyCluster(i)),
-                             m_src.GetStrategyIsLiveVoter(i) ? "YES" : "NO",
-                             total, winRate, m_src.GetStrategyAvgConfidence(i), m_src.GetStrategyParticipationScore(i));
-    }
-    
-    CUnifiedSignalPipeline* pipeline = m_src.GetPipelineConst();
-    if(pipeline != NULL)
-    {
-        report += StringFormat("\nPipeline Stats: Processed: %d | Filtered: %d | Filter Rate: %.1f%%\n",
-                             pipeline.GetSignalsProcessed(),
-                             pipeline.GetSignalsFiltered(),
-                             pipeline.GetFilterRate() * 100);
-    }
-    
-    return report;
-}
-
 string CStrategyStateReporter::GetStrategyWeightsJSON() const
 {
     if(m_src == NULL)
@@ -153,59 +84,6 @@ string CStrategyStateReporter::GetStrategyWeightsJSON() const
         if(i < (m_src.GetStrategyCount() - 1))
             json += ",";
     }
-    json += "}";
-    return json;
-}
-
-string CStrategyStateReporter::GetStrategyListJSON() const
-{
-    if(m_src == NULL)
-        return "[]";
-
-    string symbol = m_src.GetManagedSymbol();
-
-    string json = "[";
-    for(int i = 0; i < m_src.GetStrategyCount(); i++)
-    {
-        if(i > 0)
-            json += ",";
-        string name = m_src.GetStrategyName(i);
-        json += "{";
-        json += "\"name\":\"" + EscapeJsonString(name) + "\",";
-        json += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
-        json += "\"role\":\"" + StrategyRoleToString((ENUM_STRATEGY_ROLE)m_src.GetStrategyRole(i)) + "\",";
-        json += "\"mode\":\"" + (m_src.IsStrategyEnabled(i) && m_src.IsStrategyLiveVotingEnabled(i) ? "ACTIVE" : "DISABLED") + "\",";
-        json += "\"weight\":" + DoubleToString(m_src.GetStrategyWeight(i), 2) + ",";
-        json += "\"health_score\":" + DoubleToString(m_src.GetStrategyHealthScore(i), 2) + ",";
-        json += "\"win_rate\":" + DoubleToString(m_src.GetStrategyRecentWinRate(i), 2) + ",";
-        json += "\"cluster\":\"" + StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_src.GetStrategyCluster(i)) + "\"";
-        json += "}";
-    }
-    json += "]";
-    return json;
-}
-
-string CStrategyStateReporter::GetConsensusContextJSON() const
-{
-    if(m_src == NULL)
-        return "{}";
-
-    SConsensusDecisionContext ctx;
-    m_src.GetLastDecisionContextValue(ctx);
-    string json = "{";
-    json += "\"symbol\":\"" + EscapeJsonString(ctx.symbol) + "\",";
-    json += "\"signal\":\"" + TradeSignalToString(ctx.signal) + "\",";
-    json += "\"confidence\":" + DoubleToString(ctx.confidence, 3) + ",";
-    json += "\"buy_score\":" + DoubleToString(ctx.buyScore, 3) + ",";
-    json += "\"sell_score\":" + DoubleToString(ctx.sellScore, 3) + ",";
-    json += "\"quorum_met\":" + (ctx.signal != TRADE_SIGNAL_NONE ? "true" : "false") + ",";
-    json += "\"veto_code\":\"" + EscapeJsonString(ctx.vetoCode) + "\",";
-    json += "\"active_strategies\":" + IntegerToString(m_src.GetStrategyCount()) + ",";
-    json += "\"voted_strategies\":" + IntegerToString(ctx.eligibleLiveVoterCount) + ",";
-    json += "\"dominant_cluster\":\"" + StrategyClusterToString(ctx.dominantCluster) + "\",";
-    json += "\"quorum_mode\":\"" + EscapeJsonString(ctx.quorumMode) + "\",";
-    json += "\"confluence\":" + IntegerToString(ctx.confluence) + ",";
-    json += "\"reason\":\"" + EscapeJsonString(ctx.reason) + "\"";
     json += "}";
     return json;
 }
@@ -238,42 +116,6 @@ string CStrategyStateReporter::GetRegisteredStrategyName(const int index) const
     if(index < 0 || index >= m_src.GetStrategyCount())
         return "";
     return m_src.GetStrategyName(index);
-}
-
-double CStrategyStateReporter::GetRegisteredStrategyWeight(const int index) const
-{
-    if(m_src == NULL)
-        return 0.0;
-    if(index < 0 || index >= m_src.GetStrategyCount())
-        return 0.0;
-    return m_src.GetStrategyWeight(index);
-}
-
-string CStrategyStateReporter::GetRegisteredStrategyRole(const int index) const
-{
-    if(m_src == NULL)
-        return "";
-    if(index < 0 || index >= m_src.GetStrategyCount())
-        return "";
-    return StrategyRoleToString((ENUM_STRATEGY_ROLE)m_src.GetStrategyRole(index));
-}
-
-string CStrategyStateReporter::GetRegisteredStrategyCluster(const int index) const
-{
-    if(m_src == NULL)
-        return "";
-    if(index < 0 || index >= m_src.GetStrategyCount())
-        return "";
-    return StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_src.GetStrategyCluster(index));
-}
-
-bool CStrategyStateReporter::IsRegisteredStrategyLiveVotingEnabled(const int index) const
-{
-    if(m_src == NULL)
-        return false;
-    if(index < 0 || index >= m_src.GetStrategyCount())
-        return false;
-    return m_src.IsStrategyLiveVotingEnabled(index);
 }
 
 bool CStrategyStateReporter::GetLastDecisionContext(SConsensusDecisionContext &context) const

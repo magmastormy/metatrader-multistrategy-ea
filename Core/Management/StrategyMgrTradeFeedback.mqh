@@ -129,9 +129,6 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                 double netProfit = profit + swap + commission;
 
                 bool success = (netProfit > 0);
-                if(success)
-                    m_src.IncrementSuccessfulSignals();
-
                 string contributors[];
                 CTradeAttributionManager* attribution = m_src.GetAttribution();
                 if(positionId > 0 && attribution != NULL && attribution.PopPositionAttribution(positionId, contributors))

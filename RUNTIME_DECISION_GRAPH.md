@@ -340,6 +340,35 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 250: The Manager's Reporting Surface Lost Its Entry Point, and So Did the State Below It (2026-10-23)
+
+No gate, lot, stop or threshold moved. Batch 247 deleted `CEAOrchestrator::GetStatusReport()` and the aggregator that
+called eleven collaborator reports; the reports themselves, the by-name mutators behind them and the counters they read
+were still compiled and still written to. This batch removes them.
+
+- **Deleted (declared, defined, forwarded, never called):** `CStrategyStateReporter::GetStrategyReport`,
+  `GetStrategyListJSON`, `GetConsensusContextJSON`, `GetActiveBrainStrategyCount`, `GetRegisteredStrategyWeight`,
+  `GetRegisteredStrategyRole`, `GetRegisteredStrategyCluster`, `IsRegisteredStrategyLiveVotingEnabled`, and the manager
+  forwarder of `ConsensusDecisionClassToString` (the reporter's static stays - `PostConsensusValidator.mqh:150/:156`
+  calls it).
+- **Deleted (mutators with no caller):** `SetStrategyRoleByName`, `SetStrategyClusterByName`,
+  `SetStrategyLiveVotingEligibilityByName`, `SetStrategyGovernanceByName`, `SetStrategyConfidenceThresholdByName` on both
+  owners; `EnableStrategy` / `DisableStrategy` plus their `CStrategyLifecycle` bodies; `IsStrategyLiveVoter` /
+  `GetStrategyIsLiveVoter`; and six manager forwarders that only the deleted reports read.
+- **Deleted (write-only state exposed by the above):** `CEntStrategySignalContext::m_totalSignals`,
+  `m_successfulSignals`, `m_avgConfidence` with their accessors, increments, manager forwarders and both write sites.
+  `[TRADE-ATTRIBUTION]` is unaffected - the attribution write its neighbour printed is the live sibling of the deleted
+  counter line.
+- **Unchanged numbers:** the participation formula's 0.40 / 0.65 / 0.55 / 1.05 are still what `ConsensusEngine.mqh:276-279`
+  reads; only the unreachable ability to write them is gone. The health monitor's automatic disable/re-enable
+  (`EAOrchestrator.mqh:3115-3116`) is untouched and still prints `[Enterprise-Adaptation]`.
+- **Log lines that now cannot exist (they never could):** `[EnterpriseStrategyManager] Strategy ENABLED:`,
+  `[EnterpriseStrategyManager] Strategy DISABLED:` and `[EnterpriseStrategyManager] Intrabar policy updated:` (Batch 232) -
+  all three had printers on unreachable paths.
+- **Recorded, not wired:** `StrategyEntry::avgConfidence` has no writer, so `GetEnsembleConfidence()` is structurally 0.0.
+  Its readers live behind `CAIEngine::OnAIQuery`, which has no caller - that query island and the ensemble-confidence
+  writer are separate batches: one is dead-surface deletion, the other changes a reported number.
+
 ## Batch 249: The Per-Strategy Timeframe Table Got a Reader, and Two Strategies Changed Bar Size (2026-10-23)
 
 `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` reached a config array and stopped there: the whole
@@ -347,10 +376,10 @@ getter chain had no caller, so both were dialog-only and every strategy register
 `m_baseTimeframe`. The row value now travels the path Batch 234 said it would need -
 `StrategyConfigBuilder` -> `EAOrchestrator.mqh:1945-1949` (the loop that already sets the intrabar policy) ->
 `CEnterpriseStrategyManager::SetStrategyTimeframeConfig` -> `AutoRegisterStrategies`
-(`EnterpriseStrategyManager.mqh:773-776`) -> the `tf` argument of `RegisterStrategy`, whose `resolvedTf`
-(`StrategyRegistryState.mqh:90`) is what `Init` and `InitializeAI` already receive. No new consumer was written:
-`StrategyEntry::timeframe` already feeds `ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:196` and
-`EnterpriseStrategyManager.mqh:1264`.
+(`EnterpriseStrategyManager.mqh:713-716`) -> the `tf` argument of `RegisterStrategy`, whose `resolvedTf`
+(`StrategyRegistryState.mqh:80`) is what `Init` and `InitializeAI` already receive. No new consumer was written:
+`StrategyEntry::timeframe` already feeds `ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:154` and
+`EnterpriseStrategyManager.mqh:1081`.
 
 - **Precedence:** a row overrides the catalog timeframe only when it names one; `PERIOD_CURRENT` in a row means inherit.
   Slots 0 (Momentum) and 4 (Candlestick) are the only rows that name a timeframe, so those two strategies are the whole
@@ -621,7 +650,7 @@ No edge moved; the graph's missing edge is now named on the journal.
 
 Verified order of reading:
 - `StrategyEntry::intrabarPolicy` has one reader - the registration line's `Intrabar:` field
-  (`StrategyRegistryState.mqh:128`). `GetStrategyIntrabarPolicyConfig` on both owners has no caller.
+  (`StrategyRegistryState.mqh:118`). `GetStrategyIntrabarPolicyConfig` on both owners has no caller.
 - The entry path requests `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3499`, `:3543`;
   `SignalGenerator.mqh:109` states it), so no entry decision ever runs an intrabar scan.
 - The only live `EVAL_MODE_INTRABAR` caller is `PositionLifecycleManager.mqh:263` (signal-reversal exit), whose voter
@@ -653,7 +682,7 @@ had one that could be reached - it printed only from the uncalled by-name method
 
 **The finding this batch leaves open (Batch 233).** With those copies gone, nothing on a decision path reads the
 stored intrabar policy: `GetStrategyIntrabarPolicyRaw` survives only as the argument to the strategy report's
-`Intrabar:` field (`StrategyRegistryState.mqh:128`), `GetStrategyIntrabarPolicyConfig` has no caller, and
+`Intrabar:` field (`StrategyRegistryState.mqh:118`), `GetStrategyIntrabarPolicyConfig` has no caller, and
 `SStrategyTimeframeConfig::intrabarEnabled` - the second output of the same eleven inputs, written 20 times in
 `StrategyConfigBuilder.mqh` - has **no reader at all**. So the eleven `InpIntrabarEligibility*` inputs gate no
 entry today, and every enabled live-voting strategy votes in the intrabar path. Enforcing the stored policy would
@@ -1147,7 +1176,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 | `hasONNXContributor` (`+0.30`) | matched on `"ONNX"` | matched on `aiKind == CAT_AI_ONNX` |
 | `hasNeuralNetContributor` (label gate, Batch 203) | matched on `"Neural"` | matched on `aiKind == CAT_AI_NEURAL_NET` |
 
-- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:778`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2396`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
+- **Precondition verified first:** contributor strings are row names because `RegisterStrategy` (`EnterpriseStrategyManager.mqh:718`) and `RegisterCatalogAIAdapter` (`EAOrchestrator.mqh:2396`) both pass `g_strategyCatalog[i].name`. Matching is containment, so a qualified `symbol::name` still resolves, and no row name is a substring of another.
 - **Plug-and-play effect:** a new row is classified correctly without touching `CandidateBuilder`, which removes the fifth hand-maintained per-strategy list.
 
 ## Batch 207: Three Phantom Strategy Slots Removed (2026-10-15)
@@ -1242,7 +1271,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **Send-time composition changed for five owners, not four.** `fast scalp = base + 6000` (both the async branch and the synchronous `OpenPosition` call, which previously left magic at 0 and let `TradeManager.mqh:1267` stamp the symbol's consensus magic; pending orders previously shipped the bare base), `ATR scalp = base + 6100`, `grid = base + 6200 + level`, `spike = base + 6300`. **Consensus composition also changed:** `SetMagicOffsetForSymbol` registered the asset offset alone, so every symbol in an asset class shipped the same magic (`base + 7000` for all forex pairs); it now registers `assetOffset + symbolIndex * 100`, one per symbol. New consensus positions therefore carry a different number than the ones already on the account.
 - **Why that is safe to change:** every consumer of `POSITION_MAGIC` either tests the ownership *window* (`IsEAOwnedMagic` / `CMagicRange::IsOwned` / `IsLifecycleManaged`, seven sites) or filters by symbol before comparing (the grid's `GridRecoveryExecution.mqh:210`). No gate, cap, lot or exit reads an exact consensus magic, so the re-label moves no decision.
 - **Why the bands sit under 7000:** asset-class offsets run 7000 (ASSET_FOREX) to 9999 (DERIV_UNKNOWN), so an engine can no longer reach a consensus number or the reverse. Only `ASSET_UNIVERSAL` (offset 0) composes below 7000, from slot 60 upward - which is what the init assertion refuses to trade rather than merge two books.
-- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1791` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:580` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
+- **Attribution could not separate owners, and this batch did not fix attribution.** `CStrategyMgrTradeFeedback::OnTradeTransaction` gates a deal on `IsEAOwnedMagic(dealMagic)` - a window test, because `managedMagic` is seeded with the bare base (`EAOrchestrator.mqh:1791` hands `m_config.magicNumber` to `manager.Initialize`, and `EnterpriseStrategyManager.mqh:537` stores it) - then on `DEAL_SYMBOL == manager's symbol`. A same-symbol fast scalp cleared both. What it then met was a contributor list nothing ever wrote, so no deal, strategy or scalp, was ever attributed at all; Batch 199 found that writer missing and installed it. The magic bands are what make the two owners distinguishable *now* that the loop runs, which is why the engine-book filter added in Batch 199 can name a scalp as one.
 - **Grid restart edge added:** `init -> RecoverOpenGridLevels() -> for each open position whose comment starts with GRID-RECOVERY -> decode level from magic (new band, or legacy 8000 band via %100) -> refill slot`. Previously the level table started empty every session while the positions stayed open, so `CalculateGridDrawdownPercent`, `CloseAllGrids` and the next-level logic all acted on a grid the engine could not see.
 - **Lifecycle gate widened:** `ManageSignalReversalExit` and the ranging-regime breakeven loop test `IsPositionLifecycleManaged()`, whose window was `base + symbolCount*100 + maxClusterCode` (`base + 1399` on the default 13-symbol universe) against magics shipped at `base + 7000..9400`. Twelve of thirteen symbols were excluded, so both exits never ran with `InpEnableSignalReversalExit = true`. The predicate now delegates to `CMagicRange::IsOwned(magic, base, MagicMax())`, the same authority `CTradeManager`, `CPositionMgrMagicFilter`, `SyntheticSpikeMonitor` and `UnprotectedPositionTracker` use.
 - **Behaviour direction:** more exits, not fewer - signal reversal closes and breakeven SL moves now reach consensus positions. Both are bounded by their own inputs (`InpSignalReversalMinLossR`/`MaxLossR`/`MinTimeSec`, `InpSignalReversalProfitGuard`). No entry gate, risk ceiling, lot or stop distance changed.

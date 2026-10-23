@@ -1,8 +1,8 @@
-// Last-decided-signal bookkeeping and the cycle/lifetime signal counters, formerly loose members of
-// CEnterpriseStrategyManager. Leaf value object: no back-pointer, and JoinContributors() is passed in because
-// the attribution delegator owns it. Before Batch 199 the contributor fields had no writer, so attribution,
-// authority learning, role/cluster tags and strategy health all read an empty list. The funnel counters still
-// hold their construction values - nothing writes them.
+// Last-decided-signal bookkeeping and the per-cycle funnel counters, formerly loose members of
+// CEnterpriseStrategyManager. Leaf value object: no back-pointer, and JoinContributors() is passed in because the
+// attribution delegator owns it. Before Batch 199 the contributor fields had no writer, so attribution, authority
+// learning, role/cluster tags and strategy health all read an empty list. The lifetime signal counters that used to sit
+// here are gone (Batch 250): their only reader was a status report with no entry point.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef ENT_STRATEGY_SIGNAL_CONTEXT_MQH
 #define ENT_STRATEGY_SIGNAL_CONTEXT_MQH
@@ -28,10 +28,6 @@ private:
     int  m_lastCycleSignalsGenerated;
     int  m_lastCycleSignalsAfterPipeline;
     bool m_lastCycleSignalAfterQuorum;
-
-    int    m_totalSignals;
-    int    m_successfulSignals;
-    double m_avgConfidence;
 
     ENUM_MARKET_REGIME m_currentMarketRegime;
 
@@ -59,13 +55,6 @@ public:
                          const string symbolName, const datetime when,
                          const string roleTag, const string clusterTag, const string clusterCodeTag);
 
-    void IncrementTotalSignals() { m_totalSignals++; }
-
-    int    GetTotalSignals() const      { return m_totalSignals; }
-    int    GetSuccessfulSignals() const { return m_successfulSignals; }
-    double GetAvgConfidence() const     { return m_avgConfidence; }
-    void   IncrementSuccessfulSignals() { m_successfulSignals++; }
-
     int  GetLastCycleSignalsGenerated() const     { return m_lastCycleSignalsGenerated; }
     int  GetLastCycleSignalsAfterPipeline() const { return m_lastCycleSignalsAfterPipeline; }
     bool GetLastCycleSignalAfterQuorum() const    { return m_lastCycleSignalAfterQuorum; }
@@ -84,9 +73,6 @@ CEntStrategySignalContext::CEntStrategySignalContext() :
     m_lastCycleSignalsGenerated(0),
     m_lastCycleSignalsAfterPipeline(0),
     m_lastCycleSignalAfterQuorum(false),
-    m_totalSignals(0),
-    m_successfulSignals(0),
-    m_avgConfidence(0.0),
     m_currentMarketRegime((ENUM_MARKET_REGIME)0)
 {
     ArrayResize(m_lastSignalContributors, 0);

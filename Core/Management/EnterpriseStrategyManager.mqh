@@ -99,17 +99,12 @@ private:
 
     void ConfigureBeforeInit(IStrategy* strategy, const string name);
 
-    bool IsPositionIdStillOpen(const ulong positionId) const;
     int FindStrategyIndexByName(const string name) const;
     int FindAttributionIndexByPositionId(const ulong positionId) const;
     string JoinContributors(const string &contributors[]) const;
     void SplitContributors(const string csv, string &contributors[]) const;
     void UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool PopPositionAttribution(const ulong positionId, string &contributors[]);
-    //--- CStrategyStateReporter consumes this via GetStrategyIsLiveVoter().
-    bool IsStrategyLiveVoter(const int strategyIndex) const;
-
-    static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
 
     //--- Result type must be the top-level SPostConsensusValidation: a nested SValidationResult would
     //--- shadow the unrelated global SValidationResult from Core/Utils/Enums.mqh.
@@ -162,20 +157,15 @@ public:
            { return m_roster.GetStrategyHealthScore(index); }
     double GetStrategyRecentWinRate(const int index) const
            { return m_roster.GetStrategyRecentWinRate(index); }
-    bool   GetStrategyIsLiveVoter(const int index) const { return IsStrategyLiveVoter(index); }
     CUnifiedSignalPipeline* GetPipelineConst() const { return m_infra.GetPipeline(); }
     CDiagnosticsManager*    GetDiagnosticsConst() const { return m_infra.GetDiagnostics(); }
     string GetManagedSymbol() const { return m_infra.GetManagedSymbol(); }
-    int    GetTotalSignals() const { return m_signalContext.GetTotalSignals(); }
-    int    GetSuccessfulSignals() const { return m_signalContext.GetSuccessfulSignals(); }
     void   GetLastDecisionContextValue(SConsensusDecisionContext &out) const
            { m_consensusEngine.GetLastDecisionContextValue(out); }
     int    GetLastCycleSignalsGeneratedValue() const { return m_signalContext.GetLastCycleSignalsGenerated(); }
     int    GetLastCycleSignalsAfterPipelineValue() const { return m_signalContext.GetLastCycleSignalsAfterPipeline(); }
     bool   GetLastCycleSignalAfterQuorumValue() const { return m_signalContext.GetLastCycleSignalAfterQuorum(); }
 
-    //--- Last-signal contributor telemetry read by CStrategyMgrTradeFeedback through its m_src back-pointer.
-    void IncrementSuccessfulSignals()         { m_signalContext.IncrementSuccessfulSignals(); }
     void ResetLastContributorContext()        { m_signalContext.ResetContributorContext(); }
 
     //--- Called by the consensus engine when a decision is accepted. Names come from the roster so
@@ -215,9 +205,6 @@ public:
         if(ArraySize(names) == 0)
             return;
         m_attributionDelegator.UpsertPositionAttribution(positionId, names);
-        // Denominator of the "Success Rate" the state reporter prints, so it counts the trades that
-        // can close - a decision refused between here and the send would inflate it.
-        m_signalContext.IncrementTotalSignals();
         PrintFormat("[TRADE-ATTRIBUTION] %s | position=%I64u | contributors=%s",
                     GetManagedSymbol(), positionId, m_attributionDelegator.JoinContributors(names));
     }
@@ -309,8 +296,6 @@ public:
          { m_roster.SetStrategyTemporarilyDisabled(index, value); }
     void SetStrategyDisabledUntil(const int index, const datetime value)
          { m_roster.SetStrategyDisabledUntil(index, value); }
-    //--- Writes ONLY the entry flag; deliberately does NOT push to the IStrategy object, unlike
-    //--- EnableStrategy/DisableStrategy which push it themselves via GetStrategyPtr().
     void SetStrategyEnabledFlag(const int index, const bool value)
          { m_roster.SetStrategyEnabledFlag(index, value); }
     //--- Slot bound is the fixed recentTrades[20] capacity; m_rollingWindowSize is fixed at 20 (no setter).
@@ -364,8 +349,6 @@ public:
                              ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
                              ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
                              bool liveVotingEnabled = false);
-    bool EnableStrategy(const string name);
-    bool DisableStrategy(const string name);
     
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
 
@@ -402,7 +385,6 @@ public:
     void SetStrategyRole(int index, int role);
     void SetStrategyCluster(int index, int cluster);
     void SetStrategyLiveVotingEnabled(int index, bool enabled);
-    void SetStrategyIntrabarPolicyRaw(int index, int policy);
 
     //--- Single StrategyEntry append writer: only CStrategyRegistryState::RegisterStrategy() calls it via m_src.
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
@@ -415,10 +397,6 @@ public:
 
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
     
-    void SetParticipationFormulaBase(const double base);
-    void SetParticipationFormulaCoeff(const double coeff);
-    void SetParticipationFormulaMin(const double minVal);
-    void SetParticipationFormulaMax(const double maxVal);
     
     enum ENUM_QUORUM_PROFILE
     {
@@ -431,21 +409,9 @@ public:
     int  GetMinQuorum() const;
     int  GetEnforcedMinVoters(const bool intrabar) const;
     bool UpdateStrategyWeightByName(const string name, const double weight);
-    bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
-    bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
-    bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
-    bool SetStrategyGovernanceByName(const string name,
-                                     ENUM_STRATEGY_ROLE role,
-                                     ENUM_STRATEGY_CLUSTER cluster,
-                                     const bool liveVotingEnabled);
-    bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
     int GetRegisteredStrategyCount() const;
     IStrategy* GetStrategyByName(const string name);
     string GetRegisteredStrategyName(const int index) const;
-    double GetRegisteredStrategyWeight(const int index) const;
-    string GetRegisteredStrategyRole(const int index) const;
-    string GetRegisteredStrategyCluster(const int index) const;
-    bool IsRegisteredStrategyLiveVotingEnabled(const int index) const;
     void GetLastSignalContributors(string &contributors[]) const;
     void GetLastSignalContributorIndices(int &indices[]) const;
     //--- SL/TP (pips) from the highest-priority contributor that stashed one; false when none did.
@@ -484,8 +450,6 @@ public:
                                          ulong &intervalReasonTotal);
 
     int GetActiveStrategyCount() const;
-    int GetActiveBrainStrategyCount() const;
-    string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, double netProfit);
     
     void Deinit();
@@ -498,18 +462,12 @@ public:
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const;
     void RefreshMarketRegime();
     string GetStrategyWeightsJSON() const;
-    string GetStrategyListJSON() const;
-    string GetConsensusContextJSON() const;
     void UpdateStrategyWeights();
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
     
-    double CalculateRecentWinRate(const int index);
-    double CalculateSharpeRatio(const int index);
-    void CalculateStrategyMetrics(const int index);
     bool ShouldDisableStrategy(const int index);
     bool ShouldReEnableStrategy(const int index);
-    void UpdateRecentPerformance(const int index, const double result);
 
     void SetDrawingManager(CChartDrawingManager* drawingManager);
     CChartDrawingManager* GetDrawingManager();
@@ -529,7 +487,6 @@ public:
     void SetMultiAssetProfiler(CMultiAssetProfiler* profiler);
     void SetVPINFilter(CVPINFilter* vpin);
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi);
-    void ApplyFamilyEngineWeights(const string symbol);
     void ApplyAssetClassEngineWeights(const string symbol);
 };
 
@@ -673,23 +630,6 @@ void CEnterpriseStrategyManager::ConfigureBeforeInit(IStrategy* strategy, const 
     }
 }
 
-void CEnterpriseStrategyManager::SetParticipationFormulaBase(const double base)
-{
-    m_quorumConfig.SetParticipationFormulaBase(base);
-}
-void CEnterpriseStrategyManager::SetParticipationFormulaCoeff(const double coeff)
-{
-    m_quorumConfig.SetParticipationFormulaCoeff(coeff);
-}
-void CEnterpriseStrategyManager::SetParticipationFormulaMin(const double minVal)
-{
-    m_quorumConfig.SetParticipationFormulaMin(minVal);
-}
-void CEnterpriseStrategyManager::SetParticipationFormulaMax(const double maxVal)
-{
-    m_quorumConfig.SetParticipationFormulaMax(maxVal);
-}
-
 void CEnterpriseStrategyManager::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
 {
     m_infra.SetConsensusDiagnosticsIntervalSeconds(seconds);
@@ -822,16 +762,6 @@ int CEnterpriseStrategyManager::GetActiveStrategyCount() const
     return m_stateReporter.GetActiveStrategyCount();
 }
 
-int CEnterpriseStrategyManager::GetActiveBrainStrategyCount() const
-{
-    return m_stateReporter.GetActiveBrainStrategyCount();
-}
-
-string CEnterpriseStrategyManager::GetStrategyReport() const
-{
-    return m_stateReporter.GetStrategyReport();
-}
-
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)
 {
     //--- Cached even when the pipeline is off: CConsensusEngine uses it as the quality threshold floor.
@@ -848,21 +778,6 @@ void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxL
 string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
 {
     return m_stateReporter.GetStrategyWeightsJSON();
-}
-
-string CEnterpriseStrategyManager::GetStrategyListJSON() const
-{
-    return m_stateReporter.GetStrategyListJSON();
-}
-
-string CEnterpriseStrategyManager::GetConsensusContextJSON() const
-{
-    return m_stateReporter.GetConsensusContextJSON();
-}
-
-string CEnterpriseStrategyManager::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
-{
-    return CStrategyStateReporter::ConsensusDecisionClassToString(decisionClass);
 }
 
 void CEnterpriseStrategyManager::UpdateStrategyWeights()
@@ -887,21 +802,6 @@ bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, c
     return m_roster.UpdateStrategyWeightByName(name, weight, m_infra.GetHealthMonitor());
 }
 
-bool CEnterpriseStrategyManager::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
-{
-    return m_registryState.SetStrategyRoleByName(name, role);
-}
-
-bool CEnterpriseStrategyManager::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
-{
-    return m_registryState.SetStrategyClusterByName(name, cluster);
-}
-
-bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled)
-{
-    return m_registryState.SetStrategyLiveVotingEligibilityByName(name, enabled);
-}
-
 void CEnterpriseStrategyManager::SetStrategyRole(int index, int role)
 {
     m_roster.SetStrategyRole(index, role);
@@ -915,11 +815,6 @@ void CEnterpriseStrategyManager::SetStrategyCluster(int index, int cluster)
 void CEnterpriseStrategyManager::SetStrategyLiveVotingEnabled(int index, bool enabled)
 {
     m_roster.SetStrategyLiveVotingEnabled(index, enabled);
-}
-
-void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyRaw(int index, int policy)
-{
-    m_roster.SetStrategyIntrabarPolicyRaw(index, policy);
 }
 
 void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
@@ -936,42 +831,9 @@ void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strate
                                            liveVotingEnabled, m_infra.GetHealthMonitor());
 }
 
-bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
-{
-    return m_roster.SetStrategyConfidenceThresholdByName(name, threshold);
-}
-
-bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
-                                                             ENUM_STRATEGY_ROLE role,
-                                                             ENUM_STRATEGY_CLUSTER cluster,
-                                                             const bool liveVotingEnabled)
-{
-    return m_registryState.SetStrategyGovernanceByName(name, role, cluster, liveVotingEnabled);
-}
-
 string CEnterpriseStrategyManager::GetRegisteredStrategyName(const int index) const
 {
     return m_stateReporter.GetRegisteredStrategyName(index);
-}
-
-double CEnterpriseStrategyManager::GetRegisteredStrategyWeight(const int index) const
-{
-    return m_stateReporter.GetRegisteredStrategyWeight(index);
-}
-
-string CEnterpriseStrategyManager::GetRegisteredStrategyRole(const int index) const
-{
-    return m_stateReporter.GetRegisteredStrategyRole(index);
-}
-
-string CEnterpriseStrategyManager::GetRegisteredStrategyCluster(const int index) const
-{
-    return m_stateReporter.GetRegisteredStrategyCluster(index);
-}
-
-bool CEnterpriseStrategyManager::IsRegisteredStrategyLiveVotingEnabled(const int index) const
-{
-    return m_stateReporter.IsRegisteredStrategyLiveVotingEnabled(index);
 }
 
 void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[]) const
@@ -1099,11 +961,6 @@ IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
     return m_registryState.GetStrategyByName(name);
 }
 
-bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
-{
-    return m_consensusEngine.IsStrategyLiveVoter(strategyIndex);
-}
-
 int CEnterpriseStrategyManager::FindAttributionIndexByPositionId(const ulong positionId) const
 {
     return m_attributionDelegator.FindAttributionIndexByPositionId(positionId);
@@ -1134,26 +991,6 @@ void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, do
     m_performanceHealth.UpdatePerformance(strategyName, netProfit);
 }
 
-void CEnterpriseStrategyManager::UpdateRecentPerformance(const int index, const double result)
-{
-    m_performanceHealth.UpdateRecentPerformance(index, result);
-}
-
-double CEnterpriseStrategyManager::CalculateRecentWinRate(const int index)
-{
-    return m_performanceHealth.CalculateRecentWinRate(index);
-}
-
-double CEnterpriseStrategyManager::CalculateSharpeRatio(const int index)
-{
-    return m_performanceHealth.CalculateSharpeRatio(index);
-}
-
-void CEnterpriseStrategyManager::CalculateStrategyMetrics(const int index)
-{
-    m_performanceHealth.CalculateStrategyMetrics(index);
-}
-
 bool CEnterpriseStrategyManager::ShouldDisableStrategy(const int index)
 {
     return m_performanceHealth.ShouldDisableStrategy(index);
@@ -1178,11 +1015,6 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
     m_tradeFeedback.OnTradeTransaction(trans, request, result);
 }
 
-bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) const
-{
-    return m_tradeFeedback.IsPositionIdStillOpen(positionId);
-}
-
 //--- ENUM_QUORUM_PROFILE stays nested because it is a user-facing MT5 input type; it is forwarded as an int whose
 //--- ordinals must keep matching QUORUM_PROFILE_* in CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
@@ -1190,24 +1022,9 @@ void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
     m_weightingConfig.ApplyQuorumProfile((int)profile);
 }
 
-void CEnterpriseStrategyManager::ApplyFamilyEngineWeights(const string symbol)
-{
-    m_weightingConfig.ApplyFamilyEngineWeights(symbol);
-}
-
 void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbol)
 {
     m_weightingConfig.ApplyAssetClassEngineWeights(symbol);
-}
-
-bool CEnterpriseStrategyManager::EnableStrategy(const string name)
-{
-    return m_lifecycle.EnableStrategy(name);
-}
-
-bool CEnterpriseStrategyManager::DisableStrategy(const string name)
-{
-    return m_lifecycle.DisableStrategy(name);
 }
 
 bool CEnterpriseStrategyManager::IsEAOwnedMagic(long magic) const

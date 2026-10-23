@@ -1,9 +1,8 @@
 // Registry bookkeeping and per-strategy enable state: the registration sequence, the name -> index lookups
-// and the live-voter query. MUTATES the manager, so the back-pointer is non-const and every write goes
-// through its narrow per-field accessors; it mirrors no injected pointer, so nothing needs re-syncing.
+// and the by-name governance writes. MUTATES the manager, so the back-pointer is non-const and every write
+// goes through its narrow per-field accessors; it mirrors no injected pointer, so nothing needs re-syncing.
 // Stayed in the manager on purpose: SyncEnabledWithRegistry() reconciles the shared CStrategyRegistry from
-// EAOrchestrator, the 35-field entry initialiser would need a write accessor per field, and the consensus
-// core calls IsStrategyLiveVoter() by name.
+// EAOrchestrator, and the 35-field entry initialiser would need a write accessor per field.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_REGISTRY_STATE_MQH
 #define STRATEGY_REGISTRY_STATE_MQH
@@ -40,15 +39,6 @@ public:
     int        FindStrategyIndexByName(const string name) const;
     IStrategy* GetStrategyByName(const string name) const;
 
-    bool IsStrategyLiveVoter(const int strategyIndex) const;
-
-    bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
-    bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
-    bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
-    bool SetStrategyGovernanceByName(const string name,
-                                     ENUM_STRATEGY_ROLE role,
-                                     ENUM_STRATEGY_CLUSTER cluster,
-                                     const bool liveVotingEnabled);
 };
 
 bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string name,
@@ -157,90 +147,6 @@ IStrategy* CStrategyRegistryState::GetStrategyByName(const string name) const
     if(idx < 0 || idx >= m_src.GetStrategyCount())
         return NULL;
     return m_src.GetStrategyPtr(idx);
-}
-
-// Enable-state query: registered, enabled, live-voting strategy
-bool CStrategyRegistryState::IsStrategyLiveVoter(const int strategyIndex) const
-{
-    if(m_src == NULL)
-        return false;
-
-    if(strategyIndex < 0 || strategyIndex >= m_src.GetStrategyCount())
-        return false;
-    if(!m_src.IsStrategyEnabled(strategyIndex) || m_src.GetStrategyPtr(strategyIndex) == NULL)
-        return false;
-    if(!m_src.IsStrategyLiveVotingEnabled(strategyIndex))
-        return false;
-    return true;
-}
-
-bool CStrategyRegistryState::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyRole(index, (int)role);
-    PrintFormat("[EnterpriseStrategyManager] Role updated: %s => %s",
-                name, StrategyRoleToString(role));
-    return true;
-}
-
-bool CStrategyRegistryState::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyCluster(index, (int)cluster);
-    PrintFormat("[EnterpriseStrategyManager] Cluster updated: %s => %s",
-                name, StrategyClusterToString(cluster));
-    return true;
-}
-
-bool CStrategyRegistryState::SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyLiveVotingEnabled(index, enabled);
-    PrintFormat("[EnterpriseStrategyManager] Live voting updated: %s => %s",
-                name, enabled ? "ENABLED" : "DISABLED");
-    return true;
-}
-
-bool CStrategyRegistryState::SetStrategyGovernanceByName(const string name,
-                                                         ENUM_STRATEGY_ROLE role,
-                                                         ENUM_STRATEGY_CLUSTER cluster,
-                                                         const bool liveVotingEnabled)
-{
-    if(m_src == NULL)
-        return false;
-
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_src.SetStrategyRole(index, (int)role);
-    m_src.SetStrategyCluster(index, (int)cluster);
-    m_src.SetStrategyLiveVotingEnabled(index, liveVotingEnabled);
-
-    PrintFormat("[EnterpriseStrategyManager] Governance updated: %s | role=%s | cluster=%s | live_vote=%s",
-                name,
-                StrategyRoleToString(role),
-                StrategyClusterToString(cluster),
-                liveVotingEnabled ? "ENABLED" : "DISABLED");
-    return true;
 }
 
 #endif // STRATEGY_REGISTRY_STATE_MQH

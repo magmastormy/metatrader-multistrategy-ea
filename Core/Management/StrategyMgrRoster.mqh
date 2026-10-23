@@ -129,7 +129,6 @@ public:
     void SetStrategyDisabledUntil(const int index, const datetime value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].disabledUntil = value; }
     //--- Writes ONLY the entry flag: no push to the IStrategy object.
-    //--- EnableStrategy/DisableStrategy push it themselves via GetStrategyPtr().
     void SetStrategyEnabledFlag(const int index, const bool value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
     //--- slot bound is the fixed recentTrades[20] capacity (m_rollingWindowSize has no setter)
@@ -150,8 +149,6 @@ public:
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].cluster = cluster; }
     void SetStrategyLiveVotingEnabled(const int index, const bool enabled)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].liveVotingEnabled = enabled; }
-    void SetStrategyIntrabarPolicyRaw(const int index, const int policy)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].intrabarPolicy = policy; }
 
     //--- StrategyEntry append. Order matters: fill the entry -> health
     //--- monitor RegisterStrategy(weight) -> ++m_strategyCount.
@@ -170,8 +167,6 @@ public:
     bool UpdateStrategyWeightByName(const string name, const double weight,
                                     CStrategyHealthMonitor* healthMonitor);
 
-    //--- Writes through the IStrategy object held by the entry; no roster field changes.
-    bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
 
     //--- Teardown loop shared by Deinit() and the destructor.
     void DeleteAllStrategies();
@@ -282,19 +277,6 @@ bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const dou
     if(healthMonitor != NULL)
         healthMonitor.SetStrategyWeight(index, sanitizedWeight);
 
-    return true;
-}
-
-bool CStrategyMgrRoster::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
-{
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    if(m_strategies[index].strategy == NULL)
-        return false;
-
-    m_strategies[index].strategy.SetConfidenceThreshold(threshold);
     return true;
 }
 
