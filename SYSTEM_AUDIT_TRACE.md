@@ -1707,6 +1707,22 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 252 Unreachable Weight Scaling Deleted With Its Second Weight Store (2026-10-23)
+
+- **Trace of the removal:** none exists. `UpdateStrategyWeights` returns inside its `healthMonitor != NULL` branch, and the
+  manager constructor always allocates that monitor, so the deleted win-rate loop had no reachable call in any build. The
+  adaptation entry point that remains is `ProcessAdaptation -> UpdateStrategyWeights -> AI profitability multiplier ->
+  ApplyRawStrategyWeight`.
+- **State deleted with its last reader:** `SStrategyHealthEntry::currentWeight` (written by `UpdateAllStrategyWeights` and
+  by the roster's `SetStrategyWeight` push, read only by an accessor no caller had), `::originalWeight` (seeded from
+  `RegisterStrategy(weight)`), and `StrategyEntry::originalWeight` - whose only reader was the unreachable loop.
+- **Lifecycle step unchanged:** registration still records one weight per row; `ApplyRawStrategyWeight` still writes both
+  the roster row and `strategy.SetWeight`; the health monitor keeps win rate, health score and the
+  `[Enterprise-Adaptation]` disable/re-enable pair.
+- **Recorded for the operator:** the deleted scaling is the third time this sweep found arithmetic that could not fire and
+  would have mis-priced if it could (Batch 230's 0.0-score fallback, Batch 235's untrained-network metrics). Enabling it
+  later needs a trade-count guard and AI rows excluded, because `recentWinRate` is reused for model accuracy.
+
 ## Batch 251 AI Query Island Deleted, and the Weight Mirrors Below It With It (2026-10-23)
 
 - **Trace of the removal:** none exists. `OnAIQuery`, `InitializeAIEngine`, `CleanupAIEngine` and `g_AIEngine` have no
@@ -1726,19 +1742,18 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   `SAIDecisionExplanation`; the four `SAIAdaptiveConfig` fields the orchestrator kept assigning;
   `StrategyEntry::avgConfidence` and its getter chain; `SStrategyHealthEntry::participationScore` / `avgConfidence` and
   the seven unread participation thresholds with their seven uncalled setters.
-- **Weight arithmetic proven unchanged:** `CStrategyHealthMonitor::UpdateAllStrategyWeights` still runs on the live
+- **Weight arithmetic proven unchanged:** `CStrategyHealthMonitor::UpdateAllStrategyWeights` still ran on the live
   adaptation path (`ConsensusWeightingConfig.mqh:57`), and its product went from `originalWeight * healthScore *
-  participationScore` to `originalWeight * healthScore`. `participationScore` was written `1.0` at registration and only
+  participationScore` to `originalWeight * healthScore`. Batch 252 deleted the method with the mirror it wrote. `participationScore` was written `1.0` at registration and only
   ever changed inside `UpdateParticipationScore`, which has no caller - so the deleted factor is 1.0 and every shipped
   weight is identical.
 - **What still reaches a weight:** `ProcessAdaptation -> CEnterpriseStrategyManager::UpdateStrategyWeights` and, with
   `InpEnableExternalLLM` on, `MaybeCaptureExternalReasoning -> ReasonStrategyWeights -> ApplyLLMReasoningToWeights ->
   UpdateStrategyWeight`, which prints `[EXT-LLM] WEIGHT-APPLIED`. `InpEnableAIMode` gates the whole adaptation call.
-- **Recorded, not wired:** `SStrategyHealthEntry::currentWeight` is still written by two live paths
-  (`UpdateAllStrategyWeights` and `StrategyMgrRoster.mqh:275` via `SetStrategyWeight`) and read by nothing outside the
-  class - so the health monitor's weight mirror, and the `RegisterStrategy(weight)` value it is seeded from, feed no
-  vote. Consensus weights live in the roster. That is a second-authority finding with a real decision attached, not a
-  deletion, and it is queued.
+- **Recorded, not wired (closed by Batch 252):** `SStrategyHealthEntry::currentWeight` was written by two live paths
+  (`UpdateAllStrategyWeights` and the roster's `SetStrategyWeight` push) and read by nothing outside the class, and
+  `CConsensusWeightingConfig::UpdateStrategyWeights` returned inside its `healthMonitor != NULL` branch, so the
+  win-rate scaling below it had never run. Batch 252 deleted the mirror and the unreachable loop.
 
 ## Batch 250 Reporting Surface Removed With the State Only It Read (2026-10-23)
 

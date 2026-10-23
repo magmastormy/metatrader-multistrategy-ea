@@ -8,6 +8,44 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-23
 
+### Batch 252: the win-rate weight scaler sat behind a gate that was always open, on a mirror nobody read
+
+**Type:** dead-code sweep; one unreachable behaviour path found and deleted rather than revived.
+
+`CConsensusWeightingConfig::UpdateStrategyWeights()` began with `if(healthMonitor != NULL) { ...; return; }`, and
+`CEnterpriseStrategyManager`'s constructor calls `m_infra.AllocateHealthMonitor()` unconditionally, so the monitor exists
+for every manager from the moment it is constructed. The branch was therefore always taken and the loop written underneath
+it - "Performance-adaptive weight scaling using recent win rate ... intentionally conservative and bounded" - has never
+run for any strategy in any build. What that loop would have done to live money is the reason it is deleted instead of
+wired:
+
+- it scaled from `GetStrategyOriginalWeight(i)`, and every row registers at `weight`, so the base was right;
+- but `recentWinRate` is registered as `0.0` (`StrategyMgrRoster.mqh:239`) and only rewritten when a trade closes, so
+  `scale = 0.75 + (0.0 - 0.50)` clamps to the **0.50 floor** - every registered row on every
+  symbol would have been voted at half weight until its first closed trade;
+- and for the five AI rows `recentWinRate` does not hold a win rate at all (`UpdateAIPerformanceMetrics` reuses it for
+  model accuracy), so the same loop would have scaled AI votes by an accuracy number it mislabels a win rate.
+
+A correct version needs a sample-count guard and a decision about who may halve a strategy's vote; that is trading
+arithmetic, not cleanup, so it is not shipped here. Ask and it is a small, safe batch: gate on `recentTradeCount`, keep
+AI rows out of it, and give it an input that defaults off.
+
+Deleted with the unreachable loop: `SStrategyHealthEntry::currentWeight` and `::originalWeight` (written by
+`UpdateAllStrategyWeights` and by the roster's `SetStrategyWeight` push, read by nothing outside the class),
+`UpdateAllStrategyWeights` itself, `GetStrategyWeight` / `SetStrategyWeight` / `GetStrategyOriginalWeight` on the monitor,
+the `weight` parameter of its `RegisterStrategy()`, and the roster's push into that mirror. The same mirror existed a
+second time in the roster - `StrategyEntry::originalWeight`, written at registration and read only by that dead loop - so
+it went too, with `CStrategyMgrRoster::GetStrategyOriginalWeight` and the manager forwarder above it.
+
+Unchanged, deliberately: the AI profitability multiplier still runs with the same arithmetic and still prints
+`[AI-WEIGHT-ADJUST]`; `StrategyEntry::weight` remains the one weight consensus reads, written by
+`ApplyRawStrategyWeight` and `UpdateStrategyWeightByName`; and the health monitor keeps its real jobs - win rate, health
+score, the automatic disable/re-enable behind `[Enterprise-Adaptation]`. The honest summary of what AI adaptation does now
+is: it re-weights the five AI rows by their model profitability. Indicator rows are only ever parked or restored, never
+re-weighted.
+
+19 added / 87 deleted across five files. **Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its own `Result:` line; 0 errors / 0 warnings (11.5 / 7.4 / 14.2 / 9.3 / 209.3 / 288.2 / 67.2 / 4.4 s); `OVERALL SUCCESS`; all eight `.ex5` newer than the sources and every synced copy byte-identical to the tree it compiled (`cmp` on all six edited headers); artifacts removed. The EA program measured 209.3 s against 169.8 s for the Batch 251 tree on a quieter machine, so these remain load-dominated numbers, not a compile-cost result. Not runtime-observed: newest journal 2026-09-23.
+
 ### Batch 251: the AI engine's query island had no entry point, and the weight mirrors below it had no reader
 
 **Type:** dead-code sweep, behaviour-preserving by construction.
@@ -59,7 +97,7 @@ the Batch 246/247 shape, in the AI domain this time.
 - **Kept, with the reason:** `GetStrategyWeightsJSON` (manager, reporter) - `MaybeCaptureExternalReasoning` feeds it into
   the LLM prompt on a live path when `InpEnableExternalLLM` is on. `UpdateStrategyWeight` / `UpdateStrategyWeightByName`
   - `ApplyLLMReasoningToWeights` writes through them. `GetActiveStrategyCount` - the `[ENTERPRISE]` init line reads it.
-- **Recorded, not touched here (task #108):** `SStrategyHealthEntry::currentWeight` is written by two live paths
+- **Recorded here, closed by Batch 252:** `SStrategyHealthEntry::currentWeight` was written by two live paths
   (`UpdateAllStrategyWeights`, and `StrategyMgrRoster.mqh:275` through `SetStrategyWeight`) and read by
   `GetStrategyWeight`, which has no caller outside the class; `originalWeight` is seeded from the health monitor's own
   `RegisterStrategy(weight)` and read only by those same two. So the monitor keeps a weight store that feeds no vote -

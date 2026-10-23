@@ -215,8 +215,6 @@ public:
     CFamilyStrategyWeightMatrix* GetFamilyWeightMatrixConst() const { return m_infra.GetFamilyWeightMatrix(); }
     double GetStrategyAvgProfit(const int index) const
            { return m_roster.GetStrategyAvgProfit(index); }
-    double GetStrategyOriginalWeight(const int index) const
-           { return m_roster.GetStrategyOriginalWeight(index); }
     int    GetStrategyIndexByName(const string name) const { return FindStrategyIndexByName(name); }
 
     //--- Narrow raw weight mutator: writes the entry weight and pushes it to the strategy object,

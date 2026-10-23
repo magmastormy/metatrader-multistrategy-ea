@@ -342,6 +342,25 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 252: Weight Adaptation Keeps One Live Path, and the Unreachable One Is Deleted With Its Mirror (2026-10-23)
+
+- **Gate proven always-true:** `CConsensusWeightingConfig::UpdateStrategyWeights` returns inside
+  `if(healthMonitor != NULL)`, and `CEnterpriseStrategyManager::CEnterpriseStrategyManager` calls
+  `m_infra.AllocateHealthMonitor()` unconditionally, so no build ever reached the code below that return.
+- **Path removed (never taken):** per-strategy win-rate weight scaling (`base * (0.75 + winRate - 0.50)`, clamped
+  [0.50, 1.50]) written through `ApplyRawStrategyWeight`. Reviving it as written would have applied the 0.50 clamp floor to
+  every row with no closed trades, because `recentWinRate` is registered at `0.0` and only rewritten on a close
+  (`StrategyMgrRoster.mqh:239`), and would have scaled the five AI rows by model accuracy stored in the same field. That is
+  a weight decision with a sample guard to design, so it is deleted and recorded, not enabled.
+- **Path kept, unchanged:** AI profitability multiplier (`[AI-WEIGHT-ADJUST]`, 0.8x..1.2x) for
+  `STRATEGY_BRAIN` / `STRATEGY_AI_ENHANCED` rows whose `avgProfit` was written by `UpdateAIPerformanceMetrics`.
+- **Mirror deleted:** `SStrategyHealthEntry::currentWeight` / `::originalWeight`, `UpdateAllStrategyWeights`,
+  `GetStrategyWeight` / `SetStrategyWeight` / `GetStrategyOriginalWeight` on the monitor, `RegisterStrategy(weight)`'s
+  parameter, `CStrategyMgrRoster`'s push into it, and `StrategyEntry::originalWeight` with its roster getter and manager
+  forwarder. The weight a vote uses is `StrategyEntry::weight`, and after this batch there is exactly one place that
+  writes it per caller instead of two stores that disagreed.
+- **No entry, lot, quorum, veto, stop or exit moved.** 19 added / 87 deleted across five files.
+
 ## Batch 251: The AI Engine's Query Island Had No Entry Point, and the Weight Mirrors Below It Had No Reader (2026-10-23)
 
 - **Path removed:** `OnInit -> InitializeSubsystems -> CAIEngine.Initialize(managers...) -> ProcessAdaptation()` is the
@@ -358,7 +377,7 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
   the seven `m_participation*` thresholds were read only inside it, the seven `SetParticipation*` setters had no caller,
   `SStrategyHealthEntry::participationScore` therefore held its registered 1.0, and `GetStrategyParticipationScore` had
   no caller either. The live `UpdateAllStrategyWeights` multiply became `originalWeight * healthScore` - arithmetically
-  identical to `* 1.0`, so no weight moved.
+  identical to `* 1.0`, so no weight moved. Batch 252 deleted the method and the `currentWeight` mirror it wrote.
 - **Dead adaptation gone:** `AdaptToRegime` computed a regime-scaled confidence threshold, stored it in a local, iterated
   the managers with an empty body and never wrote the value anywhere. Its accuracy-gated partner in
   `AdaptToPerformance` (`< 0.4` disable, `> 0.6` re-enable) tested a constant 0.5 because the only writer

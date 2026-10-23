@@ -1539,6 +1539,16 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   fixed: `GetEnsembleConfidence()` averages a field nobody writes, so it is structurally 0.0 - and its readers sit behind
   `CAIEngine::OnAIQuery`, which has no caller either. Batch 251 deleted the island, the reporter method, both forwarders
   and `StrategyEntry::avgConfidence` with it, so the question is closed by removal rather than by a writer.
+- **A gate that was always true makes the code below it dead** (Batch 252). `CConsensusWeightingConfig::UpdateStrategyWeights`
+  begins `if(healthMonitor != NULL) { ...; return; }`, and `CEnterpriseStrategyManager`'s constructor allocates the monitor
+  unconditionally, so the win-rate weight-scaling loop underneath it had never run in any build. It is deleted, not wired:
+  `recentWinRate` registers at `0.0` and is rewritten only on a closed trade, so `scale = 0.75 + (0 - 0.50)` would clamp to
+  the 0.50 floor and halve the vote of every strategy that had not traded yet, and the AI rows would be scaled by the model
+  accuracy that `UpdateAIPerformanceMetrics` stores in that same field. Weight adaptation that actually runs is one thing:
+  the AI profitability multiplier, 0.8x..1.2x, printing `[AI-WEIGHT-ADJUST]`. `SStrategyHealthEntry::currentWeight` /
+  `originalWeight`, `UpdateAllStrategyWeights`, the monitor's three weight accessors and `StrategyEntry::originalWeight`
+  went with it, leaving `StrategyEntry::weight` as the single weight consensus reads.
+
 - **The AI query surface was an entry point nobody had** (Batch 251). `CAIEngine::OnAIQuery` has no call in any `.mq5`
   or `.mqh`, and neither did the free `InitializeAIEngine`/`CleanupAIEngine` pair or the `g_AIEngine` global that were the
   only other way in - so 24 unreachable methods (five `Process*Query`, `AI_ModifyWeights`, `AI_ExplainDecision`,

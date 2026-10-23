@@ -18,7 +18,6 @@ struct StrategyEntry
     int cluster;
     ENUM_STRATEGY_TIER tier;             // Strategy Tier (Ranking Matrix)
     double weight;
-    double originalWeight;              // Track original weight for decay recovery
     ENUM_TIMEFRAMES timeframe;
     int successCount;
     int failCount;

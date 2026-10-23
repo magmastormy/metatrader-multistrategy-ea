@@ -12,7 +12,6 @@
 #include "../Processing/DerivAssetProfiler.mqh"      // CDerivAssetProfiler, SDerivProfile
 #include "../Processing/MultiAssetProfiler.mqh"      // CMultiAssetProfiler, ENUM_ASSET_CLASS
 #include "../Engines/FamilyStrategyWeightMatrix.mqh" // CFamilyStrategyWeightMatrix
-#include "StrategyHealthMonitor.mqh"                 // CStrategyHealthMonitor
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
@@ -51,53 +50,27 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
 
     const int strategyCount = m_src.GetStrategyCount();
 
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-    {
-        healthMonitor.UpdateAllStrategyWeights();
-
-        // L6-016: Apply AI profitability multiplier for AI strategies
-        for(int i = 0; i < strategyCount; i++)
-        {
-            IStrategy* strategy = m_src.GetStrategyPtr(i);
-            if(strategy == NULL)
-                continue;
-
-            ENUM_STRATEGY_TYPE stratType = strategy.GetType();
-            bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
-            double avgProfit = m_src.GetStrategyAvgProfit(i);
-            if(isAI && avgProfit != 0.0)
-            {
-                // avgProfit stores AI profitability (set by UpdateAIPerformanceMetrics)
-                double aiProfitability = avgProfit;
-                // Apply profitability multiplier: 0.8x to 1.2x based on profitability (-0.2 to +0.2)
-                double profitMult = 1.0 + MathMax(-0.2, MathMin(0.2, aiProfitability));
-                double newWeight = m_src.GetStrategyWeight(i) * profitMult;
-                newWeight = MathMax(0.0, MathMin(10.0, newWeight));
-                m_src.ApplyRawStrategyWeight(i, newWeight);
-
-                PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | mult=%.3f | newWeight=%.3f",
-                            m_src.GetManagedSymbol(), m_src.GetStrategyName(i), aiProfitability, profitMult, newWeight);
-            }
-        }
-        return;
-    }
-
+    // L6-016: AI profitability multiplier, AI rows only - avgProfit carries that number because
+    // UpdateAIPerformanceMetrics writes it there.
     for(int i = 0; i < strategyCount; i++)
     {
-        if(m_src.GetStrategyPtr(i) == NULL)
+        IStrategy* strategy = m_src.GetStrategyPtr(i);
+        if(strategy == NULL)
             continue;
 
-        // Performance-adaptive weight scaling using recent win rate.
-        // This is intentionally conservative and bounded to prevent destabilizing consensus.
-        double originalWeight = m_src.GetStrategyOriginalWeight(i);
-        double base = originalWeight > 0.0 ? originalWeight : m_src.GetStrategyWeight(i);
-        double wr = MathMax(0.0, MathMin(1.0, m_src.GetStrategyRecentWinRate(i)));
-        double scale = 0.75 + (wr - 0.50); // 0.25..1.25 around 50% win rate
-        scale = MathMax(0.50, MathMin(1.50, scale));
-        double newWeight = MathMax(0.0, MathMin(10.0, base * scale));
+        ENUM_STRATEGY_TYPE stratType = strategy.GetType();
+        bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
+        double aiProfitability = m_src.GetStrategyAvgProfit(i);
+        if(!isAI || aiProfitability == 0.0)
+            continue;
 
+        // Multiplier spans 0.8x..1.2x for profitability in -0.2..+0.2
+        double profitMult = 1.0 + MathMax(-0.2, MathMin(0.2, aiProfitability));
+        double newWeight = MathMax(0.0, MathMin(10.0, m_src.GetStrategyWeight(i) * profitMult));
         m_src.ApplyRawStrategyWeight(i, newWeight);
+
+        PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | mult=%.3f | newWeight=%.3f",
+                    m_src.GetManagedSymbol(), m_src.GetStrategyName(i), aiProfitability, profitMult, newWeight);
     }
 }
 

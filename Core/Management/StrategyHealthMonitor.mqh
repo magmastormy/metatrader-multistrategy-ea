@@ -36,8 +36,6 @@ struct SStrategyHealthEntry
     double netProfit;
     
     int consecutiveFilterCount;
-    double originalWeight;
-    double currentWeight;
     
     SStrategyHealthEntry()
     {
@@ -65,8 +63,6 @@ struct SStrategyHealthEntry
         healthScore = 1.0;
         netProfit = 0.0;
         consecutiveFilterCount = 0;
-        originalWeight = 1.0;
-        currentWeight = 1.0;
     }
 };
 
@@ -204,13 +200,11 @@ public:
     void SetStrategyActivityDecayRate(const double rate) { m_strategyActivityDecayRate = MathMax(0.0, MathMin(1.0, rate)); }
     void SetStrategyInactiveCounterThreshold(const int threshold) { m_strategyInactiveCounterThreshold = MathMax(1, threshold); }
     
-    int RegisterStrategy(double weight = 1.0)
+    int RegisterStrategy()
     {
         int idx = m_healthEntryCount;
         EnsureCapacity(idx);
         SStrategyHealthEntry entry;
-        entry.originalWeight = weight;
-        entry.currentWeight = weight;
         entry.healthScore = 1.0;
         m_healthEntries[idx] = entry;
         m_healthEntryCount++;
@@ -281,22 +275,6 @@ public:
         m_healthEntries[index].disabledUntil = until;
     }
     
-    double GetStrategyWeight(int index) const
-    {
-        if(index < 0 || index >= m_healthEntryCount) return 1.0;
-        return m_healthEntries[index].currentWeight;
-    }
-    bool SetStrategyWeight(int index, double weight)
-    {
-        if(index < 0 || index >= m_healthEntryCount) return false;
-        m_healthEntries[index].currentWeight = MathMax(0.0, MathMin(10.0, weight));
-        return true;
-    }
-    double GetStrategyOriginalWeight(int index) const
-    {
-        if(index < 0 || index >= m_healthEntryCount) return 1.0;
-        return m_healthEntries[index].originalWeight;
-    }
     double GetStrategyHealthScore(int index) const
     {
         if(index < 0 || index >= m_healthEntryCount) return 0.0;
@@ -356,15 +334,6 @@ public:
                 // would insta-redisable the strategy on its first new loss.
                 ResetRecoverySample(m_healthEntries[i]);
             }
-        }
-    }
-    void UpdateAllStrategyWeights()
-    {
-        for(int i = 0; i < m_healthEntryCount; i++)
-        {
-            double hw = m_healthEntries[i].healthScore;
-            double origW = m_healthEntries[i].originalWeight;
-            m_healthEntries[i].currentWeight = origW * hw;
         }
     }
     

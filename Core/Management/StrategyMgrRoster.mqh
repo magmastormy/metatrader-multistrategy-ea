@@ -55,8 +55,6 @@ public:
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentWinRate : 0.0; }
     double GetStrategyAvgProfit(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgProfit : 0.0; }
-    double GetStrategyOriginalWeight(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].originalWeight : 0.0; }
     int      GetStrategyTotalTrades(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].totalTrades : 0; }
     int      GetStrategyWinningTrades(const int index) const
@@ -159,9 +157,8 @@ public:
                                        bool liveVotingEnabled,
                                        CStrategyHealthMonitor* healthMonitor);
 
-    //--- By-name weight mutator: writes the roster array AND pushes to the health
-    //--- monitor, which ApplyRawStrategyWeight() deliberately does not. The monitor is
-    //--- passed in because the roster does not own it.
+    //--- By-name weight mutator: clamps to [0, 10] and finds the row by name;
+    //--- ApplyRawStrategyWeight() writes an index the caller already resolved, unclamped.
     bool UpdateStrategyWeightByName(const string name, const double weight,
                                     CStrategyHealthMonitor* healthMonitor);
 
@@ -220,7 +217,6 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].cluster = (int)cluster;
     m_strategies[m_strategyCount].tier = tier;
     m_strategies[m_strategyCount].weight = weight;
-    m_strategies[m_strategyCount].originalWeight = weight;
     m_strategies[m_strategyCount].timeframe = resolvedTf;
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
@@ -253,7 +249,7 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
 
     if(healthMonitor != NULL)
-        healthMonitor.RegisterStrategy(weight);
+        healthMonitor.RegisterStrategy();
 
     m_strategyCount++;
 }
@@ -270,9 +266,6 @@ bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const dou
     m_strategies[index].weight = sanitizedWeight;
     if(m_strategies[index].strategy != NULL)
         m_strategies[index].strategy.SetWeight(sanitizedWeight);
-
-    if(healthMonitor != NULL)
-        healthMonitor.SetStrategyWeight(index, sanitizedWeight);
 
     return true;
 }

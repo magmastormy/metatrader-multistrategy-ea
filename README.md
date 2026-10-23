@@ -633,6 +633,34 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 252: the win-rate weight scaler sat behind a gate that was always open, on a mirror nobody read
+
+`CConsensusWeightingConfig::UpdateStrategyWeights()` starts with `if(healthMonitor != NULL) { ...; return; }`, and
+`CEnterpriseStrategyManager`'s constructor calls `m_infra.AllocateHealthMonitor()` unconditionally. The monitor therefore
+exists for every manager before any strategy is registered, the branch is always taken, and the loop written underneath it
+- "Performance-adaptive weight scaling using recent win rate", `scale = 0.75 + (winRate - 0.50)`, clamped to
+[0.50, 1.50] - has never run for any strategy in any build.
+
+It is deleted rather than wired, because as written it would have hurt: `recentWinRate` is registered as `0.0`
+(`StrategyMgrRoster.mqh:239`) and only rewritten when a trade closes, so every registered row on every symbol would have
+started life at the 0.50 floor - half voting weight, on a fresh install, for strategies that simply had not traded yet -
+and the five AI rows would have been scaled by a number `UpdateAIPerformanceMetrics` puts in that field as model accuracy,
+not a win rate. A safe version needs a `recentTradeCount` guard, AI rows kept out, and an input that defaults off. Say the
+word and it is a small batch; inventing that arithmetic silently, with no journal newer than 2026-09-23 to check it
+against, is not.
+
+What went with the unreachable loop is the second weight mirror in the tree: `SStrategyHealthEntry::currentWeight` and
+`::originalWeight`, `UpdateAllStrategyWeights()`, the monitor's `GetStrategyWeight` / `SetStrategyWeight` /
+`GetStrategyOriginalWeight`, the `weight` parameter of its `RegisterStrategy()`, the roster's push into it, and
+`StrategyEntry::originalWeight` with its getter and manager forwarder - the only reader of that last one was the dead
+loop. Consensus reads one weight from one place: `StrategyEntry::weight`, written by `ApplyRawStrategyWeight` and
+`UpdateStrategyWeightByName`. Those are untouched, as is `[AI-WEIGHT-ADJUST]`, which still prints with the same
+arithmetic.
+
+The honest sentence for what AI adaptation does now: it re-weights the five AI rows by their model profitability.
+Indicator rows are parked and restored by the health monitor; they are never re-weighted. 19 added / 87 deleted across
+five files.
+
 ### Batch 251: the AI engine's query island had no entry point, and the weight mirrors below it had no reader
 
 `CAIEngine::OnAIQuery` is not called anywhere, and neither are the free `InitializeAIEngine`/`CleanupAIEngine` pair or
@@ -663,7 +691,7 @@ What the docs had been repeating as live behaviour, and what the code could not 
 - The health monitor's participation ladder (`UpdateParticipationScore`, seven `m_participation*` thresholds, seven
   `SetParticipation*` setters, `GetStrategyParticipationScore`) had no driver and no reader. The live
   `UpdateAllStrategyWeights` product became `originalWeight * healthScore`, which is the same number as before because
-  the deleted term was registered at 1.0 and never moved.
+  the deleted term was registered at 1.0 and never moved. Batch 252 deleted that product too, with the weight mirror it wrote.
 
 `CAIEngine` is 404 lines and does three things: it initializes against the symbol managers, it calls
 `UpdateStrategyWeights()` on the adaptation interval, and - when `InpEnableExternalLLM` is on - it asks the configured
