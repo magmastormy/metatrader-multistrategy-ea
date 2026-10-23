@@ -7,24 +7,14 @@
 #include "../Utils/Enums.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
-// Centralized per-strategy timeframe/intrabar config: the only place these are resolved.
-struct SStrategyTimeframeConfig
-{
-    string              name;
-    ENUM_TIMEFRAMES     defaultTF;
-    ENUM_TIMEFRAMES     intrabarTF;
-    bool                forceHigherOnM1Synthetic;
-
-    SStrategyTimeframeConfig() : name(""), defaultTF(PERIOD_CURRENT), intrabarTF(PERIOD_M5), forceHigherOnM1Synthetic(false) {}
-};
-
+// Per-slot registration config, indexed by the catalog row's siPolicyIndex. A timeframe of
+// PERIOD_CURRENT means "register on the manager's base (chart) timeframe".
 struct SStrategyIntrabarConfig
 {
-    string              name;
     ENUM_INTRABAR_POLICY defaultPolicy;
-    bool                syntheticLeanPrimary;
+    bool                 syntheticLeanPrimary;
 
-    SStrategyIntrabarConfig() : name(""), defaultPolicy(INTRABAR_POLICY_OFF), syntheticLeanPrimary(false) {}
+    SStrategyIntrabarConfig() : defaultPolicy(INTRABAR_POLICY_OFF), syntheticLeanPrimary(false) {}
 };
 
 // Static sizing for strategy config rows: must stay >= the number of strategies, because every
@@ -205,7 +195,7 @@ struct SOrchestratorConfig
     int     nnSampleIntervalSeconds;
     int     nnCheckpointEveryLabeled;
 
-    SStrategyTimeframeConfig strategyTimeframeConfigs[MAX_STRATEGY_CONFIGS];
+    ENUM_TIMEFRAMES         strategyTimeframes[MAX_STRATEGY_CONFIGS];
     SStrategyIntrabarConfig  strategyIntrabarConfigs[MAX_STRATEGY_CONFIGS];
     int                     strategyConfigCount;
 
@@ -663,7 +653,7 @@ struct SOrchestratorConfig
         skewStepLargeThreshold = 0.5;
         sessionDSTOffsetHours = 0;
 
-        // strategyTimeframeConfigs/strategyIntrabarConfigs are filled by InitializeStrategyConfigs(),
+        // strategyTimeframes/strategyIntrabarConfigs are filled by InitializeStrategyConfigs(),
         // not by this constructor; only the count is set here.
         strategyConfigCount = 0;
     }

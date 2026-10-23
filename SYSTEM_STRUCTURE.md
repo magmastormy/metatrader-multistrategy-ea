@@ -2,11 +2,11 @@
 
 ## Document Metadata
 
-- Last Updated: 2026-10-21
-- Last Architecture Sync: 2026-10-21
+- Last Updated: 2026-10-23
+- Last Architecture Sync: 2026-10-23
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 247
+- Current Batch: 249
 
 ## 1. System Goal
 
@@ -213,6 +213,7 @@ min R:R enforcement (2.0 default, 1.5 for the mean-reversion cluster; the "1:5" 
 | Read (registry) | `CEAOrchestrator::BuildStrategyRegistry` via `CatalogEnableSlot(i)` | semantic `SI_*` (Batch 193) |
 | Read (roster report) | `COrchestratorSymbolClassifier::BuildEnabledStrategyList` / `CountEffectiveIndicatorStrategiesForSymbol`, both row loops (Batch 209) | semantic `SI_*`, named by row |
 | Intrabar policy | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` | each strategy's own `siPolicyIndex` |
+| Strategy timeframe | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` (bound in Batch 249) | same `siPolicyIndex`; `PERIOD_CURRENT` = inherit the chart |
 | Voting weight | catalog row, overridden once at init by `InpWeight*` | `StrategyConfigWeight(siIndex, rowDefault)` (Batch 193) |
 
 Ownership after Batch 147 (legacy scheme deleted):
@@ -1121,7 +1122,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 - **Momentum** (SimpleMomentumStrategy.mqh)
   - v2.0: MACD histogram confirmation, ADX strong trend filter (ADX > 25), pullback entry mode (EMA pullback within 0.5×ATR), freshness confidence modifier (+10%), volume confidence modifier (+8%)
   - Optional scalp-continuation mode is configured by `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; it shortens cooldown only for momentum itself and still sends every entry through manager consensus, unified risk, and trade-manager execution.
-  - Optional scalp timeframe registration is configured by `InpMomentumScalpTimeframe`; when this is lower than the attached chart timeframe, Momentum evaluates on that lower timeframe instead of waiting on the chart bar cadence.
+  - `InpMomentumScalpTimeframe` is the timeframe Momentum registers on (bound from Batch 249; before it the value reached no `Init`). With the shipped `PERIOD_M5` it also keeps `InpEnableMomentumScalping` honoured: the strategy's own M1-M15 band test (`SimpleMomentumStrategy.mqh:513`) used to force trend-following whenever the chart sat above M15.
   - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Trend** (StrategyTrend.mqh)
   - Simplified from 300 → 259 lines (-13.7%), removed timeframe auto-stepping and dead trailing stop code
@@ -1134,7 +1135,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Candlestick** (StrategyCandlestick.mqh)
   - v2.0: 7 new pattern detectors (Doji, Hammer, Star, Harami, ThreeSoldiers, Piercing) + CCandleConfluenceScorer (0-100 scoring, threshold ≥70); confidence scaled by confluence score
-  - Optional intrabar timeframe registration is configured by `InpCandlestickIntrabarTimeframe`; when this is lower than the attached chart timeframe and candlestick intrabar eligibility is enabled, Candlestick evaluates its own lower-timeframe bar stream.
+  - `InpCandlestickIntrabarTimeframe` is the timeframe Candlestick registers on (bound from Batch 249). It changes its pattern reads only - intrabar *participation* is still report-only, and entries never request intrabar mode (`RUNTIME_DECISION_GRAPH.md` Batch 233).
   - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Power of Three** (CPowerOfThreeStrategy.mqh)
   - ICT AMD (Accumulation-Manipulation-Distribution) phase detection
@@ -1206,7 +1207,7 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
 - AI adapters can be the sole tradable family when enabled. The *entry* vote is new-bar only (`EVAL_MODE_NEW_BAR` at
-  `EAOrchestrator.mqh:3498`/`:3543`); no entry path runs an intrabar scan (Batch 233).
+  `EAOrchestrator.mqh:3499`/`:3543`); no entry path runs an intrabar scan (Batch 233).
 - AI intrabar participation is *configured* per strategy (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) rather than hard-forced `OFF` at governance time — and since Batch 233 that field is stated as report-only: the stored policy gates no vote, and the AI adapters register with `fixedPolicy = LIVE` regardless of the input, because their catalog slot is `-1`.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
@@ -1527,9 +1528,18 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   unconsulted) candlestickTF=...(stored,unconsulted)` so the mismatch is visible at init rather than inferred from a
   dialog.
 
+- **A bound table is only bound where a reader exists** (Batch 249). Batch 234 kept the per-strategy timeframe table as
+  the carrier for a future decision; the decision landed, and what made it small was not the binding but the read set:
+  `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:196`,
+  `EnterpriseStrategyManager.mqh:1264`) and `CStrategyRegistryState::RegisterStrategy` already resolved
+  `PERIOD_CURRENT -> m_baseTimeframe` at `:90`, so feeding the row value into `RegisterStrategy` was one argument, not a
+  new mechanism. `SStrategyTimeframeConfig` is now `ENUM_TIMEFRAMES strategyTimeframes[23]` - `name`, `intrabarTF` and
+  `forceHigherOnM1Synthetic` (21 writes, 0 readers each) are gone, and the third was a second holder of the band rule
+  `SimpleMomentumStrategy.mqh:513` enforces. Two rows can name a timeframe, so two strategies move; the other 19 slots
+  keep `PERIOD_CURRENT` and resolve to the chart exactly as before.
 - **A field no branch reads must announce itself** (Batch 233). The eleven `InpIntrabarEligibility*` inputs still
   write a per-strategy intrabar policy, and after Batch 231 the only reader left is the registration print: the entry
-  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3498`/`:3543`, `SignalGenerator.mqh:109` says so outright), and
+  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3499`/`:3543`, `SignalGenerator.mqh:109` says so outright), and
   the one live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`), whose voter
   set is enabled + `liveVotingEnabled` + the regime veto - never the policy. Making it binding is one line and the
   *restrictive* direction, because eight indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` with no input at

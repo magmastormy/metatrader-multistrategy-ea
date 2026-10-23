@@ -6,7 +6,48 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-21
+## [Unreleased] - 2026-10-23
+
+### Batch 249: the two timeframe inputs now choose the timeframe a strategy reads
+
+**Type:** wiring + dead-field removal, with one deliberate behaviour change.
+
+Batch 234 recorded that `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land only in a per-strategy
+timeframe table whose getter chain has no caller, so every strategy registered on `PERIOD_CURRENT` -> the manager's
+`m_baseTimeframe` and the two inputs priced nothing. This batch binds that table and deletes what could never be part of
+the decision.
+
+- **The road was already built.** `CStrategyRegistryState::RegisterStrategy` resolves `resolvedTf` at `:90` and passes it
+  to `strategy.Init(...)` and `InitializeAI(...)`; `StrategyEntry::timeframe` is read by `ConsensusEngine.mqh:524`
+  (pipeline signal processing), `StrategyLifecycle.mqh:196` (`OnNewBar`) and `EnterpriseStrategyManager.mqh:1264`
+  (regime update). So the fix is one argument at `AutoRegisterStrategies` plus the per-slot push, not a new mechanism.
+- **Precedence:** a row overrides the catalog `timeframe` only when it names one. Slots 0 (Momentum) and 4 (Candlestick)
+  are the only rows that name a timeframe, so those two strategies are the entire delta; 19 rows keep `PERIOD_CURRENT`.
+- **What that unlocks:** `SimpleMomentumStrategy.mqh:513` clears `m_enableScalping` when its timeframe leaves M1-M15, so
+  with the chart above M15 the shipped `InpEnableMomentumScalping = true` had never applied. Registering on `PERIOD_M5`
+  keeps scalping, which lets Momentum re-signal every `InpMomentumScalpCooldownSeconds` (20 s) rather than once per chart
+  bar. Cadence, not exposure: two-voter quorum, quality/support floors, `CUnifiedRiskManager`,
+  `InpMaxTradeSendsPerCycle`, `InpMaxPositionsTotal` and `InpMaxRiskPerTrade = 1.0` are untouched, and the reversal-exit
+  check reads the same manager so exits see the faster bar too.
+- **Deleted:** `SStrategyTimeframeConfig` as a type; its `name`, `intrabarTF` and `forceHigherOnM1Synthetic` fields
+  (21 writers, zero readers each). `forceHigherOnM1Synthetic` restated the band rule Momentum already enforces - wiring it
+  would have made two holders of one rule. `COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig`, its
+  `EAOrchestrator.mqh` wrapper, and `SStrategyIntrabarConfig::name` (20 writes, no reader).
+- **Added:** `ENUM_TIMEFRAMES strategyTimeframes[MAX_STRATEGY_CONFIGS]` in config, `CIntrabarPolicy`'s
+  `m_timeframeConfig` + setter/getter, `CEnterpriseStrategyManager::SetStrategyTimeframeConfig`, and the push in the
+  loop that already sets the intrabar policy.
+- **Log surface:** `[ENTERPRISE]` loses `(stored,unconsulted)` and prints
+  `baseTF=chart(<TF>) | tfOverride Momentum=<TF|inherit> Candlestick=<TF|inherit>`. `AGENTS.md` section 6 rewritten to
+  match. `[CONFIG] Initialized 23 strategy timeframe/intrabar configs` is unchanged (`strategyConfigCount` still counts
+  the array).
+- **Docs:** 39 pointers re-pointed by the +3/+6/+1 region deltas, then 2 re-anchored by content (`:1987` had drifted onto
+  a blank line; the setter call is `:1947`); a Batch 234 citation to the now-deleted wrapper is number-free.
+  `StrategyConfigBuilder.mqh` 199 -> 53 lines.
+- **Reversibility:** setting `InpMomentumScalpTimeframe` to the chart timeframe prints `inherit` and moves nothing.
+
+**Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its
+own `Result:` line; 0 errors / 0 warnings (6.6 / 3.3 / 5.1 / 7.0 / 143.0 / 149.3 / 79.7 / 3.4 s); harness exit 0; all
+eight `.ex5` newer than the sources; artifacts removed. Not runtime-observed: newest journal 2026-09-23.
 
 ### Batch 248: the audit trace's "Current Runtime Evidence" was a dated archive, and four of its scope rows named files that are not in the tree
 

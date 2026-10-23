@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-140-green)
+![Batch](https://img.shields.io/badge/batch-249-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3578`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3579`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -631,6 +631,37 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 249: your two timeframe inputs now choose the timeframe a strategy reads
+
+Batch 234 recorded that `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` land in a table nothing reads.
+That is ended: the table is one `ENUM_TIMEFRAMES` per strategy slot, pushed into the symbol's manager at init and read
+during registration, so Momentum and Candlestick `Init` — indicator handles, bar-time guards and all — on the timeframe you
+named, whatever chart the EA sits on. Everything else in the table still says `PERIOD_CURRENT` and keeps the chart
+timeframe, so the change is exactly those two strategies.
+
+The one consequence worth reading before you change the inputs: Momentum declares M1-M15 as its scalp band and switches
+itself off outside it. With the chart on H1 the shipped `InpEnableMomentumScalping = true` was therefore never honoured,
+and the strategy ran trend-following on every symbol. Registering it on `PERIOD_M5` keeps scalping live, which means
+Momentum may re-signal every `InpMomentumScalpCooldownSeconds` (20 s) instead of once per chart bar. That is signal
+cadence, not exposure: consensus still needs two voters, the quality and support floors still apply, every entry still
+passes `CUnifiedRiskManager`, the per-cycle send cap and the position ceiling still bind, and each position is still sized
+against `InpMaxRiskPerTrade`. The signal-reversal exit reads the same manager, so exits get the faster view too.
+
+If you want the old behaviour back, set `InpMomentumScalpTimeframe` to your chart timeframe — the row then matches what
+`baseTF=` prints and nothing moves.
+
+Three fields that no code read went with it: `name`, `intrabarTF` and `forceHigherOnM1Synthetic` (21 writes each). The
+last one restated the band rule Momentum already enforces, and a second holder of one rule is how Batch 38 started. The
+init line now tells the truth instead of annotating its own uselessness:
+
+```
+[ENTERPRISE] Manager initialized for EURUSD with 12 active strategies | profile=balanced |
+  baseTF=chart(PERIOD_H1) | tfOverride Momentum=PERIOD_M5 Candlestick=PERIOD_M5
+```
+
+Per-strategy confirmation is already in the journal: `Registered strategy: Momentum | ... | TF: PERIOD_M5` and
+`[MOMENTUM] Effective mode=scalping | TF=PERIOD_M5 | sameBarGuard=bypassed`.
 
 ### Batch 247: the rest of the status-report chain is gone, and the EA now compiles five times faster
 
@@ -1000,7 +1031,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3578`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3579`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

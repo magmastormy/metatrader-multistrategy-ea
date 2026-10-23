@@ -1,4 +1,4 @@
-// Centralized intrabar policy + timeframe config resolution.
+// Centralized intrabar policy resolution.
 // All methods are static - this cluster owns no state; config and the multi-asset
 // profiler arrive as parameters.
 #property strict
@@ -47,15 +47,6 @@ public:
         }
 
         return policy;
-    }
-
-    static SStrategyTimeframeConfig GetStrategyTimeframeConfig(const SOrchestratorConfig &config,
-                                                               int strategyIndex)
-    {
-        static SStrategyTimeframeConfig defaultConfig;
-        if(strategyIndex < 0 || strategyIndex >= config.strategyConfigCount)
-        return defaultConfig;
-        return config.strategyTimeframeConfigs[strategyIndex];
     }
 };
 

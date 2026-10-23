@@ -390,6 +390,7 @@ public:
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
     
     void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
+    void SetStrategyTimeframeConfig(int strategyIndex, ENUM_TIMEFRAMES tf);
 
     //--- Per-field accessors consumed by CStrategyRegistryState / CIntrabarPolicy via their m_src back-pointers.
     int    GetMaxStrategies() const { return m_roster.GetMaxStrategies(); }
@@ -637,6 +638,11 @@ void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyInd
     m_intrabarPolicy.SetStrategyIntrabarPolicyConfig(strategyIndex, policy);
 }
 
+void CEnterpriseStrategyManager::SetStrategyTimeframeConfig(int strategyIndex, ENUM_TIMEFRAMES tf)
+{
+    m_intrabarPolicy.SetStrategyTimeframeConfig(strategyIndex, tf);
+}
+
 // Catalog creators build each strategy bare, so the operator's per-strategy inputs have to be pushed here
 // rather than in the after-registration dependency pass.
 void CEnterpriseStrategyManager::ConfigureBeforeInit(IStrategy* strategy, const string name)
@@ -764,8 +770,13 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
         ENUM_INTRABAR_POLICY pol = (pIdx >= 0) ? GetIntrabarPolicyHelper(pIdx)
                                                : g_strategyCatalog[i].fixedPolicy;
 
+        // The row table overrides the catalog timeframe only where it names a real one; every other
+        // slot holds PERIOD_CURRENT, so those strategies keep registering on the base (chart) timeframe.
+        ENUM_TIMEFRAMES rowTf = (pIdx >= 0) ? m_intrabarPolicy.GetStrategyTimeframeConfig(pIdx) : PERIOD_CURRENT;
+        ENUM_TIMEFRAMES tf = (rowTf != PERIOD_CURRENT) ? rowTf : g_strategyCatalog[i].timeframe;
+
         RegisterStrategy(s, g_strategyCatalog[i].name, true, g_strategyCatalog[i].weight,
-                         g_strategyCatalog[i].tier, g_strategyCatalog[i].timeframe, pol,
+                         g_strategyCatalog[i].tier, tf, pol,
                          g_strategyCatalog[i].role, g_strategyCatalog[i].cluster,
                          g_strategyCatalog[i].liveVoting);
 

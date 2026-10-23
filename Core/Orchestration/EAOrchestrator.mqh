@@ -1939,10 +1939,13 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     PrintFormat("[SYMBOL-PROFILE] %s uses synthetic lean roster: Momentum/Trend suppressed from manager roster; Candlestick remains new-bar active but intrabar PROBE while Fibonacci/Elliott/SupportResistance/UICT stay LIVE",
     symbol);
 
-    // Intrabar policies must be set from the config array before auto-registration
+    // Per-slot policy and timeframe must be set from the config arrays before auto-registration:
+    // both are read inside AutoRegisterStrategies, and timeframe is consumed by strategy Init, so
+    // an indicator handle created later would otherwise be keyed to the wrong bar size.
     for(int si = 0; si < m_config.strategyConfigCount; si++)
     {
         manager.SetStrategyIntrabarPolicyConfig(si, m_config.strategyIntrabarConfigs[si].defaultPolicy);
+        manager.SetStrategyTimeframeConfig(si, m_config.strategyTimeframes[si]);
     }
     // Strategies beyond strategyConfigCount will use defaults from GetIntrabarPolicy lambda
 
@@ -1991,10 +1994,13 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     }
 }
 
+// The two rows that can name a timeframe are the only ones that ever differ from the chart's;
+// PERIOD_CURRENT in a row means that strategy inherits the base timeframe.
+string momTf  = (m_config.strategyTimeframes[0] == PERIOD_CURRENT ? "inherit" : EnumToString(m_config.strategyTimeframes[0]));
+string candTf = (m_config.strategyTimeframes[4] == PERIOD_CURRENT ? "inherit" : EnumToString(m_config.strategyTimeframes[4]));
 Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile,
-      " | strategyTF=chart(", EnumToString((ENUM_TIMEFRAMES)Period()),
-      ") | momentumScalpTF=", EnumToString(m_config.momentumScalpTimeframe), "(stored,unconsulted)",
-      " candlestickTF=", EnumToString(m_config.candlestickIntrabarTimeframe), "(stored,unconsulted)");
+      " | baseTF=chart(", EnumToString((ENUM_TIMEFRAMES)Period()), ")",
+      " | tfOverride Momentum=", momTf, " Candlestick=", candTf);
 return true;
 }
 
@@ -2021,11 +2027,6 @@ ENUM_INTRABAR_POLICY GetIntrabarPolicy(const string symbol, int strategyIndex, c
 {
     return COrchestratorIntrabarPolicy::GetIntrabarPolicy(
         m_config, GetPointer(m_multiAssetProfiler), symbol, strategyIndex, strategyFlags);
-}
-
-SStrategyTimeframeConfig GetStrategyTimeframeConfig(int strategyIndex) const
-{
-    return COrchestratorIntrabarPolicy::GetStrategyTimeframeConfig(m_config, strategyIndex);
 }
 
 string BuildEnabledStrategyList(const bool& strategyFlags[])
