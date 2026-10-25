@@ -5,7 +5,6 @@
 #ifndef STRATEGY_MGR_TRADE_FEEDBACK_MQH
 #define STRATEGY_MGR_TRADE_FEEDBACK_MQH
 
-#include "StrategyHealthMonitor.mqh"                      // CStrategyHealthMonitor::RecordTradeResult
 #include "../../Core/Trading/TradeAttributionManager.mqh" // CTradeAttributionManager
 #include "../Utils/MagicRange.mqh"                        // IsEngineManagedPosition / CMagicRange
 
@@ -140,15 +139,10 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                         if(contributors[contributorIdx] == "")
                             continue;
                         m_src.UpdatePerformance(contributors[contributorIdx], netProfit);
-                        CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-                        if(healthMonitor != NULL)
-                        {
-                            int stratIdx = m_src.GetStrategyIndexByName(contributors[contributorIdx]);
-                            if(stratIdx >= 0)
-                            {
-                                healthMonitor.RecordTradeResult(stratIdx, netProfit);
-                            }
-                        }
+                        // UpdatePerformance already feeds the health monitor (CStrategyPerformanceHealth
+                        // forwards it as RecordTradeResult). This used to call RecordTradeResult again
+                        // here, so every closed trade entered the rolling sample twice and the
+                        // consecutive-loss park fired after 3 real losses, not its stated 5.
                     }
                 }
 

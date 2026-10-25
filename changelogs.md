@@ -8,7 +8,68 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-25
 
+### Batch 255: one closed trade entered the health sample twice, and the metrics that had no live writer went with the twins above them
+
+**Type:** one real money bug, one log lie, and 486 lines of unreachable code. This is Batch 252's stated "Next"
+item - prove the health monitor's accessors against a caller chain - and the answer was that six methods of
+`CStrategyPerformanceHealth` and one of `CStrategyLifecycle` each begin with a guard the manager's constructor
+makes always true.
+
+**(1) The bug: every closed trade was recorded in the health monitor twice.** `CStrategyMgrTradeFeedback` walked the
+contributor list and called `m_src.UpdatePerformance(name, netProfit)` (which forwards through
+`CStrategyPerformanceHealth::UpdatePerformance` -> `UpdateRecentPerformance` -> `CStrategyHealthMonitor::RecordTradeResult`)
+and then called `healthMonitor.RecordTradeResult(stratIdx, netProfit)` **again** on the next statement. Two call sites, one
+event - the Batch 239 shape, applied to the strategy park instead of the risk budget. Consequences, all in the restrictive
+direction: `consecutiveLosses` grew by 2 per real loss, so `ShouldDisableStrategy`'s `consecutiveLosses >= 5` fired after
+**3** real losing trades instead of five; `recentTradeCount` grew by 2, so the 5-trade sample requirement was met on ~3 real
+trades; and the "20-trade rolling window" held 10 real trades with each outcome duplicated. `winRate` was unaffected because
+numerator and denominator both doubled. The second call site is deleted; the park now enforces the rule it documents. This is
+a change in *when a strategy stops voting*, and it moves toward the documented behaviour, not away from it.
+
+**(2) The always-true guard made six fallbacks dead, and the roster's metric set with them.**
+`CEnterpriseStrategyManager::CEnterpriseStrategyManager()` (`EnterpriseStrategyManager.mqh:493`) calls
+`m_infra.AllocateHealthMonitor()`, which `new`s the monitor at `StrategyMgrInfrastructure.mqh:215`, so every
+`if(m_src.GetHealthMonitor() != NULL) { <monitor answer>; return; }` is taken and nothing under it has ever run:
+`UpdateRecentPerformance`'s roster-ring writes, `CalculateRecentWinRate`'s window count, `CalculateSharpeRatio`'s real
+rolling mean/stdev computation, **`CalculateStrategyMetrics`' whole body** (the only writer of roster `winRate`,
+`profitFactor`, `sharpeRatio` and `recentWinRate`), `ShouldDisableStrategy`'s `>= 10 closed trades` rule and
+`ShouldReEnableStrategy`'s cooldown test. Deleted with them: `CStrategyLifecycle::CheckStrategyDisabling`'s 32-line loop -
+a second park authority that wrote the roster's enabled flag and printed `[Enterprise-Adaptation] Strategy %s disabled by AI
+model degeneration check` from a path no build could enter. The state those twins alone touched is gone from
+`StrategyEntry`: `winRate`, `avgLoss`, `profitFactor`, `sharpeRatio`, `recentWinRate`, `maxConsecutiveLosses`, `lastUpdate`,
+`consecutiveFilterCount`, `recentTrades[20]` + `recentTradeIndex` + `recentTradeCount` (a second rolling window, never written
+once) and `regimePerformance[5]`/`regimeTrades[5]`, with their roster accessors and manager forwarders. From
+`SStrategyHealthEntry`: `healthScore` (the monitor's second copy - read only by its own dead getter, Batch 252's shape again),
+`sharpeRatio` (**no writer anywhere in the tree**, so `GetSharpeRatio` returned 0.0 for the life of every entry),
+`profitFactor`, `maxConsecutiveLosses`, `consecutiveWins`, `lastUpdate`, `netProfit`, `consecutiveFilterCount`,
+`recentTrades[20]`/`recentTradeIndex` and `disabledUntil` (armed by nothing: `CheckAllStrategiesDisabling` sets the flag with no
+cooldown, so `ShouldReEnableStrategy`'s expiry test could never see a non-zero value). Dead monitor methods gone:
+`UnregisterStrategy`, `ClearAll`, `RecordSignalGenerated`, `RecordSignalFiltered`, `UpdateRegimePerformance`,
+`CalculateSharpeRatio`, `CalculateRecentWinRate`, `GetStrategyHealthScore`, `GetProfitFactor`, `GetSharpeRatio`,
+`GetConsecutiveLosses`, `GetMaxConsecutiveLosses`, `IsStrategyTemporarilyDisabled`, `GetStrategyDisabledUntil`,
+`SetStrategyTemporarilyDisabled`, `GetActiveStrategyCount`, `GetTotalStrategyCount`. Four values that flowed from
+`CEntStrategyQuorumConfig` into monitor setters and were read by nothing (`performanceDecayFactor`, `maxDrawdownLimit`,
+`strategyActivityDecayRate`, `strategyInactiveCounterThreshold`) are deleted at both ends.
+
+**(3) The log lie: `[Enterprise-Adaptation] ... (WinRate: %.2f)` printed 0.00 in every build.** Its argument was
+`m_src.GetStrategyWinRate(idx)`, a roster field whose only writer sat under the always-true guard in
+`CalculateStrategyMetrics`; registration sets it to `0.0` (`StrategyMgrRoster.mqh`), so the number beside a park decision was a
+constant. It now prints the monitor's lifetime and recent win rates - the same sample the park was decided from - as
+`(WinRate: %.2f, recent: %.2f, Losses: %d)`. AGENTS.md §6's bullet for this tag said the printed numbers were the strategy's
+own record; they were not.
+
+**Recorded, not fixed, with the reason.** `StrategyEntry::participationScore` is registered at `0.90` and read by consensus
+(`ConsensusEngine.mqh:276`), which also falls back to `0.90` when it reads `<= 0` - so the per-strategy participation term has
+been one constant for every strategy since it was introduced, and making it a real measure is vote arithmetic, not cleanup. The
+park still releases on the next governance pass because `CheckAllStrategiesDisabling` arms no cooldown (`disabledUntil` was the
+field that would have, and it never had a writer); arming a one-hour hold is a *tightening* and belongs with task #55's opposite
+number. `CStrategyHealthMonitor::GetWinRate`/`GetRecentWinRate` survived this sweep only because finding (3) gave them a caller.
+
+**41 added / 487 deleted across nine files.** No lot, stop, take-profit, quorum, threshold or exit moved.
+
 ### Batch 253: the first runtime journal found a silent trade gate, a veto that demanded unanimity, and a funnel that printed zero beside the three fills it had counted
+
+
 
 **Type:** runtime-evidence-driven fixes. This is the first batch judged against an actual running journal
 (`MQL5\Logs\20261023.log`, the attached `Step Index,M15` session) rather than against the tree. Every number quoted below is read out

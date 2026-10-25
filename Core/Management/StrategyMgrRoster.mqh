@@ -51,31 +51,16 @@ public:
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].participationScore : 0.0; }
     double GetStrategyHealthScore(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].healthScore : 0.0; }
-    double GetStrategyRecentWinRate(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentWinRate : 0.0; }
     double GetStrategyAvgProfit(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgProfit : 0.0; }
     int      GetStrategyTotalTrades(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].totalTrades : 0; }
     int      GetStrategyWinningTrades(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winningTrades : 0; }
-    double   GetStrategyWinRate(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winRate : 0.0; }
-    double   GetStrategyAvgLoss(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgLoss : 0.0; }
     int      GetStrategyConsecutiveWins(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveWins : 0; }
     int      GetStrategyConsecutiveLosses(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveLosses : 0; }
-    int      GetStrategyMaxConsecutiveLosses(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].maxConsecutiveLosses : 0; }
-    int      GetStrategyRecentTradeIndex(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeIndex : 0; }
-    int      GetStrategyRecentTradeCount(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeCount : 0; }
-    double   GetStrategyRecentTrade(const int index, const int slot) const
-             { return (index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
-                      ? m_strategies[index].recentTrades[slot] : 0.0; }
     bool     IsStrategyTemporarilyDisabled(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].temporarilyDisabled : false; }
     datetime GetStrategyDisabledUntil(const int index) const
@@ -102,24 +87,10 @@ public:
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveWins = value; }
     void SetStrategyConsecutiveLosses(const int index, const int value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveLosses = value; }
-    void SetStrategyMaxConsecutiveLosses(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].maxConsecutiveLosses = value; }
     void SetStrategyAvgProfit(const int index, const double value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgProfit = value; }
-    void SetStrategyAvgLoss(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgLoss = value; }
-    void SetStrategyWinRate(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].winRate = value; }
-    void SetStrategyProfitFactor(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].profitFactor = value; }
-    void SetStrategySharpeRatio(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].sharpeRatio = value; }
-    void SetStrategyRecentWinRate(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentWinRate = value; }
     void SetStrategyHealthScore(const int index, const double value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].healthScore = value; }
-    void SetStrategyLastUpdate(const int index, const datetime value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastUpdate = value; }
     void SetStrategyTemporarilyDisabled(const int index, const bool value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].temporarilyDisabled = value; }
     void SetStrategyDisabledUntil(const int index, const datetime value)
@@ -127,14 +98,6 @@ public:
     //--- Writes ONLY the entry flag: no push to the IStrategy object.
     void SetStrategyEnabledFlag(const int index, const bool value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
-    //--- slot bound is the fixed recentTrades[20] capacity (m_rollingWindowSize has no setter)
-    void SetStrategyRecentTrade(const int index, const int slot, const double value)
-         { if(index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
-               m_strategies[index].recentTrades[slot] = value; }
-    void SetStrategyRecentTradeIndex(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeIndex = value; }
-    void SetStrategyRecentTradeCount(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeCount = value; }
     void SetStrategyLastSignal(const int index, const ENUM_TRADE_SIGNAL value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastSignal = value; }
     void SetStrategyLastSignalConfidence(const int index, const double value)
@@ -225,28 +188,14 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
     m_strategies[m_strategyCount].lastEvaluationTime = 0;
-    m_strategies[m_strategyCount].consecutiveFilterCount = 0;
 
     m_strategies[m_strategyCount].totalTrades = 0;
     m_strategies[m_strategyCount].winningTrades = 0;
-    m_strategies[m_strategyCount].winRate = 0.0;
     m_strategies[m_strategyCount].avgProfit = 0.0;
-    m_strategies[m_strategyCount].avgLoss = 0.0;
-    m_strategies[m_strategyCount].profitFactor = 0.0;
-    m_strategies[m_strategyCount].sharpeRatio = 0.0;
-    m_strategies[m_strategyCount].recentTradeIndex = 0;
-    m_strategies[m_strategyCount].recentTradeCount = 0;
-    m_strategies[m_strategyCount].recentWinRate = 0.0;
     m_strategies[m_strategyCount].consecutiveLosses = 0;
-    m_strategies[m_strategyCount].maxConsecutiveLosses = 0;
     m_strategies[m_strategyCount].consecutiveWins = 0;
     m_strategies[m_strategyCount].temporarilyDisabled = false;
     m_strategies[m_strategyCount].disabledUntil = 0;
-    m_strategies[m_strategyCount].lastUpdate = 0;
-
-    ArrayInitialize(m_strategies[m_strategyCount].recentTrades, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
 
     if(healthMonitor != NULL)
         healthMonitor.RegisterStrategy();

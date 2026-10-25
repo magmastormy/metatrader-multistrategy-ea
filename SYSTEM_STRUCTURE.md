@@ -292,7 +292,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 - File: `Core/Management/DiagnosticsManager.mqh`
 - Responsibilities:
 - Core heartbeat emission (`[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]`) - journal and JSON log together since Batch 218; before that the payload reached only the JSON file
-  - Consensus diagnostics (`[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT-CONSENSUS]`)
+  - Consensus diagnostics (`[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT-CONSENSUS]`) - **unreachable**: `EmitConsensusDiagnostics` has no caller, so these five tags cannot appear in any journal (recorded in Batch 255, deletion queued)
   - Windowed conversion-rate calculations
   - Indicator manager cleanup
   - NN health checks
@@ -1568,6 +1568,24 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   `FileOpen` wrote the basename into `MQL5\Files\`; the sink had 635 events and every reader who followed the log line concluded
   it had never run. Same batch deleted 18 methods on that class whose only two occurrences were a declaration and a definition -
   including `IsEnabled()`, whose six apparent external callers were `CJsonLogger::IsEnabled()` on a different class.
+- **Two call sites for one event is a doubled sample, not a redundancy** (Batch 255). `CStrategyMgrTradeFeedback` called
+  `CEnterpriseStrategyManager::UpdatePerformance` (which forwards to `CStrategyHealthMonitor::RecordTradeResult`) and then
+  called `RecordTradeResult` again on the next statement. Rates survived it - `winRate` doubled numerator and denominator -
+  but every *count* behind a threshold doubled: the `consecutiveLosses >= 5` park fired after three real losses and the
+  20-trade rolling window held ten real trades. Same rule as Batch 239's reservation double-count, applied to the governance
+  sample: ask what the completing event is, then count the call sites that deliver it.
+- **A fallback under an always-true guard is a second holder that never receives writes** (Batch 255). Six methods in
+  `CStrategyPerformanceHealth` and one in `CStrategyLifecycle` begin `if(m_src.GetHealthMonitor() != NULL) { ...; return; }`,
+  and the manager's constructor allocates the monitor, so the fallbacks had never run - and the roster fields they alone
+  wrote (`winRate`, `profitFactor`, `sharpeRatio`, `recentWinRate`, the `recentTrades[20]` ring) were therefore never written
+  at all, while the monitor held the live copy of the same numbers. Deleting a caller makes its callees write-only (Batch 250);
+  an always-taken branch makes the *other* holder dark in exactly the same way. Prove the guard's truth once (constructor, or
+  `new` + NULL check) and the whole subtree below it falls out as one unit.
+- **A getter with no writer behind it is a constant wearing a measurement's name** (Batch 255). `SStrategyHealthEntry::sharpeRatio`
+  had no writer anywhere in the tree, so `GetSharpeRatio` returned `0.0` and the caller that used it as the strategy's risk-adjusted
+  return was reading a constructor value. `StrategyEntry::participationScore` is the recorded sibling: registered at `0.90`, read
+  live by consensus (`ConsensusEngine.mqh:276`), and the fallback at `:278` is also `0.90` - so the per-strategy participation term
+  has been one constant for every strategy. Recorded, not fixed: making it real is vote arithmetic.
 
 - **The AI query surface was an entry point nobody had** (Batch 251). `CAIEngine::OnAIQuery` has no call in any `.mq5`
   or `.mqh`, and neither did the free `InitializeAIEngine`/`CleanupAIEngine` pair or the `g_AIEngine` global that were the

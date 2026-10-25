@@ -217,11 +217,7 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     {
         m_healthMonitor.SetOrchestratorMode(quorumConfig.GetMinWinRateThreshold(),
                                             quorumConfig.GetMaxConsecutiveLossesLimit());
-        m_healthMonitor.SetPerformanceDecayFactor(quorumConfig.GetPerformanceDecayFactor());
         m_healthMonitor.SetRollingWindowSize(quorumConfig.GetRollingWindowSize());
-        m_healthMonitor.SetMaxDrawdownLimit(quorumConfig.GetMaxDrawdownLimit());
-        m_healthMonitor.SetStrategyActivityDecayRate(quorumConfig.GetStrategyActivityDecayRate());
-        m_healthMonitor.SetStrategyInactiveCounterThreshold(quorumConfig.GetStrategyInactiveCounterThreshold());
     }
 
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);

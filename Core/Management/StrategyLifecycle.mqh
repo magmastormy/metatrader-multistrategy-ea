@@ -32,44 +32,13 @@ void CStrategyLifecycle::CheckStrategyDisabling()
     if(m_src == NULL)
         return;
 
+    // The manager's constructor allocates the monitor, so this guard is always taken. The loop that
+    // used to sit under it was the second park authority: it wrote the roster's enabled flag and
+    // printed "disabled by AI model degeneration check" from a path no build could enter.
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
         healthMonitor.CheckAllStrategiesDisabling();
-        return;
-    }
-
-    const int strategyCount = m_src.GetStrategyCount();
-    for(int i = 0; i < strategyCount; i++)
-    {
-        IStrategy* strategy = m_src.GetStrategyPtr(i);
-        if(strategy == NULL)
-            continue;
-        if(!m_src.IsStrategyEnabled(i))
-            continue;
-        if(m_src.IsStrategyTemporarilyDisabled(i))
-            continue;
-
-        if(strategy.ShouldDisableModel())
-        {
-            m_src.SetStrategyTemporarilyDisabled(i, true);
-            m_src.SetStrategyDisabledUntil(i, TimeCurrent() + 3600); // 1 hour cooldown
-            m_src.SetStrategyEnabledFlag(i, false);
-            PrintFormat("[Enterprise-Adaptation] Strategy %s disabled by AI model degeneration check",
-                        m_src.GetStrategyName(i));
-            continue;
-        }
-
-        if(m_src.ShouldDisableStrategy(i))
-        {
-            m_src.SetStrategyTemporarilyDisabled(i, true);
-            m_src.SetStrategyDisabledUntil(i, TimeCurrent() + 3600); // 1 hour cooldown
-            m_src.SetStrategyEnabledFlag(i, false);
-            PrintFormat("[Enterprise-Adaptation] Strategy %s disabled by governance | recent_winrate=%.2f | losses=%d",
-                        m_src.GetStrategyName(i),
-                        m_src.GetStrategyRecentWinRate(i),
-                        m_src.GetStrategyConsecutiveLosses(i));
-        }
     }
 }
 

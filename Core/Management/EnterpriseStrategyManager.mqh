@@ -153,8 +153,6 @@ public:
            { return m_roster.GetStrategyParticipationScore(index); }
     double GetStrategyHealthScore(const int index) const
            { return m_roster.GetStrategyHealthScore(index); }
-    double GetStrategyRecentWinRate(const int index) const
-           { return m_roster.GetStrategyRecentWinRate(index); }
     CUnifiedSignalPipeline* GetPipelineConst() const { return m_infra.GetPipeline(); }
     CDiagnosticsManager*    GetDiagnosticsConst() const { return m_infra.GetDiagnostics(); }
     string GetManagedSymbol() const { return m_infra.GetManagedSymbol(); }
@@ -228,22 +226,10 @@ public:
              { return m_roster.GetStrategyTotalTrades(index); }
     int      GetStrategyWinningTrades(const int index) const
              { return m_roster.GetStrategyWinningTrades(index); }
-    double   GetStrategyWinRate(const int index) const
-             { return m_roster.GetStrategyWinRate(index); }
-    double   GetStrategyAvgLoss(const int index) const
-             { return m_roster.GetStrategyAvgLoss(index); }
     int      GetStrategyConsecutiveWins(const int index) const
              { return m_roster.GetStrategyConsecutiveWins(index); }
     int      GetStrategyConsecutiveLosses(const int index) const
              { return m_roster.GetStrategyConsecutiveLosses(index); }
-    int      GetStrategyMaxConsecutiveLosses(const int index) const
-             { return m_roster.GetStrategyMaxConsecutiveLosses(index); }
-    int      GetStrategyRecentTradeIndex(const int index) const
-             { return m_roster.GetStrategyRecentTradeIndex(index); }
-    int      GetStrategyRecentTradeCount(const int index) const
-             { return m_roster.GetStrategyRecentTradeCount(index); }
-    double   GetStrategyRecentTrade(const int index, const int slot) const
-             { return m_roster.GetStrategyRecentTrade(index, slot); }
     bool     IsStrategyTemporarilyDisabled(const int index) const
              { return m_roster.IsStrategyTemporarilyDisabled(index); }
     datetime GetStrategyDisabledUntil(const int index) const
@@ -270,37 +256,16 @@ public:
          { m_roster.SetStrategyConsecutiveWins(index, value); }
     void SetStrategyConsecutiveLosses(const int index, const int value)
          { m_roster.SetStrategyConsecutiveLosses(index, value); }
-    void SetStrategyMaxConsecutiveLosses(const int index, const int value)
-         { m_roster.SetStrategyMaxConsecutiveLosses(index, value); }
     void SetStrategyAvgProfit(const int index, const double value)
          { m_roster.SetStrategyAvgProfit(index, value); }
-    void SetStrategyAvgLoss(const int index, const double value)
-         { m_roster.SetStrategyAvgLoss(index, value); }
-    void SetStrategyWinRate(const int index, const double value)
-         { m_roster.SetStrategyWinRate(index, value); }
-    void SetStrategyProfitFactor(const int index, const double value)
-         { m_roster.SetStrategyProfitFactor(index, value); }
-    void SetStrategySharpeRatio(const int index, const double value)
-         { m_roster.SetStrategySharpeRatio(index, value); }
-    void SetStrategyRecentWinRate(const int index, const double value)
-         { m_roster.SetStrategyRecentWinRate(index, value); }
     void SetStrategyHealthScore(const int index, const double value)
          { m_roster.SetStrategyHealthScore(index, value); }
-    void SetStrategyLastUpdate(const int index, const datetime value)
-         { m_roster.SetStrategyLastUpdate(index, value); }
     void SetStrategyTemporarilyDisabled(const int index, const bool value)
          { m_roster.SetStrategyTemporarilyDisabled(index, value); }
     void SetStrategyDisabledUntil(const int index, const datetime value)
          { m_roster.SetStrategyDisabledUntil(index, value); }
     void SetStrategyEnabledFlag(const int index, const bool value)
          { m_roster.SetStrategyEnabledFlag(index, value); }
-    //--- Slot bound is the fixed recentTrades[20] capacity; m_rollingWindowSize is fixed at 20 (no setter).
-    void SetStrategyRecentTrade(const int index, const int slot, const double value)
-         { m_roster.SetStrategyRecentTrade(index, slot, value); }
-    void SetStrategyRecentTradeIndex(const int index, const int value)
-         { m_roster.SetStrategyRecentTradeIndex(index, value); }
-    void SetStrategyRecentTradeCount(const int index, const int value)
-         { m_roster.SetStrategyRecentTradeCount(index, value); }
     void SetStrategyLastSignal(const int index, const ENUM_TRADE_SIGNAL value)
          { m_roster.SetStrategyLastSignal(index, value); }
     void SetStrategyLastSignalConfidence(const int index, const double value)

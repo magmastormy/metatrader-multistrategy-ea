@@ -1707,6 +1707,33 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
 
+## Batch 255 The Closed-Trade Path Reported Every Outcome Twice, and the Roster's Metric Set Turned Out to Have No Writer (2026-10-25)
+
+**Lifecycle evidence.** The attribution loop is the only writer of per-strategy trade outcomes
+(`CStrategyMgrTradeFeedback` -> `CEnterpriseStrategyManager::UpdatePerformance` at `StrategyMgrTradeFeedback.mqh:141`, reached
+from `OnTradeTransaction` when a position closes). Batch 199 gave it contributors to iterate; Batch 255 found it also calling
+`CStrategyHealthMonitor::RecordTradeResult` directly on the next statement for the same contributor, so the monitor's
+`totalTrades`, `winningTrades`, `consecutiveLosses`, `recentTradeCount` and `recentWinRate` all advanced twice per closed trade.
+
+- Ratios survived it (`winRate = winningTrades / totalTrades` doubles both), counts did not. The park rule
+  `consecutiveLosses >= m_maxConsecutiveLosses_Limit (5)` therefore triggered on the third consecutive real loss, and the
+  "20-trade rolling window" (`m_rollingWindowSize = 20`) reached its 5-trade sample requirement on three real trades.
+  Read any pre-255 journal's `[Enterprise-Adaptation] ... DISABLED` as "this strategy lost three in a row", not five.
+- The second call is deleted, so `RecordTradeResult` has exactly one call site again (through
+  `CStrategyPerformanceHealth::UpdateRecentPerformance`). No state file, breaker flag or persisted counter was involved.
+- **A tag can print a number that no code computes.** `[Enterprise-Adaptation] ... (WinRate: %.2f)` read
+  `StrategyEntry::winRate`, whose only writer lived under `CStrategyPerformanceHealth::CalculateStrategyMetrics`' always-taken
+  monitor guard, so the printed value was the registration `0.0` in every build since the field existed. The line now reads the
+  monitor (`GetWinRate` / `GetRecentWinRate`) - the holder the decision is taken from - and gained `recent:`.
+- The roster's second rolling window (`recentTrades[20]`, `recentTradeIndex`, `recentTradeCount`) had **no writer at all** after
+  the twins went: its only writes were inside `UpdateRecentPerformance`'s unreachable fallback. A reader who assumed two
+  holders of the same window (Batch 215's shape) would have found zero live holders of one and one live holder of the other.
+- `CStrategyLifecycle::CheckStrategyReEnabling` is the path that clears a park, and it is reached every cycle from
+  `EAOrchestrator.mqh:3116`. It consults the monitor's flag, which `CheckAllStrategiesDisabling` arms with no expiry, so release
+  lands on the next pass. `disabledUntil` on the monitor never had a writer; the roster's `disabledUntil` is written
+  (`TimeCurrent() + 3600`) and read by no decision. Recorded here because a journal line saying "re-enabled after cooldown" is
+  not evidence an hour passed.
+
 ## Batch 253 First Runtime Journal: the Blocked Scan, the Unanimity Veto, and the Funnel That Counted Its Own Zeros (2026-10-25)
 
 **Lifecycle evidence.** `MQL5\Logs\20261023.log` is the first journal written by a build that had been through this audit cycle,

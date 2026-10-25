@@ -26,32 +26,16 @@ struct StrategyEntry
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
     datetime lastEvaluationTime;
-    int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
 
     int totalTrades;
     int winningTrades;
-    double winRate;
     double avgProfit;
-    double avgLoss;
-    double profitFactor;
-    double sharpeRatio;
-    
-    // Recent performance tracking (20-trade rolling window)
-    double recentTrades[20];
-    int recentTradeIndex;
-    int recentTradeCount;
-    double recentWinRate;
-    
+
     int consecutiveLosses;
-    int maxConsecutiveLosses;
     int consecutiveWins;
-    
+
     bool temporarilyDisabled;
     datetime disabledUntil;
-    datetime lastUpdate;
-
-    double regimePerformance[5];
-    int regimeTrades[5];
 };
 
 string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)

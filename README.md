@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-253-green)
+![Batch](https://img.shields.io/badge/batch-255-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -632,6 +632,38 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 255: a closed trade was counted twice in the strategy park, and the metrics nobody wrote are gone
+
+This is the follow-up to Batch 252's "prove the health monitor's accessors against a caller chain". It found one real
+bug, one log lie, and 486 lines of code no build could enter.
+
+- **Every closed trade entered the health sample twice.** The closed-trade loop called
+  `UpdatePerformance(name, netProfit)` - which already forwards to the health monitor - and then called
+  `RecordTradeResult(stratIdx, netProfit)` again on the next statement. `consecutiveLosses` grew by two per real loss, so
+  the park rule `consecutiveLosses >= 5` fired after **three** losing trades instead of five, and the "20-trade rolling
+  window" held ten real trades with each outcome duplicated. The second call is deleted; the park now enforces the rule
+  its own text describes. Win rate was unaffected (numerator and denominator both doubled).
+- **Six methods had an unreachable half.** `CEnterpriseStrategyManager`'s constructor allocates the health monitor, so every
+  `if(GetHealthMonitor() != NULL) { ...; return; }` in `CStrategyPerformanceHealth` is always taken. The code underneath -
+  a real rolling Sharpe computation, a `>= 10 closed trades` disable rule, a cooldown expiry test, and the only writer of
+  the roster's `winRate`/`profitFactor`/`sharpeRatio`/`recentWinRate` - had never run in any build, and
+  `CStrategyLifecycle::CheckStrategyDisabling`'s 32-line loop (a second park authority, printing
+  "disabled by AI model degeneration check") was unreachable for the same reason. All of it is deleted, together with the
+  state only it touched: the roster's second rolling window (`recentTrades[20]`, never written), `avgLoss`,
+  `maxConsecutiveLosses`, `lastUpdate`, `regimePerformance[]`/`regimeTrades[]`, and on the monitor `healthScore` (a second
+  copy read only by its own dead getter), `sharpeRatio` (**no writer anywhere in the tree**), `profitFactor`,
+  `disabledUntil` (armed by nothing) and seventeen dead accessors.
+- **`[Enterprise-Adaptation] ... (WinRate: ...)` printed 0.00 beside every park.** Its argument was a roster field with no
+  live writer. It now prints the monitor's lifetime and recent win rates - the sample the decision actually came from:
+  `(WinRate: 0.62, recent: 0.40, Losses: 6)`.
+- **Also worth knowing before you read a journal:** `CDiagnosticsManager::EmitConsensusDiagnostics` has no caller, so
+  `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]` and `[NO-SIGNAL-ALERT-CONSENSUS]` cannot
+  appear in any journal - `SYSTEM_STRUCTURE.md` listed them as live emissions, and that row is corrected.
+
+Operator-visible behaviour: a strategy that loses three in a row is no longer parked early; the park still releases on the
+next governance pass because no code arms its cooldown (arming a one-hour hold is a tightening, and it is on the ask list).
+No lot, stop, take-profit, quorum, threshold or exit moved.
 
 ### Batch 253: the first runtime journal - what it showed, and what it corrected
 

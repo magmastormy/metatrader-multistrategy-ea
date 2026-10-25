@@ -34,12 +34,8 @@ private:
     double m_adaptiveSupportFloor_2voters;
     double m_adaptiveQualityThreshold_3plus;
     double m_adaptiveSupportFloor_3plus;
-    double m_strategyActivityDecayRate;
-    int    m_strategyInactiveCounterThreshold;
     bool   m_regimeRelaxActive;
     double m_regimeRelaxFactor;
-    double m_performanceDecayFactor;
-    double m_maxDrawdownLimit;
 
     // Participation score multiplier formula parameters (L6-008)
     double m_participationFormulaBase;
@@ -71,12 +67,8 @@ public:
     double GetAdaptiveSupportFloor2Voters() const      { return m_adaptiveSupportFloor_2voters; }
     double GetAdaptiveQualityThreshold3Plus() const    { return m_adaptiveQualityThreshold_3plus; }
     double GetAdaptiveSupportFloor3Plus() const        { return m_adaptiveSupportFloor_3plus; }
-    double GetStrategyActivityDecayRate() const        { return m_strategyActivityDecayRate; }
-    int    GetStrategyInactiveCounterThreshold() const { return m_strategyInactiveCounterThreshold; }
     bool   IsRegimeRelaxActive() const                 { return m_regimeRelaxActive; }
     double GetRegimeRelaxFactor() const                { return m_regimeRelaxFactor; }
-    double GetPerformanceDecayFactor() const           { return m_performanceDecayFactor; }
-    double GetMaxDrawdownLimit() const                 { return m_maxDrawdownLimit; }
 
     double GetParticipationFormulaBase() const         { return m_participationFormulaBase; }
     double GetParticipationFormulaCoeff() const        { return m_participationFormulaCoeff; }
@@ -120,12 +112,8 @@ CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
     m_adaptiveSupportFloor_2voters(2),
     m_adaptiveQualityThreshold_3plus(0.60),
     m_adaptiveSupportFloor_3plus(3),
-    m_strategyActivityDecayRate(0.95),
-    m_strategyInactiveCounterThreshold(10),
     m_regimeRelaxActive(false),
     m_regimeRelaxFactor(0.80),
-    m_performanceDecayFactor(0.95),
-    m_maxDrawdownLimit(0.20),
     m_participationFormulaBase(0.40),
     m_participationFormulaCoeff(0.65),
     m_participationFormulaMin(0.55),

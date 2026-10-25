@@ -342,6 +342,33 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 
+## Batch 255: The Strategy Park Stops Double-Counting, and the Monitor Becomes the Only Holder of Its Own Numbers (2026-10-25)
+
+**Decision-path changes:**
+
+- **The poor-performance park now fires on the rule it documents.** On a closed trade, `CStrategyMgrTradeFeedback` ran both
+  `CEnterpriseStrategyManager::UpdatePerformance` (which reaches `CStrategyHealthMonitor::RecordTradeResult` through
+  `CStrategyPerformanceHealth`) and a direct `RecordTradeResult` call for the same contributor. The monitor's counters are the
+  inputs to `ShouldDisableStrategy` (`consecutiveLosses >= 5` OR `recentTradeCount >= 5 && recentWinRate < threshold`), so the
+  loss arm fired after **three** real losing trades and the sample arm reached "5 trades" on three as well. The second call site
+  is deleted (`StrategyMgrTradeFeedback.mqh:141`). Net effect on live behaviour: a strategy keeps voting for two more losses than
+  it did before this batch - which is the direction task #55 asks for, and it is a bug fix rather than a loosening because the
+  threshold text never described the doubled arithmetic.
+- `CStrategyLifecycle::CheckStrategyDisabling` (`EAOrchestrator.mqh:3115` per cycle) is now a single call to
+  `CheckAllStrategiesDisabling`. Its 32-line loop - which wrote the roster's enabled flag and printed
+  `[Enterprise-Adaptation] Strategy %s disabled by AI model degeneration check` - sat under the manager-allocated monitor guard and
+  had never run, so deleting it moves nothing. `IStrategy::ShouldDisableModel()` keeps its one live consumer, the release test at
+  `StrategyLifecycle.mqh:66`.
+- The park's release path is unchanged and still does not honour a cooldown: `CheckAllStrategiesDisabling` sets the monitor flag
+  without arming `disabledUntil` (that field never had a writer and is deleted in this batch), so
+  `ShouldReEnableStrategy` returns true on the next governance pass and `ResetRecoverySample` clears the evidence. The one-hour
+  `disabledUntil` written by `CStrategyPerformanceHealth` sits on the roster entry and no decision reads it. Arming it is a
+  tightening, so it is on the ask list rather than shipped here.
+- **No entry, exit, lot or risk threshold changed.** The consensus reliability multiplier still reads
+  `StrategyEntry::healthScore` (`ConsensusEngine.mqh:262`, written at `StrategyPerformanceHealth.mqh:78`), the AI blend still
+  reads and writes the same field, and `[AI-WEIGHT-ADJUST]`'s profitability input is still `StrategyEntry::avgProfit`
+  (`ConsensusWeightingConfig.mqh:63`).
+
 ## Batch 253: The Scan Entry Point Stops Being Silent, and the Conflict Veto Stops Demanding Unanimity (2026-10-25)
 
 **Decision-path changes, both observed on the attached chart:**
