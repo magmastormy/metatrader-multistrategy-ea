@@ -161,6 +161,7 @@ struct SOrchestratorConfig
     double  pipelineMinConfidence;
     double  pipelineIntrabarConfidenceCap;
     bool    pipelineEnableRegimeCostGate;
+    bool    pipelineEngineRegistry;          // binds the shared math-engine registry to each symbol's pipeline
     double  pipelineMaxSpreadToAtrRatio;
     int     pipelineSpreadShockCooldownSec;
     double  pipelineLateEntryZScoreLimit;
@@ -482,6 +483,7 @@ struct SOrchestratorConfig
         pipelineMinConfidence = 0.55;
         pipelineIntrabarConfidenceCap = 0.05;
         pipelineEnableRegimeCostGate = true;
+        pipelineEngineRegistry = false;
         pipelineMaxSpreadToAtrRatio = 0.50;
         pipelineSpreadShockCooldownSec = 90;
         pipelineLateEntryZScoreLimit = 4.00;

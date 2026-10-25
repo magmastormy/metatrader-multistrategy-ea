@@ -8,6 +8,98 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-25
 
+### Batch 258: the journal announced five pipeline filters as ON, and one uncalled setter made every one of them a pass-through
+
+**Type:** one seam bound, shipped behind a default-off input. Task #113 started as "why does `[MARKET-REGIME]`
+never appear in a journal". It ends here at the same missing call, which also covers four other filters.
+
+**(1) The setter had no caller.** `CUnifiedSignalPipeline::SetMathRegistry` (`UnifiedSignalPipeline.mqh:143`)
+occurs in the tree exactly once - its own inline definition. `m_mathRegistry` is constructed NULL (`:151`) and
+nothing assigned it, so every per-symbol pipeline ran its whole life with no handle on the shared engines.
+
+**(2) Which is why the announcement lied.** `MQL5\Logs\20261023.log` prints 11 lines of
+`[UnifiedSignalPipeline] Initialized with filters: Trend=true Volatility=true Liquidity=true Structure=true
+RegimeCostGate=true MaxSpreadATR=0.250 ...` (`UnifiedSignalPipeline.mqh:215-219`) - those flags come from
+`EAOrchestrator.mqh:1802-1823`, so the settings were built and handed over correctly. `[ENTERPRISE-CONFIG] ...
+trend_filter=true` (`:1935`), the field AGENTS.md 6 warns not to read as a filter event, names the same filter that
+returns pass at `SignalPipelineFilter.mqh:149`. Each of the five consumers
+then short-circuited on the NULL registry before testing anything: `SignalPipelineFilter.mqh:41`
+(regime/cost), `:149` (trend), `:241` (volatility), `:286` (liquidity), `:314` (structure) all `return true`.
+`InpPipelineEnableRegimeCostGate` ships `true` (`MultiStrategyAutonomousEA.mq5:242`) and has never gated an entry.
+The journal counts agree: `[COST-GATE]`, `[PIPELINE-THRESHOLD]`, `[ENTRY-VETO]`, `[REGIME-STATE]` and
+`[MARKET-REGIME]` each match 0 lines in that session.
+
+**(3) #113 resolved: the regime snapshot had no way in.** `CEnterpriseStrategyManager::RefreshMarketRegime`
+(`EnterpriseStrategyManager.mqh:925`) obtains its engine from `pipeline.GetRegimeEngine()` - `:141`, which answers
+NULL when the registry is unbound - and returns at `:933`. So Batch 201's writer was reachable and
+unenterable at the same time, `m_currentMarketRegime` stayed `MARKET_REGIME_UNKNOWN`, and the stand-aside that
+Batch 222 documented for an unconfirmed snapshot applied to nobody, because no snapshot was ever asked for. A
+second NULL branch sits above the same seam: `ConsensusEngine.mqh:197` returns the neutral `1.0` multiplier
+whenever the regime getter is NULL.
+
+**(4) Two TTL writes configured nothing.** `EAOrchestrator.mqh:1840` and `:1844` call
+`SetReadinessReuseTtlSeconds` / `SetSnapshotReuseTtlSeconds` on engines fetched from `:137` / `:141`. Unbound, both
+pointers are NULL, both guards skip, and `InpReadinessReuseTtlSeconds` (`:223`, default 60) has never reached an
+engine. `UnifiedSignalPipeline.mqh:241` guards `ConfigureCostLimits` the same way, so
+`InpPipelineMaxSpreadToAtrRatio` never configured the engine that prints it.
+
+**(5) Bound, not switched on.** The seam is one conditional at `EAOrchestrator.mqh:1834-1836` fed by
+`InpPipelineEngineRegistry` (`MultiStrategyAutonomousEA.mq5:239`, `MultiStrategyTestingEA.mq5:396`) through
+`SOrchestratorConfig::pipelineEngineRegistry` (`OrchestratorConfig.mqh:164`, constructor `:486`), and it ships
+`false` - byte-for-byte the behaviour every previous build had. Turning it on adds five veto layers plus the regime
+stand-aside to a book that is already refusing for want of voters: the same journal carries 97 lines of
+`[CONSENSUS-REJECT] ... Winning votes 1 < minVoters 2` against 5 fills. A tightening is operator policy (the
+Batch 233/234 rule), not a cleanup, so this batch makes the state answerable and leaves the choice visible.
+`[PIPELINE-ENGINES] <symbol> | registry=bound|unbound | trend/vol/liq/struct/regimeCost=consulted|inert(pass-through)
+| readinessTTL=applied|not-applied` prints once per symbol at init.
+
+**(6) Ownership proved before thirteen pointers were handed out.** `RegistryAggregator.mqh:93` `new`s the registry,
+`:147-150` deletes it, and `Core/Pipeline/` contains no `delete m_mathRegistry` (grep: zero matches), so the
+pipelines borrow exactly as the aggregator intends. This is the Batch 256 failure shape, checked before binding
+rather than after.
+
+**(7) Recorded, not acted on.** `[COST-GATE]` and `[PIPELINE-HEALTH]` sit behind
+`LOG_IF9`/`LOG_IF7(LOG_LEVEL_DEBUG)`, and `LOG_LEVEL_DEBUG` is `3` at `Core/Utils/Enums.mqh:706` while
+`InpLogLevel` defaults to `1` - a bound registry can therefore refuse an entry with no journal line, which is
+precisely why the mode prints at init instead of relying on the gates. The same name is also `LOG_LEVEL_DEBUG = 4`
+in the enum at `Enums.mqh:132`; two values for one verbosity level is a print-routing bug waiting on a caller, and
+untouched here. `CUnifiedSignalPipeline::PerformHealthCheck`, `IsPipelineHealthy` and `GetEngineHealthStatus` have
+no caller outside their own file, so that health subtree joins Batch 257's built-but-never-called list rather than
+this diff.
+
+**(8) A money finding the same seam exposes, recorded and not fixed.** The live-authority ladder's three pipeline
+bonuses are paid on unbound builds: `contextScore` keeps its struct default `0.5` (`SignalPipelineTypes.mqh:357`)
+against `InpAuthorityMinContextScore = 0.48`, `costScore = 0.72` is written at `SignalPipelineFilter.mqh:38`
+*before* the NULL return at `:42` against the `0.50` floor, and readiness is computed from
+`warmupScore = 0.58` (`SignalPipelineTypes.mqh:33`) against `0.52`. The 2026-10-23 journal proves it fires:
+`[AUTHORITY-REDUCED] Jump 25 Index | mult=0.85 | ... | score=0.70 | AI INDICATOR QUALITY CONVICTION READINESS
+CONTEXT COST` - so `+0.17` of a `0.70` authority score, the number that chooses the lot multiplier, measures nothing.
+AGENTS.md section 6's "a `reason=` without those tokens means the measurement missed its threshold" is corrected by
+this batch in the other direction: with the tokens present it may mean a default passed a floor. Not tightened here
+- requiring `contextPrepared` before crediting would shrink live lots, which is task #114 and an operator call.
+
+**(9) Doc truth moved with it.** 52 filename-qualified `file.mqh:NNN` citations across 48 lines re-pointed (+9 for lines between
+`:1829` and `:1838`, +15 above), then 24 more discovered as bare `:NNN` citations sharing a line with a
+filename-qualified one - a filename-only regex leaves those stale silently, and it is how
+`Emit(&m_diagnosticsManager)` at `:2878` stayed a live-looking number in the Batch 256 record after the emit moved
+to `:2893` (and its argument is `GetPointer()`, not `&`). Eight pointers re-anchored by content because they had
+drifted before this batch: the orchestrator's margin object `:970`->`:966`, its diagnostics read
+`DiagnosticsManager.mqh:299`->`:257`, `SetDailyRiskBudgetPercent` `:1006`/`:1019`->`:1015`,
+`UpdateRiskParametersFromInputs` `:2968`->`:2925`, `m_liveAuthority.Resolve` `:3591`->`:3597`, and two citations
+naming code Batch 238 and Batch 249 deleted, now number-free. 84 `:NNNNone` artifacts stripped across the five
+docs - a suffix no batch wrote deliberately, which made each of those 84 pointers unresolvable. A full
+impossibility scan (every citation checked against its file's real lines) now reports 36 citations landing on a
+blank, a lone brace, or past EOF; several are legitimate range endpoints, and the rest is the sweep Batch 249
+deferred. It becomes its own batch rather than riding on this one.
+
+**(10) Behaviour.** With the input off, nothing a symbol decides changes: one conditional resolves to `NULL`, the
+same value the field already held, and one init line prints. 21 added / 0 deleted across four code files.
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with
+its own `Result:` line; 0 errors / 0 warnings (7.7 / 3.8 / 7.0 / 6.5 / 117.6 / 131.1 / 40.6 / 3.3 s);
+`OVERALL SUCCESS`; all eight `.ex5` newer than every source; `cmp` identical on all four edited files against the
+synced tree; artifacts removed. Not runtime-observed: newest journal 2026-10-23, which is itself the evidence this
+batch documents - `[PIPELINE-ENGINES]` cannot predate its own build.
+
 ### Batch 256: the consensus-diagnostic subsystem had no writer and no reachable printer, and its manager deinit deleted an object it never owned
 
 **Type:** dead-code deletion plus one ownership fix found by following the same chain down. Batch 255 queued

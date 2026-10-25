@@ -236,6 +236,7 @@ input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
 
 input group "Pipeline, Spread & Crisis Filters";
 input bool     InpUseSignalPipeline = true;
+input bool     InpPipelineEngineRegistry = false;  // binds the shared engines to the pipeline's five filters (tightens entries)
 input double   InpPipelineMinConfidence = 0.55;
 input double   InpPipelineIntrabarConfidenceCap = 0.05;
 input bool     InpPipelineEnableRegimeCostGate = true;
@@ -516,6 +517,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.pipelineMinConfidence = InpPipelineMinConfidence;
     config.pipelineIntrabarConfidenceCap = InpPipelineIntrabarConfidenceCap;
     config.pipelineEnableRegimeCostGate = InpPipelineEnableRegimeCostGate;
+    config.pipelineEngineRegistry = InpPipelineEngineRegistry;
     config.pipelineMaxSpreadToAtrRatio = InpPipelineMaxSpreadToAtrRatio;
     config.pipelineSpreadShockCooldownSec = InpPipelineSpreadShockCooldownSec;
     config.pipelineLateEntryZScoreLimit = InpPipelineLateEntryZScoreLimit;

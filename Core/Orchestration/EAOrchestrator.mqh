@@ -1826,6 +1826,15 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
         CUnifiedSignalPipeline* pipeline = manager.GetPipeline();
         if(pipeline != NULL)
         {
+            // m_mathRegistry stayed NULL in every build - SetMathRegistry had no caller - so each pipeline
+            // getter that reads it answered NULL: the five announced filters passed signals straight
+            // through, the two TTL calls below configured nothing, and the manager's regime refresh could
+            // not reach an engine. Binding it turns those filters on, which refuses entries, so the input
+            // ships off and [PIPELINE-ENGINES] states which of the two modes a symbol is in.
+            CMathematicalEngineRegistry* mathRegistry =
+                (m_config.pipelineEngineRegistry ? m_registryAggregator.GetMathRegistry() : NULL);
+            pipeline.SetMathRegistry(mathRegistry);
+
             CTrendEngine* trendEngine = pipeline.GetTrendEngine(symbol);
             if(trendEngine != NULL)
             trendEngine.SetReadinessReuseTtlSeconds(m_config.readinessReuseTtlSeconds);
@@ -1836,6 +1845,12 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
 
             if(m_config.enableSessionWeights)
             pipeline.SetSessionWeightManager(&m_sessionWeightManager);
+
+            PrintFormat("[PIPELINE-ENGINES] %s | registry=%s | trend/vol/liq/struct/regimeCost=%s | readinessTTL=%s",
+                        symbol,
+                        mathRegistry != NULL ? "bound" : "unbound",
+                        mathRegistry != NULL ? "consulted" : "inert(pass-through)",
+                        mathRegistry != NULL ? "applied" : "not-applied");
         }
     }
 

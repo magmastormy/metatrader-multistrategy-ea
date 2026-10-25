@@ -393,6 +393,7 @@ input int      InpCVDDivergenceLookback = 30;
 
 input group "=== ENTERPRISE MODE & CLUSTER GOVERNANCE ==="
 input bool     InpUseSignalPipeline = true;
+input bool     InpPipelineEngineRegistry = false;  // binds the shared engines to the pipeline's five filters (tightens entries)
 input bool     InpAllowSyntheticOffHours = true;
 input double   InpMinTrendStrength = 50.0;
 input double   InpMaxVolatility = 3.0;
@@ -1173,6 +1174,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.pipelineMinConfidence = InpPipelineMinConfidence;
     config.pipelineIntrabarConfidenceCap = InpPipelineIntrabarConfidenceCap;
     config.pipelineEnableRegimeCostGate = InpPipelineEnableRegimeCostGate;
+    config.pipelineEngineRegistry = InpPipelineEngineRegistry;
     config.pipelineMaxSpreadToAtrRatio = InpPipelineMaxSpreadToAtrRatio;
     config.pipelineSpreadShockCooldownSec = InpPipelineSpreadShockCooldownSec;
     config.pipelineLateEntryZScoreLimit = InpPipelineLateEntryZScoreLimit;
