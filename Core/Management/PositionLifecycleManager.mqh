@@ -14,7 +14,6 @@
 #include "..\Cache\ConsensusCache.mqh"
 #include "..\Risk\RiskTierManager.mqh"
 #include "..\Risk\SafeModeConfig.mqh"
-#include "..\Trading\IntelligentSLGuard.mqh"
 #include "..\..\IndicatorManager.mqh"
 
 // Phase H — extracted lifecycle modules (complete types required:
@@ -57,7 +56,6 @@ private:
 
     int    m_magicNumber;
 
-    CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
 
     CPosLifecyclePyramid    m_pyramid;      // pyramiding registry + config

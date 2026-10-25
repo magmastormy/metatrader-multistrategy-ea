@@ -152,9 +152,20 @@ void CConsensusEngine::SyncEnabledWithRegistry()
             synced++;
         }
     }
-    if(synced > 0)
-        PrintFormat("[EnterpriseStrategyManager] %s: reconciled %d strategy enable-flags with registry",
-                    m_src.GetManagedSymbol(), synced);
+    int enabledCount = 0;
+    int liveVotingCount = 0;
+    for(int i = 0; i < strategyCount; i++)
+    {
+        if(m_src.IsStrategyEnabled(i))
+            enabledCount++;
+        if(m_src.IsStrategyLiveVotingEnabled(i))
+            liveVotingCount++;
+    }
+
+    // Prints even when synced == 0: enabled=0/m is the state an operator needs to see, and a line that
+    // only appears when flags changed cannot distinguish "already correct" from "nothing is voting".
+    PrintFormat("[EnterpriseStrategyManager] %s: reconciled %d strategy enable-flags with registry | enabled=%d/%d | liveVoting=%d",
+                m_src.GetManagedSymbol(), synced, enabledCount, strategyCount, liveVotingCount);
 }
 
 // Regime gate values: 0.0 = category has no edge here, vote hard-disabled; 1.0 = allowed; 0.25-0.40 = strongly deweighted.

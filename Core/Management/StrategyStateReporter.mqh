@@ -19,7 +19,6 @@ public:
 
     void SetSource(const CEnterpriseStrategyManager* src) { m_src = src; }
 
-    int    GetActiveStrategyCount() const;
     string GetStrategyWeightsJSON() const;
     static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
     string GetRegisteredStrategyName(const int index) const;
@@ -27,20 +26,6 @@ public:
     void   GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
     int    GetRegisteredStrategyCount() const;
 };
-
-int CStrategyStateReporter::GetActiveStrategyCount() const
-{
-    if(m_src == NULL)
-        return 0;
-
-    int count = 0;
-    for(int i = 0; i < m_src.GetStrategyCount(); i++)
-    {
-        if(m_src.IsStrategyEnabled(i))
-            count++;
-    }
-    return count;
-}
 
 string CStrategyStateReporter::GetStrategyWeightsJSON() const
 {

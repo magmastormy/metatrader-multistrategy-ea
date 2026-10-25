@@ -382,7 +382,6 @@ public:
     void GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
     
 
-    int GetActiveStrategyCount() const;
     void UpdatePerformance(const string strategyName, double netProfit);
     
     void Deinit();
@@ -651,8 +650,8 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered");
     }
 
-    Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
-          GetActiveStrategyCount());
+    Print("[EnterpriseStrategyManager] Auto-registration complete. Registered strategies: ",
+          GetStrategyCount());
 
     // The stored per-row intrabar policy is report-only: the gate that used to consult it was unreachable and is
     // deleted, and the entry path requests EVAL_MODE_NEW_BAR, so the intrabar vote happens only in the
@@ -682,11 +681,6 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 void CEnterpriseStrategyManager::SyncEnabledWithRegistry()
 {
     m_consensusEngine.SyncEnabledWithRegistry();
-}
-
-int CEnterpriseStrategyManager::GetActiveStrategyCount() const
-{
-    return m_stateReporter.GetActiveStrategyCount();
 }
 
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)

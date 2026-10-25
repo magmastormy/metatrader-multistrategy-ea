@@ -8,6 +8,75 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-25
 
+### Batch 259: two init lines reported a roster of zero in every build, and three dead files went out - one came back
+
+**Type:** log truthfulness plus a bounded deletion, with one self-correction written down.
+
+**(1) `0 active strategies` was structural, not a broken roster.** `AutoRegisterStrategies` runs before the
+orchestrator fills the shared `CStrategyRegistry`, so at registration `IsStrategyActive(name)` is false for every
+row and `StrategyRegistryState.mqh:67` overwrites the caller's `enabled=true` argument with `false` - the journal
+carries 176 of `[ENTERPRISE] Strategy <name> disabled by registry (mode filter or not registered)` (16 rows x 11
+symbols). `CConsensusEngine::SyncEnabledWithRegistry` (called once from `EAOrchestrator.mqh:739`) then re-applies
+registry state ~7 s later, and its `reconciled 16 strategy enable-flags` line proves every row ends up enabled. But
+both init prints read `CStrategyStateReporter::GetActiveStrategyCount()` *before* that reconciliation, so
+`[ENTERPRISE] Manager initialized for <symbol> with 0 active strategies` (11 lines) and
+`Auto-registration complete. Active strategies: 0` (13 lines) said the roster was empty in every build that ever
+ran - and AGENTS.md section 6 documents that first line as the per-symbol roster count.
+
+**(2) What the lines say now.** `[ENTERPRISE] Manager initialized for <symbol> | registered=%d | profile= |
+baseTF= | tfOverride ...` prints the registered row count, and `Auto-registration complete. Registered strategies: N`
+same. The reconciliation summary became the roster truth and now prints even when nothing changed:
+`[EnterpriseStrategyManager] <symbol>: reconciled %d strategy enable-flags with registry | enabled=%d/%d |
+liveVoting=%d`. A line that appears only when a flag flips cannot distinguish "already correct" from "nothing is
+voting", which is this repository's recurring silence problem (Batch 242's file reader, Batch 253's blocked scan).
+`liveVoting=` is the `IsStrategyLiveVotingEnabled` subset, i.e. the reversal-exit voter pool.
+
+**(3) The chain that could only answer zero.** With both prints re-pointed,
+`CStrategyStateReporter::GetActiveStrategyCount` and the manager's forwarder lost their last caller and are deleted -
+Batch 250's rule, applied in the same breath as the change that orphans it. `IsStrategyEnabled` itself stays: the
+vote test at `ConsensusEngine.mqh:248`, the dynamic sync at `:144`, `ConsensusWeightingConfig.mqh:130`,
+`StrategyLifecycle.mqh:60`/`:121` and `EnterpriseStrategyManager.mqh`'s regime refresh all still call it.
+
+**(4) Three files deleted.** `Strategies/SMCFiles/PremiumDiscount.mqh` (325 lines, `CSMCPremiumDiscount` +
+`SOTEZone` + `ENUM_PRICE_ZONE`), `Core/Strategy/StrategyWrapper.mqh` (45, `CStrategyWrapper`) and
+`Core/Trading/IntelligentSLGuard.mqh` (83, `CIntelligentSLGuard`) - none of the three is `#include`d by any
+translation unit, so they compile into no program. The SL guard was the one that was *included*:
+`CPositionLifecycleManager` held `CIntelligentSLGuard m_slGuard` by value, and `m_slGuard.` has no occurrence
+anywhere - constructed, destructed, never asked for anything, with its `1.5` ATR-spike and `30 s` min-age constants
+unread. Its include, its member and the `OrchestratorFwd.mqh` forward declaration go with it. Deleting rather than
+wiring: a second stop-moving authority beside `CPositionLifecycleManager` and `CRiskCircuitBreaker` is Batch 245's
+shape, and this one would have wanted its own input block (an ask, not a cleanup).
+
+**(5) One deletion reversed, and why it is written down.** `Core/Scalp/ScalpVolatilityBreakout.mqh` was deleted with
+them and then restored. `SYSTEM_AUDIT_TRACE.md` Batch 216 records it as a deliberate keep with a rule: unreachable
+*construction* is deleted, a wired-but-undriven *feature* is recorded, and "a complete strategy class that no program
+includes" is neither - deleting it closes an option, enabling it opens a trading path that has never traded, which is
+activation, not hygiene. `SYSTEM_STRUCTURE.md` section 4 carries the same row with what activation requires (catalog
+row, `SI_*` slot, enable input, registration). I found that record after the deletion, so the file is back, byte
+identical, and the rule now applies to the other two by contrast: `CSMCPremiumDiscount` is not a
+`CStrategyBase` strategy that someone might activate - it is an SMC zone calculator with no catalog identity - and
+`CStrategyWrapper` is a 45-line shim around an interface its callers never used. Recorded here because a reversal of
+a documented decision needs the batch, the winner and the restore point, not a silent revert.
+
+**(6) Checked and left, because they are live or because deletion needs its own decision.**
+`CTrendTrailingStop` looked dead by its setter list and is not: `StrategyTrend.mqh:459` calls
+`CalculateTrailingStop` on a NULL-guarded holder (`:413`), so only its uncalled setters are dead.
+`CExitOptimizer`, `CVolumeProfileEngine`, `CVWAPEngine` and `CCVDEngine` are the opposite case - each is `new`ed,
+`Initialize`d and registered, and then no method of theirs is ever called (`GetExitOptimizer` has zero callers; the
+volume-profile getter has zero; the only calls on the hub arrays are `Initialize`/`Deinit`), so they cost init time
+and memory and answer nothing. They keep their own batch because the orchestrator's `[VOLUME-PROXY]` line, two
+registry holders, `enableExitOptimizer`/`enableVolumeProfile`/`enableVWAPEngine`/`enableCVDEngine` and the hub's
+three registration paths all move with them, and because wiring an exit optimizer is exactly the kind of trading
+decision that has to be asked for.
+
+**(7) Totals and verification.** 22 added / 485 deleted across nine files (six modified, three deleted).
+`sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its own
+`Result:` line; 0 errors / 0 warnings (7.3 / 3.6 / 6.9 / 8.1 / 124.9 / 105.9 / 35.9 / 2.3 s); `OVERALL SUCCESS`; all eight `.ex5` newer than every source;
+`cmp` identical on all seven edited or restored files against the synced tree; the synced copies of the three deleted headers removed;
+artifacts removed. No quorum, veto, threshold, lot, stop or exit moved: the two changed strings are init prints and
+the deleted code was unreachable. Not runtime-observed: newest journal 2026-10-23, which is where the
+`0 active strategies` evidence comes from.
+
 ### Batch 258: the journal announced five pipeline filters as ON, and one uncalled setter made every one of them a pass-through
 
 **Type:** one seam bound, shipped behind a default-off input. Task #113 started as "why does `[MARKET-REGIME]`

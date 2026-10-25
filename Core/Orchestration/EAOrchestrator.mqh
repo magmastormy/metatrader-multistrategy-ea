@@ -2011,9 +2011,12 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
 // PERIOD_CURRENT in a row means that strategy inherits the base timeframe.
 string momTf  = (m_config.strategyTimeframes[0] == PERIOD_CURRENT ? "inherit" : EnumToString(m_config.strategyTimeframes[0]));
 string candTf = (m_config.strategyTimeframes[4] == PERIOD_CURRENT ? "inherit" : EnumToString(m_config.strategyTimeframes[4]));
-Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile,
-      " | baseTF=chart(", EnumToString((ENUM_TIMEFRAMES)Period()), ")",
-      " | tfOverride Momentum=", momTf, " Candlestick=", candTf);
+// Registered rows, not enabled ones: AutoRegisterStrategies locks every row disabled against a registry
+// that is still empty, so an enabled count here reads 0 for every symbol; the truth is one line per
+// symbol from SyncEnabledWithRegistry's enabled=/liveVoting= summary.
+PrintFormat("[ENTERPRISE] Manager initialized for %s | registered=%d | profile=%s | baseTF=chart(%s) | tfOverride Momentum=%s Candlestick=%s",
+            symbol, manager.GetStrategyCount(), symbolProfile,
+            EnumToString((ENUM_TIMEFRAMES)Period()), momTf, candTf);
 return true;
 }
 

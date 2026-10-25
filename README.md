@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-258-green)
+![Batch](https://img.shields.io/badge/batch-259-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3605`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3608`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -633,6 +633,37 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 259: the init line said `0 active strategies` in every build, and it was measuring the wrong moment
+
+`AutoRegisterStrategies` registers against a `CStrategyRegistry` the orchestrator has not filled yet, so
+`StrategyRegistryState.mqh:67` locks all 16 rows disabled - the 2026-10-23 journal carries 176
+`[ENTERPRISE] Strategy <name> disabled by registry` lines - and `SyncEnabledWithRegistry` releases them about 7
+seconds later (176 `Synced strategy ... -> enabled=true`, eleven `reconciled 16 strategy enable-flags`). Both init
+prints read the *enabled* count before that reconciliation, so they reported an empty roster no matter what the
+book ended up as, and AGENTS.md section 6 documents one of them as the per-symbol roster count.
+
+- **Now:** `[ENTERPRISE] Manager initialized for <symbol> | registered=N | profile=... | baseTF=... | tfOverride ...`
+  and `Auto-registration complete. Registered strategies: N`, while the reconciliation line carries the state that
+  gates trading: `reconciled N strategy enable-flags with registry | enabled=n/m | liveVoting=k`. It prints even when
+  `N=0`, because a line that only appears when a flag flips cannot tell "already correct" from "nothing is voting".
+- **Deleted with their last caller:** `CStrategyStateReporter::GetActiveStrategyCount` and the manager forwarder
+  behind it. `IsStrategyEnabled` keeps six live readers, so the vote path is untouched.
+- **Unreachable classes gone:** `Strategies/SMCFiles/PremiumDiscount.mqh` (325 lines) and
+  `Core/Strategy/StrategyWrapper.mqh` (45) were included by nothing, and `Core/Trading/IntelligentSLGuard.mqh` (83)
+  was held by value in `CPositionLifecycleManager` with no method call on it - `m_slGuard.` appears nowhere. Its
+  include, member and forward declaration go too; wiring it would have created a second stop authority beside the
+  lifecycle guard and the circuit breaker.
+- **One deletion reversed inside the batch:** `Core/Scalp/ScalpVolatilityBreakout.mqh` came back byte identical.
+  Batch 216 recorded it as a deliberate keep - a complete strategy class that nothing includes is neither
+  unreachable construction nor an undriven feature, and deleting it closes an option that only you should open.
+- **Left for its own batch:** `CExitOptimizer`, `CVolumeProfileEngine`, `CVWAPEngine` and `CCVDEngine` are built,
+  initialized and registered, and then never consulted (their registry getters have zero callers). Four inputs, two
+  registries and the `[VOLUME-PROXY]` line move with them, and an exit optimizer is a trading decision, not hygiene.
+  `CTrendTrailingStop` looked dead by its setter list and is not - `StrategyTrend.mqh:459` calls
+  `CalculateTrailingStop`.
+
+22 added / 485 deleted across nine files. No entry, exit, lot, quorum or threshold moved.
+
 ### Batch 258: the pipeline's five filters were announced as ON and had never run, because one setter was never called
 
 `CUnifiedSignalPipeline::SetMathRegistry` has no call site in any build. Every filter, every engine getter
@@ -643,11 +674,11 @@ the pipeline had no engines at all.
   Liquidity=true Structure=true RegimeCostGate=true` prints at init, while `SignalPipelineFilter.mqh:41` returns
   "pass" for a NULL engine. So `[COST-GATE]`, `[ENTRY-VETO]`, `[PIPELINE-THRESHOLD]`, `[PIPELINE-HEALTH]`,
   `[REGIME-STATE]` and `[MARKET-REGIME]` each have **0** lines in the attached 2026-10-23 session, and so does
-  `[CONSENSUS-REGIME-VETO]`: `ConsensusEngine.mqh:197` fetches the regime engine, gets NULL, and `:199` returns
+  `[CONSENSUS-REGIME-VETO]`: `ConsensusEngine.mqh:208` fetches the regime engine, gets NULL, and `:210` returns
   weight `1.0`. Batch 204's regime veto, Batch 222's 0.30 stand-aside and the per-category regime multipliers have
   never touched a vote.
 - **And for sizing: the bonuses were paid from constants.** The live-authority ladder reads the pipeline's evidence
-  (`ConsensusEngine.mqh:567-590` -> `LiveAuthorityResolver.mqh:213-223`), and unbound that evidence is never
+  (`ConsensusEngine.mqh:578-601` -> `LiveAuthorityResolver.mqh:213-223`), and unbound that evidence is never
   measured - it is its own default: `contextScore = 0.5` (`SignalPipelineTypes.mqh:357`) against
   `InpAuthorityMinContextScore = 0.48`, `costScore = 0.72` written before the NULL return
   (`SignalPipelineFilter.mqh:38`) against `InpAuthorityMinCostScore = 0.50`, and readiness computed from
@@ -812,7 +843,7 @@ What the docs had been repeating as live behaviour, and what the code could not 
 - `AdaptToPerformance` gated strategy parking and re-enabling on `m_predictionAccuracy < 0.4` / `> 0.6`. The only writer,
   `UpdatePredictionAccuracy`, sat behind `ProvideFeedback`. So the two branches were unreachable arithmetic on a 0.5
   constant, and what actually parks a strategy has always been the orchestrator's 60 s governance sweep
-  (`EAOrchestrator.mqh:3119-3132`), which is untouched.
+  (`EAOrchestrator.mqh:3122-3135`), which is untouched.
 - `AdaptToRegime` multiplied a threshold by the regime factor (0.9 / 1.1 / 1.2), stored it in a local, walked the
   managers with an empty body, and returned. Batch 201's records - here and in `SYSTEM_STRUCTURE.md` /
   `RUNTIME_DECISION_GRAPH.md` / `SYSTEM_AUDIT_TRACE.md` - said AI entries became more permissive in a confirmed trend.
@@ -892,7 +923,7 @@ last one restated the band rule Momentum already enforces, and a second holder o
 init line now tells the truth instead of annotating its own uselessness:
 
 ```
-[ENTERPRISE] Manager initialized for EURUSD with 12 active strategies | profile=balanced |
+[ENTERPRISE] Manager initialized for EURUSD | registered=16 | profile=STANDARD |
   baseTF=chart(PERIOD_H1) | tfOverride Momentum=PERIOD_M5 Candlestick=PERIOD_M5
 ```
 
@@ -1267,7 +1298,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3605`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3608`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.
@@ -1345,7 +1376,7 @@ per-symbol operating-timeframe decision, where you choose a timeframe per strate
 What shipped is the truth on the line you already read at init:
 
 ```
-[ENTERPRISE] Manager initialized for EURUSD with 12 active strategies | profile=... |
+[ENTERPRISE] Manager initialized for EURUSD | registered=16 | profile=... |
   strategyTF=chart(PERIOD_M1) | momentumScalpTF=PERIOD_M5(stored,unconsulted) candlestickTF=PERIOD_M5(stored,unconsulted)
 ```
 
