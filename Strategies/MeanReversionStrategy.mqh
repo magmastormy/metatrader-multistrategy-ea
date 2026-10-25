@@ -402,7 +402,7 @@ public:
             
                     SValidationResult result;
                     ZeroMemory(result);
-                    if(riskMgr.ValidateTradeRequest(request, "MEANREV_SYN").approved)
+                    if(riskMgr.ValidateTradeRequest(request, "MEANREV_SYN", "", false).approved)
                     {
                         m_lastSignalBar = iBars(m_symbol, m_timeframe);
                         m_signalsGenerated++;

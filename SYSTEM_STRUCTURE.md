@@ -178,7 +178,7 @@ min R:R enforcement (2.0 default, 1.5 for the mean-reversion cluster; the "1:5" 
   - consume only registry-enabled descriptors so disabled strategies and disabled AI adapters do not enter live manager pools or denominator math
   - execute strategy voting and confidence aggregation
   - own the single authoritative `GetSignal(...)` call for each strategy evaluation so strategies do not pre-consume per-bar state ahead of consensus
-  - resolve cross-timeframe vote conflicts via `CTimeframeConsistency`
+  - hold a `CTimeframeConsistency` that nothing feeds (Batch 260 deleted its only writer)
   - dispatch `OnNewBar` to each strategy using its registered timeframe
   - apply normalized weighted quorum rules by evaluation mode (new-bar vs intrabar eligible pool)
 - classify intrabar strategy participation as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent
@@ -1276,7 +1276,10 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 Live path is `CConsensusEngine::EvaluateConsensusInternal` (the Two-Tier, probe-only and fallback-solo siblings have no caller).
 
 - `m_src.RefreshMarketRegime()` publishes the per-symbol regime into the signal context first, so AI adaptation and this scan read the same snapshot.
-- Per live voter: raw signal and confidence, then `CUnifiedSignalPipeline::ProcessSignal` may filter it (`[CONSENSUS-FILTERED]`). A NONE or filtered signal contributes nothing.
+- Per live voter: `GetSignal` once, then `CUnifiedSignalPipeline::ProcessSignal(symbol, tf, rawSignal, confidence)` filters that
+  same signal (`[CONSENSUS-FILTERED]`). Before Batch 260 the pipeline re-polled the strategy, so a voter that records its signal on
+  emission failed its own cooldown or same-bar guard on the second call and its vote was dropped with a blank `filtered by `. A NONE
+  or filtered signal contributes nothing.
 - **Vote score** = `stratConf × weight × participation × reliability × regimeCategoryMult`.
   - `weight` is the catalog row's weight, operator-overridden at init (`[CATALOG]`).
   - `participation` = `clamp(0.55, 1.05, 0.40 + 0.65 × participationScore)`; `participationScore` is registered at 0.90 and never updated, so this is a constant 0.985 (recorded in §4.8).
@@ -1295,7 +1298,9 @@ Live path is `CConsensusEngine::EvaluateConsensusInternal` (the Two-Tier, probe-
 - `confidence = min(0.95, winningQuality × 0.8 + supportRatio × 0.2)`; `confluence = winningVotes`; class is `SPARSE_INTRABAR` when intrabar and fewer than three eligible live voters, else `FULL_QUORUM`.
 - Winning contributor indices are published through `SetLastSignalContributors` with the dominant role, cluster tag and normalized cluster code — the input Batch 199's attribution, `[TRADE-ATTRIBUTION]`, `[RISK-CLUSTER]` governance and `[AUTHORITY-LEARN]` all read.
 - The decision context also publishes the winning side's mean pipeline evidence — `convictionScore` (raw `stratConf`), `readinessScore`, `contextScore`, `costScore` — plus `readyLiveWeight` / `totalLiveWeight`, the numerator and denominator of the ready-ratio gate (Batch 205). `CLiveAuthorityResolver` sizes the lot from the first four.
-- Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final acceptance; post-quorum nullification prints `[CONSENSUS-VETO]`.
+- Mixed-timeframe conflicts are **not** resolved anywhere: the manager's `CTimeframeConsistency` is allocated, initialised and
+  NULL-tested, and no code feeds or consults it (Batch 260 deleted `ProcessMTFSignals`, its only writer, which had no caller).
+  Post-quorum nullification prints `[CONSENSUS-VETO]` and is a consensus-vote test, not a timeframe resolution.
 - **Legacy vocabulary still in this file's older notes:** "role multiplier", "dynamic weight decay", "contribution class denominator", and the veto codes `insufficient_quality` / `insufficient_support` / `insufficient_readiness_weight` / `direction_quorum_not_met` describe the Batch 82 implementation and match no code in the repository. The live strings are the `[CONSENSUS-REJECT]` reasons above. `convictionScore`, `readinessScore`, `contextScore`, `costScore`, `readyLiveWeight` and `totalLiveWeight` now have writers (Batch 205: the winning side's mean pipeline evidence, which `CLiveAuthorityResolver`'s lot ladder and the candidate log read); `diversityScore`, `directionalWeight`, `readyCoverage` and `stalenessPenalty` had no reader outside the struct's own copy operations and were deleted in Batch 205.
 
 ### 4.3 Validation

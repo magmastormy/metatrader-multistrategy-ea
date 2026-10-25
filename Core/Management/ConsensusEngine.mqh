@@ -536,7 +536,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         if(pipeline != NULL)
         {
             double filteredConf = stratConf;
-            ENUM_TRADE_SIGNAL filteredSignal = pipeline.ProcessSignal(entryStrategy, symbol, m_src.GetStrategyTimeframe(i), filteredConf);
+            ENUM_TRADE_SIGNAL filteredSignal = pipeline.ProcessSignal(symbol, m_src.GetStrategyTimeframe(i), signal, filteredConf);
 
             if(filteredSignal == TRADE_SIGNAL_NONE)
             {

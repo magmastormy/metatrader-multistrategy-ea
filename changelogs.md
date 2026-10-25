@@ -8,6 +8,101 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-25
 
+### Batch 260: a strategy's vote reserved the daily risk budget, and every voter was polled twice per scan
+
+**Type:** two money defects in one seam, both counted out of the attached 2026-10-23 journal, plus the dead island the
+second fix exposed.
+
+**(1) The gate booked risk for votes.** Eleven strategies call `CStrategyBase::ValidateWithRiskManager`
+(`StrategyBase.mqh:460`) from inside `GetSignal`, `MeanReversionStrategy.mqh:405` and
+`StatisticalArbitrageStrategy.mqh:263` call `ValidateTradeRequest` directly, and none of those calls is a send: the
+request carries a placeholder lot (`StrategySupportResistance.mqh:509` says so in its own print,
+`[S/R-LOT-DEFERRED] ... placeholder=0.010 (broker min)`) and the entry is sized and gated again later by
+`CCandidateBuilder` under phase `final-lot`. Inside every one of those calls `RunInternal` reserves virtual portfolio
+risk before the gates and releases it only on a rejection branch (`RiskValidationPipeline.mqh:414-420`), so each
+approved vote kept a hold.
+
+**(2) The journal counted it, and the count is doubled.** `MQL5\Logs\20261023.log` (UTF-16LE, the attached `Step Index,M15` session) carries
+1,092 `[RISK-VIRTUAL] reserve` lines booking 67.08% of risk. 1,024 of them - 63.79% of the booked total - print an
+empty `cluster=`, which is the strategy-poll shape: only `CandidateBuilder.mqh:470` and `FastScalpEntry.mqh:70`
+assign `strategyCluster`. 953 sit at lot 0.01. Endings: 52 `[RISK-VIRTUAL] release`, 253 `pruned`, so roughly 787
+holds were discharged by nothing but their 60 s TTL. Most of the 1,024 are the same vote booked twice - `16:27:59.229 [CONSENSUS-DIAG] Jump 75 Index | SELL ... Reason: SR_UNSET` -> `16:27:59.230 [S/R-LOT-DEFERRED] ... placeholder=0.010` -> `16:27:59.230 [RISK-VIRTUAL] reserve | owner=Jump 75 Index_ORDER_TYPE_SELL_1443628039` -> `16:27:59.231 [CONSENSUS-DIAG] ... SR_UNSET` is one Support/Resistance vote in one scan, booked twice and printed twice - so ~500 votes cast booked ~1,000 reservations and printed ~1,000 diagnostics lines. Peak concurrent reservation total measured 35.21% against
+`InpMaxDailyRisk = 4.0`, and the refusals it produced name themselves: all five `[RISK-DAILY-LIMIT]` lines carry
+`phase=TURTLE-SOUP` or `phase=MOMENTUM`, seven strategy rejects read `Virtual reservation conflict on <symbol>
+(opposing candidate already reserved)`, and beside them `[RISK-DAILY-CAP] effective=4.65% capped to limit=4.00% |
+entry_used=0.00% | mtm=0.00% | open_exp=0.00%` - the budget was full of votes while the account held nothing.
+
+**(3) What shipped.** `const bool reserveBudget = true` threaded through `CRiskValidationPipeline::Run`/`RunInternal`
+(`RiskValidationPipeline.mqh:254-263`, `:274-292`) and `CUnifiedRiskManager::ValidateTradeRequest`
+(`UnifiedRiskManager.mqh:190`, `:721`), and the three poll sites pass `false`. A vote now asks "would the gate allow
+this?" and claims nothing; the pre-send gates - `final-lot`, `scalp`, `atr-scalp-pretrade`, `grid-pretrade`,
+`spike-pretrade` - keep the reservation exactly as before.
+
+**(4) Why a vote's own verdict cannot move.** Inside one call every read of the book happens before the reserve
+(`:384` `reservedRisk`, `:399` `HasOpposingReservation`), `ValidatePortfolioRisk` is passed
+`virtualReserved ? provisionalRiskPct : 0.0` and subtracts it at `:986`, and the daily projection calls
+`GetEffectiveDailyRiskUsedPercent(reservedRisk + result.riskPercent)` - this candidate's risk is added outright, not
+read from the book. Skipping the hold therefore cannot change the answer a poll gets; it only stops the poll from
+being counted as a position by the next caller.
+
+**(5) The second poll destroyed votes.** `CConsensusEngine::EvaluateConsensusInternal` polls a voter
+(`ConsensusEngine.mqh:528`) and, for a non-NONE answer, handed the same strategy to
+`CUnifiedSignalPipeline::ProcessSignal`, which polled it a **second** time (`UnifiedSignalPipeline.mqh:356` before
+this batch). A strategy that records its signal - Momentum writes `m_lastSignalTimestamp` at
+`SimpleMomentumStrategy.mqh:769` - then fails its own cooldown test (`:566`) on the repeat call and returns NONE, so
+the pipeline reported a filter veto and consensus dropped a vote that had just been cast. In that session Momentum
+emitted three signals (`[CONSENSUS-DIAG] ... Reason: MOMENTUM_SIGNAL_SELL` x3), three
+`[MOMENTUM] Filtered: MOMENTUM_COOLDOWN` lines follow at the same timestamps, and three of the five
+`[CONSENSUS-FILTERED] ... | filtered by ` lines with a **blank** filter name are Momentum's: nothing vetoed it, the
+strategy refused to answer twice in a row. Turtle Soup and Support/Resistance each lost one vote the same way. The
+repeat call also double-counted `m_signalsGenerated`/`RecordSignal()` - Batch 255's shape - and printed `[S/R-LOT-DEFERRED]` 611 times and `[CONSENSUS-DIAG]` 995 times for ~500 votes.
+
+**(6) What shipped instead.** `ProcessSignal` takes the voter's signal as a parameter
+(`UnifiedSignalPipeline.mqh:293`, `:321`) and no longer holds a strategy pointer, so a scan asks each voter once.
+`confidence` keeps its in/out contract: it arrives as the first poll's value, and every filter adjustment (the
+soft-band attenuation and the context/readiness/staleness blend at `:530-535`) lands on it as before. The
+budget-exhausted early return now names itself - `m_lastFilterName = "BudgetExhausted"` (`:314`) - so
+`[CONSENSUS-FILTERED] ... filtered by ` cannot print blank while the pipeline returns NONE: `LogResult` writes a name
+only on a veto, and this was the one veto that left none.
+
+**(7) The island that deletion exposed.** `ProcessMTFSignals` was the only remaining caller that could poll inside
+the pipeline, and it has zero call sites in any `.mq5` or `.mqh` - declared `:104`, defined `:594`, never entered. It
+goes with `Core/Pipeline/SignalPipelineAggregator.mqh` (54 lines, its only reader), the pipeline's
+`CTimeframeConsistency* m_tfConsistency` (member, constructor, destructor, and the `Initialize` block that allocated,
+initialised and printed two `[UnifiedSignalPipeline] ERROR: TimeframeConsistency ...` lines that no build had any
+reason to print), the `component initialization incomplete; fail-closed startup` line it existed to justify, and
+`m_lastRawSignalNone` with its zero-caller `WasLastSignalRawNone()` - write-only once the second poll went. What
+remains is the manager's own instance (`StrategyMgrInfrastructure.mqh:175`), allocated per symbol, initialised,
+NULL-tested at `ConsensusEngine.mqh:109` and never consulted: no code in the tree calls any of its methods, so the
+docs claiming manager consensus resolves mixed-timeframe conflicts were corrected in this batch's doc pass, and the
+island is queued for deletion with its file list in task #116.
+
+**(8) A comment that claimed more than the code.** `StrategyBase.mqh:116` said of this helper "approval applies its
+confidence multiplier". `ValidateWithRiskManager` never writes `confidence` - it reads it for the rejection print -
+and after this batch the approval also reserves nothing. Corrected in place.
+
+**(9) Behaviour.** Vote-shaped reservations stop: the daily and portfolio projections lose 63.79 points of booked
+risk that came from votes, and poll-vs-poll `VIRTUAL_RESERVATION_CONFLICT` refusals lose their cause. Momentum's votes
+reach the tally. Nothing was loosened for a real entry: `final-lot` and the four engine pre-send tags still reserve
+against the same ceilings, the filter chain still vets every signal it is handed, and a strategy still sees
+`approved=false` and abstains when the gate refuses. One residual leak is recorded, not fixed: 64 of the 1,092
+carried `TREND_CLUSTER`, the fast-scalp gate at `FastScalpEntry.mqh:74`, which approves and whose caller can still
+walk away at `:102` (`[SCALP-LOT-MIN]`) or inside `Execute` at `:126`/`:138`/`:144` and on `[SCALP-ASYNC-FAILED]`,
+leaving the hold to its TTL. Closing that needs the owner tag returned to the caller - the gap Batch 239 recorded, and
+which the new `symbol_phase_ORDERTYPE_micros` tag now makes attributable.
+
+**(10) Verification.** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs,
+each with its own `Result:` line; 0 errors / 0 warnings (9.0 / 3.6 / 6.9 / 7.6 / 158.9 / 361.6 / 112.8 / 6.2 s); `OVERALL SUCCESS`; no source newer than the last `.ex5`; `cmp`
+byte-identical on every edited header; 46 added / 178 deleted across eight files, one of them deleted; totals re-read from the
+final tree after every doc edit. the stale synced copy of `SignalPipelineAggregator.mqh` removed; artifacts
+removed. Documentation: 24 `file.mqh:NNN` citations re-pointed by these hunks across the five current-state docs, 7 anchors in six edits
+re-anchored by content (four of them stale before this batch landed on a blank line - `RiskValidationPipeline.mqh:489`
+to `:490`, `:522` to `:548`, `:1124` to `:778`, `UnifiedRiskManager.mqh:675` to `:692`, and the `:409-411`/`:410-412`
+reserve ranges to `:414-420`), and the TimeframeConsistency claims in `RUNTIME_DECISION_GRAPH.md` and
+`SYSTEM_AUDIT_TRACE.md` corrected to what the tree does. Journal evidence is the attached 2026-10-23 `Step Index,M15`
+session: (1)-(2) and (5) are counted from it; (3)-(6) have not been seen running. Next: #116, then #112, #114, #55,
+and #53 last.
+
 ### Batch 259: two init lines reported a roster of zero in every build, and three dead files went out - one came back
 
 **Type:** log truthfulness plus a bounded deletion, with one self-correction written down.

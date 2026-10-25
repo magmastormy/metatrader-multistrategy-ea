@@ -187,7 +187,7 @@ public:
     // Public only so the pipeline reaches it through IRiskPipelineHost; no default argument - every call site passes one.
     virtual double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent);
 
-        SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime", const string corrId = "");
+        SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime", const string corrId = "", const bool reserveBudget = true);
         void ConfigureClusterGovernance(const bool enabled,
                                     const int maxConcurrentPerCluster,
                                     const double maxClusterRiskPercent,
@@ -715,9 +715,10 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
 // The one entry authority: thin forwarder, every pre-trade gate is evaluated inside CRiskValidationPipeline::Run.
 SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidationRequest &request,
                                                             const string phaseTag,
-                                                            const string corrId)
+                                                            const string corrId,
+                                                            const bool reserveBudget)
 {
-    return m_validationPipeline.Run(request, phaseTag, corrId);
+    return m_validationPipeline.Run(request, phaseTag, corrId, reserveBudget);
 }
 
 void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,

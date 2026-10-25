@@ -260,7 +260,7 @@ public:
                     validationReq.requestTime = TimeCurrent();
 
                     SetProposedStops(validationReq.stopLossPips, validationReq.takeProfitPips);
-                    SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq);
+                    SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq, "STATARB", "", false);
                     if(!validationResult.approved)
                     {
                         SetDecisionReasonTag("STATARB_RISK_REJECTED");

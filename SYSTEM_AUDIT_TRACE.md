@@ -4,7 +4,7 @@
 - Last Updated: 2026-10-25
 - Last Architecture Sync: 2026-10-25
 - Scope: End-to-end lifecycle and logic traces
- - Current Batch: 259
+ - Current Batch: 260
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -226,7 +226,7 @@ no longer exist (§8). Current-state truth is in `SYSTEM_STRUCTURE.md` (ownershi
   - **CNYOpenGapStrategy** in `Strategies/NYOpenGapStrategy.mqh`: NY session open gap (NDOG) fade during 13:30-14:00 UTC. Gap size > 0.5×ATR(14,D1). Fades gap direction. Confidence: base 0.50 + FVG (+0.10) + large gap >1.0×ATR (+0.08) + near gap level (+0.07), capped 0.95. SL beyond gap extreme + 0.5×ATR, TP at previous close. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: skips Volatility/Boom/Crash/Jump/Step. Owned: `CSessionGapDetector(PERIOD_D1)`, `CImbalanceDetector`. Log: `[NYGAP]`. Enum: `STRATEGY_NY_OPEN_GAP=14`.
   - **CAsianRangeBreakStrategy** in `Strategies/AsianRangeBreakStrategy.mqh`: Asian session range (00:00-06:00 UTC) breakout during London open (07:00-07:30 UTC). Requires tight range < 0.8×ATR. Confidence: base 0.50 + range compression < 0.5×ATR (+0.10) + structure (+0.08) + fast CHOCH (+0.07), capped 0.95. SL at opposite range boundary, TP 2× range size. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: same as NY Open Gap. Owned: `CICTKillZones(sessionCount=2, autoDetect=true)`, `CMarketStructureAnalyzer(swings=3)`. Log: `[ASIANRB]`. Enum: `STRATEGY_ASIAN_RANGE_BREAK=15`.
 - **NOT IN THIS REPOSITORY** - `CPartialCloseManager` in `Strategies/UnifiedICTFiles/PartialCloseManager.mqh`: the file does not exist (Batch 218 check). Partial closes are owned per engine: `[PARTIAL-PROFIT]` (`PosLifecycleExit.mqh:134`), `[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`.
-- **NOT IN THIS REPOSITORY** - `CTimeframeConfluence` in `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`: the file does not exist (Batch 218 check). The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), which prints `[TimeframeConsistency]` and feeds the post-quorum veto; its 40/30/30 multi-TF scoring never shipped.
+- **NOT IN THIS REPOSITORY** - `CTimeframeConfluence` in `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`: the file does not exist (Batch 218 check). The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), which prints `[TimeframeConsistency] Initialized with mode:` per symbol and is then never consulted - the only code that fed it (`CUnifiedSignalPipeline::ProcessMTFSignals`) had zero callers and is deleted in Batch 260; its 40/30/30 multi-TF scoring never shipped and no post-quorum veto reads it.
   - **AdvancedOrderBlocks.mqh** upgrade: `GetFreshness(int obIndex)` returns 0.0-1.0 freshness decay for order blocks. Used by BreakerBlockStrategy.
   - **MarketStructureAnalyzer.mqh** upgrade: 5 fast structure detection methods — `DetectFastCHOCH()`, `DetectWickBOS()`, `DetectCISDDisplacement()`, `GetSwingHighLevel()`, `GetSwingLowLevel()`. Used by FVGScalper, TurtleSoup, BreakerBlock, AsianRangeBreak.
   - **LiquidityDetector.mqh** upgrade: `SExternalLiquidityPool` struct + `DetectExternalSwingLiquidity()` for swing-based external liquidity detection. Used by TurtleSoupStrategy.
@@ -1675,7 +1675,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Silent control made loud:** `[RISK-ENVELOPE]` skipped its own log when only the drawdown-warning threshold was clamped; the term is in the condition and `ddWarn A->B` in the message.
 - **State added:** none. No new fields, files or counters; two log lines changed shape (`[SCALP-RISK-ADJUSTED]` gained lot-from/lot-to/reason, `[COMPOUNDING-TIER]` gained the tier value it clamped from).
 - **§3 invariants:** §3.1 holds with one gate per scalp instead of two; §3.2 execution ownership untouched; §3.3 lifecycle untouched; §3.5 unaffected.
-- **Found by:** Batch 191's comment pass, then verified line by line before being written here — the same report's two other claims (a halt nobody can clear, a CVaR gate with no data) were disproved against `UnifiedRiskManager.mqh:1337` and `:680`.
+- **Found by:** Batch 191's comment pass, then verified line by line before being written here — the same report's two other claims (a halt nobody can clear, a CVaR gate with no data) were disproved against `UnifiedRiskManager.mqh:1338` and `:680`.
 
 ## Batch 193 Registration From the Catalog, Four Restored Entry Paths (2026-10-14)
 
@@ -1706,6 +1706,33 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:155`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 260 A Strategy's Vote Reserved the Daily Risk Budget, and the Pipeline Polled Every Voter Twice (2026-10-25)
+
+- **Lifecycle of one reservation, before:** a strategy inside `GetSignal` called `ValidateTradeRequest` on a placeholder lot,
+  the gate reserved virtual risk before its own tests, and approval kept the hold. The reservation was never covered by a
+  position (Batch 239's `PruneCoveredByPositions` matches on the symbol, side, volume and `POSITION_TIME`, and a vote has no
+  position), never released (the owner tag was not returned to the caller), so only its 60 s TTL ended it. The 2026-10-23
+  session counts 1,092 of those lines, 1,024 of them from strategy polls, 52 releases and 253 prunes.
+- **Lifecycle now:** a poll passes `reserveBudget=false` (`StrategyBase.mqh:460`, `MeanReversionStrategy.mqh:405`,
+  `StatisticalArbitrageStrategy.mqh:263`), so it answers the same gates and books nothing. Only a gate whose approval becomes
+  a send holds risk - `final-lot` at `CandidateBuilder.mqh:556`, and the four engine pre-send tags - and the reservation's owner
+  tag now carries that phase (`symbol_phase_ORDERTYPE_micros`), which is what makes the remaining TTL expiries attributable.
+- **Voter lifecycle:** each enabled voter is polled once per scan. `CUnifiedSignalPipeline::ProcessSignal` no longer calls
+  `strategy.GetSignal`; it filters the signal the voter produced, so a strategy's own cooldown or same-bar guard can no longer
+  see a second request in the same scan. That path used to discard votes (Momentum: three cast, three
+  `[MOMENTUM] Filtered: MOMENTUM_COOLDOWN`, three blank `[CONSENSUS-FILTERED] ... filtered by ` lines) and to double-count
+  `m_signalsGenerated`/`RecordSignal()`.
+- **Deinit/teardown unchanged** except that each symbol's pipeline no longer allocates a `CTimeframeConsistency`, so the
+  pipeline's two allocation-failure error lines and its fail-closed line cannot print. `Initialize` can now fail only on
+  invalid filter settings.
+- **Startup prints removed:** `[UnifiedSignalPipeline] ERROR: TimeframeConsistency allocation failed`,
+  `... initialization failed`, `... component initialization incomplete; fail-closed startup`. Their absence in a newer journal
+  is this batch, not a broken build. The per-symbol `[UnifiedSignalPipeline] Initialized with filters: ...` line is unchanged.
+- **Subsystem left standing on purpose:** the manager's `CTimeframeConsistency` (`StrategyMgrInfrastructure.mqh:175`) is
+  allocated, initialised, NULL-tested at `ConsensusEngine.mqh:109` and consulted by nothing - now documented as such and
+  queued for deletion (#116), because a consensus path that fails closed on an object nothing reads is a startup gate with no
+  purpose.
 
 ## Batch 259 The Init Line Reported an Empty Roster in Every Build, and Three Unreachable Classes Went Out (2026-10-25)
 
@@ -1755,7 +1782,7 @@ The journal shows 176 `[ENTERPRISE] Strategy <name> disabled by registry (mode f
 **Lifecycle evidence.** Registration is where the seam was missing. `InitializeEnterpriseManagerForSymbol`
 (`EAOrchestrator.mqh:1776`) builds one `CUnifiedSignalPipeline` per symbol through the manager, configures the
 filter settings block at `:1802-1823`, and hands it over - but never bound the engine registry, because
-`CUnifiedSignalPipeline::SetMathRegistry` (`UnifiedSignalPipeline.mqh:143`) has no call site anywhere in the tree.
+`CUnifiedSignalPipeline::SetMathRegistry` (`UnifiedSignalPipeline.mqh:138`) has no call site anywhere in the tree.
 `m_mathRegistry` is therefore `NULL` from its constructor (`:151`) for the life of every pipeline, and the five
 getter facades at `:137-141` answer `NULL`. The scan-time consequence is at `SignalPipelineFilter.mqh:41`/`:149`/
 `:241`/`:286`/`:314`: each filter fetches its engine, sees `NULL`, and `return true` before testing a threshold.
@@ -1764,7 +1791,7 @@ getter facades at `:137-141` answer `NULL`. The scan-time consequence is at `Sig
   `EAOrchestrator.mqh:1834-1836` now resolves to the aggregator's registry or to `NULL`, and the shipped default is
   `NULL`, which is what the field already held. `[PIPELINE-ENGINES]` prints that per-symbol state once at init.
 - **Two TTL writes and one cost-limits write had no target.** `:1840`/`:1844` guard on the engine pointer, so
-  `InpReadinessReuseTtlSeconds` never reached `CTrendEngine` or `CRegimeEngine`; `UnifiedSignalPipeline.mqh:241`
+  `InpReadinessReuseTtlSeconds` never reached `CTrendEngine` or `CRegimeEngine`; `UnifiedSignalPipeline.mqh:215`
   guards `ConfigureCostLimits` the same way. With the input on, all three now configure live objects.
 - **The regime reader is downstream of the same seam.** `CEnterpriseStrategyManager::RefreshMarketRegime`
   (`EnterpriseStrategyManager.mqh:919`) returns at `:927` when `GetRegimeEngine()` answers `NULL`, so no build

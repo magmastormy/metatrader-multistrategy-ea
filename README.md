@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-259-green)
+![Batch](https://img.shields.io/badge/batch-260-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:467` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:850-851` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:476` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:850-851` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -369,7 +369,7 @@ The pre-trade gate used to be called before the position was sized, with `lotSiz
 - **A risk-manager lot cut is now visible:** `[SCALP-RISK-ADJUSTED] XAUUSD | lot 0.05 -> 0.03 | reason=...`. Adoption is shrink-only — the pipeline can round a reduction up to the broker minimum, and that is no longer taken.
 - **Compounding tiers can no longer size above the envelope.** A tier wrote its raw risk percent straight into the position sizer, which does not clamp, while the envelope clamp applies only on the risk-manager path: the per-trade cap check then refused the entries, so a tier could look applied and trade nothing. `[COMPOUNDING-TIER] Applied to PositionSizer` names the clamped value when it binds.
 - **`[RISK-ENVELOPE]` no longer skips a warning-only clamp,** and the line gained `ddWarn A->B`.
-- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1337`), and the CVaR gate is fed by the equity-curve buffer (`:680`). Neither was "fixed".
+- Two things reported during the audit were disproved before being acted on: the daily-loss halt clears itself at the trading-day roll (`UnifiedRiskManager.mqh:1338`), and the CVaR gate is fed by the equity-curve buffer (`:680`). Neither was "fixed".
 
 ### Batch 193: five things that were stopping valid trades, and one strategy that could never start
 
@@ -632,6 +632,50 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 260: a strategy's vote reserved the daily risk budget, and every voter was polled twice per scan
+
+Two money defects in the same seam, both counted out of the attached 2026-10-23 journal.
+
+- **Votes were holding money.** That session carries 1,092 `[RISK-VIRTUAL] reserve` lines booking 67.08% of risk against
+  **five** fills. 1,024 of them print an empty `cluster=`, which is the strategy-poll shape (only `CandidateBuilder.mqh:470`
+  and `FastScalpEntry.mqh:70` ever assign a cluster), and 953 are at lot 0.01 - the placeholder a strategy builds for a
+  signal it is only deciding whether to emit. One Support/Resistance vote in one scan booked two reservations and printed
+  its DIAG line twice (`16:27:59.229` / `16:27:59.230` / `16:27:59.231`, owners `..._1443626511` and `..._1443628039`),
+  so ~500 votes cast held ~1,000 reservations. 52 releases and 253 prunes means roughly 787 of those holds ended only when
+  their 60 s TTL expired, and peak concurrent reserved risk measured 35.21% against `InpMaxDailyRisk = 4.0`.
+- **And the votes were then refused by it.** All five `[RISK-DAILY-LIMIT] ... daily_risk_would_exceed` refusals carry
+  `phase=TURTLE-SOUP` or `phase=MOMENTUM` - a gate refusing a strategy its own teammates' phantom holds - and seven strategy
+  rejects read `Virtual reservation conflict on <symbol> (opposing candidate already reserved)` with
+  `[RISK-DAILY-CAP] ... entry_used=0.00% | mtm=0.00% | open_exp=0.00%` beside them. Now `reserveBudget=false` reaches the gate
+  from the three poll sites (`StrategyBase.mqh:460` for eleven strategies, `MeanReversionStrategy.mqh:405`,
+  `StatisticalArbitrageStrategy.mqh:263`), so a vote answers the gates and claims nothing. `final-lot` and the four engine
+  pre-send tags still reserve - nothing was loosened for a trade.
+- **Every voter was polled twice, and the second answer destroyed the first.** `CConsensusEngine` polled the voter
+  (`ConsensusEngine.mqh:528`) and then handed the same strategy to `CUnifiedSignalPipeline::ProcessSignal`, which polled it
+  again. A strategy that records its emission - Momentum writes `m_lastSignalTimestamp` at
+  `SimpleMomentumStrategy.mqh:769` - fails its own cooldown (`:566`) on the repeat call and returns NONE, so consensus dropped
+  the vote and printed `[CONSENSUS-FILTERED] ... | filtered by ` with a blank name (`LogResult` names a filter only on a veto;
+  nothing vetoed - the strategy refused to answer twice in a row). Three Momentum signals, three
+  `[MOMENTUM] Filtered: MOMENTUM_COOLDOWN` receipts, three of the five blank-filter lines. The repeat also double-counted
+  `m_signalsGenerated`/`RecordSignal()` and printed 611 `[S/R-LOT-DEFERRED]` lines for a path that runs once per scan.
+- **Now:** `ProcessSignal(symbol, tf, rawSignal, confidence)` filters the signal the voter already produced, confidence keeps
+  its in/out contract, and the budget-exhausted return names itself (`m_lastFilterName = "BudgetExhausted"`), so that tag can
+  no longer print blank while the pipeline returns NONE.
+- **Deleted with the second poll:** `ProcessMTFSignals` (zero call sites), `Core/Pipeline/SignalPipelineAggregator.mqh`
+  (54 lines, its only reader), the pipeline's own `CTimeframeConsistency` holder with two `[UnifiedSignalPipeline] ERROR:`
+  lines that no build needed, the `component initialization incomplete; fail-closed startup` line it justified, and
+  `m_lastRawSignalNone` with its uncalled getter. What remains of that subsystem is the manager's instance - allocated,
+  initialised, NULL-tested at `ConsensusEngine.mqh:109`, and consulted by nobody, which is why the four docs that said
+  consensus resolves mixed-timeframe conflicts now say it does not, and the island is queued (#116).
+- **Read `[RISK-VIRTUAL] owner=` differently from this batch:** it is `<symbol>_<phase>_<ORDER_TYPE>_<micros>`, so a
+  reservation says which gate booked it. Counting `reserve` lines in an older journal measures votes, not trades.
+- **Recorded, not fixed:** the fast-scalp gate at `FastScalpEntry.mqh:74` approves and its caller can still walk away at
+  `:102`/`:126`/`:138`/`:144`, leaving the hold to its TTL (64 of the 1,092). Closing it needs the owner tag returned to the
+  caller - Batch 239's gap, now attributable.
+
+46 added / 178 deleted across eight files, one of them deleted. No lot, stop, take-profit, quorum or threshold moved: a poll's own verdict is
+unchanged, because every read of the reservation book inside a call happens before the reserve or subtracts it.
 
 ### Batch 259: the init line said `0 active strategies` in every build, and it was measuring the wrong moment
 

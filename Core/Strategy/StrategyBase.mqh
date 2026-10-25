@@ -113,9 +113,9 @@ protected:
     bool RefreshForNewBar();
     virtual void OnRefreshComponents() {}
 
-    // Pre-trade risk gate: validates the request through CUnifiedRiskManager; approval applies its confidence multiplier.
-    // Fail-open on a NULL injection, but RegisterStrategy refuses a strategy that did not take it
-    // (StrategyRegistryState.mqh:122), so a registered strategy always reaches the real gate.
+    // Pre-trade risk gate: asks whether the unified manager would allow this signal; confidence is only read, by
+    // the rejection line. reserveBudget=false because a vote is not a send and the lot carried is the broker
+    // minimum. Fails open on a NULL injection, but RegisterStrategy refuses one (StrategyRegistryState.mqh:122).
     bool ValidateWithRiskManager(const STradeValidationRequest &request,
                                  const string tagPrefix,
                                  double &confidence);
@@ -457,7 +457,7 @@ bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &reque
 
     SValidationResult result;
     ZeroMemory(result);
-    result = (*riskMgr).ValidateTradeRequest(request, tagPrefix);
+    result = (*riskMgr).ValidateTradeRequest(request, tagPrefix, "", false);
 
     if(!result.approved)
     {

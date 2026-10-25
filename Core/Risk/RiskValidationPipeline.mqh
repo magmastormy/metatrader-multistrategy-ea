@@ -249,14 +249,18 @@ public:
         m_maxClusterRiskPercent    = maxClusterRiskPercent;
     }
 
+    // reserveBudget=false: answer the gates without claiming risk headroom. A caller that only asks "would this
+    // be allowed?" (a strategy's pre-signal poll) must not reserve, because no send follows on that lot.
     SValidationResult Run(const STradeValidationRequest &request,
                           const string phaseTag = "runtime",
-                          const string corrId = "");
+                          const string corrId = "",
+                          const bool reserveBudget = true);
 
     // Validation body; Run() wraps it for timing and approve/reject counts.
     SValidationResult RunInternal(const STradeValidationRequest &request,
                           const string phaseTag = "runtime",
-                          const string corrId = "");
+                          const string corrId = "",
+                          const bool reserveBudget = true);
 
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
@@ -269,10 +273,11 @@ public:
 
     SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &request,
                           const string phaseTag,
-                          const string corrId)
+                          const string corrId,
+                          const bool reserveBudget)
     {
         ulong validationStartUs = GetMicrosecondCount();
-        SValidationResult result = RunInternal(request, phaseTag, corrId);
+        SValidationResult result = RunInternal(request, phaseTag, corrId, reserveBudget);
         if(result.approved)
             m_validationStats.RecordApproval();
         else
@@ -283,7 +288,8 @@ public:
 
     SValidationResult CRiskValidationPipeline::RunInternal(const STradeValidationRequest &request,
                                                const string phaseTag,
-                                               const string corrId)
+                                               const string corrId,
+                                               const bool reserveBudget)
     {
     SyncConfig();
 
@@ -403,12 +409,15 @@ public:
 
     // Reserve before the gates so the trade counts toward portfolio risk; released on rejection, kept on approval.
     // Reserve() refuses riskPercent<=0 and lotSize<=0, hence the provisional risk, re-synced by UpdateVirtualPositionRisk().
+    // Skipping the reserve cannot change this call's answer: the book is read before this line, and both the
+    // portfolio test and the daily projection add this candidate's risk outright instead of via the book.
     int preValidationReservations = m_virtualPositionBook.GetReservationCount();
     double provTradeRisk = m_host.CalculateTradeRisk(request.symbol, request.lotSize, request.stopLossPips);
     double provDenom = CRiskMath::GetRiskDenominator();
     double provisionalRiskPct = (provTradeRisk > 0.0 && provDenom > 0.0) ? (provTradeRisk / provDenom) * 100.0 : 0.0;
-    string virtualOwnerTag = StringFormat("%s_%s_%lld", request.symbol, EnumToString(request.orderType), GetMicrosecondCount());
-    bool virtualReserved = (provisionalRiskPct > 0.0) &&
+    string virtualOwnerTag = StringFormat("%s_%s_%s_%lld", request.symbol, phaseTag,
+                                          EnumToString(request.orderType), GetMicrosecondCount());
+    bool virtualReserved = reserveBudget && (provisionalRiskPct > 0.0) &&
                            m_host.ReserveVirtualPosition(virtualOwnerTag, request, provisionalRiskPct);
 
     string validationMessage = "";
@@ -766,7 +775,7 @@ public:
             result.riskPercent = (tradeRiskReduced / riskDenom) * 100.0;
     }
 
-    // The margin gate above priced request.lotSize, and the lot floor at :522 can have raised it since. Re-check on the
+    // The margin gate above priced request.lotSize, and the lot floor at :548 can have raised it since. Re-check on the
     // lot the candidate actually ships, so a round-up to the broker minimum cannot be approved on margin never verified.
     if(result.adjustedLotSize > request.lotSize)
     {

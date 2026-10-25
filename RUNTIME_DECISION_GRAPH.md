@@ -292,7 +292,9 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
 `SScalpConfig` carries those five numbers; `SetScalpSetup`'s `setupType` (0=none, 1=momentum, 2=spread,
 3=breakout) was the ghost of the three-strategy design and is deleted in Batch 216 - nothing read it.
 
-- Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
+- No mixed-timeframe conflict resolution runs: the manager allocates and NULL-tests a `CTimeframeConsistency` that nothing
+  feeds, and Batch 260 deleted `ProcessMTFSignals`, the only path that ever could. Consensus is the vote tally in
+  `CConsensusEngine`, and each voter is polled once per scan.
 - OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
 - Strategy `OnNewBar(...)` handlers are state-refresh only; manager consensus owns the single authoritative `GetSignal(...)` call for each strategy evaluation cycle.
 - Pending new-bar work is durable across cycles: symbols that miss the current evaluation budget stay queued ahead of intrabar work until they are processed.
@@ -540,7 +542,7 @@ getter chain had no caller, so both were dialog-only and every strategy register
   `InpMinLotRiskMultiplier = 15.0`: a round-up the sizer refused at 5x was approved at 15x by the gate that sets the lot,
   so one position could risk fifteen times the configured per-trade figure.
 - **New refusal edge.** `allowMinLotRoundUp = false` now reaches the gate, not just the sizer:
-  `[RISK-GATE-REJECT] <symbol> | reason=lot_below_min_roundup_disabled` at `RiskValidationPipeline.mqh:526`, which
+  `[RISK-GATE-REJECT] <symbol> | reason=lot_below_min_roundup_disabled` at `RiskValidationPipeline.mqh:535`, which
   releases the virtual reservation like every other rejection.
 - **New init print.** `[RISK-ROUNDUP-CEILING] asked= | enforced= | ceiling=MAX_MIN_LOT_RISK_MULTIPLIER` from
   `CUnifiedRiskManager::Initialize` when an ask exceeds the ceiling, because a silent clamp is the Batch 225 failure
@@ -594,7 +596,7 @@ getter chain had no caller, so both were dialog-only and every strategy register
   reservation selected first by `reservedAt` because the swap-remove compaction leaves the book unordered.
 - **Why the caps saw two trades.** `CPortfolioRiskManager::GetPortfolioRisk()` counts the open position from the fill,
   and the reservation still carried the same risk, so every projection on `reservedRisk + openExposureRisk` -
-  `RiskValidationPipeline.mqh:378-381`, `:795`, `:976-979` and `CUnifiedRiskManager`'s remaining-budget and snapshot
+  `RiskValidationPipeline.mqh:384-381`, `:795`, `:976-979` and `CUnifiedRiskManager`'s remaining-budget and snapshot
   fields - read one trade as two for up to a minute.
 - **The lot had to travel with the risk.** `UpdateVirtualPositionRisk` now takes `result.adjustedLotSize` at `:833`, so a
   correlation-shrunk or min-lot-floored fill can still match its own reservation. Without it the fix would have missed
@@ -641,7 +643,7 @@ Both changes sit on the entry edge, and both were declared in the inputs dialog 
   roster could send against one stale measurement; `InpMaxTradeSendsPerCycle` had no reader anywhere in the tree.
   Only an executed send decrements the budget (`:3589`), so a deduped or broker-refused send does not spend it. The
   test sits before validation deliberately: an approved candidate keeps a virtual portfolio reservation
-  (`RiskValidationPipeline.mqh:404-412`, TTL 60 s at `VirtualPosition.mqh:242`) whose owner tag embeds
+  (`RiskValidationPipeline.mqh:414-420`, TTL 60 s at `VirtualPosition.mqh:242`) whose owner tag embeds
   `GetMicrosecondCount()` and is therefore unreconstructable by the caller, so a slot validated then held would reserve
   risk for a minute against no position. Batch 239 added the other ending: `PruneCoveredByPositions()` (`:89`)
   discharges a reservation once an open position covers it, because `GetPortfolioRisk()` counts that position and the
@@ -673,7 +675,7 @@ pointed at a plausible neighbour - and surfaced only while re-anchoring the clai
   (`EAOrchestrator.mqh:3608`) applies it, shrink-only. The bullets now separate what was true when written from what
   closed it, in the same way Batch 231 marked the probe-path correction.
 - **The README's correlation row** described a `CPositionSizer` path "explicitly disabled at `:886`". Batch 226 deleted
-  that path; the row now cites `RiskValidationPipeline.mqh:467` -> the REDUCE shrink at `:694`, and the comment at
+  that path; the row now cites `RiskValidationPipeline.mqh:476` -> the REDUCE shrink at `:694`, and the comment at
   `EAOrchestrator.mqh:850-851` that records the deletion.
 - **Field deleted:** `STradeCandidate::liveAuthorityRiskMult` - two writers (`CandidateBuilder.mqh`'s stub and the
   orchestrator after `Resolve`), zero readers. The value that sizes the trade is the parameter handed to
@@ -962,7 +964,7 @@ Removed from `CPositionSizer` (all unreachable, not disabled):
 | `SetCorrelationThresholds` and the three params it wrote | zero call sites |
 | `useVolatilityAdjustment` | no ctor initialiser, written `true` once by the orchestrator, read by nothing |
 
-Correlation sizing stays single-authority: `RiskValidationPipeline.mqh:713-729` REDUCE tier ->
+Correlation sizing stays single-authority: `RiskValidationPipeline.mqh:722-729` REDUCE tier ->
 `adjustedLotSize`, adopted by the consensus builder, the fast scalp (Batch 192) and, from Batch 224, the ATR
 scalp, grid and spike books. Wiring the sizer's own shrink back on would stack two reductions on one lot -
 the Batch 213 double-ADX failure one layer down.
@@ -1005,7 +1007,7 @@ sole reader multiplied confidence by it), `SPositionSizingParams::correlationAdj
 
 | Path | What was wrong | Change |
 |---|---|---|
-| `RiskValidationPipeline.mqh:638` family cap | `DERIV_UNKNOWN` is the "not a Deriv synthetic" answer, and it was counted as a family: six of thirteen default symbols shared one 3-position bucket | cap runs only for a real family; the non-Deriv half is bounded by the per-symbol and total caps |
+| `RiskValidationPipeline.mqh:647` family cap | `DERIV_UNKNOWN` is the "not a Deriv synthetic" answer, and it was counted as a family: six of thirteen default symbols shared one 3-position bucket | cap runs only for a real family; the non-Deriv half is bounded by the per-symbol and total caps |
 | `ATRScalpEntry.mqh:165` / `GridRecoveryExecution.mqh:69` / `SpikeHunterExecutor.mqh:229` | printed `reason=` from `SValidationResult.reason` (never assigned anywhere in `Core/Risk/`) and read only `.approved`, discarding `adjustedLotSize` / `riskPercent` | print `.message`; adopt the shrink-only lot with `[ATR-SCALP-RISK-ADJUSTED]` / `[GRID-RISK-ADJUSTED]` / `[SPIKE-RISK-ADJUSTED]` |
 | `GridRecoveryExecution.mqh:49` | `PassesRiskValidation` took `lotSize` by value, so it could not pass an adjustment back | takes `double &lotSize`; the engine records the level lot after the send, so table and position agree |
 
@@ -1025,7 +1027,7 @@ Path touched: `CCandidateBuilder::BuildCandidate` sizing block -> `CUnifiedRiskM
 | Limit | Comparison | Why it could not bind | Change |
 |---|---|---|---|
 | min-lot round-up ceiling, `CandidateBuilder.mqh:789` | `floorMult = brokerMinLot / lotSize <= m_minLotRiskMultiplier` | `lotSize > brokerMinLot` in the enclosing branch forces `floorMult < 1.0`; ceiling 15.0 | compare `brokerMinLot / newLot`, refuse above it, stop before the round-up at `:519` |
-| post-adjustment daily risk, `RiskValidationPipeline.mqh:795` | `projectedDailyRisk > maxDailyRiskPercent` | the getter clamps to `maxDailyRiskPercent`, so `>` is impossible | `>=` (matches `:365`) plus `[RISK-DAILY-LIMIT]` |
+| post-adjustment daily risk, `RiskValidationPipeline.mqh:804` | `projectedDailyRisk > maxDailyRiskPercent` | the getter clamps to `maxDailyRiskPercent`, so `>` is impossible | `>=` (matches `:365`) plus `[RISK-DAILY-LIMIT]` |
 | per-cluster risk cap, `RiskClusterBudget.mqh` | `"T" -> 10.0`, `"R" -> 5.0` absolute | a stored percent replaces `m_maxClusterRiskPercent`, which only `InpRiskMaxClusterExposurePct` writes | factors 2.0x / 1.0x of the configured cap; dead `SetClusterRiskCap` pair deleted |
 
 New/refused log lines: `[RISK-GATE-REJECT] ... reason=drawdown_lot_below_min`,
@@ -1101,7 +1103,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
   `Core/Utils/LogMacros.mqh` had no call site, so eight tags - `[HEARTBEAT]` first among them, the one
   AGENTS.md section 6 asks for first - could not appear in a journal whatever the runtime did. Each now prints
   from the same values at the same call site; the two per-symbol profile lines stay behind `ShouldLogVerbose()`.
-- `[RISK-FAMILY-POS]` prints at the per-family position cap (`RiskValidationPipeline.mqh:664`). That gate
+- `[RISK-FAMILY-POS]` prints at the per-family position cap (`RiskValidationPipeline.mqh:673`). That gate
   already refused the entry and released its virtual reservation, but through the JSON log alone, so a capped
   family was indistinguishable from a strategy that had stopped voting.
 - 29 macros with no call site are deleted: ten duplicate format strings for tags the code prints literally,
@@ -1115,8 +1117,25 @@ nobody wrote, or an input whose reachable range the gate ignored.
   after consensus and HIGH/MEDIUM shrink the lot through `[VPIN-MODIFIER]`. `CPartialCloseManager` and
   `CTimeframeConfluence` are not in this repository; partial closes are `[PARTIAL-PROFIT]`,
   `[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`, and timeframe consistency is
-  `CTimeframeConsistency` printing `[TimeframeConsistency]`.
+  `CTimeframeConsistency` printing `[TimeframeConsistency] Initialized with mode:` (init only - nothing feeds it, Batch 260).
 - **No risk, sizing, cadence or exit change.** No input moved. Compile 8 root programs, 0 errors / 0 warnings.
+
+## Batch 260: The Reservation the Vote Was Not Allowed to Keep, and the Second Poll That Cancelled the Vote (2026-10-25)
+
+- **Entry path today, per non-NONE voter:** `strategy.GetSignal(conf)` once at `ConsensusEngine.mqh:528` ->
+  `CUnifiedSignalPipeline::ProcessSignal(symbol, tf, rawSignal, confidence)` at `:539` -> filters ->
+  `SPipelineEvidenceSnapshot` -> tally. The pipeline used to call `GetSignal` again on the same strategy, and that second
+  answer is what a strategy's own cooldown or same-bar guard saw; a voter that had just cast a signal returned NONE and the
+  vote was dropped as a filter veto with a blank `filtered by `.
+- **Budget projection:** `reservedRisk` now contains only reservations from gates whose approval becomes a send
+  (`final-lot`, `scalp`, `atr-scalp-pretrade`, `grid-pretrade`, `spike-pretrade`). A strategy poll reaches the same gates
+  with `reserveBudget=false` (`RiskValidationPipeline.mqh:254-263`, `:420`), so it cannot hold risk; the projection arithmetic
+  is unchanged because the book is read before the reserve and `result.riskPercent` is added outright.
+- **No quorum, deadband, lot, stop, take-profit or exit moved.** A refusal that came from phantom holds simply stops
+  happening; a candidate that deserves refusal is refused by the same numbers as before.
+- **Deleted from this path:** `CUnifiedSignalPipeline::ProcessMTFSignals` (zero callers) and
+  `Core/Pipeline/SignalPipelineAggregator.mqh`, the pipeline's `CTimeframeConsistency` member and its `Initialize` block,
+  and `m_lastRawSignalNone` with its uncalled getter.
 
 ## Batch 217: Volatility Targeting Measures a Scalar That No Lot Reads (2026-10-17)
 
@@ -1300,7 +1319,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 
 ## Batch 205: The Authority Ladder Is Fed Measurements Instead of Zeros (2026-10-15)
 
-- **New edge:** `pipeline.ProcessSignal(voter) -> SPipelineEvidenceSnapshot -> per-direction mean over the winning side -> SConsensusDecisionContext.convictionScore/readinessScore/contextScore/costScore (+ readyLiveWeight/totalLiveWeight) -> CandidateBuilder.mqh:382-385 -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult rung -> lot`.
+- **New edge:** `pipeline.ProcessSignal(rawSignal) -> SPipelineEvidenceSnapshot -> per-direction mean over the winning side -> SConsensusDecisionContext.convictionScore/readinessScore/contextScore/costScore (+ readyLiveWeight/totalLiveWeight) -> CandidateBuilder.mqh:382-385 -> CLiveAuthorityResolver::Resolve -> authorityScore -> riskMult rung -> lot`.
 - **What the path did before:** the four measured inputs reached `Resolve` as `0.0` on every consensus candidate, so the `+0.08 conviction`, `+0.07 readiness`, `+0.05 context` and `+0.05 cost` bonuses never fired. `authorityScore` was the kind/confluence/quality sum only, and `riskMult` (`>=0.80 1.0`, `>=0.65 0.85`, `>=0.50 0.70`, `>=0.35 0.50`) sat one to two rungs below what the ladder computes from a measured signal. `InpAuthorityMinReadinessScore`, `InpAuthorityMinContextScore` and `InpAuthorityMinCostScore` had no effect.
 - **Aggregation chosen:** unweighted mean over the winning side's voters, captured per voter right after its own `ProcessSignal` (which resets then fills the snapshot, so a voter never reads another's evidence). `convictionScore` is mean raw `stratConf`; `qualityScore`/`directionalQuality` stays mean `stratConf x weight` - two different bonuses, two different measurements, no double-counting of one value.
 - **Fail-closed:** with no pipeline the values stay `0.0` and pay no bonus. Nothing was substituted for a missing measurement on a sizing path.
@@ -1363,7 +1382,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **New edge:** `consensus accepted -> SetLastSignalContributors(winners, role, cluster, clusterCode)` (`ConsensusEngine.mqh:783`) -> candidate tags, attribution, cluster governance and authority learning all read from it. Before this batch the writer did not exist, so every downstream consumer ran on an empty contributor list.
 - **Second new edge:** `send executed -> positionId known -> AttributeExecutedPosition(positionId, winners)` (`EAOrchestrator.mqh:3647`). Attribution is keyed to the fill, not to whatever decision the cache holds at `DEAL_ENTRY_IN`; the old in-deal upsert is removed. Provenance now records every executed trade, not only AI ones (`[AUTHORITY-LEARN]` was unreachable because `hasAIContributor` was computed from the empty list).
 - **Revived loop:** `close -> PopPositionAttribution -> UpdatePerformance -> successCount/failCount/totalTrades/healthScore -> GetStrategyReliabilityMultiplier`. Indicator strategies sat on the registration default (0.75 -> multiplier 1.025) for every vote forever; AI rows were the only ones that moved, via `UpdateAIPerformanceMetrics`. So the indicator book was immune to its own results while the AI book was not.
-- **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:1016`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
+- **Revived gate:** `ValidateClusterGovernance` returned true at `NormalizeClusterCode("") == "N"` (`RiskValidationPipeline.mqh:1025`), so per-cluster position and risk caps and the opposing-cluster mutex were skipped on every candidate. They now evaluate; `[RISK-CLUSTER]` prints the cluster it measured.
 - **Tightened first:** `HasOpposingReservation` treated *same*-cluster opposing reservations as no conflict and *different*-cluster ones as a conflict - unreachable while every code was empty, and a loosening the moment codes arrived. The cluster term is removed: an opposing reservation on the same symbol is a conflict. The unused `clusterCode` parameter went with it.
 - **Engine books excluded:** `OnTradeTransaction` now returns for a deal whose comment is an engine tag or whose magic is in a Batch 197 band, so a scalp fill can no longer be scored as the strategies in the cached context (the gap Batch 197 recorded rather than shipped).
 - **Behaviour direction:** more refusals possible, never fewer; entry count can only drop, weighting quality is what improves. No ceiling, lot, stop, magic or send changed.
@@ -1829,8 +1848,10 @@ CPartialCloseManager::ManagePosition(ticket)
 #### Timeframe Confluence Scoring (Batch 103 cont.) - class not in this repository
 
 `CTimeframeConfluence` and `STFAlignmentCache` are not in this repository, and `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`
-does not exist. The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), which prints
-`[TimeframeConsistency]` and feeds the post-quorum veto. The scoring below is the 2026-08 design note.
+does not exist. `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`) is allocated and initialised per symbol and
+prints `[TimeframeConsistency] Initialized with mode:`, but nothing feeds or consults it: the only path that ever called
+`AddTimeframeSignal`/`ResolveSignals` was `CUnifiedSignalPipeline::ProcessMTFSignals`, which had zero callers and is deleted in
+Batch 260. No post-quorum veto reads it, and the scoring below is the 2026-08 design note.
 
 ```
 CTimeframeConfluence::GetAlignmentScore(direction)

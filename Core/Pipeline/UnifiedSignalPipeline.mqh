@@ -1,9 +1,8 @@
-// Filters strategy signals and MTF consensus; places no orders (CTradeManager owns execution)
+// Filters a strategy signal a voter has already produced; places no orders (CTradeManager owns execution)
 #ifndef UNIFIED_SIGNAL_PIPELINE_MQH
 #define UNIFIED_SIGNAL_PIPELINE_MQH
 
 #include "../Utils/Enums.mqh"
-#include "../Signals/TimeframeConsistency.mqh"
 #include "../../Core/Registry/MathematicalEngineRegistry.mqh"
 #include "../../Core/Engines/SessionWeightManager.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
@@ -16,14 +15,11 @@ extern CMultiAssetProfiler* g_multiAssetProfiler;
 #include "SignalPipelineWeighter.mqh"
 #include "SignalPipelineCollector.mqh"
 #include "SignalPipelineFilter.mqh"
-#include "SignalPipelineAggregator.mqh"
 
 class CUnifiedSignalPipeline
 {
 private:
     CMathematicalEngineRegistry* m_mathRegistry;
-    
-    CTimeframeConsistency* m_tfConsistency;
 
     // Injected from the EA: not allocated or freed by this class
     CSessionWeightManager* m_sessionWeightManager;
@@ -34,7 +30,6 @@ private:
     int m_signalsFiltered;
     int m_signalsPassed;
     string m_lastEvaluatedSymbol;
-    bool m_lastRawSignalNone;
     bool m_lastFilteredByPipeline;
     bool m_intrabarContext;
     bool m_lastRegimeSnapshotValid;
@@ -98,12 +93,13 @@ public:
     
     bool Initialize(SignalFilterSettings &settings);
     
-    ENUM_TRADE_SIGNAL ProcessSignal(IStrategy* strategy, const string symbol, 
-                                   ENUM_TIMEFRAMES timeframe, double &confidence);
-    
-    ENUM_TRADE_SIGNAL ProcessMTFSignals(IStrategy* &strategies[], int count,
-                                       const string symbol, ENUM_TIMEFRAMES &timeframes[],
-                                       double &finalConfidence);
+    // rawSignal is the voter's own GetSignal answer: this filter chain must not poll the strategy a
+    // second time, because a per-bar or cooldown guard inside the strategy reads the repeat call as a new
+    // scan and returns NONE, destroying the vote the caller already held.
+    ENUM_TRADE_SIGNAL ProcessSignal(const string symbol,
+                                   ENUM_TIMEFRAMES timeframe,
+                                   const ENUM_TRADE_SIGNAL rawSignal,
+                                   double &confidence);
     
     void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
@@ -114,7 +110,6 @@ public:
     int GetSignalsProcessed() const { return m_signalsProcessed; }
     int GetSignalsFiltered() const { return m_signalsFiltered; }
     int GetSignalsPassed() const { return m_signalsPassed; }
-    bool WasLastSignalRawNone() const { return m_lastRawSignalNone; }
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
     
     void PerformHealthCheck(const string symbol);
@@ -149,13 +144,11 @@ public:
 
 CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_mathRegistry(NULL),
-    m_tfConsistency(NULL),
     m_sessionWeightManager(NULL),
     m_signalsProcessed(0),
     m_signalsFiltered(0),
     m_signalsPassed(0),
     m_lastEvaluatedSymbol(""),
-    m_lastRawSignalNone(false),
     m_lastFilteredByPipeline(false),
     m_intrabarContext(false),
     m_lastRegimeSnapshotValid(false),
@@ -183,7 +176,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
 CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
 {
     // Engines are owned by the registry, not by this pipeline
-    if(m_tfConsistency != NULL) { delete m_tfConsistency; m_tfConsistency = NULL; }
 }
 
 bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
@@ -196,21 +188,6 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     
     m_filters = settings;
     BuildFilterOrderMap();
-    bool initializationOk = true;
-    
-    m_tfConsistency = new CTimeframeConsistency();
-    if(m_tfConsistency == NULL)
-    {
-        Print("[UnifiedSignalPipeline] ERROR: TimeframeConsistency allocation failed");
-        initializationOk = false;
-    }
-    else if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
-    {
-        Print("[UnifiedSignalPipeline] ERROR: TimeframeConsistency initialization failed");
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-        initializationOk = false;
-    }
     
     Print("[UnifiedSignalPipeline] Initialized with filters: Trend=", m_filters.trend.enabled,
           " Volatility=", m_filters.volatility.enabled,
@@ -221,10 +198,7 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
           " SpreadShockCooldown=", m_filters.regimeCostGate.spreadShockCooldownSeconds,
           " MaxEntryZ=", DoubleToString(m_filters.regimeCostGate.maxEntryRangeZScore, 2));
 
-    if(!initializationOk)
-        Print("[UnifiedSignalPipeline] ERROR: component initialization incomplete; fail-closed startup");
-    
-    return initializationOk;
+    return true;
 }
 
 void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
@@ -316,14 +290,13 @@ double CUnifiedSignalPipeline::ComputeContextScore(const ENUM_TRADE_SIGNAL signa
     return CSignalPipelineWeighter::ComputeContextScore(m_lastEvidence, signal);
 }
 
-ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy, 
-                                                       const string symbol,
-                                                       ENUM_TIMEFRAMES timeframe, 
+ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
+                                                       ENUM_TIMEFRAMES timeframe,
+                                                       const ENUM_TRADE_SIGNAL rawSignal,
                                                        double &confidence)
 {
     ResetEvidenceSnapshot(symbol, timeframe);
     m_lastEvaluatedSymbol = symbol;
-    m_lastRawSignalNone = false;
     m_lastFilteredByPipeline = false;
     m_lastRegimeSnapshotValid = false;
     m_lastRegimeState = REGIME_RANGE;
@@ -331,37 +304,22 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastFilterName = "";
     m_lastFilterReason = "";
 
-    if(strategy == NULL)
-    {
-        confidence = 0;
-        m_lastRawSignalNone = true;
-        return TRADE_SIGNAL_NONE;
-    }
-    
     CheckBudgetExhaustedAutoClear();
-    
-    // Budget exhausted: returns before strategy.GetSignal() runs, so no filter executes
+
     if(m_budgetExhausted)
     {
         m_signalsProcessed++;
         m_signalsFiltered++;
-        m_lastRawSignalNone = true;
         m_lastFilteredByPipeline = true;
+        m_lastFilterName = "BudgetExhausted";
         confidence = 0;
         return TRADE_SIGNAL_NONE;
     }
-    
+
     m_signalsProcessed++;
-    
-    ENUM_TRADE_SIGNAL signal = strategy.GetSignal(confidence);
-    
-    if(signal == TRADE_SIGNAL_NONE)
-    {
-        m_lastRawSignalNone = true;
-        m_signalsFiltered++;
-        return TRADE_SIGNAL_NONE;
-    }
-    
+
+    ENUM_TRADE_SIGNAL signal = rawSignal;
+
     RefreshStructuralContext(symbol, timeframe);
     
     // Gate order is m_filters.filterOrder's sequence; the first veto short-circuits every later gate
@@ -589,53 +547,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     }
     
     return signal;
-}
-
-ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategies[], 
-                                                           int count,
-                                                           const string symbol, 
-                                                           ENUM_TIMEFRAMES &timeframes[],
-                                                           double &finalConfidence)
-{
-    if(count == 0 || ArraySize(strategies) == 0 || ArraySize(timeframes) == 0)
-    {
-        finalConfidence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    if(m_tfConsistency != NULL)
-        m_tfConsistency.Reset();
-    
-    ENUM_TRADE_SIGNAL signals[];
-    double confidences[];
-    ArrayResize(signals, count);
-    ArrayResize(confidences, count);
-    
-    for(int i = 0; i < count; i++)
-    {
-        double conf = 0;
-        signals[i] = ProcessSignal(strategies[i], symbol, timeframes[i], conf);
-        confidences[i] = conf;
-        
-        if(m_tfConsistency != NULL && signals[i] != TRADE_SIGNAL_NONE)
-        {
-            m_tfConsistency.AddTimeframeSignal(timeframes[i], signals[i], conf, 
-                                              strategies[i].GetName());
-        }
-    }
-    
-    if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
-    {
-        double resolvedConf = 0.0;
-        string reasoning = "";
-        ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConf, reasoning);
-
-        finalConfidence = resolvedConf;
-        return resolvedSignal;
-    }
-    
-    finalConfidence = 0;
-    return CSignalPipelineAggregator::TallyConsensus(signals, confidences, count, finalConfidence);
 }
 // Every gate below forwards into CSignalPipelineFilter/Weighter/Normalizer: no veto logic lives in this file
 bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
