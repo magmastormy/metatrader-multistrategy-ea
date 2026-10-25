@@ -122,8 +122,6 @@ public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
     
-    CDiagnosticsManager* GetDiagnostics() { return m_infra.GetDiagnostics(); }
-    void SetDiagnosticsManager(CDiagnosticsManager* diagnostics) { m_infra.SetDiagnosticsManager(diagnostics); }
     CTradeAttributionManager* GetAttribution() { return m_infra.GetAttribution(); }
     void SetAttributionManager(CTradeAttributionManager* attribution)
          { m_infra.SetAttributionManager(attribution); m_attributionDelegator.SetAttribution(m_infra.GetAttribution()); }
@@ -154,7 +152,6 @@ public:
     double GetStrategyHealthScore(const int index) const
            { return m_roster.GetStrategyHealthScore(index); }
     CUnifiedSignalPipeline* GetPipelineConst() const { return m_infra.GetPipeline(); }
-    CDiagnosticsManager*    GetDiagnosticsConst() const { return m_infra.GetDiagnostics(); }
     string GetManagedSymbol() const { return m_infra.GetManagedSymbol(); }
     void   GetLastDecisionContextValue(SConsensusDecisionContext &out) const
            { m_consensusEngine.GetLastDecisionContextValue(out); }
@@ -366,7 +363,6 @@ public:
         QUORUM_AGGRESSIVE
     };
     void ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile);
-    void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
     int  GetMinQuorum() const;
     int  GetEnforcedMinVoters(const bool intrabar) const;
     bool UpdateStrategyWeightByName(const string name, const double weight);
@@ -383,32 +379,8 @@ public:
                                        string &contributorsCsv) const;
     CUnifiedSignalPipeline* GetPipeline();
     bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
-    void GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
-                                         ulong &featureSignals,
-                                         ulong &voteSuppressed,
-                                         ulong &trendClusterSignals,
-                                         ulong &meanReversionClusterSignals,
-                                         ulong &structureClusterSignals,
-                                         ulong &noneClusterSignals) const;
     void GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
     
-    void GetConsensusDiagnosticsSnapshot(ulong &rawNone,
-                                         ulong &filteredOut,
-                                         ulong &quorumFailed,
-                                         ulong &intrabarNotEligible,
-                                         ulong &signalsGenerated,
-                                         ulong &signalsAfterPipeline,
-                                         ulong &signalsAfterQuorum,
-                                         ulong &momentumNone,
-                                         ulong &momentumCooldown,
-                                         ulong &momentumLowVolatility,
-                                         ulong &momentumNoCrossover,
-                                         ulong &momentumTrendMisaligned,
-                                         ulong &momentumNotReady,
-                                         ulong &uictNone,
-                                         ulong &uictNeutralBias,
-                                         ulong &uictOtherFilters,
-                                         ulong &intervalReasonTotal);
 
     int GetActiveStrategyCount() const;
     void UpdatePerformance(const string strategyName, double netProfit);
@@ -454,7 +426,7 @@ public:
 //--- the 32-slot INTRABAR_POLICY_OFF table and the 15000-pt hard spread cutoff.
 CEnterpriseStrategyManager::CEnterpriseStrategyManager()
 {
-    // m_diagnostics / m_attribution stay NULL: they are injected from EAOrchestrator.
+    // m_attribution stays NULL: it is injected from EAOrchestrator.
     m_infra.AllocateHealthMonitor();
 
     // The delegator mirrors the still-NULL attribution pointer; SetAttributionManager() re-binds it.
@@ -481,7 +453,7 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     //--- No ClearRoster() here: resetting m_strategyCount and the array is Deinit()'s job alone.
     m_roster.DeleteAllStrategies();
 
-    //--- m_diagnostics / m_attribution are injected from EAOrchestrator and are deliberately NOT deleted here.
+    //--- m_attribution is injected from EAOrchestrator and is deliberately NOT deleted here.
     m_infra.ReleaseOnDestruct();
 }
 
@@ -588,11 +560,6 @@ void CEnterpriseStrategyManager::ConfigureBeforeInit(IStrategy* strategy, const 
         else
             Print("[STRATEGY-CONFIG] Momentum row did not yield a CSimpleMomentumStrategy - its inputs were not applied");
     }
-}
-
-void CEnterpriseStrategyManager::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
-{
-    m_infra.SetConsensusDiagnosticsIntervalSeconds(seconds);
 }
 
 int CEnterpriseStrategyManager::GetMinQuorum() const
@@ -830,19 +797,16 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
                                                          clusterCode, contributorsCsv);
 }
 
-//--- Explicit teardown before the destructor; releases the injected diagnostics/attribution as well.
+//--- Explicit teardown before the destructor; releases only what this manager owns.
 void CEnterpriseStrategyManager::Deinit()
 {
     //--- Strategy teardown, then the roster reset (count + array resize) the destructor omits.
     m_roster.DeleteAllStrategies();
     m_roster.ClearRoster();
 
-    //--- Release order: pipeline, ADX handle, regime detector, TF consistency, then the injected diagnostics/attribution.
-    //--- Unlike the destructor, Deinit() DOES delete those injected pointers; FinishDeinit() drops the health monitor.
+    //--- Release order: pipeline, ADX handle, regime detector, TF consistency. The injected diagnostics
+    //--- and attribution objects belong to EAOrchestrator and are not deleted here; FinishDeinit() drops the health monitor.
     m_infra.ReleaseOnDeinit();
-
-    //--- Re-bind the delegator so its mirrored attribution pointer cannot dangle.
-    m_attributionDelegator.SetAttribution(m_infra.GetAttribution());
 
     m_infra.FinishDeinit();
 }
@@ -852,63 +816,9 @@ bool CEnterpriseStrategyManager::GetLastDecisionContext(SConsensusDecisionContex
     return m_stateReporter.GetLastDecisionContext(context);
 }
 
-void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
-                                                                 ulong &featureSignals,
-                                                                 ulong &voteSuppressed,
-                                                                 ulong &trendClusterSignals,
-                                                                 ulong &meanReversionClusterSignals,
-                                                                 ulong &structureClusterSignals,
-                                                                 ulong &noneClusterSignals) const
-{
-    m_stateReporter.GetRoleClusterDiagnosticsTotals(primarySignals,
-                                                    featureSignals,
-                                                    voteSuppressed,
-                                                    trendClusterSignals,
-                                                    meanReversionClusterSignals,
-                                                    structureClusterSignals,
-                                                    noneClusterSignals);
-}
-
 void CEnterpriseStrategyManager::GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const
 {
     m_stateReporter.GetLastCycleFunnel(signalsGenerated, signalsAfterPipeline, signalAfterQuorum);
-}
-
-void CEnterpriseStrategyManager::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
-                                                                 ulong &filteredOut,
-                                                                 ulong &quorumFailed,
-                                                                 ulong &intrabarNotEligible,
-                                                                 ulong &signalsGenerated,
-                                                                 ulong &signalsAfterPipeline,
-                                                                 ulong &signalsAfterQuorum,
-                                                                 ulong &momentumNone,
-                                                                 ulong &momentumCooldown,
-                                                                 ulong &momentumLowVolatility,
-                                                                 ulong &momentumNoCrossover,
-                                                                 ulong &momentumTrendMisaligned,
-                                                                 ulong &momentumNotReady,
-                                                                 ulong &uictNone,
-                                                                 ulong &uictNeutralBias,
-                                                                 ulong &uictOtherFilters,
-                                                                 ulong &intervalReasonTotal)
-{
-    m_stateReporter.GetConsensusDiagnosticsSnapshot(rawNone,
-                                                    filteredOut,
-                                                    quorumFailed,
-                                                    intrabarNotEligible,
-                                                    signalsGenerated,
-                                                    signalsAfterPipeline,
-                                                    signalsAfterQuorum,
-                                                    momentumNone,
-                                                    momentumCooldown,
-                                                    momentumLowVolatility,
-                                                    momentumNoCrossover,
-                                                    momentumTrendMisaligned,
-                                                    momentumNotReady,
-                                                    uictNone,
-                                                    uictNeutralBias,
-                                                    uictOtherFilters,
-                                                    intervalReasonTotal);
 }
 
 int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const

@@ -1,5 +1,5 @@
 // Leaf value object held BY VALUE by CEnterpriseStrategyManager; it has no back-pointer to the manager.
-// ReleaseOnDeinit()/FinishDeinit() must stay separate: the manager re-binds its attribution delegator between them.
+// ReleaseOnDeinit() drops the infra-owned objects, FinishDeinit() the health monitor and the init flag.
 // Include only from EnterpriseStrategyManager.mqh.
 #ifndef STRATEGY_MGR_INFRASTRUCTURE_MQH
 #define STRATEGY_MGR_INFRASTRUCTURE_MQH
@@ -13,7 +13,6 @@
 #include "../Engines/FamilyStrategyWeightMatrix.mqh"      // CFamilyStrategyWeightMatrix
 #include "../Engines/FourStateRegimeDetector.mqh"         // CFourStateRegimeDetector
 #include "../Strategy/StrategyRegistry.mqh"               // CStrategyRegistry
-#include "DiagnosticsManager.mqh"                         // CDiagnosticsManager
 #include "StrategyHealthMonitor.mqh"                      // CStrategyHealthMonitor
 #include "EntStrategyQuorumConfig.mqh"                    // CEntStrategyQuorumConfig (health-monitor config source)
 #include "../../Core/Trading/TradeAttributionManager.mqh" // CTradeAttributionManager
@@ -40,7 +39,6 @@ private:
     CStrategyRegistry*           m_strategyRegistry;     // L1-004: Injected registry (no global singleton)
     bool                         m_regimeDetectorInitialized;
 
-    CDiagnosticsManager*      m_diagnostics;
     CTradeAttributionManager* m_attribution;
     CStrategyHealthMonitor*   m_healthMonitor;
 
@@ -59,7 +57,7 @@ public:
                     CUnifiedRiskManager* unifiedRiskManagerPtr,
                     CEntStrategyQuorumConfig &quorumConfig);
 
-    //--- destructor teardown; does NOT delete the injected m_diagnostics / m_attribution
+    //--- destructor teardown; does NOT delete the injected m_attribution
     void ReleaseOnDestruct();
     //--- explicit-Deinit teardown, part 1 (up to and including attribution)
     void ReleaseOnDeinit();
@@ -70,10 +68,8 @@ public:
 
     //--- pipeline half of SetPipelineFilters(); the confidence-floor cache stays in the quorum config object
     void ApplyPipelineFilters(SignalFilterSettings &settings);
-    void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
 
     void SetStrategyRegistry(CStrategyRegistry* registry)          { m_strategyRegistry = registry; }
-    void SetDiagnosticsManager(CDiagnosticsManager* diagnostics)   { m_diagnostics = diagnostics; }
     void SetAttributionManager(CTradeAttributionManager* attrib)   { m_attribution = attrib; }
     void SetDrawingManager(CChartDrawingManager* drawingManager)   { m_drawingManager = drawingManager; }
     void SetDerivProfiler(CDerivAssetProfiler* profiler)           { m_derivProfiler = profiler; }
@@ -95,7 +91,6 @@ public:
     CFamilyStrategyWeightMatrix* GetFamilyWeightMatrix() const     { return m_familyWeightMatrix; }
     CFourStateRegimeDetector*    GetFourStateRegimeDetector() const{ return m_fourStateRegimeDetector; }
     CStrategyRegistry*           GetStrategyRegistry() const       { return m_strategyRegistry; }
-    CDiagnosticsManager*         GetDiagnostics() const            { return m_diagnostics; }
     CTradeAttributionManager*    GetAttribution() const            { return m_attribution; }
     CStrategyHealthMonitor*      GetHealthMonitor() const          { return m_healthMonitor; }
 
@@ -121,7 +116,6 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_fourStateRegimeDetector(NULL),
     m_strategyRegistry(NULL),                // L1-004: Injected registry
     m_regimeDetectorInitialized(false),
-    m_diagnostics(NULL),
     m_attribution(NULL),
     m_healthMonitor(NULL),
     m_baseTimeframe(PERIOD_CURRENT),
@@ -205,7 +199,7 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_initialized = true;
     m_drawingManager = NULL;
 
-    // m_diagnostics and m_attribution are injected from EAOrchestrator; never create them here.
+    // m_attribution is injected from EAOrchestrator; never create it here.
 
     if(m_healthMonitor != NULL)
     {
@@ -267,7 +261,7 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_tfConsistency = NULL;
     }
 
-    // Do not delete m_diagnostics / m_attribution here (injected; only Deinit releases them).
+    // Do not delete m_attribution here (injected; the orchestrator owns it).
     if(m_healthMonitor != NULL)
     {
         delete m_healthMonitor;
@@ -295,17 +289,8 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
         m_tfConsistency = NULL;
     }
 
-    if(m_diagnostics != NULL)
-    {
-        delete m_diagnostics;
-        m_diagnostics = NULL;
-    }
-
-    if(m_attribution != NULL)
-    {
-        delete m_attribution;
-        m_attribution = NULL;
-    }
+    // m_attribution is injected from EAOrchestrator (&m_attributionManager, a by-value member);
+    // The orchestrator's own teardown releases it, so nothing here deletes it.
 }
 
 void CStrategyMgrInfrastructure::FinishDeinit()
@@ -336,12 +321,6 @@ void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &sett
               " StructureFilter=", settings.structure.enabled,
               " LiquidityFilter=", settings.liquidity.enabled);
     }
-}
-
-void CStrategyMgrInfrastructure::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
-{
-    if(m_diagnostics != NULL)
-        m_diagnostics.SetLogIntervalSeconds(seconds);
 }
 
 #endif // STRATEGY_MGR_INFRASTRUCTURE_MQH

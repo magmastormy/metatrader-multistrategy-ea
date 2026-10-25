@@ -1654,7 +1654,6 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
     if(m_enterpriseManagers[mi] != NULL)
     {
         m_enterpriseManagers[mi].SetManagedMagicRangeMax((long)magicRangeMax);
-        m_enterpriseManagers[mi].SetDiagnosticsManager(&m_diagnosticsManager);
         m_enterpriseManagers[mi].SetAttributionManager(&m_attributionManager);
         // Profilers drive asset-class-based engine weighting
         if(m_config.multiAssetProfilerEnabled)
@@ -1851,7 +1850,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     double inputSupportFloorIntrabar = MathMax(0.05, MathMin(1.0, m_config.consensusSupportFloorIntrabar));
     manager.SetSupportFloors(inputSupportFloorNewBar, inputSupportFloorIntrabar);
     manager.SetIntrabarDynamicQuorumEnabled(m_config.intrabarDynamicQuorumEnabled);
-    manager.SetConsensusDiagnosticsIntervalSeconds(m_config.deadlockAttributionIntervalSec);
 
     // The profile owns min quorum, quorum threshold, both support floors and the intrabar dynamic-quorum
     // switch, and runs after the setters so InpQuorumProfile wins over those four inputs. enforced= applies

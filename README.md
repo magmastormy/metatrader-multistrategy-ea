@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-255-green)
+![Batch](https://img.shields.io/badge/batch-256-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3592`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3590None`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -499,7 +499,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1584` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1584None` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -633,6 +633,36 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 256: the consensus diagnostics printed nothing because nothing wrote them - and the manager's teardown deleted an object it did not own
+
+Followed Batch 255's queued note down one more floor and found the same shape twice, plus a real teardown bug.
+
+- **Five tags the docs told you to verify have no emitter.** `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`,
+  `[ROLE-CLUSTER]`, `[QUIET-REASONS]` and `[NO-SIGNAL-ALERT-CONSENSUS]` all lived behind
+  `CDiagnosticsManager::EmitConsensusDiagnostics`, which has zero call sites. Its 25 counters were no better: not one
+  of the 73 `Increment*` methods on `CDiagMgrCounters` (or the forwarders on the diagnostics manager) had a caller,
+  and `MaybeLogDiagnostics` - the only printer - had none either. They printed nothing, about nothing, forever.
+- **`[CONSENSUS-DIAG]` is strategy-side only.** The attached 2026-10-23 session carries 995 of those lines
+  (`[CONSENSUS-DIAG] Volatility 75 Index | BUY | Mode: Mixed | Conf: 100.0% | Weight: 1.80 | Reason: SR_UNSET`) and
+  none of them is the counters pair (`... | Generated= | AfterPipeline=`, `Role: Primary= | Cluster: Trend=`), which
+  matches 0 times. Read `[CONSENSUS-REJECT]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETOED]` and `[ENTRY-GATE]` for why a
+  scan traded nothing; the deleted counters were never the answer.
+- **`ReleaseOnDeinit()` deleted the orchestrator's own objects.** Each symbol manager held injected pointers to
+  `&m_diagnosticsManager` and `&m_attributionManager` - by-value members of `CEAOrchestrator`, never `new`ed - and the
+  deinit path ran `delete` on both. Detaching with the shipped 13-symbol roster did that thirteen times to two
+  addresses the orchestrator still owns and later destroys itself; an init-failure rollback runs the same pair. The
+  deletes are gone, so a detach now leaves both objects intact for whoever reads them next in teardown
+  (`NNDiagPrintSummary("deinit")` runs before the release for exactly that reason).
+- **What went with it:** `DiagMgrCounters.mqh`, `DiagMgrAggregator.mqh` and `DiagMgrConsensusReport.mqh` deleted
+  outright (1,026 lines), `DiagnosticsManager.mqh` 697 -> 320, the manager and reporter reads that fed the report, the
+  now-unread `GetDiagnostics`/`GetDiagnosticsConst` pair and the injected-diagnostics pointer chain including its init
+  call (its last reader was the deleted report). `SetConsensusDiagnosticsIntervalSeconds` went too - it configured a
+  field only the unreachable printer read. 12 added / 1635 deleted across eight code files.
+
+Nothing here touched an entry, exit, lot, threshold, quorum or veto: every deleted line was unreachable. The one
+reachable change is at teardown, and it can only remove undefined behaviour.
+
+
 ### Batch 255: a closed trade was counted twice in the strategy park, and the metrics nobody wrote are gone
 
 This is the follow-up to Batch 252's "prove the health monitor's accessors against a caller chain". It found one real
@@ -657,9 +687,10 @@ bug, one log lie, and 486 lines of code no build could enter.
 - **`[Enterprise-Adaptation] ... (WinRate: ...)` printed 0.00 beside every park.** Its argument was a roster field with no
   live writer. It now prints the monitor's lifetime and recent win rates - the sample the decision actually came from:
   `(WinRate: 0.62, recent: 0.40, Losses: 6)`.
-- **Also worth knowing before you read a journal:** `CDiagnosticsManager::EmitConsensusDiagnostics` has no caller, so
-  `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]` and `[NO-SIGNAL-ALERT-CONSENSUS]` cannot
-  appear in any journal - `SYSTEM_STRUCTURE.md` listed them as live emissions, and that row is corrected.
+- **Also worth knowing before you read a journal:** `CDiagnosticsManager::EmitConsensusDiagnostics` had no caller, so
+  `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]` and `[NO-SIGNAL-ALERT-CONSENSUS]`
+  could not appear in any journal - and the 25 counters they would have printed had no writer either. Batch 256 deletes
+  the whole chain; the 2026-10-23 journal already shows it (995 strategy-side `[CONSENSUS-DIAG]` lines, none carrying `Generated=`).
 
 Operator-visible behaviour: a strategy that loses three in a row is no longer parked early; the park still releases on the
 next governance pass because no code arms its cooldown (arming a one-hour hold is a tightening, and it is on the ask list).
@@ -747,7 +778,7 @@ What the docs had been repeating as live behaviour, and what the code could not 
 - `AdaptToPerformance` gated strategy parking and re-enabling on `m_predictionAccuracy < 0.4` / `> 0.6`. The only writer,
   `UpdatePredictionAccuracy`, sat behind `ProvideFeedback`. So the two branches were unreachable arithmetic on a 0.5
   constant, and what actually parks a strategy has always been the orchestrator's 60 s governance sweep
-  (`EAOrchestrator.mqh:3106-3119`), which is untouched.
+  (`EAOrchestrator.mqh:3104-3117`), which is untouched.
 - `AdaptToRegime` multiplied a threshold by the regime factor (0.9 / 1.1 / 1.2), stored it in a local, walked the
   managers with an empty body, and returned. Batch 201's records - here and in `SYSTEM_STRUCTURE.md` /
   `RUNTIME_DECISION_GRAPH.md` / `SYSTEM_AUDIT_TRACE.md` - said AI entries became more permissive in a confirmed trend.
@@ -965,7 +996,7 @@ decision for you, not a cleanup I should make while you are asleep.
 
 No trading decision moved in this batch. `CPositionManager` kept a `CFullMarginMode*` and a `CIntelligentSLGuard*`, was passed
 `&m_fullMarginMode` and a literal `NULL` for them at init, and asked neither anything, ever; the margin object actually
-consulted is the orchestrator's own (`EAOrchestrator.mqh:966`, read by `CDiagnosticsManager`). Gone: the two members, the two
+consulted is the orchestrator's own (`EAOrchestrator.mqh:966None`, read by `CDiagnosticsManager`). Gone: the two members, the two
 `Initialize` parameters, the include that only they needed, and three circuit-breaker getters (`GetTriggeredAt`,
 `GetRecoveryAttempts`, `GetRecoveryLevel`) with no caller anywhere. The recovery ladder still reads that state internally and
 prints it, so the journal is unchanged.
@@ -1093,7 +1124,7 @@ Also removed by the sweep in the same files: seven `Validate...` forwarders on `
 `ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
 every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
 four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
-initialized at `EAOrchestrator.mqh:966`, keeps its own config and de-risks nothing, because none of its methods is
+initialized at `EAOrchestrator.mqh:966None`, keeps its own config and de-risks nothing, because none of its methods is
 called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
@@ -1202,7 +1233,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3592`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3590None`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.
@@ -1360,7 +1391,7 @@ The dead set is gone — 706 lines across thirteen files:
   actually call. Your consensus decisions come from that one entry point and always did.
 - **Ten uncalled helpers** across the consensus engine and the intrabar-policy class — a direction-diversity
   score, an average-metric helper, a role-vote multiplier, a join-contributors string, a diagnostics printer
-  (`[CONSENSUS-DIAG]` prints from the diagnostics manager and the strategy classes, so nothing you read in a
+  (`[CONSENSUS-DIAG]` prints from the strategy classes; the diagnostics-manager counters under the same tag had no writer and no caller and are gone (Batch 256), so nothing you read in a
   journal is lost), and an ADX "is it trending" test.
 - **Seven inputs in each EA** — `InpAllowSparseIntrabarSingleVoter`, `InpSparseIntrabarMinQuality`,
   `InpSparseIntrabarMinSupportRatio`, `InpSparseIntrabarMinReadyCoverage`, `InpIntrabarSingleVoterMinConfidence`,

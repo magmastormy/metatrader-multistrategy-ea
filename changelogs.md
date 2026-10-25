@@ -8,6 +8,67 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-25
 
+### Batch 256: the consensus-diagnostic subsystem had no writer and no reachable printer, and its manager deinit deleted an object it never owned
+
+**Type:** dead-code deletion plus one ownership fix found by following the same chain down. Batch 255 queued
+the report; the sweep that removed it found that the counters it read had never been written, and that the
+manager's teardown deletes two pointers belonging to the orchestrator.
+
+**(1) The report had no entry point, five levels deep.** `CDiagnosticsManager::EmitConsensusDiagnostics` has zero
+call sites, and it was the only caller of all five `CDiagMgrConsensusReport::` emitters, which were the only
+callers of the three `CDiagMgrAggregator` statics, which were the only callers of the manager's two snapshot
+forwarders, which were the only callers of the two `CStrategyStateReporter` reads, which were the only callers of
+`GetFullDiagnosticsSnapshot`. One chain, no way in - the Batch 247 shape repeated one floor down.
+
+**(2) Its counters had no writer either.** `CDiagMgrCounters` held 25 consensus counters, 48 baseline twins and 73
+`Increment*` methods. Not one of the 73 has a call site in any `.mq5` or `.mqh`, and
+`ResetConsensusDiagnostics`, `SetSnapshotBaselines`, `GetSnapshot`, `AccumulateRoleClusterSignalDiagnostics`,
+`MaybeLogDiagnostics` and `LogDiagnostics` have none either. So the two `[CONSENSUS-DIAG]` lines it owned would
+have printed zeros had a caller existed, and because `SetSnapshotBaselines` was never called every
+`snapshotBaseline*` stayed 0 - the "interval delta" the report computed was really a lifetime total of nothing.
+
+**(3) The journal already said so.** `MQL5\Logs\20261023.log` (UTF-16LE, the attached `Step Index,M15` session)
+carries 995 `[CONSENSUS-DIAG]` lines, every one strategy-side - e.g.
+`[CONSENSUS-DIAG] Volatility 75 Index | BUY | Mode: Mixed | Conf: 100.0% | Weight: 1.80 | Reason: SR_UNSET` -
+while `Generated=`, `Role: Primary=`, `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`,
+`[QUIET-REASONS]` and `[NO-SIGNAL-ALERT-CONSENSUS]` each match 0 lines. AGENTS.md 6 had cited
+`DiagMgrCounters.mqh:649`/`:659` as a live printer for that tag; the correction is in this batch's doc pass, in all
+five current-state docs.
+
+**(4) The teardown deleted what it was only borrowing.** `CStrategyMgrInfrastructure::ReleaseOnDeinit()` ran
+`delete m_diagnostics;` and `delete m_attribution;` on pointers the orchestrator injects by address -
+`EAOrchestrator.mqh:1657` still passes `&m_attributionManager`, and the `SetDiagnosticsManager` call that passed
+`&m_diagnosticsManager` is deleted with the chain - against by-value members of `CEAOrchestrator`
+(`EAOrchestrator.mqh:179`/`:157`), never `new`ed anywhere in the tree. `ReleaseEnterpriseManagers()` calls that
+per symbol manager, so detaching with the shipped 13-symbol roster performed thirteen deletes of two addresses
+the orchestrator still owns and destroys on its own; an init-failure rollback (`EAOrchestrator.mqh:1603`) runs
+the same pair. The same file's destructor comment says injected pointers are not deleted - only the deinit path
+disagreed, and a second comment justified a two-phase split whose only purpose was to re-bind the attribution
+delegator after the delete. Both deletes are gone, the re-bind that papered over the nulling went with them, and
+the three infra-owned objects that really are `new`ed (`m_pipeline :150`, `m_tfConsistency :175`,
+`m_fourStateRegimeDetector :217`) keep theirs.
+
+**(5) What went.** `DiagMgrCounters.mqh` (697 lines), `DiagMgrAggregator.mqh` (201), `DiagMgrConsensusReport.mqh`
+(128); `DiagnosticsManager.mqh` 697 -> 320 (the report, its three aggregators, `m_counters` and the 195 lines of
+forwarders below it); the manager's `GetConsensusDiagnosticsSnapshot` and `GetRoleClusterDiagnosticsTotals` plus the
+reporter's two reads; the manager's `GetDiagnostics`/`GetDiagnosticsConst`, which lost their last callers when those
+reads went; the `SetConsensusDiagnosticsIntervalSeconds` chain including the init call that fed it
+`m_config.deadlockAttributionIntervalSec` - that field keeps its other live reader, so the input and its behaviour
+are unchanged. `StrategyStateReporter.mqh` no longer includes `DiagnosticsManager.mqh` at all.
+
+**(6) What stayed, checked per method.** All seven remaining `CStrategyStateReporter` methods have callers:
+`EAOrchestrator.mqh:2000`, `AIEngine.mqh:281`, `LiveAuthorityResolver.mqh:351`/`:354`/`:371`/`:374`,
+`SignalGenerator.mqh:323`, `PostConsensusValidator.mqh:150`/`:156`. `m_lastNoSignalAlertTime` stays because the live
+`[NO-SIGNAL-ALERT]` throttle shares it, `CDiagMgrAIVoteTracker` and `CDiagMgrHeartbeat` stay, and every
+strategy-side `[CONSENSUS-DIAG]` emitter is untouched.
+
+**(7) Behaviour.** No entry, exit, lot, threshold, quorum or veto moved: everything deleted was unreachable. The one
+reachable change is at teardown, where two deletes of memory the EA does not own are gone - that can only remove
+undefined behaviour, and it lands before this batch's other edits, so a detach now leaves the orchestrator's own
+diagnostics and attribution objects intact.
+
+**(8) Totals.** 12 added / 1,635 deleted across eight code files, of which 1,026 lines were the three whole modules. Docs: 72 `file.mqh:NNN` citations re-pointed by the six deletion hunks, then 1 re-anchored by content (`EnterpriseStrategyManager.mqh:128`, the attribution setter, which the two-removed-line hunk had undershot by one); the shifted set was then verified by comparing the cited line's text in `HEAD` against the tree - 71 of 72 are byte-identical, and the 72nd is the one just re-anchored. Tag-truth rewrites: AGENTS.md 6 (two bullets), README.md (the Batch 255 note plus a new section), SYSTEM_STRUCTURE.md 4 rows, RUNTIME_DECISION_GRAPH.md 9 rows, SYSTEM_AUDIT_TRACE.md 6 rows.
+
 ### Batch 255: one closed trade entered the health sample twice, and the metrics that had no live writer went with the twins above them
 
 **Type:** one real money bug, one log lie, and 486 lines of unreachable code. This is Batch 252's stated "Next"
