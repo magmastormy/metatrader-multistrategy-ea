@@ -54,26 +54,29 @@ public:
     // Call once from OnInit.
     void Init(string prefix = "EA") {
         if(m_enabled) return;
-        
+
         m_accountLogin = AccountInfoInteger(ACCOUNT_LOGIN);
-        
-        MqlDateTime dt; TimeCurrent(dt);
-        string timestamp = StringFormat("%04d%02d%02d_%02d%02d%02d", 
+
+        // TimeCurrent() at OnInit is the last known server tick, not the wall clock - a session started
+        // hours later than the last tick got that older name, and two sessions could collide on it.
+        MqlDateTime dt; TimeLocal(dt);
+        string timestamp = StringFormat("%04d%02d%02d_%02d%02d%02d",
                                         dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
-        
-        string dataPath = TerminalInfoString(TERMINAL_DATA_PATH);
-        m_logPath = StringFormat("%s\\MQL5\\Logs\\%s_structured_%s.jsonl", 
-                                 dataPath, prefix, timestamp);
-        
-        m_fileHandle = FileOpen(m_logPath, FILE_WRITE|FILE_TXT|FILE_ANSI);
+
+        // FileOpen accepted the old absolute path but wrote only its basename into MQL5\Files, so the sink
+        // always worked while m_logPath named a MQL5\Logs file that never existed. This is the real location.
+        string fileName = StringFormat("%s_structured_%s.jsonl", prefix, timestamp);
+        m_fileHandle = FileOpen(fileName, FILE_WRITE|FILE_TXT|FILE_ANSI);
+        m_logPath = TerminalInfoString(TERMINAL_DATA_PATH) + "\\MQL5\\Files\\" + fileName;
         m_enabled = (m_fileHandle != INVALID_HANDLE);
-        
+
         if(m_enabled) {
             Print("[STRUCTLOG] Initialized: ", m_logPath);
-            WriteRaw("{\"evt\":\"SESSION_START\",\"acct\":" + IntegerToString(m_accountLogin) + 
+            WriteRaw("{\"evt\":\"SESSION_START\",\"acct\":" + IntegerToString(m_accountLogin) +
                      ",\"ea_ver\":\"" + m_eaVersion + "\",\"ts\":" + IntegerToString(TimeCurrent() * 1000) + "}");
         } else {
-            Print("[STRUCTLOG] WARNING: Failed to open log file: ", m_logPath, " error: ", GetLastError());
+            PrintFormat("[STRUCTLOG] WARNING: Failed to open %s | error=%d | structured JSONL sink inactive, the journal still prints",
+                        fileName, GetLastError());
         }
     }
     
@@ -105,31 +108,6 @@ public:
             FlushBuffer();
     }
     
-    // Call on critical events to force the buffer out.
-    void Flush() { FlushBuffer(); }
-    
-    void LogSignal(string symbol, int strategyId, int direction, double confidence, double weight, string corrId = "") {
-        long packed = ((long)strategyId << 32) | ((long)(direction + 1) & 0xFFFFFFFF);
-        Log("SIGNAL", "", symbol, confidence, weight, packed, corrId);
-    }
-    
-    void LogConsensus(string symbol, int direction, double score, int voterCount, double threshold, string corrId = "") {
-        long packed = ((long)direction << 32) | ((long)voterCount & 0xFFFFFFFF);
-        Log("CONSENSUS", "", symbol, score, threshold, packed, corrId);
-    }
-    
-    void LogTrade(string symbol, int cmd, double volume, double price, double sl, double tp, 
-                  long ticket, string corrId = "") {
-        long packed = ((long)cmd << 32) | (ticket & 0xFFFFFFFF);
-        Log("TRADE", corrId, symbol, volume, price, packed, corrId);
-        if(sl > 0) Log("TRADE_SL", corrId, symbol, sl, 0, ticket, corrId);
-        if(tp > 0) Log("TRADE_TP", corrId, symbol, tp, 0, ticket, corrId);
-    }
-    
-    void LogRiskCheck(string symbol, string checkName, bool passed, double value, double limit, string corrId = "") {
-        Log("RISK_CHECK", passed ? "PASS" : "FAIL", symbol, value, limit, passed ? 1 : 0, corrId);
-    }
-    
     void LogError(string context, string error, int code = 0, string corrId = "") {
         Log("ERROR", error, context, 0, 0, code, corrId);
     }
@@ -145,46 +123,6 @@ public:
     void LogSpreadSpike(string symbol, double current, double average, string corrId = "") {
         Log("SPREAD_SPIKE", "", symbol, current, average, 0, corrId);
     }
-    
-    void LogSymbolFrozen(string symbol, int secondsSinceTick, string corrId = "") {
-        Log("SYMBOL_FROZEN", "", symbol, secondsSinceTick, 0, 0, corrId);
-    }
-    
-    void LogSignalSkipped(string symbol, string reason, string corrId = "") {
-        Log("SIGNAL_SKIPPED", reason, symbol, 0, 0, 0, corrId);
-    }
-    
-    void LogConfigReload(string section, string changes, string corrId = "") {
-        Log("CONFIG_RELOAD", changes, section, 0, 0, 0, corrId);
-    }
-    
-    void LogAIVote(string symbol, string model, double confidence, int vote, string corrId = "") {
-        Log("AI_VOTE", model, symbol, confidence, 0, vote, corrId);
-    }
-    
-    void LogAIModelLoad(string model, bool success, string corrId = "") {
-        Log("AI_MODEL_LOAD", success ? "SUCCESS" : "FAILED", model, 0, 0, success ? 1 : 0, corrId);
-    }
-    
-    void LogEngineInit(string engine, bool success, string corrId = "") {
-        Log("ENGINE_INIT", success ? "OK" : "FAILED", engine, 0, 0, success ? 1 : 0, corrId);
-    }
-    
-    void LogPositionOpen(string symbol, long ticket, double volume, double price, string corrId = "") {
-        Log("POSITION_OPEN", "", symbol, volume, price, ticket, corrId);
-    }
-    
-    void LogPositionClose(string symbol, long ticket, double profit, string reason, string corrId = "") {
-        Log("POSITION_CLOSE", reason, symbol, profit, 0, ticket, corrId);
-    }
-    
-    void LogPositionModify(string symbol, long ticket, double sl, double tp, string corrId = "") {
-        Log("POSITION_MODIFY", "", symbol, sl, tp, ticket, corrId);
-    }
-    
-    bool IsEnabled() const { return m_enabled; }
-    string GetLogPath() const { return m_logPath; }
-    long GetSequence() const { return m_sequence; }
     
     // Direct write + flush, bypassing the buffer; used by the session markers.
     void WriteRaw(string json) {

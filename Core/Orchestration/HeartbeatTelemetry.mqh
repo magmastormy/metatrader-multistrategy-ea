@@ -9,32 +9,22 @@
 #include "../Management/DiagnosticsManager.mqh"
 
 // Counters mirror CDiagnosticsManager::UpdateCounters' argument set. Funnel order:
-// signalsGenerated -> AfterPipeline -> AfterQuorum -> Validated -> RiskApproved -> Sent.
-// The rest are scan cadence, rejection counts, quiet-cycle reasons and outcomes.
+// signalsGenerated -> Validated -> Sent. Every counter here has a writer; the seven that had none
+// (intrabar scans, risk rejects, entry blocked, sizing rejects, the three quiet-cycle reasons,
+// after-pipeline, after-quorum, risk-approved and trades-opened) are deleted rather than left
+// printing a zero that reads as a measurement.
 class CHeartbeatTelemetry
 {
 private:
     ulong m_scansAttempted;
-    ulong m_intrabarScansExecuted;
 
     ulong m_noSignalCount;
     ulong m_validatorRejects;
-    ulong m_riskRejects;
-    ulong m_entryBlocked;
-    ulong m_sizingRejects;
-
-    ulong m_quietNoNewBar;
-    ulong m_quietCadenceHold;
-    ulong m_quietMissingManager;
 
     ulong m_signalsGenerated;
-    ulong m_signalsAfterPipeline;
-    ulong m_signalsAfterQuorum;
     ulong m_signalsValidated;
-    ulong m_signalsRiskApproved;
     ulong m_signalsSent;
 
-    ulong m_tradesOpened;
     ulong m_syntheticSpikeEvents;
 
 public:
@@ -47,46 +37,24 @@ public:
 
     void Reset()
     {
-        m_scansAttempted        = 0;
-        m_intrabarScansExecuted = 0;
-        m_noSignalCount         = 0;
-        m_validatorRejects      = 0;
-        m_riskRejects           = 0;
-        m_entryBlocked          = 0;
-        m_sizingRejects         = 0;
-        m_quietNoNewBar         = 0;
-        m_quietCadenceHold      = 0;
-        m_quietMissingManager   = 0;
-        m_signalsGenerated      = 0;
-        m_signalsAfterPipeline  = 0;
-        m_signalsAfterQuorum    = 0;
-        m_signalsValidated      = 0;
-        m_signalsRiskApproved   = 0;
-        m_signalsSent           = 0;
-        m_tradesOpened          = 0;
-        m_syntheticSpikeEvents  = 0;
+        m_scansAttempted       = 0;
+        m_noSignalCount        = 0;
+        m_validatorRejects     = 0;
+        m_signalsGenerated     = 0;
+        m_signalsValidated     = 0;
+        m_signalsSent          = 0;
+        m_syntheticSpikeEvents = 0;
     }
 
     void IncScansAttempted()        { m_scansAttempted++; }
-    void IncIntrabarScansExecuted() { m_intrabarScansExecuted++; }
     void IncNoSignalCount()         { m_noSignalCount++; }
     void IncValidatorRejects()      { m_validatorRejects++; }
-    void IncRiskRejects()           { m_riskRejects++; }
-    void IncEntryBlocked()          { m_entryBlocked++; }
-    void IncSizingRejects()         { m_sizingRejects++; }
-    void IncQuietNoNewBar()         { m_quietNoNewBar++; }
-    void IncQuietCadenceHold()      { m_quietCadenceHold++; }
-    void IncQuietMissingManager()   { m_quietMissingManager++; }
     void IncSignalsGenerated()      { m_signalsGenerated++; }
-    void IncSignalsAfterPipeline()  { m_signalsAfterPipeline++; }
-    void IncSignalsAfterQuorum()    { m_signalsAfterQuorum++; }
     void IncSignalsValidated()      { m_signalsValidated++; }
-    void IncSignalsRiskApproved()   { m_signalsRiskApproved++; }
     void IncSignalsSent()           { m_signalsSent++; }
-    void IncTradesOpened()          { m_tradesOpened++; }
     void IncSyntheticSpikeEvents(const ulong count = 1) { m_syntheticSpikeEvents += count; }
 
-// UpdateCounters takes 18 positional arguments: the order below must match the
+// UpdateCounters takes 7 positional arguments: the order below must match the
 // manager's parameter list exactly. NULL diag is tolerated (no-op). tradingPaused comes
 // from CSyntheticSpikeMonitor, the only holder of that state.
     void Emit(CDiagnosticsManager* diag, const bool tradingPaused) const
@@ -97,12 +65,9 @@ public:
         diag.SetTradingPaused(tradingPaused);
 
         diag.UpdateCounters(
-            m_scansAttempted, m_intrabarScansExecuted, m_noSignalCount,
-            m_validatorRejects, m_riskRejects, m_tradesOpened, m_syntheticSpikeEvents,
-            m_signalsGenerated, m_signalsAfterPipeline, m_signalsAfterQuorum,
-            m_signalsValidated, m_signalsRiskApproved, m_signalsSent,
-            m_entryBlocked, m_sizingRejects,
-            m_quietNoNewBar, m_quietCadenceHold, m_quietMissingManager
+            m_scansAttempted, m_noSignalCount, m_validatorRejects,
+            m_signalsGenerated, m_signalsValidated, m_signalsSent,
+            m_syntheticSpikeEvents
         );
         diag.EmitHeartbeat();
     }

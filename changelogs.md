@@ -6,7 +6,100 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-23
+## [Unreleased] - 2026-10-25
+
+### Batch 253: the first runtime journal found a silent trade gate, a veto that demanded unanimity, and a funnel that printed zero beside the three fills it had counted
+
+**Type:** runtime-evidence-driven fixes. This is the first batch judged against an actual running journal
+(`MQL5\Logs\20261023.log`, the attached `Step Index,M15` session) rather than against the tree. Every number quoted below is read out
+of that file. Two of the five findings replaced a conclusion this batch had already written down from reasoning instead of evidence,
+and both are recorded as such.
+
+**(1) A bare `return` made a blocked account indistinguishable from a quiet market.** `CEAOrchestrator::GenerateAndProcessSignals`
+opened with `if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) return;` - no print, no counter,
+and `[ENTRY-GATE]` sits below it, so nothing downstream could say why the book was still. The attached session was blocked on the
+**terminal's** AutoTrading switch, not the per-program one, and that is the finding's whole point: one journal line names it, and no
+static pass through 250 batches could have. It now prints `[TRADE-BLOCKED] scanning stopped | terminal=%s | program=%s | no consensus
+scan, candidate or send happens until both are allowed` at most once a minute (`EAOrchestrator.mqh:3471`). OBSERVED:
+`[TRADE-BLOCKED] scanning stopped | terminal=NOT-allowed | program=allowed`. The first reading of the same session claimed the
+per-expert flag, because `terminal.ini` `[Experts] Enabled=1` looks like proof that terminal trading was on - it is not: that key
+gates the Experts menu, and the printed line answers the question the ini could not.
+
+**(2) The consensus conflict deadband demanded unanimity, on the live chart, right now.** `ConsensusEngine.mqh:723-736` compares a
+*vote-count* ratio against `InpConsensusConflictDeadband`, so the smallest conflict a scan can express is one dissenter out of the
+votes **cast**. Batch 222 fixed the shipped default to `0.35` and left the runtime arithmetic alone; a chart saved before that batch
+still carries `0.05`, and that is what this session was running. OBSERVED - five symbols, identical shape:
+`[CONSENSUS-DEADBAND-FLOORED] Volatility 25 Index | asked=0.050 enforced=0.333 | votes 2-1`, and the same for Volatility 75,
+Crash 1000, Jump 25 and AUDUSD. Those scans cast 3 votes, so the floor is `1/3 = 0.333`, `conflictRatio = 0.333` is **not** greater
+than it and the decision stands; under the old arithmetic `0.333 > 0.05` vetoed it. The veto is now floored at
+`MathMax(asked, 1.0 / votes_cast)` - one dissenter can never block, two or more still answer to the operator's own number.
+Two different denominators now exist and are deliberately different: `[CONSENSUS-QUORUM] finestDissent=` uses *eligible* voters
+(19 on this roster, `1/19 = 0.053`) as the init-time warning, while the veto is floored on votes *actually cast*, which is the figure
+that decides - flooring on the eligible count would have let a 2-1 scan keep being vetoed. The floor is throttled 300 s **per symbol**
+through a member, not a function `static`: one shared slot would let the first symbol to dissent mute the other twelve, which is the
+Batch 214 shape, and five symbols each getting their own line is the evidence that it is keyed correctly. `[VALIDATION]` also warns at
+init when the asked deadband is below `1/19`.
+
+**(3) The heartbeat funnel printed zeros beside the fills it had already counted.** OBSERVED, two lines from one heartbeat block that
+contradict each other - one says three orders went out, the other that no trade ever opened:
+
+```
+[HEARTBEAT-FUNNEL] signals_generated=0 | signals_after_pipeline=0 | signals_after_quorum=0 | signals_validated=3 | signals_risk_approved=3 | signals_sent=3
+[HEARTBEAT] scans=58003 | intrabar=0 | no_signal=57929 | validator_reject=67 | risk_reject=0 | trades_opened=0 | spike_events=0 | pause_active=false
+```
+
+`trades_opened` and `signals_sent` are the same event and one of them was structurally zero. Behind it: of eighteen counters, eleven
+had no writer anywhere - `intrabar`, `risk_reject`, `entry_blocked`, `sizing_rejects`, the three `quiet_*`, `signals_after_pipeline`,
+`signals_after_quorum`, `trades_opened`, and `signals_generated`, the funnel top. Because every `[CONVERSION-RATES]` percentage divides
+by a stage, one dead stage pinned the whole chain at zero: OBSERVED `[CONVERSION-RATES] window_scans=319 | generated=0 | ... |
+validated=0.0% | risk_approved=0.0% | sent=0.0% | no_signal=100.0%` - "nothing was ever produced", in a session whose journal already
+contained five `[EXECUTION-RECEIPT] XAUUSD | accepted=true | requested=0.01 | filled=0.01 | retcode=10009` lines inside its first half
+hour. `validated` -> `risk_approved` -> `sent` were also one statement: all three incremented inside `if(execResult.executed)`, so any
+`100.0%` conversion between them was arithmetic, not measurement. The class is now seven counters, one writer each, at the real event:
+`scans_attempted` (`EAOrchestrator.mqh:3522`), `no_signal` (`:3526`, only when `!newBarSignals[i].valid`), `signals_generated`
+(`:3533`, new - the funnel top had never been counted), `validator_rejects` (`:3567`), `signals_validated` (`:3570`, moved out of the
+execution branch to where validation actually passes), `signals_sent` (`:3618`) and `synthetic_spike_events`. `signals_sent` **is** the
+fill count - it sits inside `if(execResult.executed)` - so no separate `trades_opened` was reinstated; that would rebuild the
+two-names-one-event defect. `intrabar=0` was deleted rather than wired because it was a *true* zero for a path that no longer exists:
+Batch 233 proved the only live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`) and Batch 215
+deleted the entry-side scheduler. `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]` and `[NO-SIGNAL-ALERT]` lost every field
+that could only print `0` or `100%`, `CDiagnosticsManager::UpdateCounters` takes seven arguments instead of eighteen, and the eleven
+dead `m_hb*`/`m_prev*` mirrors went with them. `[NO-SIGNAL-ALERT]`'s `no_signal=319 (100.0%)` was checked before being left alone and is
+correct: the funnel prints lifetime counters and the rates print window deltas, and that 319-scan window genuinely produced no signal.
+
+**(4) `InpEnableOnnxAI = true` shipped ON and could never have loaded a model.** The init check claimed validating it "would need
+file system access" and printed OK unconditionally. `g_onnxModel` (`StrategyFactory.mqh:11`) is declared as an empty `uchar[]` and
+no `#resource` anywhere in the tree fills it, so `ArraySize(g_onnxModel) == 0` in every build and the adapter cannot create a
+session. `[VALIDATION]` now tests the buffer itself (`MultiStrategyAutonomousEA.mq5:886-894`) and says what is missing;
+`[ONNX] <symbol> | no model bytes supplied | ...` distinguishes that from "bytes present, no session loaded"
+(`OnnxAIStrategyAdapter.mqh:220-223`), which is the case that needs a re-export - and `OnnxBrain.mqh:193` said the shipped
+`Resources/model.onnx` was built for a *65*-feature contract, which is wrong in both numbers: the file's input is `[0, 60, 57]`,
+`ONNX_SEQ_LEN` is 60 (matches) and `FEATURE_VECTOR_SIZE` is 70 (does not). The note now names 57 and `FEATURE_VECTOR_SIZE`.
+Wiring the model is an operator decision, not a cleanup: a `#resource` line would put five AI adapters into consensus voting on a
+symbol-by-symbol basis, and that is exposure, so the flag now reports honestly instead.
+
+**(5) `CStructuredLogger` was 454 lines of which 18 methods had zero callers**, and its reported path was a lie: `Init` handed
+`TERMINAL_DATA_PATH + "\MQL5\Logs\<name>"` to `FileOpen`, which wrote the basename into `MQL5\Files\` - the JSONL sink worked the
+whole time (proved by `MQL5\Files\MultiStrategyEA_structured_20261023_160355.jsonl`, 635 events) while the `[STRUCTLOG] Initialized:`
+line and `m_logPath` pointed at a directory that never held the file, so any reader who follows the printed path finds nothing.
+`m_logPath` is now the real location, the name is built from `TimeLocal` instead of `TimeCurrent` (at `OnInit` the server
+tick can be hours old, so a session started after a gap inherits the older name and two sessions can collide), the failure line names
+the file and says the journal still prints, and the eighteen uncalled methods (`LogSignal`, `LogConsensus`, `LogTrade`, `LogRiskCheck`,
+`LogSymbolFrozen`, `LogSignalSkipped`, `LogConfigReload`, `LogAIVote`, `LogAIModelLoad`, `LogEngineInit`, `LogPositionOpen`,
+`LogPositionClose`, `LogPositionModify`, `GetLogPath`, `GetSequence`, `Flush`, `IsEnabled` and their kind) are gone. Six apparent
+external `IsEnabled()` calls were `CJsonLogger::IsEnabled()` on a different class - the name-grep trap again.
+
+Docs: 38 pointers re-pointed by these deltas across the five current-state docs, then two re-anchored by content because they were
+already stale before this batch - `SYSTEM_STRUCTURE.md`'s `EAOrchestrator.mqh:575,585` (the accumulate/divide pair is 575/588 and
+601/609) and the `EVAL_MODE_NEW_BAR` citation `:3543`, which lands on a `continue`; the live sites are `:3512` and `:3557`.
+**131 added / 249 deleted across ten code files**, plus the five docs.
+
+Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its own `Result:`
+line; 0 errors / 0 warnings (8.4 / 2.6 / 5.2 / 4.7 / 81.2 / 67.4 / 36.6 / 3.5 s); `OVERALL SUCCESS`; all eight `.ex5` newer than the
+sources; artifacts removed. Runtime: the *defects* in (1), (2) and (3) are all read out of that journal - (1) and (2) show the new
+lines firing, (3) shows the old zeros it was written to expose - while the rebuilt seven-field `[HEARTBEAT]` payload itself has not
+yet been seen in a journal, because the terminal has not been re-attached since this compile.
+
 
 ### Batch 252: the win-rate weight scaler sat behind a gate that was always open, on a mirror nobody read
 

@@ -799,13 +799,19 @@ bool ValidateInputs()
         PrintFormat("[VALIDATION] OK: InpQuorumThreshold=%.2f", InpQuorumThreshold);
     }
     
-    // Votes are integers, so the smallest non-zero conflict on this roster is 1/eligibleVoters
-    // (~0.05 at 19 rows). A deadband under 0.05 cannot be satisfied by any committee and silently
-    // demands unanimity; [0.05, 0.50] is the range SetConflictDeadband can actually honour.
+    // Votes are integers, so the smallest non-zero conflict is 1/votes_cast, and a deadband at or under it is
+    // not a tight tolerance but a unanimity requirement - 1/19 = 0.053, so even this range's own floor of 0.05
+    // demands every voter agree. The consensus veto now floors the deadband at the finest dissent it can see
+    // and prints [CONSENSUS-DEADBAND-FLOORED]; a value below ~0.06 is accepted but cannot bind.
     if(InpConsensusConflictDeadband < 0.05 || InpConsensusConflictDeadband > 0.50)
     {
         PrintFormat("[VALIDATION] ERROR: InpConsensusConflictDeadband=%.2f out of range [0.05, 0.5]", InpConsensusConflictDeadband);
         valid = false;
+    }
+    else if(InpConsensusConflictDeadband < 0.10)
+    {
+        PrintFormat("[VALIDATION] WARNING: InpConsensusConflictDeadband=%.2f is under the finest dissent 1/19=0.053, so the veto is floored at runtime and single dissents cannot block an entry",
+                    InpConsensusConflictDeadband);
     }
     else
     {
@@ -879,8 +885,12 @@ bool ValidateInputs()
     // --- AI dependency validation (L7-011) ---
     if(InpEnableOnnxAI)
     {
-        // Note: Resource check would need file system access, log warning
-        Print("[VALIDATION] WARNING: InpEnableOnnxAI=true - ensure model.onnx resource is compiled in");
+        // g_onnxModel is the only source the adapter ever receives, and no line in the tree writes it, so
+        // this answers directly instead of telling the operator to go check the build.
+        if(ArraySize(g_onnxModel) > 0)
+            PrintFormat("[VALIDATION] OK: InpEnableOnnxAI=true | model bytes=%d", ArraySize(g_onnxModel));
+        else
+            Print("[VALIDATION] WARNING: InpEnableOnnxAI=true but g_onnxModel is empty - no #resource feeds it, so ONNX AI cannot vote on any symbol");
     }
     
     if(InpEnablePythonBridgeAI)

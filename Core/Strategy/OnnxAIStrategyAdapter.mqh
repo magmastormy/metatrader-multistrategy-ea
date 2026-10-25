@@ -206,8 +206,9 @@ public:
     // Initialize AI model with symbol/timeframe/risk manager after factory creation
     virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
     {
-        // For ONNX AI, the model is initialized in Init()
-        // This method just updates symbol/timeframe if needed
+        // The catalog path calls only this, never Init(), so m_brain.Init's own diagnostic cannot run
+        // here - without this branch the only trace was "[AI-MODE] ... initialization failed", which reads
+        // like a corrupt model even when no model bytes were ever supplied.
         if(m_brain.IsLoaded())
         {
             m_symbol = symbol;
@@ -215,6 +216,11 @@ public:
             m_lastDecisionReasonTag = "ONNX_AI_INITIALIZED";
             return true;
         }
+        if(ArraySize(m_modelBuffer) <= 0)
+            PrintFormat("[ONNX] %s | no model bytes supplied | g_onnxModel is empty, so the strategy cannot load a session regardless of the model file", symbol);
+        else
+            PrintFormat("[ONNX] %s | model bytes present (%d) but no session loaded | expected_shape=[1,%d,%d]",
+                        symbol, ArraySize(m_modelBuffer), ONNX_SEQ_LEN, ONNX_FEAT_DIM);
         m_lastDecisionReasonTag = "ONNX_AI_INIT_FAILED";
         return false;
     }

@@ -1208,7 +1208,7 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
 - AI adapters can be the sole tradable family when enabled. The *entry* vote is new-bar only (`EVAL_MODE_NEW_BAR` at
-  `EAOrchestrator.mqh:3499`/`:3543`); no entry path runs an intrabar scan (Batch 233).
+  `EAOrchestrator.mqh:3512`/`:3557`); no entry path runs an intrabar scan (Batch 233).
 - AI intrabar participation is *configured* per strategy (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) rather than hard-forced `OFF` at governance time — and since Batch 233 that field is stated as report-only: the stored policy gates no vote, and the AI adapters register with `fixedPolicy = LIVE` regardless of the input, because their catalog slot is `-1`.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
@@ -1391,7 +1391,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **The last live journals (17-23 September, UTF-16LE in `MQL5/Logs/`) are the runtime evidence for Batches 168-178** (Batch 179). They confirm the dormant-engine finding (grid/ATR-scalp/spike-hunter appear only as `Initialized` / `PARKED` / `Deinitialized`, `gridsOpened=0`), confirm that no OFI/VPIN/quality/hard-spread veto line ever existed before Batch 175's wiring, and show `[SCALP-ENTRY]` as the only engine traffic. Nothing newer than 23 September exists, so the tags introduced by Batches 173-179 cannot be evidenced from this machine.
 
 - **Three scalp-class engines are enabled by inputs and wired to no tick routine** (Batch 178, verified by call-site diffing): `m_spikeHunter`, `m_gridRecovery` and `m_atrScalping` receive only `Init`/`AddSymbol`/`Deinit` in `EAOrchestrator` (`:1177`, `:1287`, `:1336` each print `PARKED`), while `InpSpikeHunterEnabled` / `InpGridRecoveryEnabled` / `InpATRScalpingEnabled` all default true. They open zero trades. The only engine with a per-cycle driver is `CFastScalpEngine` (`:2640-2646` entry, `:3375-3378` management). Wiring the other three is a strategy-activation decision, not a refactor: it creates exposure on paths that have never traded, so it is left to the operator and `[ENGINE-STATUS]` reports the state at every startup.
-- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` / `IsSparseIntrabarSingleVoterAllowed` — **gone** (Batch 231). It never bypassed the voter floor: one-voter entries were refused by `MIN_CONSENSUS_VOTERS = 2`, and `SPARSE_INTRABAR` is only the label `ConsensusEngine.mqh:733` puts on a decision that already passed quorum.
+- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` / `IsSparseIntrabarSingleVoterAllowed` — **gone** (Batch 231). It never bypassed the voter floor: one-voter entries were refused by `MIN_CONSENSUS_VOTERS = 2`, and `SPARSE_INTRABAR` is only the label `ConsensusEngine.mqh:752` puts on a decision that already passed quorum.
 - Configuration entry points with no caller anywhere, found by diffing every `Set*/Configure*` in `Core/` against its call sites (Batch 176). None has an operator input behind it, so these are unsettable features rather than misreported inputs — the distinction matters, and each is listed with what actually runs:
   - `CRiskMarginHealth`'s two margin gates (`Core/Risk/RiskMarginHealth.mqh:16/17` fields, read at `:41`/`:49`): the setter pair was deleted in Batch 240 (zero callers, no input feeding it) — **this one gates live money**: the pre-trade margin check runs on the construction defaults 80% free-margin usage and 200% margin level, and its rejection message prints those numbers, so an operator reading a rejection can see the ceiling in force.
   - `CUnifiedRiskManager::SetTradingDayStartHour` (`UnifiedRiskManager.mqh:225`) — the daily risk window rolls at server midnight.
@@ -1446,7 +1446,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 
 - **The validator quality floor is not a confidence bar, and making it one would tighten admission** (found
   Batch 220, not changed). `buyDirectionalQuality = sum(voter confidence x registration weight) / buyVotes`
-  (`ConsensusEngine.mqh:571,585`) divides by the *vote count*, not the summed weight, so on the default roster
+  (`ConsensusEngine.mqh:575,588` accumulate and `:601,609` divide) divides by the *vote count*, not the summed weight, so on the default roster
   (weights 1.0 Momentum to 2.0 Volatility Breakout, mean about 1.5) the metric runs ~1.5x the committee's mean
   confidence: `InpValidatorNewBarMinQuality = 0.68`, discounted to 0.612 for a full quorum, is in practice a
   ~0.41 mean-confidence bar. `confidence = min(0.95, quality x 0.8 + support x 0.2)` inherits the same inflation,
@@ -1548,6 +1548,26 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   the AI profitability multiplier, 0.8x..1.2x, printing `[AI-WEIGHT-ADJUST]`. `SStrategyHealthEntry::currentWeight` /
   `originalWeight`, `UpdateAllStrategyWeights`, the monitor's three weight accessors and `StrategyEntry::originalWeight`
   went with it, leaving `StrategyEntry::weight` as the single weight consensus reads.
+- **A silent early return is indistinguishable from an empty market** (Batch 253). The scan entry point's algo-trading guard
+  printed nothing, so a blocked account produced the same journal as a quiet one, and `[ENTRY-GATE]` - the tag that exists to
+  explain a held book - sits below it. The rule generalises: any `return` that ends a whole decision cycle needs a name, a
+  reason and a throttle, because the alternative reading is a conclusion about the market. `[HEARTBEAT] scans=` not growing
+  is the secondary tell, since the counter sits below the same return.
+- **A threshold compared against an integer ratio has a floor of 1/N** (Batch 253). `conflictRatio` is losingVotes/votesCast,
+  so no scan can express a conflict finer than one dissenter; an asked deadband below `1/N` is not a tight tolerance, it is a
+  unanimity requirement, and it fails silently because the veto looks like a market statement. Floored at runtime
+  (`ConsensusEngine.mqh:723-736`) with `[CONSENSUS-DEADBAND-FLOORED]` naming both numbers, `[CONSENSUS-QUORUM] finestDissent=`
+  warning at scan time, and `[VALIDATION] WARNING` at init.
+- **Telemetry ownership: one counter, one event, one writer** (Batch 253). `CHeartbeatTelemetry` went 18 fields -> 7, each with
+  exactly one call site, because a stage that no line increments is not a low reading and every `[CONVERSION-RATES]` percentage
+  divides by a stage; and two stages incremented in the same statement, so a `100.0%` conversion between them was arithmetic
+  dressed as a rate. `signals_sent` is the fill count (`if(execResult.executed)`), which is why there is no separate
+  trades-opened field. `CDiagnosticsManager::UpdateCounters` mirrors the same seven arguments - the mirror is the reason eleven
+  dead fields survived: the print path read the mirror, not the writer.
+- **A subsystem's reported path is a claim** (Batch 253). `CStructuredLogger::Init` printed a `MQL5\Logs\...` path while
+  `FileOpen` wrote the basename into `MQL5\Files\`; the sink had 635 events and every reader who followed the log line concluded
+  it had never run. Same batch deleted 18 methods on that class whose only two occurrences were a declaration and a definition -
+  including `IsEnabled()`, whose six apparent external callers were `CJsonLogger::IsEnabled()` on a different class.
 
 - **The AI query surface was an entry point nobody had** (Batch 251). `CAIEngine::OnAIQuery` has no call in any `.mq5`
   or `.mqh`, and neither did the free `InitializeAIEngine`/`CleanupAIEngine` pair or the `g_AIEngine` global that were the
@@ -1569,7 +1589,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   `EntStrategyTypes.mqh` 142 -> 141. 9 added / 810 deleted across seven files.
 - **A bound table is only bound where a reader exists** (Batch 249). Batch 234 kept the per-strategy timeframe table as
   the carrier for a future decision; the decision landed, and what made it small was not the binding but the read set:
-  `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:524`, `StrategyLifecycle.mqh:154`,
+  `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:528`, `StrategyLifecycle.mqh:154`,
   `EnterpriseStrategyManager.mqh:1073`) and `CStrategyRegistryState::RegisterStrategy` already resolved
   `PERIOD_CURRENT -> m_baseTimeframe` at `:90`, so feeding the row value into `RegisterStrategy` was one argument, not a
   new mechanism. `SStrategyTimeframeConfig` is now `ENUM_TIMEFRAMES strategyTimeframes[23]` - `name`, `intrabarTF` and
@@ -1578,7 +1598,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   keep `PERIOD_CURRENT` and resolve to the chart exactly as before.
 - **A field no branch reads must announce itself** (Batch 233). The eleven `InpIntrabarEligibility*` inputs still
   write a per-strategy intrabar policy, and after Batch 231 the only reader left is the registration print: the entry
-  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3499`/`:3543`, `SignalGenerator.mqh:109` says so outright), and
+  path passes `EVAL_MODE_NEW_BAR` (`EAOrchestrator.mqh:3512`/`:3557`, `SignalGenerator.mqh:109` says so outright), and
   the one live `EVAL_MODE_INTRABAR` caller is the reversal-exit check (`PositionLifecycleManager.mqh:263`), whose voter
   set is enabled + `liveVotingEnabled` + the regime veto - never the policy. Making it binding is one line and the
   *restrictive* direction, because eight indicator rows carry `defaultPolicy = INTRABAR_POLICY_OFF` with no input at

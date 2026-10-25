@@ -29,8 +29,12 @@ private:
 
     SConsensusDecisionContext m_lastDecisionContext;
 
+    // Per-symbol, not a function static: one shared slot would let the first symbol to dissent mute the
+    // other twelve (the Batch 214 shape).
+    datetime m_lastDeadbandFloorLog;
+
 public:
-    CConsensusEngine() : m_src(NULL) {}
+    CConsensusEngine() : m_src(NULL), m_lastDeadbandFloorLog(0) {}
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
@@ -419,10 +423,10 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
     buyQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentBuy));
     sellQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentSell));
 
-    // Votes are integers: the smallest conflict this gate can ever see is one dissenter out of the
-    // votes cast. Printing it beside the deadband is what tells an operator that a value under
-    // 1/voters demands unanimity, and that supportRatio (winner / votes cast) is above 0.50 by
-    // construction, so a support floor at or below 0.50 refuses nothing.
+    // Votes are integers: the smallest conflict this gate can ever see is one dissenter out of the votes
+    // cast, and EvaluateConsensusInternal floors the veto at that figure so a lower deadband cannot demand
+    // unanimity. Printed beside it is what shows an operator when the floor is what binds. supportRatio
+    // (winner / votes cast) is above 0.50 by construction, so a support floor at or below 0.50 refuses nothing.
     double finestDissent = (eligibleLiveVoterCount > 1) ? (1.0 / eligibleLiveVoterCount) : 1.0;
     string supportFloorNote = (supportFloor > 0.0 && supportFloor <= 0.50) ? " inert" : "";
 
@@ -709,12 +713,27 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(losingVotes > 0)
     {
-        double conflictRatio = (double)losingVotes / (winningVotes + losingVotes);
-        if(conflictRatio > m_src.GetConflictDeadband())
+        double totalVotesCastForConflict = winningVotes + losingVotes;
+        double conflictRatio = (totalVotesCastForConflict > 0) ? (double)losingVotes / totalVotesCastForConflict : 0.0;
+        // Votes are integers, so the smallest conflict a scan can express is one dissenter out of the votes
+        // cast. A deadband under that figure is not a tight tolerance, it is a unanimity requirement: on this
+        // roster 1/19 = 0.053 and the live chart input is 0.05, so every single dissent vetoed. The floor
+        // removes exactly that - one dissenter can never veto - and leaves 2+ dissenters under the
+        // operator's own deadband.
+        double finestDissent = (totalVotesCastForConflict > 1) ? (1.0 / totalVotesCastForConflict) : 1.0;
+        double askedDeadband = m_src.GetConflictDeadband();
+        double effectiveDeadband = MathMax(askedDeadband, finestDissent);
+        if(conflictRatio > effectiveDeadband)
         {
             PrintFormat("[CONSENSUS-VETOED] %s | Conflict ratio %.2f > deadband %.2f | votes %d-%d",
-                        symbol, conflictRatio, m_src.GetConflictDeadband(), winningVotes, losingVotes);
+                        symbol, conflictRatio, effectiveDeadband, winningVotes, losingVotes);
             return TRADE_SIGNAL_NONE;
+        }
+        if(effectiveDeadband > askedDeadband && TimeCurrent() - m_lastDeadbandFloorLog >= 300)
+        {
+            m_lastDeadbandFloorLog = TimeCurrent();
+            PrintFormat("[CONSENSUS-DEADBAND-FLOORED] %s | asked=%.3f enforced=%.3f | votes %d-%d | a deadband under 1/votes_cast demands unanimity",
+                        symbol, askedDeadband, effectiveDeadband, winningVotes, losingVotes);
         }
     }
 

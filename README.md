@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-249-green)
+![Batch](https://img.shields.io/badge/batch-253-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -305,7 +305,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3579`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3592`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -632,6 +632,42 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 `[VOL-TARGET] ... | applied=no(no sizing consumer)` on the measurement line. If you want it live, the decision
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
+
+### Batch 253: the first runtime journal - what it showed, and what it corrected
+
+This is the first batch judged against a running journal instead of against the tree. Three of its findings were
+invisible to 250 static sweeps, and two of them corrected conclusions this batch had already written down.
+
+- **A blocked account and a quiet market used to write identical journals.** The scan entry point opened with a bare
+  `return` when terminal or program algo-trading is off. The attached chart printed
+  `[TRADE-BLOCKED] scanning stopped | terminal=NOT-allowed | program=allowed`, which is the terminal's AutoTrading
+  button - not the per-expert flag, and not something `terminal.ini` `[Experts] Enabled=1` speaks for. `[HEARTBEAT] scans=`
+  stops growing while the block holds, because the scan counter sits below the return.
+- **A saved chart can still be demanding unanimity, and now says so.** The conflict deadband is compared against a vote-count
+  ratio, so the finest conflict a scan can express is one dissenter out of the votes cast. This chart carried `0.05`; five
+  symbols each printed `[CONSENSUS-DEADBAND-FLOORED] asked=0.050 enforced=0.333 | votes 2-1`. Those decisions had been
+  vetoed by the old arithmetic. The veto is now floored at `1/votes_cast` - one dissenter can never block, two or more still
+  answer to your own number. `finestDissent=` in `[CONSENSUS-QUORUM]` is the *eligible*-voter figure and is only the init
+  warning; the votes actually cast are what decide.
+- **The funnel printed zeros beside the fills it had counted.** One journal block contained
+  `[HEARTBEAT] ... trades_opened=0` and `[HEARTBEAT-FUNNEL] ... signals_sent=3`, and `[CONVERSION-RATES]` said
+  `generated=0 ... sent=0.0% | no_signal=100.0%` in a session that had five `accepted=true | filled=0.01 | retcode=10009`
+  receipts in its first half hour. Eleven of eighteen telemetry counters had no writer, every rate divides by a stage, and
+  three stages incremented in one statement. The telemetry class is now seven counters with one writer each; `signals_sent`
+  is the fill count, so there is no separate trades-opened number, and `intrabar=` is gone because that entry path is gone.
+- **`InpEnableOnnxAI` ships ON and has never been able to load a model.** No `#resource` writes `g_onnxModel`, so the adapter
+  gets an empty buffer; the init check printed OK anyway and claimed the test would need file system access. It now reads the
+  buffer, and `[ONNX]` distinguishes "no model bytes" (needs a `#resource`) from "bytes present, no session" (needs a
+  re-export: `Resources/model.onnx` is `[0, 60, 57]` while `FEATURE_VECTOR_SIZE` is 70 - the shipped note said 65, which is
+  wrong in both numbers).
+- **The structured JSONL sink did work; its own log line pointed at the wrong folder.** `FileOpen` accepted the absolute path
+  and wrote the basename into `MQL5\Files`, while `m_logPath` printed `MQL5\Logs`. 635 events were sitting in the real file.
+  The path is now truthful, the session name uses `TimeLocal` (`TimeCurrent()` at `OnInit` is the last server tick), and 18
+  uncalled methods are gone.
+
+Operational effect: no lot, stop, take-profit, quorum or exit threshold moved. Two entry-path behaviours changed - a
+single-dissent scan that the deadband arithmetic vetoed now proceeds, and `[HEARTBEAT]`/`[CONVERSION-RATES]` now report
+stages that are actually measured. Expect the funnel numbers to be non-zero for the first time.
 
 ### Batch 252: the win-rate weight scaler sat behind a gate that was always open, on a mirror nobody read
 
@@ -1134,7 +1170,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3579`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3592`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.

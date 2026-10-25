@@ -8,8 +8,8 @@
 #include "JsonLogger.mqh"
 
 //--- Core heartbeat format strings
-#define FMT_HEARTBEAT "[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s"
-#define FMT_HEARTBEAT_FUNNEL "[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u"
+#define FMT_HEARTBEAT "[HEARTBEAT] scans=%I64u | no_signal=%I64u | validator_reject=%I64u | spike_events=%I64u | pause_active=%s"
+#define FMT_HEARTBEAT_FUNNEL "[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_validated=%I64u | signals_sent=%I64u"
 
 #define FMT_COMPOUNDING_TIER_HEARTBEAT "[COMPOUNDING-TIER-HEARTBEAT] %s"
 #define FMT_SESSION_WEIGHT_HEARTBEAT "[SESSION-WEIGHT-HEARTBEAT] %s"
@@ -17,9 +17,9 @@
 #define FMT_FAMILY_WEIGHT_MATRIX "[FAMILY-WEIGHT-MATRIX] %s"
 #define FMT_PYTHON_BRIDGE_DASHBOARD "[PYTHON-BRIDGE-DASHBOARD] %s"
 
-#define FMT_CONVERSION_RATES "[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%"
+#define FMT_CONVERSION_RATES "[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | validated=%.1f%% | sent=%.1f%% | no_signal=%.1f%%"
 
-#define FMT_NO_SIGNAL_ALERT "[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u"
+#define FMT_NO_SIGNAL_ALERT "[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%)"
 
 #define FMT_RISK_BUDGET "[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s"
 

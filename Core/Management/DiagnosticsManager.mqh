@@ -60,32 +60,18 @@ private:
 
     // Current counter snapshot (pushed by main EA)
     ulong m_hbScansAttempted;
-    ulong m_hbIntrabarScansExecuted;
     ulong m_hbNoSignalCount;
     ulong m_hbValidatorRejects;
-    ulong m_hbRiskRejects;
-    ulong m_hbTradesOpened;
     ulong m_hbSyntheticSpikeEvents;
     ulong m_hbSignalsGenerated;
-    ulong m_hbSignalsAfterPipeline;
-    ulong m_hbSignalsAfterQuorum;
     ulong m_hbSignalsValidated;
-    ulong m_hbSignalsRiskApproved;
     ulong m_hbSignalsSent;
-    ulong m_hbEntryBlocked;
-    ulong m_hbSizingRejects;
-    ulong m_hbQuietNoNewBar;
-    ulong m_hbQuietCadenceHold;
-    ulong m_hbQuietMissingManager;
 
     // Previous-window snapshots (updated at end of each heartbeat)
     ulong m_prevScansAttempted;
     ulong m_prevNoSignalCount;
     ulong m_prevSignalsGenerated;
-    ulong m_prevSignalsAfterPipeline;
-    ulong m_prevSignalsAfterQuorum;
     ulong m_prevSignalsValidated;
-    ulong m_prevSignalsRiskApproved;
     ulong m_prevSignalsSent;
 
     // Consensus counter bank; every counter accessor below forwards to it
@@ -175,30 +161,16 @@ public:
                 m_lastHeartbeatTime(0),
                 m_lastNoSignalAlertTime(0),
         m_hbScansAttempted(0),
-        m_hbIntrabarScansExecuted(0),
         m_hbNoSignalCount(0),
         m_hbValidatorRejects(0),
-        m_hbRiskRejects(0),
-        m_hbTradesOpened(0),
         m_hbSyntheticSpikeEvents(0),
         m_hbSignalsGenerated(0),
-        m_hbSignalsAfterPipeline(0),
-        m_hbSignalsAfterQuorum(0),
         m_hbSignalsValidated(0),
-        m_hbSignalsRiskApproved(0),
         m_hbSignalsSent(0),
-        m_hbEntryBlocked(0),
-        m_hbSizingRejects(0),
-        m_hbQuietNoNewBar(0),
-        m_hbQuietCadenceHold(0),
-        m_hbQuietMissingManager(0),
         m_prevScansAttempted(0),
         m_prevNoSignalCount(0),
         m_prevSignalsGenerated(0),
-        m_prevSignalsAfterPipeline(0),
-        m_prevSignalsAfterQuorum(0),
         m_prevSignalsValidated(0),
-        m_prevSignalsRiskApproved(0),
         m_prevSignalsSent(0),
         m_aiEnabled(false),
                 m_nnEnabled(false),
@@ -231,32 +203,17 @@ public:
         }
 
 // Pushes the EA's counter snapshot; call before every EmitHeartbeat()
-void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
-                        ulong validatorReject, ulong riskReject,
-                        ulong tradesOpened, ulong spikeEvents,
-                        ulong sigGenerated, ulong sigAfterPipeline, ulong sigAfterQuorum,
-                        ulong sigValidated, ulong sigRiskApproved, ulong sigSent,
-                        ulong entryBlocked, ulong sizingRejects,
-                        ulong quietNoNewBar, ulong quietCadenceHold, ulong quietMissingManager)
+void UpdateCounters(ulong scans, ulong noSignal, ulong validatorReject,
+                        ulong sigGenerated, ulong sigValidated, ulong sigSent,
+                        ulong spikeEvents)
     {
         m_hbScansAttempted       = scans;
-        m_hbIntrabarScansExecuted = intrabar;
         m_hbNoSignalCount        = noSignal;
         m_hbValidatorRejects     = validatorReject;
-        m_hbRiskRejects          = riskReject;
-        m_hbTradesOpened         = tradesOpened;
-        m_hbSyntheticSpikeEvents = spikeEvents;
         m_hbSignalsGenerated     = sigGenerated;
-        m_hbSignalsAfterPipeline = sigAfterPipeline;
-        m_hbSignalsAfterQuorum   = sigAfterQuorum;
         m_hbSignalsValidated     = sigValidated;
-        m_hbSignalsRiskApproved  = sigRiskApproved;
         m_hbSignalsSent          = sigSent;
-        m_hbEntryBlocked         = entryBlocked;
-        m_hbSizingRejects        = sizingRejects;
-        m_hbQuietNoNewBar        = quietNoNewBar;
-        m_hbQuietCadenceHold     = quietCadenceHold;
-        m_hbQuietMissingManager  = quietMissingManager;
+        m_hbSyntheticSpikeEvents = spikeEvents;
     }
 
     void SetScalpEngine(CFastScalpEngine* engine)  { m_scalpEngine = engine; }
@@ -323,11 +280,10 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
 
         if(ShouldLogNormal())
         {
-            CDiagMgrHeartbeat::EmitCoreLines(m_hbScansAttempted, m_hbIntrabarScansExecuted, m_hbNoSignalCount,
-                                             m_hbValidatorRejects, m_hbRiskRejects, m_hbTradesOpened,
+            CDiagMgrHeartbeat::EmitCoreLines(m_hbScansAttempted, m_hbNoSignalCount,
+                                             m_hbValidatorRejects,
                                              m_hbSyntheticSpikeEvents, m_tradingPaused,
-                                             m_hbSignalsGenerated, m_hbSignalsAfterPipeline, m_hbSignalsAfterQuorum,
-                                             m_hbSignalsValidated, m_hbSignalsRiskApproved, m_hbSignalsSent,
+                                             m_hbSignalsGenerated, m_hbSignalsValidated, m_hbSignalsSent,
                                              corrId);
         }
 
@@ -376,31 +332,23 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             ulong windowScans         = CDiagMgrHeartbeat::WindowDelta(m_hbScansAttempted, m_prevScansAttempted);
             ulong windowNoSignal      = CDiagMgrHeartbeat::WindowDelta(m_hbNoSignalCount, m_prevNoSignalCount);
             ulong windowGenerated     = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsGenerated, m_prevSignalsGenerated);
-            ulong windowAfterPipeline = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsAfterPipeline, m_prevSignalsAfterPipeline);
-            ulong windowAfterQuorum   = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsAfterQuorum, m_prevSignalsAfterQuorum);
             ulong windowValidated     = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsValidated, m_prevSignalsValidated);
-            ulong windowRiskApproved  = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsRiskApproved, m_prevSignalsRiskApproved);
             ulong windowSent          = CDiagMgrHeartbeat::WindowDelta(m_hbSignalsSent, m_prevSignalsSent);
 
-            double rateAfterPipeline = CDiagMgrHeartbeat::Ratio(windowAfterPipeline, windowGenerated);
-            double rateAfterQuorum   = CDiagMgrHeartbeat::Ratio(windowAfterQuorum, windowAfterPipeline);
-            double rateValidated     = CDiagMgrHeartbeat::Ratio(windowValidated, windowAfterQuorum);
-            double rateRiskApproved  = CDiagMgrHeartbeat::Ratio(windowRiskApproved, windowValidated);
-            double rateSent          = CDiagMgrHeartbeat::Ratio(windowSent, windowRiskApproved);
+            double rateValidated     = CDiagMgrHeartbeat::Ratio(windowValidated, windowGenerated);
+            double rateSent          = CDiagMgrHeartbeat::Ratio(windowSent, windowValidated);
             double noSignalRate      = CDiagMgrHeartbeat::Ratio(windowNoSignal, windowScans);
 
             if(ShouldLogNormal())
             {
                 CDiagMgrHeartbeat::EmitConversionRates(windowScans, windowGenerated,
-                                                       rateAfterPipeline, rateAfterQuorum, rateValidated,
-                                                       rateRiskApproved, rateSent, noSignalRate, corrId);
+                                                       rateValidated, rateSent, noSignalRate, corrId);
             }
 
             if(windowScans >= 20 && noSignalRate >= 80.0 &&
                (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
             {
                 CDiagMgrHeartbeat::EmitNoSignalAlert(windowScans, windowNoSignal, noSignalRate,
-                                                     m_hbQuietNoNewBar, m_hbQuietCadenceHold, m_hbQuietMissingManager,
                                                      corrId);
                 m_lastNoSignalAlertTime = hbNow;
             }
@@ -415,10 +363,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             m_prevScansAttempted       = m_hbScansAttempted;
             m_prevNoSignalCount        = m_hbNoSignalCount;
             m_prevSignalsGenerated     = m_hbSignalsGenerated;
-            m_prevSignalsAfterPipeline = m_hbSignalsAfterPipeline;
-            m_prevSignalsAfterQuorum   = m_hbSignalsAfterQuorum;
             m_prevSignalsValidated     = m_hbSignalsValidated;
-            m_prevSignalsRiskApproved  = m_hbSignalsRiskApproved;
             m_prevSignalsSent          = m_hbSignalsSent;
 
             m_lastHeartbeatTime = hbNow;

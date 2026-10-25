@@ -3458,9 +3458,22 @@ void ProcessNewBars()
 void GenerateAndProcessSignals(const string cycleCorrId)
 {
     ulong startTotal = GetMicrosecondCount();
-    
+
+    // This used to be a bare return. Nothing downstream runs, so [HEARTBEAT] scans=0 is the only trace,
+    // and [ENTRY-GATE] cannot print because it sits below here - a book blocked on the trade switch was
+    // indistinguishable from a book whose strategies were quiet.
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
-    return;
+    {
+        static datetime s_lastTradeBlockLog = 0;
+        if(TimeCurrent() - s_lastTradeBlockLog >= 60)
+        {
+            s_lastTradeBlockLog = TimeCurrent();
+            PrintFormat("[TRADE-BLOCKED] scanning stopped | terminal=%s | program=%s | no consensus scan, candidate or send happens until both are allowed",
+                        TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "allowed" : "NOT-allowed",
+                        MQLInfoInteger(MQL_TRADE_ALLOWED) ? "allowed" : "NOT-allowed");
+        }
+        return;
+    }
 
     int secondsSinceLastTrade = (int)(TimeCurrent() - m_lastTradeTime);
     bool cooldownBlocked = (secondsSinceLastTrade < m_config.minSecondsBetweenTrades && m_lastTradeTime > 0);
@@ -3514,6 +3527,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
             continue;
         }
 
+        // Top of the funnel. Until Batch 254 this had no writer, so signals_generated printed 0 in
+        // every journal while a later stage counted 1, and every [CONVERSION-RATES] percentage that
+        // divides by a stage was pinned at 0.0%.
+        m_heartbeat.IncSignalsGenerated();
+
         // Both bounds are consumed by the sends below: `eaPositions` was read before the first order went
         // out, so one cycle could otherwise order every slot against a book measured at 14/15. Tested here
         // rather than at the send because a held slot must not reserve risk no position will ever take.
@@ -3549,6 +3567,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
             m_heartbeat.IncValidatorRejects();
             continue;
         }
+        m_heartbeat.IncSignalsValidated();
 
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, newBarSignals[i].decisionContext,
@@ -3633,9 +3652,6 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 if(nnPredictionId != "" && !nnLabelBound && execResult.executed)
                     ReleaseNeuralNetPrediction(symbol, nnPredictionId);
 
-                // Update heartbeat funnel (validated + risk-approved reached execution)
-                m_heartbeat.IncSignalsValidated();
-                m_heartbeat.IncSignalsRiskApproved();
             }
     
         CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_Total_us", (double)(GetMicrosecondCount() - startTotal), cycleCorrId);

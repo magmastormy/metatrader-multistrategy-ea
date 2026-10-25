@@ -190,7 +190,7 @@ public:
         m_fallbackToCpu = false;
         if(!InitHandleFromBuffer(modelBuffer, m_handle))
         {
-            PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 65-feature contract upgrade",
+            PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=a model must be re-exported against FEATURE_VECTOR_SIZE, Resources/model.onnx was built for 57",
                         GetLastError(), ONNX_SEQ_LEN, ONNX_FEAT_DIM);
             return false;
         }

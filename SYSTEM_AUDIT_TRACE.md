@@ -637,7 +637,7 @@ Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" w
   - Prevents impossible quorum math where inactive strategies inflated weight pool and rejected legitimate votes.
   - Adaptive one-/two-voter quality thresholds now respect the current base quorum so user-lowered quorum profiles are not silently re-hardened by stale fixed fallback thresholds.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
-- `SPARSE_INTRABAR` is a **label on a decision that already passed quorum**, not an admission rule: `ConsensusEngine.mqh:733` sets it when `evalMode == EVAL_MODE_INTRABAR && eligibleLiveVoterCount < 3`, and `PostConsensusValidator.mqh:468` / `StrategyStateReporter.mqh:98` read the label. `InpAllowSparseIntrabarSingleVoter` never gated it - that input had no readers and is deleted by Batch 231. A single-voter entry is refused by `MIN_CONSENSUS_VOTERS = 2`, not by the dialog, and high-confidence AI-only packets route through the live-authority gate instead.
+- `SPARSE_INTRABAR` is a **label on a decision that already passed quorum**, not an admission rule: `ConsensusEngine.mqh:752` sets it when `evalMode == EVAL_MODE_INTRABAR && eligibleLiveVoterCount < 3`, and `PostConsensusValidator.mqh:468` / `StrategyStateReporter.mqh:98` read the label. `InpAllowSparseIntrabarSingleVoter` never gated it - that input had no readers and is deleted by Batch 231. A single-voter entry is refused by `MIN_CONSENSUS_VOTERS = 2`, not by the dialog, and high-confidence AI-only packets route through the live-authority gate instead.
 - **Multi-Tier Signal Validation (Batch 60):**
   - Votes are processed through `CTieredSignalValidator` for tier-based hierarchy.
   - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
@@ -1539,7 +1539,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## Batch 172 Live-Authority Threshold Wiring and Promotion Lifecycle (2026-10-10)
 
 - **Outcome feed (unchanged path, new state):** `OnTradeTransaction` → `ProcessManagerTradeTransactions` → `CLiveAuthorityResolver::RecordOutcome(aiName, profitR, isWin)`. The call chain already existed; what it recorded did not include the field the promotion gate reads. `RecordOutcome` now accumulates `grossWinR` / `grossLossR` by the sign of `profitR` and derives `profitFactor` from them, so the value written is a true ratio of summed R rather than a mean of per-trade ratios. A breakeven close (R = 0) enters neither side.
-- **Promotion lifecycle, now reachable in code but not yet in sizing:** `Resolve()` → AI-only contributor with `totalTrades >= authorityMinSamples` → `expectancyR >= 0.3` and `profitFactor >= 1.2` and `consecutiveLosses < 4` → `riskMult = MathMax(riskMult, promotedMult)`. Before this batch `profitFactor` was permanently 0, so the branch never executed. At the time the resolved `riskMult` reached no lot: it was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, and `result.allowed` was the only consumed output. **Closed by Batch 173 and made measurable by Batch 205:** `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3579`) multiplies the resolved value into the shipped lot, shrink-only, and a lot that falls under the broker minimum is refused loudly rather than rounded back up.
+- **Promotion lifecycle, now reachable in code but not yet in sizing:** `Resolve()` → AI-only contributor with `totalTrades >= authorityMinSamples` → `expectancyR >= 0.3` and `profitFactor >= 1.2` and `consecutiveLosses < 4` → `riskMult = MathMax(riskMult, promotedMult)`. Before this batch `profitFactor` was permanently 0, so the branch never executed. At the time the resolved `riskMult` reached no lot: it was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, and `result.allowed` was the only consumed output. **Closed by Batch 173 and made measurable by Batch 205:** `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3592`) multiplies the resolved value into the shipped lot, shrink-only, and a lot that falls under the broker minimum is refused loudly rather than rounded back up.
 - **Configuration lifecycle:** `EAOrchestrator` init → `m_liveAuthority.Configure(...)` with eleven arguments, all read from `m_config`. `Configure` clamps each to its documented floor and emits `[AUTHORITY-CONFIG] clamped: <names>` plus `[AUTHORITY-CONFIG] effective: <values>` once. This is the first time any `InpAuthority*` value other than `aiStandaloneMinConfidence` affects a runtime decision.
 - **Scoring lifecycle change:** the cost bonus flipped from `costScore <= 0.3` to `costScore >= 0.50`. `costScore` is quality-shaped (`score += costScore * 0.0543` in `SignalPipelineWeighter`), so the old test granted the bonus to the most expensive candidates. Readiness and context bonuses now use the configured floors rather than literals.
 - **Dead state removed:** `SStrategyPerf::maxDrawdownR` had no writer and no reader and was deleted. No state file or serialization references it.
@@ -1550,7 +1550,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 
 ## Batch 173 Live-Authority Sizing Lifecycle (2026-10-11)
 
-- **Where size changes hands:** `Resolve()` returns → `authority.allowed` test → `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)` (`EAOrchestrator.mqh:3579`) → `CTradeExecutor::Execute(candidate, ...)`. `candidate.lotSize` and `candidate.riskPercent` are the only two fields this step writes; both are written before the send, so nothing downstream recomputes them from the pre-shrink values.
+- **Where size changes hands:** `Resolve()` returns → `authority.allowed` test → `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)` (`EAOrchestrator.mqh:3592`) → `CTradeExecutor::Execute(candidate, ...)`. `candidate.lotSize` and `candidate.riskPercent` are the only two fields this step writes; both are written before the send, so nothing downstream recomputes them from the pre-shrink values.
 - **Order relative to the risk gate (AGENTS.md §3.1) is unchanged.** Pre-trade gating, consensus, and `BuildCandidate`'s own scaling chain all still run first; this step sits after them and can only shrink. The Batch 152 post-size re-gate stays an upper bound it cannot cross.
 - **New state on `CCandidateBuilder`:** `m_authorityBlockSymbols[]` / `m_authorityBlockCounts[]` / `m_authorityBlockedTotal` / `m_authorityBlockSymbolsCount`. In-memory only — no file, no serialization, reset on deinit, same lifetime policy as the hybrid-gate relaxed map beside it. `m_authorityBlockSymbolsCount` exists because `GetStatusReport()` is `const` and `ArraySize()` binds by reference.
 - **Broker-contract interaction resolved, not inherited:** `CPositionSizer::NormalizeVolume` clamps up to `SYMBOL_VOLUME_MIN` (`PositionSizer.mqh:572`). Routing the authority shrink through it would restore the removed risk while logging that it had been removed, so the step floor is computed here against `SYMBOL_VOLUME_STEP` with the project's established `MathFloor(v/step + 1e-9)` / 8-digit convention. Under-minimum is terminal for that candidate: refuse, log, count.
@@ -1618,7 +1618,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Edge before:** `ValidateSignal -> CheckExogenousFilters -> ApplySpreadFilter(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)` against a signature of `(symbol, double &spreadScore, overrideThreshold, atrValue)`. `atrValue` was bound to the by-reference out-param and overwritten with the computed ratio; `spreadScore` (0.0) landed in `overrideThreshold`, so the `> 0.0` test failed and the gate used `maxSpreadToAtrRatio` (0.25) instead of the 0.30/0.50 per-class ratios; and 0.30/0.50 was used *as* the ATR, making `spread / constant` the veto quantity.
 - **Edge after:** arguments in declared order. Same five-arm sequence, same short-circuit order.
 - **Effect on decisions:** inert on FX, rejecting on wide-price instruments (`XAUUSD` 25 pts -> 0.83 vs a 0.25 threshold; a 1,727-pt synthetic spread -> 34.5). Gold and synthetic candidates now reach candidate building from this gate; FX effectively unchanged.
-- **Lifecycle change (visibility):** `EAOrchestrator.mqh:3549` turns `!validation.passed` into `IncValidatorRejects(); continue;` with no print. Every other arm printed its own line; this one did not, so its refusals were unobservable and the journal reading of "no spread vetoes ever happened" was not evidence. Both branches now print `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr`.
+- **Lifecycle change (visibility):** `EAOrchestrator.mqh:3562` turns `!validation.passed` into `IncValidatorRejects(); continue;` with no print. Every other arm printed its own line; this one did not, so its refusals were unobservable and the journal reading of "no spread vetoes ever happened" was not evidence. Both branches now print `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr`.
 - **No knob:** `m_baseSpreadATRRatio` / `m_syntheticSpreadATRRatio` are constructor constants (`VALIDATOR_BASE_SPREAD_ATR_RATIO` / `VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO`), settable only through `SetValidatorConfig`, which the orchestrator calls with those constants. A future session wanting to loosen this gate cannot do it from an input.
 - **§3 invariants:** unchanged. Still one authority per veto, still pre-`CUnifiedRiskManager` admission, and the veto only ever refuses — it cannot enlarge a position.
 - **Evidence owed:** `filter=spread_vs_atr` counts and gold/synthetic candidate volume from the first attached session. Newest journal remains 23 September.
@@ -1651,7 +1651,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **A grep trap recorded so nobody re-chases it:** 12 lines look like `filter=true`. They are `trend_filter=true` inside `[ENTERPRISE-CONFIG]`, not filter events.
 - **Lifecycle change (money):** the synchronous fast-scalp entry registered its position under `CTradeManager::GetLastTicket()` — `m_lastTradeResult.order` / `m_trade.ResultOrder()`, an **order** ticket — into `CFastScalpPositionTracker`, whose key is the **position** ticket. Sequence per trade: entry `riskBudget.Add(riskPerTrade)` → next `ManageScalpPositions` → `SyncScalpPositionTracking` fails `PositionSelectByTicket(orderTicket)` → `FreeScalpRiskBudget` → `FreeForTicket` cannot select it either, so `lotSize` stays 0.0 and the path falls to `ReleaseFallback()`, subtracting `riskPerTrade` → the same pass re-adds the position by its real ticket with no `Add`. The accumulator was back to ~0 with the position still open, so `PassesEntryGates`' `usedScalpRiskPct >= config.scalpRiskPct` could only bind within the entry tick. `maxScalpPositions` kept working — it counts live positions by comment prefix, not the accumulator.
 - **Fix and its lifecycle:** entry resolves the position ticket through `CTradeMgrPreflight::FindFreshPositionForSend` (symbol + direction + opened ≤30 s + `IsMagicOwned`) and registers that. When the position is not yet visible it registers nothing and `[SCALP-ENTRY] … ticket=0 | position not visible yet, sync will adopt it` says so; the sync pass adopts it and the budget the entry consumed stays consumed. No fallback to the order ticket — that was the bug.
-- **Log truthfulness:** `[AUTHORITY-GATE]` replaces a flag-gated init print, because `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) gates nothing else while `Resolve()` runs at `EAOrchestrator.mqh:3579` on every candidate. The ATR crisis veto prints its uncapped ratio, because 46 of 71 vetoes in the last session reported the same clamped `10.000` for readings spanning 10.58× and 431×.
+- **Log truthfulness:** `[AUTHORITY-GATE]` replaces a flag-gated init print, because `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) gates nothing else while `Resolve()` runs at `EAOrchestrator.mqh:3592` on every candidate. The ATR crisis veto prints its uncapped ratio, because 46 of 71 vetoes in the last session reported the same clamped `10.000` for readings spanning 10.58× and 431×.
 - **State added:** none. No new fields, no new counters.
 - **§3 invariants:** unchanged. The entry still sends through `CTradeManager` (§3.2), still passes the pre-trade gate (§3.1), and the tracker remains driven from the EA loop (§3.3).
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings (run twice: after the log edits and again after the ticket fix).
@@ -1706,6 +1706,30 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:155`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 253 First Runtime Journal: the Blocked Scan, the Unanimity Veto, and the Funnel That Counted Its Own Zeros (2026-10-25)
+
+**Lifecycle evidence.** `MQL5\Logs\20261023.log` is the first journal written by a build that had been through this audit cycle,
+and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16LE -t UTF-8`). The session is
+`MultiStrategyAutonomousEA (Step Index,M15)`.
+
+- **Init -> tick, blocked silently.** The tick path returned at its algo-trading guard with no output, so the journal contained
+  `[INIT]`, `[SCAN-POLICY]`, `[ENTRY-BOUNDS]`, a full `[HEARTBEAT]` block and nothing else - the exact shape of a market that had
+  produced no signal. `[TRADE-BLOCKED]` at 16:13:26 names the terminal switch. The per-expert flag was the first (wrong) guess,
+  because `terminal.ini` `[Experts] Enabled=1` reads like terminal trading is on when it only says the Experts menu is.
+- **A vetoed decision leaves no trace.** Five `[CONSENSUS-DEADBAND-FLOORED] asked=0.050 enforced=0.333 | votes 2-1` lines
+  (Volatility 25, Volatility 75, Crash 1000, Jump 25, AUDUSD) are decisions that the pre-batch arithmetic refused at the conflict
+  step and that now continue to the validator. Before this batch the refusal printed `[CONSENSUS-VETOED]` with `deadband 0.05`,
+  which looked like a market statement about disagreement and was a property of integer votes.
+- **A lifecycle receipt can disagree with the telemetry above it.** In one heartbeat block:
+  `[HEARTBEAT] trades_opened=0` and `[HEARTBEAT-FUNNEL] signals_sent=3`, and later
+  `[EXECUTION-RECEIPT] XAUUSD | accepted=true | requested=0.01 | filled=0.01 | retcode=10009` five times inside thirty minutes.
+  The receipts are the lifecycle record; the counters were derived from eighteen fields, eleven of which no line ever incremented.
+  Any earlier conclusion drawn from `[CONVERSION-RATES] ... no_signal=100.0%` - "the strategies were quiet" - is not supported by
+  the file it came from, and this batch's own first reading of it made exactly that mistake before the receipts were found.
+- **The structured sink was alive while its own log line said otherwise.** `MQL5\Files\MultiStrategyEA_structured_20261023_160355.jsonl`
+  holds 635 events from the same day the logger's `[STRUCTLOG] Initialized:` line pointed at `MQL5\Logs\`. When a subsystem's
+  reported path disagrees with the filesystem, trust the filesystem and fix the report - not the other way round.
 
 ## Batch 252 Unreachable Weight Scaling Deleted With Its Second Weight Store (2026-10-23)
 
@@ -1764,7 +1788,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   surface; registration, consensus, entry, exit and attribution behaviour is unchanged. `[TRADE-ATTRIBUTION]` still
   prints from the same place - the deleted `IncrementTotalSignals()` line next to it wrote a counter only a deleted
   report read.
-- **Kept, with the reason:** `CConsensusEngine::IsStrategyLiveVoter` (called at `ConsensusEngine.mqh:459/:506`),
+- **Kept, with the reason:** `CConsensusEngine::IsStrategyLiveVoter` (called at `ConsensusEngine.mqh:463/:506`),
   `CStrategyPerformanceHealth::{CalculateRecentWinRate, CalculateSharpeRatio, CalculateStrategyMetrics,
   UpdateRecentPerformance}` (its own metrics pass at `:85/:89/:218/:219`),
   `CConsensusWeightingConfig::ApplyFamilyEngineWeights` (`:186/:200`),
@@ -1919,7 +1943,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **State read, none removed:** the report path now walks the roster (`GetStrategyCount` /
   `GetStrategyIntrabarPolicyRaw` / `GetStrategyName`) instead of restating config, so what prints is what registration
   stored.
-- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3499`, `:3543`, and
+- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3512`, `:3557`, and
   `SignalGenerator.mqh:109`'s own comment); the sole live `EVAL_MODE_INTRABAR` caller is
   `PositionLifecycleManager.mqh:263`. `GetStrategyIntrabarPolicyConfig` (manager + `CIntrabarPolicy`) has no caller,
   and `SStrategyTimeframeConfig::intrabarEnabled` has no reader at all.
@@ -1991,7 +2015,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
   ranking was arithmetic on struct defaults - which is how a path can be both unreachable and, if revived as
   written, permanently refusing.
 - **State kept:** `SConsensusDecisionContext.readinessScore / contextScore / costScore` (written at
-  `ConsensusEngine.mqh:771-773` from pipeline evidence) and `SPipelineEvidence`'s own scores. Those are the
+  `ConsensusEngine.mqh:790-792` from pipeline evidence) and `SPipelineEvidence`'s own scores. Those are the
   Batch 205 sizing inputs and the only live readers of those three quantities.
 - **Lifecycle:** no position, ticket, handle or deinit change; `CIndicatorManager::DestroyInstance()` still runs
   (AGENTS.md §3.5).
@@ -2056,7 +2080,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **State written:** none. `inputSupportFloorNewBar` / `inputSupportFloorIntrabar` became locals so the setter
   and the log read one expression rather than two copies of it.
 - **New method, one owner:** `CConsensusEngine::EnforcedMinVoters(intrabar)` is the `max(config value,
-  MIN_CONSENSUS_VOTERS)` the decision already applied inline at `ConsensusEngine.mqh:397`, extracted so the
+  MIN_CONSENSUS_VOTERS)` the decision already applied inline at `ConsensusEngine.mqh:401`, extracted so the
   init print can name the enforced voter count without restating it. `CalculateEffectiveQuorumParamsInternal`
   now calls it; the arithmetic a live committee sees is unchanged.
 - **New observability edge:** `[QUORUM-PRECEDENCE] <symbol> | profile=… | minQuorum input=2 stored=1
@@ -2461,7 +2485,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## Batch 204 The Regime Veto Stops Being Arithmetic (2026-10-15)
 
 - **How it was found:** the Batch 195 entry in `RUNTIME_DECISION_GRAPH.md` recorded "A zeroed score still counts as a vote for the minimum-voter test", and the AGENTS.md §6 bullet on `[CONSENSUS-REJECT]` called the ready-weight dilution "the known gap". Both described the same veto producing opposite errors, so neither could be read as intended behaviour.
-- **Traced forward from `RegimeStateHardGate`'s `0.0`:** `GetRegimeCategoryMultiplier` -> the `score` product at `ConsensusEngine.mqh:559` -> `buyVotes`/`sellVotes`, `buyContributorIndices`, `votedWeight`, `totalVotesCast`, `conflictRatio`, `winningContributors` -> `SetLastSignalContributors` -> `[TRADE-ATTRIBUTION]`, `CStrategyMgrTradeFeedback`, `m_strategyHealthScore`, `[RISK-CLUSTER]` cluster code. Every one of those accumulated a strategy the regime had forbidden, and the health score closes the loop into the same vote's reliability multiplier.
+- **Traced forward from `RegimeStateHardGate`'s `0.0`:** `GetRegimeCategoryMultiplier` -> the `score` product at `ConsensusEngine.mqh:563` -> `buyVotes`/`sellVotes`, `buyContributorIndices`, `votedWeight`, `totalVotesCast`, `conflictRatio`, `winningContributors` -> `SetLastSignalContributors` -> `[TRADE-ATTRIBUTION]`, `CStrategyMgrTradeFeedback`, `m_strategyHealthScore`, `[RISK-CLUSTER]` cluster code. Every one of those accumulated a strategy the regime had forbidden, and the health score closes the loop into the same vote's reliability multiplier.
 - **Proved the zero is only the veto before relying on the skip:** `RegimeComposite.mqh:246-250` clamps all five category weights to `>= 0.01`; the chaos factor is `0.30` and the low-confidence factor `0.55`; `RegimeStateHardGate` returns `0.0` in exactly two cells. So no deweight can be mistaken for a veto.
 - **Left alone with reasons:** the dead `EvaluateConsensusProbeOnlyInternal` / `EvaluateConsensusTwoTierInternal` / `TryFallbackSoloSignalInternal` copies of the same shape (an edit there is unverifiable), and `eligibleLiveVoterCount`, which measures field size rather than support.
 - **Found while documenting §4.2:** the Batch 82 weighting vocabulary in that section (role multiplier, dynamic weight decay, contribution-class denominators, four veto-code names) matches no code in the repository, and `SConsensusDecisionContext`'s `convictionScore`/`readinessScore`/`contextScore`/`costScore`/`readyLiveWeight`/`totalLiveWeight` have no writer while `CandidateBuilder.mqh:382-385` copies four of them into every candidate and two log lines print them as `0.00`. §4.2 is rewritten to the live algorithm; the zero fields are filed as Batch 205, not silently deleted.

@@ -37,35 +37,27 @@ public:
     }
 
     static void EmitCoreLines(const ulong scansAttempted,
-                              const ulong intrabarScansExecuted,
                               const ulong noSignalCount,
                               const ulong validatorRejects,
-                              const ulong riskRejects,
-                              const ulong tradesOpened,
                               const ulong syntheticSpikeEvents,
                               const bool tradingPaused,
                               const ulong signalsGenerated,
-                              const ulong signalsAfterPipeline,
-                              const ulong signalsAfterQuorum,
                               const ulong signalsValidated,
-                              const ulong signalsRiskApproved,
                               const ulong signalsSent,
                               const string corrId)
     {
         string pauseFlag = tradingPaused ? "true" : "false";
-        PrintFormat(FMT_HEARTBEAT, scansAttempted, intrabarScansExecuted, noSignalCount,
-                    validatorRejects, riskRejects, tradesOpened, syntheticSpikeEvents, pauseFlag);
+        PrintFormat(FMT_HEARTBEAT, scansAttempted, noSignalCount,
+                    validatorRejects, syntheticSpikeEvents, pauseFlag);
         CJsonLogger::LogInfo("Heartbeat",
-            StringFormat("scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s",
-                    scansAttempted, intrabarScansExecuted, noSignalCount,
-                    validatorRejects, riskRejects, tradesOpened, syntheticSpikeEvents, pauseFlag), corrId);
+            StringFormat("scans=%I64u | no_signal=%I64u | validator_reject=%I64u | spike_events=%I64u | pause_active=%s",
+                    scansAttempted, noSignalCount,
+                    validatorRejects, syntheticSpikeEvents, pauseFlag), corrId);
 
-        PrintFormat(FMT_HEARTBEAT_FUNNEL, signalsGenerated, signalsAfterPipeline, signalsAfterQuorum,
-                    signalsValidated, signalsRiskApproved, signalsSent);
+        PrintFormat(FMT_HEARTBEAT_FUNNEL, signalsGenerated, signalsValidated, signalsSent);
         CJsonLogger::LogInfo("HeartbeatFunnel",
-            StringFormat("signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u",
-            signalsGenerated, signalsAfterPipeline, signalsAfterQuorum,
-            signalsValidated, signalsRiskApproved, signalsSent), corrId);
+            StringFormat("signals_generated=%I64u | signals_validated=%I64u | signals_sent=%I64u",
+            signalsGenerated, signalsValidated, signalsSent), corrId);
     }
 
 // Compounding tier / session weight / skew step / family weight
@@ -182,21 +174,17 @@ public:
 
     static void EmitConversionRates(const ulong windowScans,
                                     const ulong windowGenerated,
-                                    const double rateAfterPipeline,
-                                    const double rateAfterQuorum,
                                     const double rateValidated,
-                                    const double rateRiskApproved,
                                     const double rateSent,
                                     const double noSignalRate,
                                     const string corrId)
     {
         PrintFormat(FMT_CONVERSION_RATES, windowScans, windowGenerated,
-            rateAfterPipeline, rateAfterQuorum, rateValidated, rateRiskApproved, rateSent, noSignalRate);
+            rateValidated, rateSent, noSignalRate);
         CJsonLogger::LogInfo("ConversionRates",
-            StringFormat("window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
+            StringFormat("window_scans=%I64u | generated=%I64u | validated=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
                 windowScans, windowGenerated,
-                rateAfterPipeline, rateAfterQuorum, rateValidated,
-                rateRiskApproved, rateSent, noSignalRate), corrId);
+                rateValidated, rateSent, noSignalRate), corrId);
     }
 
 // No-signal alert (heartbeat variant)
@@ -204,17 +192,12 @@ public:
     static void EmitNoSignalAlert(const ulong windowScans,
                                   const ulong windowNoSignal,
                                   const double noSignalRate,
-                                  const ulong quietNoNewBar,
-                                  const ulong quietCadenceHold,
-                                  const ulong quietMissingManager,
                                   const string corrId)
     {
-        PrintFormat(FMT_NO_SIGNAL_ALERT, windowScans, windowNoSignal, noSignalRate,
-            quietNoNewBar, quietCadenceHold, quietMissingManager);
+        PrintFormat(FMT_NO_SIGNAL_ALERT, windowScans, windowNoSignal, noSignalRate);
         CJsonLogger::LogWarning("NoSignalAlert",
-            StringFormat("window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u",
-                windowScans, windowNoSignal, noSignalRate,
-                quietNoNewBar, quietCadenceHold, quietMissingManager), corrId);
+            StringFormat("window_scans=%I64u | no_signal=%I64u (%.1f%%)",
+                windowScans, windowNoSignal, noSignalRate), corrId);
     }
 
     static void EmitRiskBudget(CUnifiedRiskManager* riskManager, const string corrId)
