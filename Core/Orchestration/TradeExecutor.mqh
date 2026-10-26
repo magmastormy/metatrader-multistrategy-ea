@@ -360,7 +360,6 @@ public:
             else if(StringFind(firstContributor, "VolTarget") >= 0) stratCode = "VT";
             else if(StringFind(firstContributor, "Liquidity") >= 0) stratCode = "LS";
             else if(StringFind(firstContributor, "RangeComp") >= 0) stratCode = "RC";
-            else if(StringFind(firstContributor, "ExitOpt") >= 0) stratCode = "EO";
             else if(StringFind(firstContributor, "Neural") >= 0 || StringFind(firstContributor, "NN") >= 0) stratCode = "NNET";
             else if(StringFind(firstContributor, "Transformer") >= 0) stratCode = "TRAN";
             else if(StringFind(firstContributor, "Ensemble") >= 0) stratCode = "ENS";

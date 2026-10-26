@@ -11,7 +11,6 @@
 #include "LiveAuthorityResolver.mqh"
 #include "../Position/PositionManager.mqh"
 #include "../../Core/Registry/MathematicalEngineRegistry.mqh"
-#include "../../Core/Registry/InstitutionalEngineRegistry.mqh"
 #include "../../Core/Registry/NeuralNetRegistry.mqh"
 #include "../../Core/Registry/DrawingManagerRegistry.mqh"
 #include "../../Core/Registry/ScanSchedulerRegistry.mqh"
@@ -97,7 +96,7 @@
 #include "OrchestratorIntrabarPolicy.mqh"       // static: L7-009/L7-010 intrabar + timeframe policy
 #include "OrchestratorModeResolver.mqh"         // static: EA-mode degradation + topology logs
 #include "OrchestratorProfitGuard.mqh"          // stateful: daily profit target / trading halt
-#include "OrchestratorMathEngineHub.mqh"        // stateful: mathematical + institutional engine fleets
+#include "OrchestratorMathEngineHub.mqh"        // stateful: math engine fleet
 
 class CEAOrchestratorBuilder
 {
@@ -188,7 +187,7 @@ class CEAOrchestrator
     CADXLotModifier*            m_adxModifier;
     datetime                    m_lastCvarLogTime;
 
-    // Per-symbol mathematical/institutional engine arrays live in the hub below. Held BY
+    // Per-symbol math engine arrays live in the hub below. Held BY
     // VALUE so construction/teardown order is fixed; the hub OWNS every engine pointer.
     COrchestratorMathEngineHub  m_mathEngineHub;
 
@@ -322,7 +321,7 @@ class CEAOrchestrator
         // Set the shutdown flag FIRST: OnTimer must not touch resources being released.
         m_shuttingDown = true;
 
-        // Math + institutional engine Deinit()/delete ordering owned by ReleaseAll().
+        // Math engine Deinit()/delete ordering owned by ReleaseAll().
         m_mathEngineHub.ReleaseAll();
 
         // EA owns the modifiers; PositionSizer holds only non-owning refs
@@ -1518,9 +1517,6 @@ bool InitializeComponents()
 // The hub NULL-checks the math registry internally.
 m_mathEngineHub.RegisterMathEngines(m_registryAggregator.GetMathRegistry());
 
-m_mathEngineHub.RegisterInstitutionalEngines(m_registryAggregator.GetInstitutionalRegistry(),
-m_enterpriseManagerSymbols, m_managerCount);
-
 if(m_config.enableAIMode && (m_config.enableNeuralNetwork || m_config.enableTransformer ||
 m_config.enableEnsemble || m_config.enableOnnxAI))
 {
@@ -1537,23 +1533,6 @@ ArraySize(m_drawingManagers));
 // by BuildStrategyRegistry(), orphans every manager's view and leaves all strategies disabled.
 
 return true;
-}
-
-void InitializeMathematicalEngines()
-{
-    m_mathEngineHub.InitializeMathematicalEngines(m_config,
-                                                  m_registryAggregator.GetMathRegistry(),
-                                                  m_enterpriseManagerSymbols,
-                                                  m_managerCount,
-                                                  m_signalDiagnostics);
-}
-
-void InitializeInstitutionalEngines()
-{
-    m_mathEngineHub.InitializeInstitutionalEngines(m_config,
-                                                   m_registryAggregator.GetInstitutionalRegistry(),
-                                                   m_enterpriseManagerSymbols,
-                                                   m_managerCount);
 }
 
 // Engine-injection states for the one-line-per-symbol [WIRE-STATUS] report below.

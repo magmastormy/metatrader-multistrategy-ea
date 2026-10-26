@@ -71,9 +71,6 @@
     "enableHurstEngine": true,
     "enableOUProcess": true,
     "enableOFIProxy": true,
-    "enableVPINFilter": true,
-    "enableVWAPEngine": true,
-    "enableVolumeProfile": true,
-    "enableCVDEngine": true
+    "enableVPINFilter": true
   }
 }

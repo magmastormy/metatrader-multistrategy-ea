@@ -2,9 +2,9 @@
 
 ## Document Metadata
 - Last Updated: 2026-10-26
-- Last Architecture Sync: 2026-10-25
+- Last Architecture Sync: 2026-10-26
 - Scope: End-to-end lifecycle and logic traces
- - Current Batch: 261
+ - Current Batch: 262
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -67,7 +67,7 @@
   - `Core/Registry/RegistryAggregator.mqh` (unified registry access)
   - `Core/Factory/StrategyFactory.mqh` (strategy creation)
   - `Core/Registry/MathematicalEngineRegistry.mqh`
-  - `Core/Registry/InstitutionalEngineRegistry.mqh`
+  - ~~`Core/Registry/InstitutionalEngineRegistry.mqh`~~ - DELETED in Batch 262 (190 lines): its entire content is the VWAP/Volume Profile/CVD slots, and nothing constructs those engines any more
   - `Core/Registry/NeuralNetRegistry.mqh`
   - `Core/Registry/DrawingManagerRegistry.mqh`
   - `Core/Registry/ScanSchedulerRegistry.mqh`
@@ -1539,7 +1539,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 ## Batch 172 Live-Authority Threshold Wiring and Promotion Lifecycle (2026-10-10)
 
 - **Outcome feed (unchanged path, new state):** `OnTradeTransaction` → `ProcessManagerTradeTransactions` → `CLiveAuthorityResolver::RecordOutcome(aiName, profitR, isWin)`. The call chain already existed; what it recorded did not include the field the promotion gate reads. `RecordOutcome` now accumulates `grossWinR` / `grossLossR` by the sign of `profitR` and derives `profitFactor` from them, so the value written is a true ratio of summed R rather than a mean of per-trade ratios. A breakeven close (R = 0) enters neither side.
-- **Promotion lifecycle, now reachable in code but not yet in sizing:** `Resolve()` → AI-only contributor with `totalTrades >= authorityMinSamples` → `expectancyR >= 0.3` and `profitFactor >= 1.2` and `consecutiveLosses < 4` → `riskMult = MathMax(riskMult, promotedMult)`. Before this batch `profitFactor` was permanently 0, so the branch never executed. At the time the resolved `riskMult` reached no lot: it was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, and `result.allowed` was the only consumed output. **Closed by Batch 173 and made measurable by Batch 205:** `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3608`) multiplies the resolved value into the shipped lot, shrink-only, and a lot that falls under the broker minimum is refused loudly rather than rounded back up.
+- **Promotion lifecycle, now reachable in code but not yet in sizing:** `Resolve()` → AI-only contributor with `totalTrades >= authorityMinSamples` → `expectancyR >= 0.3` and `profitFactor >= 1.2` and `consecutiveLosses < 4` → `riskMult = MathMax(riskMult, promotedMult)`. Before this batch `profitFactor` was permanently 0, so the branch never executed. At the time the resolved `riskMult` reached no lot: it was copied into `candidate.liveAuthorityRiskMult`, a struct field with no reader that Batch 236 deleted, and `result.allowed` was the only consumed output. **Closed by Batch 173 and made measurable by Batch 205:** `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3587`) multiplies the resolved value into the shipped lot, shrink-only, and a lot that falls under the broker minimum is refused loudly rather than rounded back up.
 - **Configuration lifecycle:** `EAOrchestrator` init → `m_liveAuthority.Configure(...)` with eleven arguments, all read from `m_config`. `Configure` clamps each to its documented floor and emits `[AUTHORITY-CONFIG] clamped: <names>` plus `[AUTHORITY-CONFIG] effective: <values>` once. This is the first time any `InpAuthority*` value other than `aiStandaloneMinConfidence` affects a runtime decision.
 - **Scoring lifecycle change:** the cost bonus flipped from `costScore <= 0.3` to `costScore >= 0.50`. `costScore` is quality-shaped (`score += costScore * 0.0543` in `SignalPipelineWeighter`), so the old test granted the bonus to the most expensive candidates. Readiness and context bonuses now use the configured floors rather than literals.
 - **Dead state removed:** `SStrategyPerf::maxDrawdownR` had no writer and no reader and was deleted. No state file or serialization references it.
@@ -1550,7 +1550,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 
 ## Batch 173 Live-Authority Sizing Lifecycle (2026-10-11)
 
-- **Where size changes hands:** `Resolve()` returns → `authority.allowed` test → `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)` (`EAOrchestrator.mqh:3608`) → `CTradeExecutor::Execute(candidate, ...)`. `candidate.lotSize` and `candidate.riskPercent` are the only two fields this step writes; both are written before the send, so nothing downstream recomputes them from the pre-shrink values.
+- **Where size changes hands:** `Resolve()` returns → `authority.allowed` test → `CCandidateBuilder::ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId)` (`EAOrchestrator.mqh:3587`) → `CTradeExecutor::Execute(candidate, ...)`. `candidate.lotSize` and `candidate.riskPercent` are the only two fields this step writes; both are written before the send, so nothing downstream recomputes them from the pre-shrink values.
 - **Order relative to the risk gate (AGENTS.md §3.1) is unchanged.** Pre-trade gating, consensus, and `BuildCandidate`'s own scaling chain all still run first; this step sits after them and can only shrink. The Batch 152 post-size re-gate stays an upper bound it cannot cross.
 - **New state on `CCandidateBuilder`:** `m_authorityBlockSymbols[]` / `m_authorityBlockCounts[]` / `m_authorityBlockedTotal` / `m_authorityBlockSymbolsCount`. In-memory only — no file, no serialization, reset on deinit, same lifetime policy as the hybrid-gate relaxed map beside it. `m_authorityBlockSymbolsCount` exists because `GetStatusReport()` is `const` and `ArraySize()` binds by reference.
 - **Broker-contract interaction resolved, not inherited:** `CPositionSizer::NormalizeVolume` clamps up to `SYMBOL_VOLUME_MIN` (`PositionSizer.mqh:572`). Routing the authority shrink through it would restore the removed risk while logging that it had been removed, so the step floor is computed here against `SYMBOL_VOLUME_STEP` with the project's established `MathFloor(v/step + 1e-9)` / 8-digit convention. Under-minimum is terminal for that candidate: refuse, log, count.
@@ -1562,7 +1562,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 
 ## Batch 174 VPIN Veto and Sizing Truthfulness Lifecycle (2026-10-12)
 
-- **Veto lifecycle:** consensus signal -> `CPostConsensusValidator::ValidateSignal` -> `CheckVPINFilter` -> `CVPINFilter::ShouldBlockNewPositions()` -> false -> `result.passed=false` with `vetoReason="vpin_toxicity"` -> the candidate never reaches `BuildCandidate`. The filter is per-symbol (`OrchestratorMathEngineHub.mqh:190` constructs one `CVPINFilter` per symbol with `config.vpinExtremeThreshold`), so a veto removes one symbol's entries, not the basket's.
+- **Veto lifecycle:** consensus signal -> `CPostConsensusValidator::ValidateSignal` -> `CheckVPINFilter` -> `CVPINFilter::ShouldBlockNewPositions()` -> false -> `result.passed=false` with `vetoReason="vpin_toxicity"` -> the candidate never reaches `BuildCandidate`. The filter is per-symbol (`OrchestratorMathEngineHub.mqh:177` constructs one `CVPINFilter` per symbol with `config.vpinExtremeThreshold`), so a veto removes one symbol's entries, not the basket's.
 - **Fail-open on absent data is the documented choice, not an oversight:** `vpinFilter == NULL || !IsWarmedUp()` returns true. Batch 170 stopped creating VPIN filters for synthetic-index symbols, so NULL means "no traded volume to measure"; failing closed there would stop those symbols trading entirely.
 - **Entry-refusal lifecycle for the clamp path:** `BuildCandidate` -> post-size re-gate -> over cap -> lot scaled to cap -> floored to `SYMBOL_VOLUME_STEP` -> under `SYMBOL_VOLUME_MIN` -> `[RISK-GATE-REJECT] reason=compliant_lot_below_min` + `RiskGateReject` JSON + `return false`. The candidate is gone before `ScaleLotByLiveAuthority`, so the authority step never sees a lot that cannot be sized compliantly.
 - **State written by the sizing chain:** only `candidate.lotSize` and `candidate.riskPercent`. After the step floor the realized risk is at or under the cap, so booking the cap is an upper bound rather than a claim — the shape the pre-Batch code had backwards.
@@ -1618,7 +1618,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Edge before:** `ValidateSignal -> CheckExogenousFilters -> ApplySpreadFilter(symbol, atrValue, spreadScore, effectiveSpreadATRRatio)` against a signature of `(symbol, double &spreadScore, overrideThreshold, atrValue)`. `atrValue` was bound to the by-reference out-param and overwritten with the computed ratio; `spreadScore` (0.0) landed in `overrideThreshold`, so the `> 0.0` test failed and the gate used `maxSpreadToAtrRatio` (0.25) instead of the 0.30/0.50 per-class ratios; and 0.30/0.50 was used *as* the ATR, making `spread / constant` the veto quantity.
 - **Edge after:** arguments in declared order. Same five-arm sequence, same short-circuit order.
 - **Effect on decisions:** inert on FX, rejecting on wide-price instruments (`XAUUSD` 25 pts -> 0.83 vs a 0.25 threshold; a 1,727-pt synthetic spread -> 34.5). Gold and synthetic candidates now reach candidate building from this gate; FX effectively unchanged.
-- **Lifecycle change (visibility):** `EAOrchestrator.mqh:3578` turns `!validation.passed` into `IncValidatorRejects(); continue;` with no print. Every other arm printed its own line; this one did not, so its refusals were unobservable and the journal reading of "no spread vetoes ever happened" was not evidence. Both branches now print `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr`.
+- **Lifecycle change (visibility):** `EAOrchestrator.mqh:3557` turns `!validation.passed` into `IncValidatorRejects(); continue;` with no print. Every other arm printed its own line; this one did not, so its refusals were unobservable and the journal reading of "no spread vetoes ever happened" was not evidence. Both branches now print `[POST-CONSENSUS-FILTER] ... filter=spread_vs_atr`.
 - **No knob:** `m_baseSpreadATRRatio` / `m_syntheticSpreadATRRatio` are constructor constants (`VALIDATOR_BASE_SPREAD_ATR_RATIO` / `VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO`), settable only through `SetValidatorConfig`, which the orchestrator calls with those constants. A future session wanting to loosen this gate cannot do it from an input.
 - **§3 invariants:** unchanged. Still one authority per veto, still pre-`CUnifiedRiskManager` admission, and the veto only ever refuses — it cannot enlarge a position.
 - **Evidence owed:** `filter=spread_vs_atr` counts and gold/synthetic candidate volume from the first attached session. Newest journal remains 23 September.
@@ -1651,7 +1651,7 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **A grep trap recorded so nobody re-chases it:** 12 lines look like `filter=true`. They are `trend_filter=true` inside `[ENTERPRISE-CONFIG]`, not filter events.
 - **Lifecycle change (money):** the synchronous fast-scalp entry registered its position under `CTradeManager::GetLastTicket()` — `m_lastTradeResult.order` / `m_trade.ResultOrder()`, an **order** ticket — into `CFastScalpPositionTracker`, whose key is the **position** ticket. Sequence per trade: entry `riskBudget.Add(riskPerTrade)` → next `ManageScalpPositions` → `SyncScalpPositionTracking` fails `PositionSelectByTicket(orderTicket)` → `FreeScalpRiskBudget` → `FreeForTicket` cannot select it either, so `lotSize` stays 0.0 and the path falls to `ReleaseFallback()`, subtracting `riskPerTrade` → the same pass re-adds the position by its real ticket with no `Add`. The accumulator was back to ~0 with the position still open, so `PassesEntryGates`' `usedScalpRiskPct >= config.scalpRiskPct` could only bind within the entry tick. `maxScalpPositions` kept working — it counts live positions by comment prefix, not the accumulator.
 - **Fix and its lifecycle:** entry resolves the position ticket through `CTradeMgrPreflight::FindFreshPositionForSend` (symbol + direction + opened ≤30 s + `IsMagicOwned`) and registers that. When the position is not yet visible it registers nothing and `[SCALP-ENTRY] … ticket=0 | position not visible yet, sync will adopt it` says so; the sync pass adopts it and the budget the entry consumed stays consumed. No fallback to the order ticket — that was the bug.
-- **Log truthfulness:** `[AUTHORITY-GATE]` replaces a flag-gated init print, because `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) gates nothing else while `Resolve()` runs at `EAOrchestrator.mqh:3608` on every candidate. The ATR crisis veto prints its uncapped ratio, because 46 of 71 vetoes in the last session reported the same clamped `10.000` for readings spanning 10.58× and 431×.
+- **Log truthfulness:** `[AUTHORITY-GATE]` replaces a flag-gated init print, because `InpEnableLiveAuthorityGate` (default `false` in both `.mq5`) gates nothing else while `Resolve()` runs at `EAOrchestrator.mqh:3587` on every candidate. The ATR crisis veto prints its uncapped ratio, because 46 of 71 vetoes in the last session reported the same clamped `10.000` for readings spanning 10.58× and 431×.
 - **State added:** none. No new fields, no new counters.
 - **§3 invariants:** unchanged. The entry still sends through `CTradeManager` (§3.2), still passes the pre-trade gate (§3.1), and the tracker remains driven from the EA loop (§3.3).
 - **Compilation:** `sync_and_compile.ps1 -All`, 8 root programs, 0 errors / 0 warnings (run twice: after the log edits and again after the ticket fix).
@@ -1703,9 +1703,38 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **No lifecycle step added or removed.** The change is one method name per class: `GetType()` overrides `GetStrategyType()`, so the value that `CConsensusEngine` already read from the interface became correct for Liquidity Sweep and Range Compression. Registration, roster append, health enrolment, signal polling, risk gating and exit ownership are byte-identical.
 - **State added:** none. Both classes already passed their display name to the base constructor, so `GetName()` was never affected; only the type was.
 - **Decision path that changed:** `RegimeStateHardGate` and the category-multiplier switch inside `GetRegimeCategoryMultiplier`, reached from three vote-scoring sites. Range Compression re-acquires the trend-regime veto the code intends for it, and both strategies acquire a regime-dependent weight instead of a neutral one.
-- **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:155`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
+- **Dead code found while checking whether this could move a magic number:** `CMagicNumberAllocator` (`Core/Risk/MagicNumberAllocator.mqh`, 395 lines, deleted in Batch 197) maps strategy type to a magic offset, is declared as `m_magicNumberAllocator` in `EAOrchestrator.mqh:154`, and has no method call anywhere in the repository. `MagicRange.mqh` remains the only magic authority, which is why this batch cannot orphan an open position. The file is left in place and recorded: deleting a risk-domain file is a decision the operator should see, not one to fold into a bug fix.
 - **§3 invariants:** unchanged.
 - **Found by:** the shape-10 hunt in Batch 194 (dead construction path), which surfaced these two dead accessors as a suspected second identity. The suspected magic/weighting consequence was checked and largely disproved before acting — the real damage was confined to regime weighting — and the "vote disabled entirely" comment on the path was found to overstate what a zero multiplier does.
+
+## Batch 262 The Hub Built Its Engines Twice and the Second Path Had No Caller (2026-10-26)
+
+- **Init lifecycle, before:** `InitializeSubsystems` -> `m_registryAggregator.Initialize()` (six registries allocated,
+  each with its own `[RegistryAggregator] ERROR: Failed to allocate ...` branch) -> `RegisterMathEngines` +
+  `RegisterInstitutionalEngines` -> per symbol `CreateEnginesForSymbol`, which `new`ed Hurst, OU, OFI, VPIN, VWAP,
+  Volume Profile, CVD, Kalman, CPD, Four-State, VolTarget, ExitOptimizer, Liquidity Sweep and Range Compression behind
+  their `config.enable*` flags. **After:** the same sequence minus the institutional registry and minus four engines -
+  five registries allocated, and `CreateEnginesForSymbol` builds ten fleets. `Reserve()` sizes nine arrays instead of
+  thirteen.
+- **Deinit lifecycle:** `Shutdown()` and `CleanupOnInitFailure()` both still open with `m_mathEngineHub.ReleaseAll()`
+  and reach `m_registryAggregator.Deinitialize()` later (`EAOrchestrator.mqh:325`, `:478`, `:510`). That order is the
+  only thing separating a correct teardown from a double free, because
+  `CMathematicalEngineRegistry::SEngineSlot::Clear()` deletes the same engine pointers the hub deletes, guarded only by
+  `CheckPointer(...) == POINTER_DYNAMIC`. The hub's header comment claimed "Registries hold non-owning references",
+  which the registry code does not do; it now states the real arrangement and the ordering that keeps it safe.
+  AGENTS §3.5 (`CIndicatorManager::DestroyInstance()` on deinit) is untouched.
+- **Indicator handles released that are no longer acquired:** `CExitOptimizer::Initialize` called
+  `iATR(symbol, Period(), 14)` per symbol and freed it in `Deinit()`/destructor, so 11 handles on that session's roster
+  were created, never read, and correctly released. Not a leak; a cost that bought nothing.
+- **Ownership questions closed by deletion rather than adjudicated:** `EnsureEngines` (the registry `new`ing engines
+  into its own slots) was the only path that could make the registry a legitimate owner of a hub-side engine, and it had
+  no caller. `OnTickAll` was a second feed for OFI/VPIN/Kalman with no caller.
+- **Post-trade feedback unaffected.** `[TRADE-ATTRIBUTION]`, `[AUTHORITY-LEARN]`, `[NN-LABEL]`/`[NN-TRAINING]` and the
+  closed-trade contributor loop (Batch 199/255) never consulted any of the four engines.
+  `CorrelationId.mqh:197/:222-223` still map `"EO"`/`"EXT"` to `ExitOptimizer`; the codes array is index-addressed and
+  its values are written into correlation IDs, so those two names stay rather than re-key history.
+- **Runtime evidence:** none newer than the attached 2026-10-23 `Step Index,M15` session, which is where the tag counts
+  come from. Nothing this batch deleted could have printed a line in it.
 
 ## Batch 261 The Timeframe-Consistency Island Goes, and the Gate That Appeared to Consult It Was Switching Consensus Off (2026-10-26)
 
@@ -1768,7 +1797,7 @@ is false for every row and `CStrategyRegistryState::RegisterStrategy` overwrites
 argument with `false` (`StrategyRegistryState.mqh:67`, whose comment already says the argument is advisory).
 The journal shows 176 `[ENTERPRISE] Strategy <name> disabled by registry (mode filter or not registered)` lines -
 16 rows x 11 symbols - and then `CConsensusEngine::SyncEnabledWithRegistry` (called once, from
-`EAOrchestrator.mqh:739`) releases all of them 7 s later: 176 `Synced strategy <name> -> enabled=true
+`EAOrchestrator.mqh:738`) releases all of them 7 s later: 176 `Synced strategy <name> -> enabled=true
 (registry active=true)` and eleven `reconciled 16 strategy enable-flags with registry`.
 
 - **What the two init prints read.** Both called
@@ -1800,13 +1829,14 @@ The journal shows 176 `[ENTERPRISE] Strategy <name> disabled by registry (mode f
   `CVWAPEngine` / `CCVDEngine` are constructed, `Initialize`d and registered but never asked for anything
   (`GetExitOptimizer` and the volume-profile getter have zero callers; the hub arrays see only `Initialize`/
   `Deinit`). They keep their own batch: two registries, three hub registration paths, four `enable*` config fields
-  and the `[VOLUME-PROXY]` line all move with them.
+  and the `[VOLUME-PROXY]` line all move with them. Batch 262 took that batch: the four class files are still in the
+  tree, unreferenced and parked; the construction, the second registry and the eleven inputs are gone.
 - **section 3 invariants:** unchanged. Entries still pass `CUnifiedRiskManager`, execution stays `CTradeManager`-
   owned, lifecycle stays EA-loop-owned, consensus stays symbol-scoped.
 ## Batch 258 The Pipeline's Engine Seam Had No Caller, So Five Filters Passed Signals Through While Announcing Themselves ON (2026-10-25)
 
 **Lifecycle evidence.** Registration is where the seam was missing. `InitializeEnterpriseManagerForSymbol`
-(`EAOrchestrator.mqh:1776`) builds one `CUnifiedSignalPipeline` per symbol through the manager, configures the
+(`EAOrchestrator.mqh:1755`) builds one `CUnifiedSignalPipeline` per symbol through the manager, configures the
 filter settings block at `:1802-1823`, and hands it over - but never bound the engine registry, because
 `CUnifiedSignalPipeline::SetMathRegistry` (`UnifiedSignalPipeline.mqh:138`) has no call site anywhere in the tree.
 `m_mathRegistry` is therefore `NULL` from its constructor (`:151`) for the life of every pipeline, and the five
@@ -1814,7 +1844,7 @@ getter facades at `:137-141` answer `NULL`. The scan-time consequence is at `Sig
 `:241`/`:286`/`:314`: each filter fetches its engine, sees `NULL`, and `return true` before testing a threshold.
 
 - **Init -> scan, unchanged in order.** No step was added or removed in the decision path. One expression at
-  `EAOrchestrator.mqh:1834-1836` now resolves to the aggregator's registry or to `NULL`, and the shipped default is
+  `EAOrchestrator.mqh:1813-1815` now resolves to the aggregator's registry or to `NULL`, and the shipped default is
   `NULL`, which is what the field already held. `[PIPELINE-ENGINES]` prints that per-symbol state once at init.
 - **Two TTL writes and one cost-limits write had no target.** `:1840`/`:1844` guard on the engine pointer, so
   `InpReadinessReuseTtlSeconds` never reached `CTrendEngine` or `CRegimeEngine`; `UnifiedSignalPipeline.mqh:215`
@@ -1824,7 +1854,7 @@ getter facades at `:137-141` answer `NULL`. The scan-time consequence is at `Sig
   before this batch could write `m_currentMarketRegime` and `[MARKET-REGIME]` has no journal line. A reader who
   checked reachability only at the manager (Batch 201) found the writer and stopped; the entry point above it was
   the missing link.
-- **Ownership at deinit is proved, not assumed.** The registry is `new`ed by `RegistryAggregator.mqh:93` and deleted
+- **Ownership at deinit is proved, not assumed.** The registry is `new`ed by `RegistryAggregator.mqh:86` and deleted
   at `:147-150`; `Core/Pipeline/` contains no `delete m_mathRegistry`. Pipelines borrow, so thirteen per-symbol
   bindings add no teardown step. This is the shape Batch 256 found fatal in the diagnostics chain, checked before
   the bind rather than after.
@@ -1852,7 +1882,7 @@ getter facades at `:137-141` answer `NULL`. The scan-time consequence is at `Sig
 
 **Lifecycle evidence.** Deinit is where the reachable fault lived. `CStrategyMgrInfrastructure::ReleaseOnDeinit()`
 ran `delete m_diagnostics; delete m_attribution;` on pointers injected by address from `CEAOrchestrator`'s by-value
-members (`EAOrchestrator.mqh:157`/`:179`), and `ReleaseEnterpriseManagers()` (`:2541`) calls it once per symbol
+members (`EAOrchestrator.mqh:156`/`:179`), and `ReleaseEnterpriseManagers()` (`:2541`) calls it once per symbol
 manager - thirteen deletes of two addresses the orchestrator still owns, plus the same pair on the init-failure
 rollback at `:1603`, while `NNDiagPrintSummary` reads the diagnostics object at `:373` and the heartbeat emits to it
 at `:2893`. Both deletes are gone; the three infra objects that really are `new`ed
@@ -1891,7 +1921,7 @@ from `OnTradeTransaction` when a position closes). Batch 199 gave it contributor
   the twins went: its only writes were inside `UpdateRecentPerformance`'s unreachable fallback. A reader who assumed two
   holders of the same window (Batch 215's shape) would have found zero live holders of one and one live holder of the other.
 - `CStrategyLifecycle::CheckStrategyReEnabling` is the path that clears a park, and it is reached every cycle from
-  `EAOrchestrator.mqh:3132`. It consults the monitor's flag, which `CheckAllStrategiesDisabling` arms with no expiry, so release
+  `EAOrchestrator.mqh:3111`. It consults the monitor's flag, which `CheckAllStrategiesDisabling` arms with no expiry, so release
   lands on the next pass. `disabledUntil` on the monitor never had a writer; the roster's `disabledUntil` is written
   (`TimeCurrent() + 3600`) and read by no decision. Recorded here because a journal line saying "re-enabled after cooldown" is
   not evidence an hour passed.
@@ -1989,7 +2019,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 ## Batch 249 Registration Timeframe Comes From the Operator Row (2026-10-23)
 
 - **Trace:** `CStrategyConfigBuilder::Initialize` -> `m_config.strategyTimeframes[slot]` ->
-  `InitializeEnterpriseManagerForSymbol` push (`EAOrchestrator.mqh:1958-1962`) ->
+  `InitializeEnterpriseManagerForSymbol` push (`EAOrchestrator.mqh:1937-1941`) ->
   `CEnterpriseStrategyManager::SetStrategyTimeframeConfig` -> `CIntrabarPolicy::m_timeframeConfig` ->
   `AutoRegisterStrategies` (`EnterpriseStrategyManager.mqh:674-677`) -> `RegisterStrategy`'s `tf` -> `resolvedTf`
   (`StrategyRegistryState.mqh:80`) -> `IStrategy::Init` / `InitializeAI`. The last three links already existed; the
@@ -2012,7 +2042,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
   batch removed, and it removed a false refusal rather than a protection: the values compared gate nothing.
 - **Ownership:** `CEAOrchestrator` no longer holds a `CTickSafetyMonitor`, and `Core/Processing/TickSafetyMonitor.mqh`
   is deleted. Nothing else referenced the class after Batch 237 removed the spike monitor's pointer to it. No
-  transitive include broke: `<Trade\AccountInfo.mqh>` is included by `EAOrchestrator.mqh:78` and `<Trade\SymbolInfo.mqh>`
+  transitive include broke: `<Trade\AccountInfo.mqh>` is included by `EAOrchestrator.mqh:77` and `<Trade\SymbolInfo.mqh>`
   by `TradeManager.mqh:12` and `SessionManager.mqh:6`.
 - **Deinit:** unchanged, and §3.5 still holds - `CIndicatorManager::DestroyInstance()` is called on deinit. The deleted
   class had no handles to release (its ATR/margin reads were `CAccountInfo`/`CSymbolInfo` value objects).
@@ -2028,7 +2058,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 ## Batch 237 Send Budget Per Slot, Spike Detector On The Timer Path (2026-10-19)
 
 - **Init:** `CSyntheticSpikeMonitor::Initialize(CTradeManager&, CUnifiedRiskManager&, CTickSafetyMonitor&)` is gone,
-  replaced by a `RegisterSymbol` loop over `m_enterpriseManagerSymbols` at the same site (`EAOrchestrator.mqh:1068`),
+  replaced by a `RegisterSymbol` loop over `m_enterpriseManagerSymbols` at the same site (`EAOrchestrator.mqh:1067`),
   filtered to synthetic names, followed by `[SPIKE-MONITOR]`. The monitor holds no pointers to the trade, risk or
   tick-safety objects now, so its lifetime can no longer outlive a re-initialized manager set with a stale pointer -
   the re-bind hazard Batch 188/229 recorded for other holders. `[ENTRY-BOUNDS]` prints next to `[AUTHORITY-GATE]`.
@@ -2132,7 +2162,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 - **State read, none removed:** the report path now walks the roster (`GetStrategyCount` /
   `GetStrategyIntrabarPolicyRaw` / `GetStrategyName`) instead of restating config, so what prints is what registration
   stored.
-- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3528`, `:3578`, and
+- **Verified reach set:** entry path = `EVAL_MODE_NEW_BAR` only (`EAOrchestrator.mqh:3507`, `:3578`, and
   `SignalGenerator.mqh:109`'s own comment); the sole live `EVAL_MODE_INTRABAR` caller is
   `PositionLifecycleManager.mqh:261`. `GetStrategyIntrabarPolicyConfig` (manager + `CIntrabarPolicy`) has no caller,
   and `SStrategyTimeframeConfig::intrabarEnabled` has no reader at all.
@@ -2152,7 +2182,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
   It was a derived copy of `intrabarPolicy == INTRABAR_POLICY_LIVE` with two writers and, after Batch 231, zero
   readers. `SetStrategyIntrabarPolicyByName` and `SetStrategyIntrabarEligibilityByName` (manager + `CIntrabarPolicy`)
   are gone as a declared-defined-forwarded-never-called chain; the live write path is
-  `EAOrchestrator.mqh:1960` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`.
+  `EAOrchestrator.mqh:1939` `SetStrategyIntrabarPolicyConfig(si, defaultPolicy)`.
 - **Log surface:** `[EnterpriseStrategyManager] Intrabar policy updated:` loses its only emitter, which no caller
   could reach. No doc cited it.
 - **Lifecycle:** unchanged. Registration, `SyncEnabledWithRegistry`, deinit and `CIndicatorManager::DestroyInstance()`
@@ -2424,7 +2454,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
   the VPIN filter; the fuller question was what the four operator inputs actually buy, and the answer turned out to
   be a working volatility model whose output is discarded.
 - **Verified in both directions:** the engine is genuinely fed (`Update()` every cycle at
-  `OrchestratorMathEngineHub.mqh:649`, EWMA + percentile + clamped scalar all computed), and genuinely unread -
+  `OrchestratorMathEngineHub.mqh:297`, EWMA + percentile + clamped scalar all computed), and genuinely unread -
   every one of its five getters grepped to zero call sites outside its own file. Checked for the near-miss trap:
   `GetVolPercentile()` does exist elsewhere, on `CFourStateRegimeDetector`, which is a different engine with a
   different snapshot; counting the name would have said "consumed". Same lesson as Batch 215's owner-not-name rule,
@@ -2471,7 +2501,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
   recorded as documentation fiction.
 - **Rejected wiring with a written reason:** `SetPeriods` had no caller, and calling it would be the only way for
   the cache's `emaFast/emaSlow/atr/rsi` periods to differ from `SScalpConfig`'s, which are literals set at
-  `EAOrchestrator.mqh:1267`. Two paths evaluating different EMAs on one symbol is a real defect shape - the fast
+  `EAOrchestrator.mqh:1266`. Two paths evaluating different EMAs on one symbol is a real defect shape - the fast
   and slow paths already compute the same signal by different routes - so the configurability was deleted instead
   of introduced. If those numbers become operator inputs, both paths must read one source.
 - **§3 invariants:** unchanged. No gate, veto or lot moved; only the reads feeding them.
@@ -2531,7 +2561,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 - **Verified before calling it cross-symbol:** three facts had to hold together, and each was read at its own
   lines. (1) `RefreshIndicators` writes `m_cachedATR` / `m_cachedFastEMA` / `m_cachedSlowEMA` / `m_cachedRSI`
   immediately after each read and only stamps `m_cachedSymbol` / `m_cachedBarTime` after the last. (2) One
-  `CFastScalpEngine` is held **by value** in the orchestrator (`EAOrchestrator.mqh:174`) and driven across
+  `CFastScalpEngine` is held **by value** in the orchestrator (`EAOrchestrator.mqh:173`) and driven across
   `m_managerCount` symbols in a single pass (`ProcessScalpFastPath`), so a foreign tag is always one call away.
   (3) The re-entry test is `barTime == m_cachedBarTime && symbol == m_cachedSymbol && m_cachedATR > 0.0` - the
   symbol check compares the *stale* tag, so it passes, and the ATR check passes on a number from another
@@ -2581,8 +2611,8 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 ## Batch 213 The Lot Was Doubled by a Modifier Nobody Owned and Shrunk by One Nobody Fed (2026-10-16)
 
 - **How it was found:** a read-only sweep of `PositionSizer` + `PositionSizerModifiers` + the scalp gates, run after Batch 212 shipped, looking specifically for refusals and size changes caused by measurement error rather than policy. Six findings came back; each was read at its own lines before anything moved, and five survived. This is the same method that produced Batches 199-205, applied to the sizing pair no earlier batch had opened.
-- **Verified, not assumed (the ADX double):** `CPositionSizer::Initialize` registered a `CADXLotModifier` unconditionally while `EAOrchestrator.mqh:892` added a second configured `CADXLotModifier` to the *same* `m_positionSizer`; Batch 213 deleted the sizer's copy, so `:930` is the only registration. Both instances own an iADX handle, so both compute and both multiply - which makes the tier `1.3` a `1.69` and `1.5` a `2.25`. Checked whether other paths absorb it before calling it over-exposure: the consensus path clamps the modified lot to `GetEffectiveRiskPerTrade` at `CandidateBuilder.mqh:505-529`, so there the symptom was `[RISK-GATE-ADJUST]` churn plus a ladder pinned at the ceiling; the five direct sizer callers (three scalp engines, grid recovery, spike hunter, and Momentum's own sizing at `SimpleMomentumStrategy.mqh:749`) have no such clamp.
-- **Verified (the VPIN non-protection):** the modifier's filter was created inside itself (`EnsureFilterCreated`), `SetVPINFilter` had zero call sites on this class, the parameterized `Initialize(symbol, ...)` had zero call sites, and the only live VPIN tick feed is the hub's per-symbol filters (`EAOrchestrator.mqh:2576`, throttled inside the hub). `IsWarmedUp()` is `m_completedBuckets >= m_numBuckets`, so the `!IsWarmedUp()` early return was the only branch that ever ran. Three documents claimed the opposite (`PostConsensusValidator.mqh:390`, `CandidateBuilder.mqh:496`, `VPINFilter.mqh:54`) and `[VPIN-MODIFIER]` has never printed - which could only be established from the code, since no journal newer than 2026-09-23 exists to check.
+- **Verified, not assumed (the ADX double):** `CPositionSizer::Initialize` registered a `CADXLotModifier` unconditionally while `EAOrchestrator.mqh:891` added a second configured `CADXLotModifier` to the *same* `m_positionSizer`; Batch 213 deleted the sizer's copy, so `:930` is the only registration. Both instances own an iADX handle, so both compute and both multiply - which makes the tier `1.3` a `1.69` and `1.5` a `2.25`. Checked whether other paths absorb it before calling it over-exposure: the consensus path clamps the modified lot to `GetEffectiveRiskPerTrade` at `CandidateBuilder.mqh:505-529`, so there the symptom was `[RISK-GATE-ADJUST]` churn plus a ladder pinned at the ceiling; the five direct sizer callers (three scalp engines, grid recovery, spike hunter, and Momentum's own sizing at `SimpleMomentumStrategy.mqh:749`) have no such clamp.
+- **Verified (the VPIN non-protection):** the modifier's filter was created inside itself (`EnsureFilterCreated`), `SetVPINFilter` had zero call sites on this class, the parameterized `Initialize(symbol, ...)` had zero call sites, and the only live VPIN tick feed is the hub's per-symbol filters (`EAOrchestrator.mqh:2555`, throttled inside the hub). `IsWarmedUp()` is `m_completedBuckets >= m_numBuckets`, so the `!IsWarmedUp()` early return was the only branch that ever ran. Three documents claimed the opposite (`PostConsensusValidator.mqh:390`, `CandidateBuilder.mqh:496`, `VPINFilter.mqh:54`) and `[VPIN-MODIFIER]` has never printed - which could only be established from the code, since no journal newer than 2026-09-23 exists to check.
 - **Chosen shape for the fix:** the modifier holds *references* to the hub's filters, keyed by symbol, registered in the engine-injection loop that already hands the same pointer to Trend, S/R and the manager. A per-symbol table rather than a rebind-on-symbol-change, because unlike an iADX handle a VPIN filter carries state (its buckets) and recreating it per call would reset the very measurement it exists to make. The sibling modifiers rebind handles and are correct doing so; this one may not.
 - **Checked and NOT treated as the same bug:** the sizer's `m_equityCurveModifier` is also constructed inside `PositionSizer::Initialize`, but only `if(m_params.useEquityCurveScaling)`, and it has its own reader at `:489`. A conditional feature with a consumer, not an unconditional duplicate. Recording this because "second instance of the same modifier class" looks like a pattern and acting on the pattern alone would have removed a working path.
 - **Declined with reasons written down:** `m_riskReductionFactor` is the repo's signature field-with-readers-and-no-writer, but the tuner's `reductionFactor` (fraction of base risk to trade at, tightened to 0.35 in critical drawdown) and this field's documented meaning (fraction of unrealized profit that frees budget) are two quantities; storing one in the other would make a single variable carry two semantics, which is the mistake Batch 203 avoided for the neural-net labels. Bayesian Kelly is inert because `UpdateTradeResult` has no caller - and wiring it as written would multiply an already risk-sized lot by a bankroll fraction, cutting trades to roughly 1/13-1/40 of intended size armed by one closed trade; the correct form (Kelly sets `riskPercent` before sizing) is a redesign. Both recorded in `SYSTEM_STRUCTURE.md`'s unwired list, and `[SIZING-CHAIN]` now says Kelly is inert at every start rather than leaving it implied.
@@ -2627,9 +2657,9 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 
 - **How it was found:** the same touchpoint census that produced Batch 208 listed `BuildStrategyFlags` as a second place per-strategy knowledge lives. While converting it to a row loop I read its two consumers to check the loop would still satisfy them, and both indexed the array by hand. Neither was on the report; an index-space bug is only visible when you try to replace the writer.
 - **The cast first:** `BuildEnabledStrategyList` printed `EnumToString((ENUM_STRATEGY_TYPE)i)` for each set flag index. `ENUM_STRATEGY_INDEX` and `ENUM_STRATEGY_TYPE` describe overlapping names at different numbers with different gaps, so the shift was systematic - every row after Momentum got its neighbour's name and every gap index got a bare number. The `[CURATION] Effective strategy set` line is the per-symbol init log an operator reads to confirm which roster a symbol got, and `AGENTS.md` §6 now lists it as post-change evidence, which is the reason to fix a print on a live book.
-- **The arithmetic second, and it does gate:** `CountEffectiveIndicatorStrategiesForSymbol` added every set flag then subtracted slots `17/18/19/20` as AI. AI rows carry `siIndex = -1` and never occupy a flag slot, while 17/18/19 are Liquidity Sweep, Range Compression and Exit Optimizer - so the default curated roster counted 11 where registration uses 13, and that number is tested against zero at `EAOrchestrator.mqh:1584` before a symbol gets a manager. The arithmetic is worth spelling out because it is the reason the bug was survivable: the Exit Optimizer flag was added to the sum and subtracted again, so only the two real structure rows were lost. Direction of travel is recorded because it matters: the corrected count is higher, so the guard is looser, and no symbol that traded before can now be skipped.
+- **The arithmetic second, and it does gate:** `CountEffectiveIndicatorStrategiesForSymbol` added every set flag then subtracted slots `17/18/19/20` as AI. AI rows carry `siIndex = -1` and never occupy a flag slot, while 17/18/19 are Liquidity Sweep, Range Compression and Exit Optimizer - so the default curated roster counted 11 where registration uses 13, and that number is tested against zero at `EAOrchestrator.mqh:1563` before a symbol gets a manager. The arithmetic is worth spelling out because it is the reason the bug was survivable: the Exit Optimizer flag was added to the sum and subtracted again, so only the two real structure rows were lost. Direction of travel is recorded because it matters: the corrected count is higher, so the guard is looser, and no symbol that traded before can now be skipped.
 - **Rejected a tempting extra fix:** `COrchestratorIntrabarPolicy::GetIntrabarPolicy` reads `strategyFlags[strategyIndex]` where `strategyIndex` is a *policy* slot, which mixes index spaces the same way and looked like it was silently switching intrabar policies off. It has no call site anywhere in the repository - the live path is `CIntrabarPolicy::GetIntrabarPolicyHelper(pIdx)`, which reads no flags - so deleting the flag write it depended on changes nothing. Left in place as dead, recorded in `SYSTEM_STRUCTURE.md`'s unwired list.
-- **Deleted after reference counts, not before:** `SI_EXIT_OPTIMIZER` had exactly two references (its declaration and the write); `STRATEGY_NEURAL_NETWORK_AI`/`TRANSFORMER`/`ENSEMBLE`/`ONNX`/`PYTHON_BRIDGE` had no reader outside the deleted decrements (the classifier held four guarded duplicates, the orchestrator five originals). `InpEnableExitOptimizer` and `config.enableExitOptimizer` both stay - the math engine reads them at `OrchestratorMathEngineHub.mqh:272,440`.
+- **Deleted after reference counts, not before:** `SI_EXIT_OPTIMIZER` had exactly two references (its declaration and the write); `STRATEGY_NEURAL_NETWORK_AI`/`TRANSFORMER`/`ENSEMBLE`/`ONNX`/`PYTHON_BRIDGE` had no reader outside the deleted decrements (the classifier held four guarded duplicates, the orchestrator five originals). `InpEnableExitOptimizer` and `config.enableExitOptimizer` both stay - the math engine read them at the hub's per-symbol engine creation. Neither survives Batch 262.
 - **Behaviour parity proved rather than assumed:** the curated set was compared row by row with the deleted ladder (twelve force-enabled; Candlestick and Statistical Arbitrage absent), and that set is now `SStrategyDefinition::curatedEnable`, so `BuildStrategyFlags` reproduces the old array for all fourteen rows with no strategy named twice.
 - **§3 invariants:** unchanged. Registration stays manager-owned, the flag array keeps its single producer, and no risk or execution path was touched.
 - **Verification:** compile 8 programs, 0 errors / 0 total warnings. No journal exists past 2026-09-23, so the `[CURATION]` line has never been observed correct; the first attach is the check - it should read `Momentum, Trend, Support/Resistance, ...` and contain no bare numbers, and no `[CATALOG] ... has no operator input` line should appear for the current fourteen rows.
@@ -2638,7 +2668,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 
 - **How it was found:** the touchpoint census run for task #54 (what must change to add one strategy) listed the places that hold per-strategy knowledge. One of them was `CandidateBuilder`'s contributor-classification predicates - a list of substrings that is a *copy of the catalog row names*. Comparing the two lists is where the drift showed up: four tokens spelled the names differently (`MeanReversion` vs `Mean Reversion`, `StatArb` vs `Statistical Arbitrage`, `NYOpen` vs `NY Open Gap`, `AsianRange` vs `Asian Range Break`) and three rows (`Liquidity Sweep`, `Range Compression`, `Python Bridge AI`) had no token at all.
 - **Traced to money before believing it:** `hasIndicatorContributor` / `indicatorContributorCount` / `hasAIContributor` are consumed by `CLiveAuthorityResolver::Resolve` for the `+0.20` INDICATOR term, the `0.55`-vs-`0.65` confidence bar and the BOOTSTRAP/PROVEN_AI branch - not for a log line. A classification bug here sizes positions and refuses entries.
-- **Verified the precondition rather than assuming it:** contributor strings are `m_roster.GetStrategyName(idx)`, and both registration paths pass `g_strategyCatalog[i].name` (`EnterpriseStrategyManager.mqh:679`, `EAOrchestrator.mqh:2412`), so the row is a valid lookup key. Had the registered name been spelled differently from the row name, containment matching would have *reduced* classification instead of fixing it - that check is why the fix is a row lookup and not five more tokens.
+- **Verified the precondition rather than assuming it:** contributor strings are `m_roster.GetStrategyName(idx)`, and both registration paths pass `g_strategyCatalog[i].name` (`EnterpriseStrategyManager.mqh:679`, `EAOrchestrator.mqh:2391`), so the row is a valid lookup key. Had the registered name been spelled differently from the row name, containment matching would have *reduced* classification instead of fixing it - that check is why the fix is a row lookup and not five more tokens.
 - **Report claims that were checked and were not real:** the touchpoint report's "missing flag slot skips the row with no print" was verified at `OrchestratorStrategyFlagBuilder.mqh:62-66` (the slot switch and its `[CATALOG]` no-input print) before being trusted; its `StrategyFactory` redundancy claim matched §2.2.3. Nothing in the batch was implemented from the report alone.
 - **Kept as-is:** `ExtractAIName` / `GetStrategyTypeByName` already resolve through the live object's `GetType()` rather than a name table, so they were left untouched; whether every adapter's `GetType()` answers one of the three AI types is the §4.4 identity question, already recorded separately.
 - **Verification:** compile 8 programs, 0 errors / 0 total warnings. No journal evidence exists (newest 2026-09-23). The first attach should show `INDICATOR` in authority reasons for trades the six rows voted, fewer `LOW_CONFIDENCE` refusals on those decisions, and a `[TRADE-ATTRIBUTION] contributors=` line that names rows the old tokens could not see.
@@ -2658,7 +2688,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 - **Confirmed and fixed (1):** `CalculateStops`' `takeProfitPips = MathMin(takeProfitPips, stopLossPips * minRR)` - a minimum R:R applied as a ceiling on the target. Verified against the two upstream branches that already raise TP to `SL x minRR`, and against `CheckExecutionCost`'s `spread / TP` test, which the shortened target pushes the wrong way.
 - **Rejected after reading the line (5):** the triple-counted spread floor (the explicit `spread * 3` term dominates, and the `[CANDIDATE-BUILDER] stop pinned to floor` log already states the arithmetic); the init-latched safe-mode per-symbol cap (MT5 inputs cannot change during a run, so `OnChartEvent` re-pushes the tier the process already has and no stale case is reachable); the fixed `0.65/0.70` quality arms (their two decision classes are never published by the live consensus); the min-lot correlation refusal (the anti-round-up rule this project enforces); the SL-less portfolio `cap + 0.01` poison (deliberate, recomputed from zero each pass).
 - **Rejected as tuning, not repair (1):** `atr_ratio > 1.5 -> halve_risk` below the 2.0/2.5 crisis ceiling. It is a policy constant with its own `[RISK-VOL-GATE]` line; moving it without journals is inventing a threshold.
-- **Escalated as a finding rather than a fix (1):** the chart-timeframe ATR problem. Half of the sweep's "wrong ratio" findings reduce to this one cause, and the reason it is not arithmetic is that the base timeframe is *assigned* `Period()` at `EAOrchestrator.mqh:1789` while the strategies each hold a catalog timeframe. Chosen measurement basis is operator policy.
+- **Escalated as a finding rather than a fix (1):** the chart-timeframe ATR problem. Half of the sweep's "wrong ratio" findings reduce to this one cause, and the reason it is not arithmetic is that the base timeframe is *assigned* `Period()` at `EAOrchestrator.mqh:1768` while the strategies each hold a catalog timeframe. Chosen measurement basis is operator policy.
 - **Two edits reverted before shipping:** the validator's `Period()` call and the candidate builder's `PERIOD_CURRENT` were first rewritten to use the manager's base timeframe, then confirmed to be no-ops by reading the init site. They are not in the commit. A "fix" that cannot change a value is the kind of record that misleads the next session.
 - **Verification:** compile 8 programs, 0 errors / 0 total warnings. No journal evidence (newest 2026-09-23); look for strategy-proposed `TP=` values that stay wide and fewer `execution cost too high` refusals per symbol.
 
@@ -2717,7 +2747,7 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 
 - **Lifecycle steps changed:** none. The deletions had no call site, which the compile of all eight programs establishes - MQL5 would fail on any surviving reference. Entry, exit, risk and send traces from Batch 199 are byte-identical.
 - **State removed:** the closed-trade attribution trio (`m_closedTradeContributors`, `m_closedTradeNetProfit`, `m_hasClosedTradeAttribution`) and the four methods reading it, `m_preRetrainTimestamp`, `m_lastNNHealthLogTime`, the portfolio cache's two private mutators, and `ApplyStrategyWeights` / `FeedMicrostructureEngines` / `ExecuteBatch` / `ReenableONNXAI` / `Reset` / `GetTotalGridRisk` / `UpdateRegimePerformance` (manager + health wrapper) / `EmitNNHealthCheck` / `GetNoSignalRate` / `GetWindowScans` / `GetWindowNoSignal` / `UpdateTradingPaused`.
-- **Latent defect class, sixth instance: a never-called twin of live code.** `FeedMicrostructureEngines` held the same VPIN/OFI and Skew Step statements as `OnTick` (`EAOrchestrator.mqh:2576`) with a different loop bound, and `CTradeExecutor::ExecuteBatch` carried its own `[EXECUTION]` print. A reader who edits a copy changes nothing and the journal keeps looking normal - which for a data feed is how a switched-on VPIN arm (Batch 175) quietly stops being fed. `ExecuteBatch`'s print was the more dangerous of the two: two emitters for one log tag.
+- **Latent defect class, sixth instance: a never-called twin of live code.** `FeedMicrostructureEngines` held the same VPIN/OFI and Skew Step statements as `OnTick` (`EAOrchestrator.mqh:2555`) with a different loop bound, and `CTradeExecutor::ExecuteBatch` carried its own `[EXECUTION]` print. A reader who edits a copy changes nothing and the journal keeps looking normal - which for a data feed is how a switched-on VPIN arm (Batch 175) quietly stops being fed. `ExecuteBatch`'s print was the more dangerous of the two: two emitters for one log tag.
 - **Recorded instead of deleted, because each is a behaviour change:** consensus participation frozen at 0.985 for every vote (`UpdateParticipationScore` has no caller), the lifecycle's ranging-regime trailing pause with no regime source (`SetRegimeEngine` uncalled; the per-symbol manager lookup is the right shape), the heartbeat's `paused` field, which printed false until Batch 202 wired it to `CSyntheticSpikeMonitor::IsPaused()`, `EntStrategyQuorumConfig`'s 13 adaptive-quorum getters, `CorrelationEngine`'s documented dead surface, and the read-only getters whose deletion would leave their counters write-only. The neural net's trade-linked label path was on this list until Batch 203 connected it.
 - **§3 invariants:** all five untouched. §3.5 specifically: `CIndicatorManager::DestroyInstance()` sits in the deinit path, and no deletion in this batch removed or reordered a deinit call (`ReleaseOnDeinit`/`FinishDeinit` and the delegator re-bind at `EnterpriseStrategyManager.mqh:125-125` are intact).
 - **Also:** doc line references into the 13 touched files were re-derived from the diff (16 shifted), and two that were already stale before this batch were corrected to the code they describe.

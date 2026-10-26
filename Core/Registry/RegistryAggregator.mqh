@@ -8,14 +8,12 @@
 // instance" map, but every registry here stores structs BY VALUE (SStrategyDescriptor, SNNEntry, SEngineSlot,
 // SDrawingEntry, SSymbolScanState) and maps one symbol to MANY engines, which the template cannot express.
 #include "MathematicalEngineRegistry.mqh"
-#include "InstitutionalEngineRegistry.mqh"
 #include "NeuralNetRegistry.mqh"
 #include "DrawingManagerRegistry.mqh"
 #include "ScanSchedulerRegistry.mqh"
 #include "../Strategy/StrategyRegistry.mqh"
 
 class CMathematicalEngineRegistry;
-class CInstitutionalEngineRegistry;
 class CDrawingManagerRegistry;
 class CScanSchedulerRegistry;
 class CNeuralNetRegistry;
@@ -25,8 +23,6 @@ class CRegistryAggregator
 {
 private:
     CMathematicalEngineRegistry* m_mathRegistry;
-    
-    CInstitutionalEngineRegistry* m_institutionalRegistry;
     
     CNeuralNetRegistry* m_neuralNetRegistry;
     
@@ -40,7 +36,6 @@ private:
     public:
     CRegistryAggregator() :
         m_mathRegistry(NULL),
-        m_institutionalRegistry(NULL),
         m_neuralNetRegistry(NULL),
         m_drawingRegistry(NULL),
         m_scanRegistry(NULL),
@@ -53,8 +48,6 @@ private:
     void Deinitialize();
     
     CMathematicalEngineRegistry* GetMathRegistry() const { return m_mathRegistry; }
-    
-    CInstitutionalEngineRegistry* GetInstitutionalRegistry() const { return m_institutionalRegistry; }
     
     CNeuralNetRegistry* GetNeuralNetRegistry() const { return m_neuralNetRegistry; }
     
@@ -94,13 +87,6 @@ bool CRegistryAggregator::Initialize()
     if(m_mathRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate MathematicalEngineRegistry");
-        ok = false;
-    }
-    
-    m_institutionalRegistry = new CInstitutionalEngineRegistry();
-    if(m_institutionalRegistry == NULL)
-    {
-        Print("[RegistryAggregator] ERROR: Failed to allocate InstitutionalEngineRegistry");
         ok = false;
     }
     
@@ -150,12 +136,6 @@ void CRegistryAggregator::Deinitialize()
         m_mathRegistry = NULL;
     }
     
-    if(m_institutionalRegistry != NULL)
-    {
-        delete m_institutionalRegistry;
-        m_institutionalRegistry = NULL;
-    }
-    
     if(m_neuralNetRegistry != NULL)
     {
         delete m_neuralNetRegistry;
@@ -193,7 +173,6 @@ void CRegistryAggregator::TickNeuralNetOnlineLearning() const
 void CRegistryAggregator::ClearAll()
 {
     if(m_mathRegistry != NULL) m_mathRegistry.Clear();
-    if(m_institutionalRegistry != NULL) m_institutionalRegistry.Clear();
     if(m_neuralNetRegistry != NULL) m_neuralNetRegistry.Clear();
     if(m_drawingRegistry != NULL) m_drawingRegistry.Clear();
     if(m_scanRegistry != NULL) m_scanRegistry.Clear();

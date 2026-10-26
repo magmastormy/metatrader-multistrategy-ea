@@ -162,7 +162,6 @@ input double   InpVolMinScale = 0.2;
 input double   InpVolMaxScale = 3.0;
 input bool     InpEnableLiquiditySweep = false;
 input bool     InpEnableRangeCompression = false;
-input bool     InpEnableExitOptimizer = false;
 
 input group "=== EA OPERATING MODE ==="
 input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
@@ -378,18 +377,6 @@ input int      InpOFISlowWindow = 100;
 input bool     InpEnableVPINFilter = true;
 input double   InpVPINExtremeThreshold = 0.7;
 input int      InpVPINNumBuckets = 50;
-
-input group "=== INSTITUTIONAL TA ==="
-input bool     InpEnableVWAPEngine = false;
-input bool     InpEnableVolumeProfile = false;
-input bool     InpEnableCVDEngine = false;
-input int      InpVWAPMinPeriodBars = 30;
-input double   InpVWAPBand1 = 1.0;
-input double   InpVWAPBand2 = 1.5;
-input double   InpVWAPBand3 = 2.0;
-input int      InpVPLookback = 20;
-input int      InpVPResolution = 20;
-input int      InpCVDDivergenceLookback = 30;
 
 input group "=== ENTERPRISE MODE & CLUSTER GOVERNANCE ==="
 input bool     InpUseSignalPipeline = true;
@@ -1299,18 +1286,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.vpinExtremeThreshold = InpVPINExtremeThreshold;
     config.vpinNumBuckets = InpVPINNumBuckets;
 
-    // Institutional TA
-    config.enableVWAPEngine = InpEnableVWAPEngine;
-    config.enableVolumeProfile = InpEnableVolumeProfile;
-    config.enableCVDEngine = InpEnableCVDEngine;
-    config.vwapMinPeriodBars = InpVWAPMinPeriodBars;
-    config.vwapBand1 = InpVWAPBand1;
-    config.vwapBand2 = InpVWAPBand2;
-    config.vwapBand3 = InpVWAPBand3;
-    config.vpLookback = InpVPLookback;
-    config.vpResolution = InpVPResolution;
-    config.cvdDivergenceLookback = InpCVDDivergenceLookback;
-
     // Enterprise Mode
     config.useSignalPipeline = InpUseSignalPipeline;
     config.allowSyntheticOffHours = InpAllowSyntheticOffHours;
@@ -1360,7 +1335,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.volMinScale = InpVolMinScale;
     config.volMaxScale = InpVolMaxScale;
 
-    config.enableExitOptimizer = InpEnableExitOptimizer;
 
     // Symbol Universe
     config.autoAddChartSymbol = InpAutoAddChartSymbol;

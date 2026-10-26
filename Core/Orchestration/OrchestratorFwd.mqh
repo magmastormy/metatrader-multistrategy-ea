@@ -25,7 +25,6 @@ class CSpikeMonitor;
 // Engine Registry
 class CRegistryAggregator;
 class CMathematicalEngineRegistry;
-class CInstitutionalEngineRegistry;
 class CDrawingManagerRegistry;
 class CScanSchedulerRegistry;
 class CNeuralNetRegistry;

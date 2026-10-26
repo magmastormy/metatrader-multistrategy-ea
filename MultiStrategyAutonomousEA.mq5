@@ -101,7 +101,6 @@ input double   InpVolMinScale = 0.2;
 input double   InpVolMaxScale = 3.0;
 input bool     InpEnableLiquiditySweep = true;
 input bool     InpEnableRangeCompression = true;
-input bool     InpEnableExitOptimizer = true;
 
 input group "Strategies - Microstructure Engines";
 input bool     InpEnableHurstEngine = true;
@@ -113,16 +112,6 @@ input int      InpOFISlowWindow = 100;
 input bool     InpEnableVPINFilter = true;
 input double   InpVPINExtremeThreshold = 0.7;
 input int      InpVPINNumBuckets = 50;
-input bool     InpEnableVWAPEngine = true;
-input bool     InpEnableVolumeProfile = true;
-input bool     InpEnableCVDEngine = true;
-input int      InpVWAPMinPeriodBars = 30;
-input double   InpVWAPBand1 = 1.0;
-input double   InpVWAPBand2 = 1.5;
-input double   InpVWAPBand3 = 2.0;
-input int      InpVPLookback = 20;
-input int      InpVPResolution = 20;
-input int      InpCVDDivergenceLookback = 30;
 input bool     InpMultiAssetProfilerEnabled = true;
 input bool     InpDerivProfilerEnabled = true;
 input bool     InpGridRecoveryEnabled = true;
@@ -439,7 +428,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.volMaxScale = InpVolMaxScale;
     config.enableLiquiditySweep = InpEnableLiquiditySweep;
     config.enableRangeCompression = InpEnableRangeCompression;
-    config.enableExitOptimizer = InpEnableExitOptimizer;
     
     // EA operating mode
     config.eaMode = InpEAMode;
@@ -640,18 +628,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.enableVPINFilter = InpEnableVPINFilter;
     config.vpinExtremeThreshold = InpVPINExtremeThreshold;
     config.vpinNumBuckets = InpVPINNumBuckets;
-    
-    // Institutional TA
-    config.enableVWAPEngine = InpEnableVWAPEngine;
-    config.enableVolumeProfile = InpEnableVolumeProfile;
-    config.enableCVDEngine = InpEnableCVDEngine;
-    config.vwapMinPeriodBars = InpVWAPMinPeriodBars;
-    config.vwapBand1 = InpVWAPBand1;
-    config.vwapBand2 = InpVWAPBand2;
-    config.vwapBand3 = InpVWAPBand3;
-    config.vpLookback = InpVPLookback;
-    config.vpResolution = InpVPResolution;
-    config.cvdDivergenceLookback = InpCVDDivergenceLookback;
     
     // Enterprise mode
     config.useSignalPipeline = InpUseSignalPipeline;

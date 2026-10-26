@@ -83,7 +83,6 @@ struct SOrchestratorConfig
     double  volMaxScale;
     bool    enableLiquiditySweep;
     bool    enableRangeCompression;
-    bool    enableExitOptimizer;
 
     // EA operating mode
     ENUM_EA_MODE eaMode;
@@ -292,18 +291,6 @@ struct SOrchestratorConfig
     double  vpinExtremeThreshold;
     int     vpinNumBuckets;
 
-    // Institutional TA
-    bool    enableVWAPEngine;
-    bool    enableVolumeProfile;
-    bool    enableCVDEngine;
-    int     vwapMinPeriodBars;
-    double  vwapBand1;
-    double  vwapBand2;
-    double  vwapBand3;
-    int     vpLookback;
-    int     vpResolution;
-    int     cvdDivergenceLookback;
-
     // Enterprise mode
     bool    useSignalPipeline;
     bool    allowSyntheticOffHours;
@@ -411,7 +398,6 @@ struct SOrchestratorConfig
         volMaxScale = 3.0;
         enableLiquiditySweep = true;
         enableRangeCompression = true;
-        enableExitOptimizer = true;
 
         eaMode = EA_MODE_HYBRID;
         enableVisualAnalysis = true;
@@ -604,17 +590,6 @@ struct SOrchestratorConfig
         enableVPINFilter = true;
         vpinExtremeThreshold = 0.7;
         vpinNumBuckets = 50;
-
-        enableVWAPEngine = true;
-        enableVolumeProfile = true;
-        enableCVDEngine = true;
-        vwapMinPeriodBars = 30;
-        vwapBand1 = 1.0;
-        vwapBand2 = 1.5;
-        vwapBand3 = 2.0;
-        vpLookback = 20;
-        vpResolution = 20;
-        cvdDivergenceLookback = 30;
 
         useSignalPipeline = true;
         allowSyntheticOffHours = true;

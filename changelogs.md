@@ -8,6 +8,90 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-10-26
 
+### Batch 262: the engine hub had a second, unreachable creation path, and the four engines it also built on the live path answered nothing
+
+**Type:** dead code deletion with a measured cost, and one §6 phantom-tag family closed.
+
+**(1) Two creation paths, one caller.** `COrchestratorMathEngineHub::InitializeMathematicalEngines` (206 lines) and
+`InitializeInstitutionalEngines` (85 lines) each `new` the full engine set, `Initialize` it and register it, and each
+is reached only through a same-named `CEAOrchestrator` wrapper. Both wrappers have zero calls in any `.mq5` or `.mqh`,
+so ~293 lines of engine bootstrapping could never run. The live path is `CreateEnginesForSymbol`
+(`EAOrchestrator.mqh:1979`), called per symbol, and `Reserve()` (`OrchestratorMathEngineHub.mqh:87`) sizes every array,
+so the dead path's `ArrayResize` block was redundant too.
+
+**(2) The dead path is why sixteen init tags have no lines.** In the attached 2026-10-23 session (UTF-16LE,
+`Step Index,M15`, 11 symbols): `Engine initialized for` matches **0** lines, `Filter initialized for` **0**,
+`Optimizer initialized for` **0**, `[EXIT-OPT]` **0**, `[INSTITUTIONAL-ENGINE]` **0**, `[INIT] Mathematical engines
+initialized` **0**, `[INIT] Institutional TA engines` **0**. Two phrasings that do appear are not the dead path: the 11
+`Detector initialized for` lines are `[EnterpriseStrategyManager] FourStateRegimeDetector initialized for <symbol>`
+(`StrategyMgrInfrastructure.mqh:188`) and the 33 `Strategy initialized for` lines are `[TREND v2.1]`, `[S/R v1.0]` and
+`[CANDLESTICK]`. The live path was proven live by the two tags that gate on nothing: `[VOLUME-PROXY]` (11 lines) and
+`[WIRE-STATUS]` (11 lines, Batch 211's report), the same 11 symbols.
+
+**(3) The four engines were built, registered and never asked for anything.** `CVWAPEngine`, `CVolumeProfileEngine`,
+`CCVDEngine` (`Core/Engines/`) and `CExitOptimizer` (`Core/Processing/`) have no method call outside their own file and
+the hub's construction. `Calculate()` - the only way any of the three volume engines produces a number - occurs once
+outside its class definition, on `InstitutionalEngineRegistry.mqh:185`, **inside a comment**. Every read-side method is
+equally unread: `GetVWAPPosition`, `IsAtExhaustion`, `IsAtMeanReversion`, `GetDirectionBias`, `IsInsideValueArea`,
+`IsAboveValueArea`, `IsBelowValueArea`, `GetDistanceFromPOC`, `ConfirmsPrice`, `GetDirection`. `GetVWAP`, `GetVP`,
+`GetCVD` and `GetExitOptimizer` have no caller outside their own registry, and no file under `Strategies/` names any of
+the four classes. `CExitOptimizer::Evaluate`'s own header line already said it has no caller in the EA loop.
+Measured cost on the live path, per start, in that session's own roster: 15 volume-engine objects (5 non-synthetic
+symbols x 3 engines; the 6 synthetic indices are skipped by the `IsSyntheticIndexSymbolName` gate) plus 11
+`CExitOptimizer` objects, each holding an `iATR(symbol, Period(), 14)` handle, 13 symbols' worth of registrations, and
+none of it read. `ReleaseAll` released all of it, so this was cost and clutter, not a leak.
+
+**(4) Deleted.** `Core/Registry/InstitutionalEngineRegistry.mqh` (190 lines) - its entire content is the three volume
+engines' slots, so once nothing constructs them it holds nothing. `COrchestratorMathEngineHub`'s four arrays
+(`m_vwapEngines`, `m_vpEngines`, `m_cvdEngines`, `m_exitOptimizers`) with their `Reserve`, `CreateEnginesForSymbol`,
+`RegisterMathEngines` and `ReleaseAll` entries, `RegisterInstitutionalEngines`, and both unreachable init methods.
+`CEAOrchestrator::InitializeMathematicalEngines`/`InitializeInstitutionalEngines` wrappers, the
+`CInstitutionalEngineRegistry` member in `CRegistryAggregator` (allocate, delete, clear, getter, include, forward
+declaration). In `CMathematicalEngineRegistry`: the `exitOptimizer` slot, its `CheckPointer` delete, `GetExitOptimizer`,
+`RegisterExitOptimizer`, the `RegisterAll` parameter and `EnsureEngines` (31 lines) and `OnTickAll` (19 lines).
+`EnsureEngines` goes because it is uncalled **and** it is the only path by which that registry could ever own a
+hub-side engine, which is what made its slot destructor's deletes legitimate-looking. `OnTickAll` goes as a dead second
+feed: it fed `ofi.OnTick`, `vpin.OnTick` and `kalman.FLSUpdate`, and all three already have their live driver
+(`FeedMicrostructure` at `EAOrchestrator.mqh:2576` and the bar sweep in `UpdateTimerEngines`) - had it ever been wired,
+VPIN would have been fed twice per tick, which is Batch 213's double-applied ADX tier and Batch 216's shape.
+`TradeExecutor.mqh`'s `else if(StringFind(firstContributor, "ExitOpt") >= 0) stratCode = "EO"` branch: no contributor
+carries that name since Batch 209 removed the `SI_EXIT_OPTIMIZER` row.
+
+**(5) Eleven inputs per root EA, bound to nothing.** `InpEnableExitOptimizer`, `InpEnableVWAPEngine`,
+`InpEnableVolumeProfile`, `InpEnableCVDEngine`, `InpVWAPMinPeriodBars`, `InpVWAPBand1/2/3`, `InpVPLookback`,
+`InpVPResolution`, `InpCVDDivergenceLookback` each wrote one of eleven `SOrchestratorConfig` fields, and every one of
+those fields had exactly one reader: the construction call being deleted here. Batch 238's rule applied unchanged -
+an input that writes config that nothing reads is deleted, not left in the dialog. `[VOLUME-PROXY]`'s synthetic branch
+now names only OFI/VPIN, which are live and stay; `Config/live_overrides.json`'s three `engines` keys went with the
+fields, that section being report-only since Batch 242.
+
+**(6) Kept, with the reason.** The four engine classes stay in the tree unreferenced, the way `ScalpVolatilityBreakout.mqh`
+was restored byte-identical in Batch 259 for the same reason. `CExitOptimizer` is the sharper case: chandelier exits,
+R-multiple partials, time exits and vol-adjusted TPs are a *second exit authority* beside
+`CTradeManager::ManageAllPositions`, which AGENTS §3 invariant 3 keeps EA-loop-owned, so wiring it is a trading decision
+this repository has twice deleted code to avoid (Batch 245's `PositionMgrLossGuard`, Batch 259's `IntelligentSLGuard`).
+Deleting the class file would close an option that activation would have to reopen on purpose; deleting the per-symbol
+construction removes only the pretence that it is running. No entry, exit, lot, quorum, threshold or veto moved.
+
+**(7) Recorded, not fixed.** `CMathematicalEngineRegistry::SEngineSlot::Clear()` still deletes pointers the hub also
+deletes (hurst, ou, ofi, vpin, kalman, cpd, fourState, volTarget, liquiditySweep, rangeComp), guarded only by
+`CheckPointer(...) == POINTER_DYNAMIC`, so safety rests on teardown order: `ReleaseAll()` runs first
+(`EAOrchestrator.mqh:326` and `:479`), `m_registryAggregator.Deinitialize()` at `:511`. The hub's header comment said
+"Registries hold non-owning references", which is not what the registry code does, and now says what is true and which
+order must hold. Making the registry genuinely non-owning is a teardown change, and Batch 256 is the reason that gets
+its own batch. `CorrelationId.mqh:197/:222-223` still map `"EO"`/`"EXT"` to `ExitOptimizer`; the `codes[]` indices
+cannot shift without re-keying correlation IDs already written into position comments and the JSON log.
+
+**Code:** 14 added / 759 deleted across eleven files, one header deleted (190 lines). Four engine class files stay in the tree, unreferenced.
+
+**Docs:** 115 of the 117 filename-qualified citations into files this batch edited were re-pointed by the hunk model, each verified by comparing the cited line's text in `HEAD` against the tree at the new number; the 2 that could not shift are this batch's own historical numbers (the wrapper range and the deleted comment site, each written in a sentence that says so). The Exit Optimizer construction pair that four docs cited as `OrchestratorMathEngineHub.mqh:272,440` is now cited number-free - a pointer into deleted lines is mechanically unresolvable however worded - and four of those five lines had made it a present-tense claim (`InpEnableExitOptimizer` *still gates* the engine), now rewritten as a Batch 209 record superseded here. Bare `:NNN` residues on the lines this batch wrote were fixed by hand, since a filename-only regex silently leaves them stale. `SYSTEM_STRUCTURE.md`'s own metadata was thirteen batches stale at Batch 249 and now reads 262. A full impossibility scan of the five docs (420 citations) reports 9 landing on a blank or past end-of-file, every one the residual Batch 249 deferred to its own sweep, and 2 into `InstitutionalEngineRegistry.mqh` - both inside the sentences that delete that file, which is how Batch 256's `DiagMgrCounters.mqh:649` citations already read.
+
+**Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with its own `Result:` line; 0 errors / 0 warnings (11.2 / 6.4 / 10.9 / 10.5 / 280.2 / 398.1 / 121.2 / 6.8 s); `OVERALL SUCCESS`; all eight `.ex5` newer than every source; `cmp` identical on the nine synced code files (the tenth edit, `Config/live_overrides.json`, is not synced by the harness - it is the operator's source for the sandbox file); the stale synced copy of `InstitutionalEngineRegistry.mqh` removed from the terminal tree; compile logs removed. The four small programs got faster and the two big ones slower on the same run, which is Batch 252's load-dominated reading, not a compile-cost result. **Not runtime-observed:** newest journal 2026-10-23, and nothing this batch deleted could have printed a line in it - the whole point of the tag counts is that they are zero.
+
+**Next:** Batch 263 takes the rest of #112 - the pipeline health subtree (`PerformHealthCheck`, `IsPipelineHealthy`, `GetEngineHealthStatus`, and the two helpers only they call, with the two health fields no code reads), the five write-only pipeline stat getters (`GetSignalsProcessed`, `GetSignalsFiltered`, `GetSignalsPassed`, `WasLastSignalFilteredByPipeline`, `GetFilterRate` - deleting them orphans four counters), `ResolveATRCrisisThreshold` and the `InpTrendADXNoTrendThreshold` chain, whose config field has zero readers and whose `Source=EA_INPUT` arm cannot print. Then #114, #55, #53 (attach the EA, last).
+
+## [Unreleased] - 2026-10-26
+
 ### Batch 261: the timeframe-consistency island is gone, and the gate that only pretended to consult it stops switching consensus off
 
 **Type:** one dead subsystem deleted, and one live defect found on the same line while deleting it.

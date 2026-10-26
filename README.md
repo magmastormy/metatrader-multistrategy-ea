@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-261-green)
+![Batch](https://img.shields.io/badge/batch-262-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -157,7 +157,7 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpMaxPortfolioRiskPercent` | 15.0 | Max total portfolio risk |
 | `InpDrawdownWarningPercent` | 5.0 | Drawdown warning threshold |
 | `InpDrawdownCriticalPercent` | 10.0 | Emergency drawdown stop |
-| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:476` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:850-851` says so where the switch used to be set. |
+| — correlation thresholds | 0.4 / 0.7 | Not an input. `InpCorrelationBlockThreshold` does not exist in any `.mq5`. Correlation is enforced once, in the pre-trade gate (`RiskValidationPipeline.mqh:476` calls `ValidateCorrelationLimits`; the REDUCE shrink is `:713`). The `CPositionSizer` correlation path was deleted in Batch 226, and `EAOrchestrator.mqh:849-850` says so where the switch used to be set. |
 
 ### AI Integration
 | Parameter | Default | Description |
@@ -187,9 +187,10 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpEnableLiquiditySweep` | true | Liquidity Sweep strategy |
 | `InpEnableRangeCompression` | true | Range Compression Breakout |
 
-`InpEnableExitOptimizer` is not one of these: the Exit Optimizer is a math engine registered by
-`COrchestratorMathEngineHub`, never a consensus voter, and it has owned an enable-flag slot until Batch 209
-deleted that slot as unread.
+Four engine inputs are not in this table because they no longer exist: `InpEnableExitOptimizer`,
+`InpEnableVWAPEngine`, `InpEnableVolumeProfile` and `InpCVDDivergenceLookback` (with six siblings) each wrote one
+`SOrchestratorConfig` field, and the only reader of each was the construction call Batch 262 deleted. The Exit
+Optimizer was never a consensus voter; Batch 209 deleted its flag slot as unread and Batch 262 deleted its input.
 
 **Under `InpUseCuratedStrategySet = true` (the live default) a false input does not switch a curated strategy
 off.** Which rows are curated is catalog data (`SStrategyDefinition::curatedEnable`), not a list in the flag
@@ -305,7 +306,7 @@ This is a live-sizing change. The ladder stopped being a log line.
 - **Every shrink prints `[AUTHORITY-REDUCED]`** with the multiplier, the before/after lot, the before/after risk percentage and the reason. These two tags are the first real writes to `FMT_AUTHORITY_REJECT` / `FMT_AUTHORITY_REDUCED`, which have been defined since Batch 168 with no consumer while AGENTS.md §6 kept listing them as verification evidence.
 - **The daily risk budget follows the actual lot.** `candidate.riskPercent` is rescaled by the same ratio before the send, because `RegisterExecutedTradeRisk` books it; otherwise the gate would reduce exposure while the budget kept charging full risk.
 - **Do not read the first session as strategy regression.** Judge it against `[AUTHORITY-REDUCED]` counts and the refusal breakdown, not against last month's trade count.
-- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3608`.
+- **Levers, in order of preference:** widen the stop at the same risk percentage (raises the approved lot above the minimum), revisit the `AUTHORITY_MIN_*` floors in `LiveAuthorityResolver.mqh`, or accept the smaller size. There is no input that turns the ladder back off — that would mean removing the call at `EAOrchestrator.mqh:3587`.
 - **What authority still does not do:** `result.allowed` remains `true` unconditionally at the end of `Resolve()`, so authority influences size and vetoes only on mode conflict and `LOW_CONFIDENCE`. It is not a permission layer.
 
 ### What the operator will notice after Batch 174 (VPIN vetoes; the risk clamp stops claiming a size it never had)
@@ -499,7 +500,7 @@ Expect more and larger consensus trades from the six indicator rows, correct boo
 
 The roster is now catalog data. The flag builder loops the indicator rows, one `ConfigEnableForSlot` switch maps a slot to its operator input, and a row whose slot has no input prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being silently absent. Curated membership moved into the row (`curatedEnable`), which is where it belongs for the plug-and-play contract: a new strategy needs a row, a slot and a case in that switch, and nothing else. Both reporting paths now walk the rows, so they name and count what registration will actually do.
 
-Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gates the Exit Optimizer *math engine* at `OrchestratorMathEngineHub.mqh:272,440`, and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1584` sees the true count. Registration, weights, policies and every risk gate are untouched.
+Slot `SI_EXIT_OPTIMIZER` is gone: `InpEnableExitOptimizer` gated the Exit Optimizer *math engine* at the hub's per-symbol engine creation (Batch 262 deleted that input, the field it wrote and both sites), and its one effect on the strategy roster was being misread as an AI vote. Operator-visible output changes only in accuracy - `[CURATION]` now lists real row names and no longer lists Exit Optimizer, and the skip guard at `EAOrchestrator.mqh:1563` sees the true count. Registration, weights, policies and every risk gate are untouched.
 
 ### Batch 210: the strategy factory builds AI adapters and nothing else
 
@@ -633,6 +634,59 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 262: the engine hub was building everything twice, once on a path no caller could enter
+
+**What the hub looked like.** `COrchestratorMathEngineHub` held two complete engine-creation methods,
+`InitializeMathematicalEngines` and `InitializeInstitutionalEngines` (~293 lines with their two `CEAOrchestrator`
+wrappers), each `new`-ing the fleet, `Initialize`-ing it and registering it. Neither had a caller: the live creation
+path is `CreateEnginesForSymbol`, run once per symbol from `EAOrchestrator.mqh:1958`. So sixteen init tags had never
+printed - in the 2026-10-23 journal `Engine initialized for`, `Filter initialized for`, `Optimizer initialized for`,
+`[EXIT-OPT]`, `[INSTITUTIONAL-ENGINE]`, `[VWAP]`, `[VP]`, `[CVD]`, `[VOL-TARGET] Engine initialized`, `[LIQ-SWEEP]`,
+`[RANGE-COMP]`, `[KALMAN-MR] Engine initialized`, `[INIT] Mathematical engines initialized` and `[INIT] Institutional TA
+engines` all match **0** lines. The two phrasings that do appear belong elsewhere: the 11 `Detector initialized for`
+lines are `[EnterpriseStrategyManager] FourStateRegimeDetector initialized for`, and the 33 `Strategy initialized for`
+lines are `[TREND v2.1]`, `[S/R v1.0]` and `[CANDLESTICK]`. `[VOLUME-PROXY]` (11 lines) and `[WIRE-STATUS]` (11 lines)
+gate on nothing and prove the live path ran, on the same 11 symbols.
+
+**What was built and never asked for anything.** `CVWAPEngine`, `CVolumeProfileEngine`, `CCVDEngine` and
+`CExitOptimizer` were constructed on the live path, registered, and read by nobody. `Calculate()` - the only way a
+volume engine produced a number - occurred once outside its own class, inside a comment at
+`InstitutionalEngineRegistry.mqh:185`. `GetVWAPPosition`, `IsAtExhaustion`, `IsAtMeanReversion`, `GetDirectionBias`,
+`IsInsideValueArea`, `IsAboveValueArea`, `IsBelowValueArea`, `GetDistanceFromPOC`, `ConfirmsPrice`, `GetDirection`,
+`Evaluate`, `ComputeChandelierExit`, `CheckRMultiplePartials` and every other read-side method have no call on those
+owners, and no file under `Strategies/` names any of the four classes. Per start on that session's roster: 15
+volume-engine objects (5 non-synthetic symbols x 3; the 6 synthetic indices are skipped), 11 `CExitOptimizer` objects
+each holding an `iATR(symbol, Period(), 14)` handle, and none of it consulted. `ReleaseAll()` released all of it, so
+this was cost and clutter, not a leak.
+
+**Deleted.** `Core/Registry/InstitutionalEngineRegistry.mqh` (190 lines - its entire content is those three slots), the
+hub's four arrays and both unreachable init methods, `RegisterInstitutionalEngines`, the orchestrator's two wrappers,
+the aggregator's institutional member with its allocate/delete/clear/getter/include, and in
+`CMathematicalEngineRegistry` the `exitOptimizer` slot, `GetExitOptimizer`, `RegisterExitOptimizer`, `EnsureEngines`
+(31 lines - uncalled, and the only path by which that registry could ever own a hub-side engine) and `OnTickAll`
+(19 lines - a dead second feed for OFI/VPIN/Kalman, all three of which already have a live driver, so wiring it would
+have fed VPIN twice per tick: Batch 213's and Batch 216's shape). Eleven `SOrchestratorConfig` fields and eleven
+inputs per root EA went with them; `[VOLUME-PROXY]`'s synthetic branch now names only OFI/VPIN, which are live.
+
+**Kept, with the reason.** The four engine classes stay in the tree unreferenced, the way Batch 259 restored
+`ScalpVolatilityBreakout.mqh`. `CExitOptimizer` is the sharper case: chandelier exits, R-multiple partials, time exits
+and vol-adjusted TPs are a second exit authority beside `CTradeManager::ManageAllPositions`, which AGENTS §3 keeps
+EA-loop-owned, so wiring it is a trading decision - Batch 245 and Batch 259 each deleted code to avoid exactly that.
+Deleting the file would close an option only you should open; deleting the per-symbol construction removes only the
+pretence that it runs. **No entry, exit, lot, quorum, threshold or veto moved.**
+
+**Also recorded, not acted on.** `MQL5\Files\Config\live_overrides.json` does not exist on this terminal, so
+`Config/live_overrides.json` in the repo has never been deployed and the EA prints `[LIVE-CONFIG] file not readable |
+path= | live overrides inactive` at init: Batch 242's risk-override channel is armed against a file that is not there.
+The safe state is the current one - the dialog's numbers are what trade - and copying the repo file into the sandbox
+would switch live risk overrides on with values no operator has just approved, so it stays a decision, not a cleanup.
+
+14 added / 759 deleted across eleven files, one header deleted. `sync_and_compile.ps1 -All -KeepLog
+-MaxCompileWaitSec 600` read un-piped: eight programs, each with its own `Result:` line, 0 errors / 0 warnings
+(11.2 / 6.4 / 10.9 / 10.5 / 280.2 / 398.1 / 121.2 / 6.8 s), `OVERALL SUCCESS`, all eight `.ex5` newer than every
+source, `cmp` identical on the nine synced files, the stale synced copy of the deleted registry removed, artifacts
+removed. Not runtime-observed: newest journal 2026-10-23.
+
 ### Batch 261: the timeframe-consistency island is gone - and the gate that only pretended to consult it was switching consensus off
 
 Two things, found in the same line of code.
@@ -732,6 +786,7 @@ book ended up as, and AGENTS.md section 6 documents one of them as the per-symbo
 - **Left for its own batch:** `CExitOptimizer`, `CVolumeProfileEngine`, `CVWAPEngine` and `CCVDEngine` are built,
   initialized and registered, and then never consulted (their registry getters have zero callers). Four inputs, two
   registries and the `[VOLUME-PROXY]` line move with them, and an exit optimizer is a trading decision, not hygiene.
+  Batch 262 took that batch: the construction and registration are gone, the four class files stay parked.
   `CTrendTrailingStop` looked dead by its setter list and is not - `StrategyTrend.mqh:459` calls
   `CalculateTrailingStop`.
 
@@ -762,7 +817,7 @@ the pipeline had no engines at all.
   lot multiplier. Recorded, not fixed: making those three tests require a measurement is a **tightening** that
   shrinks live lots, so it is your call, not a cleanup.
 - **What shipped instead of a silent switch-on.** `InpPipelineEngineRegistry` (default `false`) binds the
-  orchestrator's registry to each symbol's pipeline at `EAOrchestrator.mqh:1836`, and
+  orchestrator's registry to each symbol's pipeline at `EAOrchestrator.mqh:1815`, and
   `[PIPELINE-ENGINES] <symbol> | registry= | trend/vol/liq/struct/regimeCost= | readinessTTL=` states per symbol
   which mode is running. Binding is a **tightening** - five veto layers, the regime stand-aside and confidence
   attenuation start applying to a book that already refuses 97 scans at the two-voter floor against 5 fills - so it
@@ -916,7 +971,7 @@ What the docs had been repeating as live behaviour, and what the code could not 
 - `AdaptToPerformance` gated strategy parking and re-enabling on `m_predictionAccuracy < 0.4` / `> 0.6`. The only writer,
   `UpdatePredictionAccuracy`, sat behind `ProvideFeedback`. So the two branches were unreachable arithmetic on a 0.5
   constant, and what actually parks a strategy has always been the orchestrator's 60 s governance sweep
-  (`EAOrchestrator.mqh:3122-3135`), which is untouched.
+  (`EAOrchestrator.mqh:3101-3114`), which is untouched.
 - `AdaptToRegime` multiplied a threshold by the regime factor (0.9 / 1.1 / 1.2), stored it in a local, walked the
   managers with an empty body, and returned. Batch 201's records - here and in `SYSTEM_STRUCTURE.md` /
   `RUNTIME_DECISION_GRAPH.md` / `SYSTEM_AUDIT_TRACE.md` - said AI entries became more permissive in a confirmed trend.
@@ -1134,7 +1189,7 @@ decision for you, not a cleanup I should make while you are asleep.
 
 No trading decision moved in this batch. `CPositionManager` kept a `CFullMarginMode*` and a `CIntelligentSLGuard*`, was passed
 `&m_fullMarginMode` and a literal `NULL` for them at init, and asked neither anything, ever; the margin object actually
-consulted is the orchestrator's own (`EAOrchestrator.mqh:966`, read by `CDiagnosticsManager`). Gone: the two members, the two
+consulted is the orchestrator's own (`EAOrchestrator.mqh:965`, read by `CDiagnosticsManager`). Gone: the two members, the two
 `Initialize` parameters, the include that only they needed, and three circuit-breaker getters (`GetTriggeredAt`,
 `GetRecoveryAttempts`, `GetRecoveryLevel`) with no caller anywhere. The recovery ladder still reads that state internally and
 prints it, so the journal is unchanged.
@@ -1262,7 +1317,7 @@ Also removed by the sweep in the same files: seven `Validate...` forwarders on `
 `ValidateMarginRequirements`, `ValidateAccountHealth`, `ValidateClusterGovernance`) that the pipeline never used -
 every pre-trade gate calls its own method inside `CRiskValidationPipeline`, so those entry points had no caller - and the
 four accessors around `CRiskMarginHealth`'s two pinned thresholds went with them. Recorded, not wired: `CFullMarginMode` is
-initialized at `EAOrchestrator.mqh:966`, keeps its own config and de-risks nothing, because none of its methods is
+initialized at `EAOrchestrator.mqh:965`, keeps its own config and de-risks nothing, because none of its methods is
 called from anywhere - full-margin stacking and its stricter gates are a trading mode choice, not a cleanup.
 
 ### Batch 239: an open trade was counted twice against your risk caps for a minute after every fill
@@ -1371,7 +1426,7 @@ ten more that sat on a plausible neighbouring line. All thirty are re-anchored n
 
 Two of them were not stale pointers but stale *claims*, which is the part worth your attention. Two sentences said the
 live-authority multiplier "reaches nothing" and that only the mode vetoes and `LOW_CONFIDENCE` have any effect. That
-was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3608`) is what applies it
+was true when written; Batch 205 ended it, and `ScaleLotByLiveAuthority` (`EAOrchestrator.mqh:3587`) is what applies it
 to the lot today. And the README's own correlation row told you the position sizer had a path "explicitly disabled at
 `:886`" — Batch 226 deleted that path, so the row now points at the pipeline's REDUCE shrink and at the comment that
 records the deletion.
@@ -1815,7 +1870,7 @@ MultiStrategyAutonomousEA.mq5       # Main EA entry point (production)
 MultiStrategyTestingEA.mq5          # Standalone testing EA with Complete Test Profile System
 IndicatorManager.mqh                # Singleton indicator cache
 Core/
-  Engines/                      # Market analysis engines (Trend, Regime, Volatility, Hurst, VPIN, OU, OFI, VWAP, VolumeProfile, CVD)
+  Engines/                      # Market analysis engines (Trend, Regime, Volatility, Hurst, VPIN, OU, OFI; VWAP, VolumeProfile and CVD are parked unreferenced since Batch 262)
   Pipeline/                     # UnifiedSignalPipeline (regime, cost, spread filtering)
   Management/                   # EnterpriseStrategyManager, PositionLifecycleManager, SymbolUniverseBuilder
   Risk/                         # UnifiedRiskManager, PositionSizer, PortfolioRiskManager, CorrelationEngine, EquityCurveManager
