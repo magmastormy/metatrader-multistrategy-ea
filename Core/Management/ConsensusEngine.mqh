@@ -106,13 +106,16 @@ ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMod
     ulong startTime = GetMicrosecondCount();
 
     ENUM_TRADE_SIGNAL result;
-    if(m_src.GetPipelineConst() != NULL && m_src.GetTFConsistencyConst() != NULL)
+    // The filter chain is optional by operator input (InpUseSignalPipeline) and every use inside the evaluator
+    // NULL-guards it, so pipeline presence cannot stand in for a usable manager - testing it here made that
+    // checkbox switch consensus off entirely, with no journal line to say so.
+    if(m_src.IsManagerInitialized())
     {
         result = EvaluateConsensusInternal(symbol, confidence, confluence, evalMode);
     }
     else
     {
-        // Fail closed when the pipeline or TF consistency is unavailable
+        // Fail closed when the manager never finished initialization
         confluence = 0;
         confidence = 0;
         result = TRADE_SIGNAL_NONE;

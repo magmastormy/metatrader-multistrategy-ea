@@ -178,7 +178,6 @@ min R:R enforcement (2.0 default, 1.5 for the mean-reversion cluster; the "1:5" 
   - consume only registry-enabled descriptors so disabled strategies and disabled AI adapters do not enter live manager pools or denominator math
   - execute strategy voting and confidence aggregation
   - own the single authoritative `GetSignal(...)` call for each strategy evaluation so strategies do not pre-consume per-bar state ahead of consensus
-  - hold a `CTimeframeConsistency` that nothing feeds (Batch 260 deleted its only writer)
   - dispatch `OnNewBar` to each strategy using its registered timeframe
   - apply normalized weighted quorum rules by evaluation mode (new-bar vs intrabar eligible pool)
 - classify intrabar strategy participation as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent
@@ -1068,7 +1067,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 
 - **NOT IN THIS REPOSITORY** - `CPartialCloseManager`, `SPartialCloseState` and `Strategies/UnifiedICTFiles/PartialCloseManager.mqh` do not exist (Batch 218 check). Partial closes are owned per engine: `[PARTIAL-PROFIT]` (`PosLifecycleExit.mqh:134`), `[SAFE-MODE-PARTIAL]`, `[SCALP-PARTIAL]`, `[ATR-SCALP-PARTIAL]`.
 
-- **NOT IN THIS REPOSITORY** - `CTimeframeConfluence`, `STFAlignmentCache` and `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh` do not exist (Batch 218 check). The live class is `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`), printing `[TimeframeConsistency]` and feeding the post-quorum veto; its 40/30/30 scoring was a 2026-08 design note.
+- **NOT IN THIS REPOSITORY** - `CTimeframeConfluence`, `STFAlignmentCache` and `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh` do not exist (Batch 218 check). Neither does `CTimeframeConsistency`: `Core/Signals/TimeframeConsistency.mqh` was deleted in Batch 261 with 608 lines, nothing having ever called its two feeding methods. Its 40/30/30 scoring was a 2026-08 design note, and `[TimeframeConsistency] Initialized with mode:` has no printer now.
 
 - **Component Upgrades**:
   - `AdvancedOrderBlocks.mqh`: `GetFreshness(int obIndex)` returns 0.0-1.0 freshness decay for order blocks. Used by BreakerBlockStrategy for freshness > 0.7 confidence bonus.
@@ -1298,9 +1297,10 @@ Live path is `CConsensusEngine::EvaluateConsensusInternal` (the Two-Tier, probe-
 - `confidence = min(0.95, winningQuality × 0.8 + supportRatio × 0.2)`; `confluence = winningVotes`; class is `SPARSE_INTRABAR` when intrabar and fewer than three eligible live voters, else `FULL_QUORUM`.
 - Winning contributor indices are published through `SetLastSignalContributors` with the dominant role, cluster tag and normalized cluster code — the input Batch 199's attribution, `[TRADE-ATTRIBUTION]`, `[RISK-CLUSTER]` governance and `[AUTHORITY-LEARN]` all read.
 - The decision context also publishes the winning side's mean pipeline evidence — `convictionScore` (raw `stratConf`), `readinessScore`, `contextScore`, `costScore` — plus `readyLiveWeight` / `totalLiveWeight`, the numerator and denominator of the ready-ratio gate (Batch 205). `CLiveAuthorityResolver` sizes the lot from the first four.
-- Mixed-timeframe conflicts are **not** resolved anywhere: the manager's `CTimeframeConsistency` is allocated, initialised and
-  NULL-tested, and no code feeds or consults it (Batch 260 deleted `ProcessMTFSignals`, its only writer, which had no caller).
-  Post-quorum nullification prints `[CONSENSUS-VETO]` and is a consensus-vote test, not a timeframe resolution.
+- Mixed-timeframe conflicts are **not** resolved anywhere and never were: the only code that fed that logic,
+  `CUnifiedSignalPipeline::ProcessMTFSignals`, had zero callers and went in Batch 260; `CTimeframeConsistency` itself went
+  in Batch 261. Post-quorum nullification prints `[CONSENSUS-VETO]` and is a consensus-vote test, not a timeframe
+  resolution.
 - **Legacy vocabulary still in this file's older notes:** "role multiplier", "dynamic weight decay", "contribution class denominator", and the veto codes `insufficient_quality` / `insufficient_support` / `insufficient_readiness_weight` / `direction_quorum_not_met` describe the Batch 82 implementation and match no code in the repository. The live strings are the `[CONSENSUS-REJECT]` reasons above. `convictionScore`, `readinessScore`, `contextScore`, `costScore`, `readyLiveWeight` and `totalLiveWeight` now have writers (Batch 205: the winning side's mean pipeline evidence, which `CLiveAuthorityResolver`'s lot ladder and the candidate log read); `diversityScore`, `directionalWeight`, `readyCoverage` and `stalenessPenalty` had no reader outside the struct's own copy operations and were deleted in Batch 205.
 
 ### 4.3 Validation
@@ -1397,7 +1397,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **The last live journals (17-23 September, UTF-16LE in `MQL5/Logs/`) are the runtime evidence for Batches 168-178** (Batch 179). They confirm the dormant-engine finding (grid/ATR-scalp/spike-hunter appear only as `Initialized` / `PARKED` / `Deinitialized`, `gridsOpened=0`), confirm that no OFI/VPIN/quality/hard-spread veto line ever existed before Batch 175's wiring, and show `[SCALP-ENTRY]` as the only engine traffic. Nothing newer than 23 September exists, so the tags introduced by Batches 173-179 cannot be evidenced from this machine.
 
 - **Three scalp-class engines are enabled by inputs and wired to no tick routine** (Batch 178, verified by call-site diffing): `m_spikeHunter`, `m_gridRecovery` and `m_atrScalping` receive only `Init`/`AddSymbol`/`Deinit` in `EAOrchestrator` (`:1177`, `:1287`, `:1336` each print `PARKED`), while `InpSpikeHunterEnabled` / `InpGridRecoveryEnabled` / `InpATRScalpingEnabled` all default true. They open zero trades. The only engine with a per-cycle driver is `CFastScalpEngine` (`:2640-2646` entry, `:3375-3378` management). Wiring the other three is a strategy-activation decision, not a refactor: it creates exposure on paths that have never traded, so it is left to the operator and `[ENGINE-STATUS]` reports the state at every startup.
-- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` / `IsSparseIntrabarSingleVoterAllowed` — **gone** (Batch 231). It never bypassed the voter floor: one-voter entries were refused by `MIN_CONSENSUS_VOTERS = 2`, and `SPARSE_INTRABAR` is only the label `ConsensusEngine.mqh:763` puts on a decision that already passed quorum.
+- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` / `IsSparseIntrabarSingleVoterAllowed` — **gone** (Batch 231). It never bypassed the voter floor: one-voter entries were refused by `MIN_CONSENSUS_VOTERS = 2`, and `SPARSE_INTRABAR` is only the label `ConsensusEngine.mqh:766` puts on a decision that already passed quorum.
 - Configuration entry points with no caller anywhere, found by diffing every `Set*/Configure*` in `Core/` against its call sites (Batch 176). None has an operator input behind it, so these are unsettable features rather than misreported inputs — the distinction matters, and each is listed with what actually runs:
   - `CRiskMarginHealth`'s two margin gates (`Core/Risk/RiskMarginHealth.mqh:16/17` fields, read at `:41`/`:49`): the setter pair was deleted in Batch 240 (zero callers, no input feeding it) — **this one gates live money**: the pre-trade margin check runs on the construction defaults 80% free-margin usage and 200% margin level, and its rejection message prints those numbers, so an operator reading a rejection can see the ceiling in force.
   - `CUnifiedRiskManager::SetTradingDayStartHour` (`UnifiedRiskManager.mqh:225`) — the daily risk window rolls at server midnight.
@@ -1452,7 +1452,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 
 - **The validator quality floor is not a confidence bar, and making it one would tighten admission** (found
   Batch 220, not changed). `buyDirectionalQuality = sum(voter confidence x registration weight) / buyVotes`
-  (`ConsensusEngine.mqh:586,588` accumulate and `:601,609` divide) divides by the *vote count*, not the summed weight, so on the default roster
+  (`ConsensusEngine.mqh:588-591` accumulate and `:615-619` divide) divides by the *vote count*, not the summed weight, so on the default roster
   (weights 1.0 Momentum to 2.0 Volatility Breakout, mean about 1.5) the metric runs ~1.5x the committee's mean
   confidence: `InpValidatorNewBarMinQuality = 0.68`, discounted to 0.612 for a full quorum, is in practice a
   ~0.41 mean-confidence bar. `confidence = min(0.95, quality x 0.8 + support x 0.2)` inherits the same inflation,
@@ -1562,7 +1562,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **A threshold compared against an integer ratio has a floor of 1/N** (Batch 253). `conflictRatio` is losingVotes/votesCast,
   so no scan can express a conflict finer than one dissenter; an asked deadband below `1/N` is not a tight tolerance, it is a
   unanimity requirement, and it fails silently because the veto looks like a market statement. Floored at runtime
-  (`ConsensusEngine.mqh:734-747`) with `[CONSENSUS-DEADBAND-FLOORED]` naming both numbers, `[CONSENSUS-QUORUM] finestDissent=`
+  (`ConsensusEngine.mqh:737-750`) with `[CONSENSUS-DEADBAND-FLOORED]` naming both numbers, `[CONSENSUS-QUORUM] finestDissent=`
   warning at scan time, and `[VALIDATION] WARNING` at init.
 - **Telemetry ownership: one counter, one event, one writer** (Batch 253). `CHeartbeatTelemetry` went 18 fields -> 7, each with
   exactly one call site, because a stage that no line increments is not a low reading and every `[CONVERSION-RATES]` percentage
@@ -1590,7 +1590,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 - **A getter with no writer behind it is a constant wearing a measurement's name** (Batch 255). `SStrategyHealthEntry::sharpeRatio`
   had no writer anywhere in the tree, so `GetSharpeRatio` returned `0.0` and the caller that used it as the strategy's risk-adjusted
   return was reading a constructor value. `StrategyEntry::participationScore` is the recorded sibling: registered at `0.90`, read
-  live by consensus (`ConsensusEngine.mqh:287`), and the fallback at `:289` is also `0.90` - so the per-strategy participation term
+  live by consensus (`ConsensusEngine.mqh:290`), and the fallback at `:292` is also `0.90` - so the per-strategy participation term
   has been one constant for every strategy. Recorded, not fixed: making it real is vote arithmetic.
 
 - **The AI query surface was an entry point nobody had** (Batch 251). `CAIEngine::OnAIQuery` has no call in any `.mq5`
@@ -1613,8 +1613,8 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   `EntStrategyTypes.mqh` 142 -> 141. 9 added / 810 deleted across seven files.
 - **A bound table is only bound where a reader exists** (Batch 249). Batch 234 kept the per-strategy timeframe table as
   the carrier for a future decision; the decision landed, and what made it small was not the binding but the read set:
-  `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:539`, `StrategyLifecycle.mqh:154`,
-  `EnterpriseStrategyManager.mqh:977`) and `CStrategyRegistryState::RegisterStrategy` already resolved
+  `StrategyEntry::timeframe` already had three live consumers (`ConsensusEngine.mqh:542`, `StrategyLifecycle.mqh:154`,
+  `EnterpriseStrategyManager.mqh:975`) and `CStrategyRegistryState::RegisterStrategy` already resolved
   `PERIOD_CURRENT -> m_baseTimeframe` at `:90`, so feeding the row value into `RegisterStrategy` was one argument, not a
   new mechanism. `SStrategyTimeframeConfig` is now `ENUM_TIMEFRAMES strategyTimeframes[23]` - `name`, `intrabarTF` and
   `forceHigherOnM1Synthetic` (21 writes, 0 readers each) are gone, and the third was a second holder of the band rule

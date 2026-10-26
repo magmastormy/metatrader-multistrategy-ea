@@ -6,7 +6,88 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-10-25
+## [Unreleased] - 2026-10-26
+
+### Batch 261: the timeframe-consistency island is gone, and the gate that only pretended to consult it stops switching consensus off
+
+**Type:** one dead subsystem deleted, and one live defect found on the same line while deleting it.
+
+**(1) Nothing ever fed it.** `CTimeframeConsistency` (`Core/Signals/TimeframeConsistency.mqh`, 608 lines) is a
+multi-timeframe vote aggregator: `AddTimeframeSignal` writes votes, `ResolveSignals` resolves conflicts with six
+resolution modes. Both had zero callers once Batch 260 deleted `CUnifiedSignalPipeline::ProcessMTFSignals`, the only
+code that ever called either. The 2026-10-23 journal is the matching evidence: 22 `[TimeframeConsistency] Initialized
+with mode:` lines (11 from the manager, 11 from the pipeline instance that 260 removed) and **0** lines from any other
+printer in the file - `[TimeframeConsistency] Conflict detected:` (`:214`) cannot appear because `m_signalCount` is
+structurally 0. So the class constructed, printed itself once per symbol, and answered nothing for eleven months of
+repository claims that consensus resolves mixed-timeframe conflicts.
+
+**(2) Its "mandatory" failure branch was unreachable too.** `CStrategyMgrInfrastructure::Initialize` documented
+Pipeline and TimeframeConsistency as mandatory and printed
+`[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for <symbol>` on
+`!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false)`. But `CTimeframeConsistency::Initialize` (`:161`)
+assigns three fields and `return true` - it has no failure path. Only the allocation-NULL branch above it could ever
+have fired, so the "either failure returns false" comment described a gate one step short of impossible. Neither print
+appears in the journal, which is not evidence either way: neither can.
+
+**(3) The live defect is the gate, not the island.** `ConsensusEngine.mqh:109` read
+`if(m_src.GetPipelineConst() != NULL && m_src.GetTFConsistencyConst() != NULL)` at `ConsensusEngine.mqh:109`, so a pointer to an object nobody
+consulted was load-bearing in the entry path. Dropping that term exposed the second half: the surviving
+`GetPipelineConst() != NULL` term uses the **filter chain's existence** as the test for *a usable manager*, and the
+filter chain is an operator input. `InpUseSignalPipeline` (`MultiStrategyAutonomousEA.mq5:238`, default `true`) reaches
+`config.useSignalPipeline` (`:657`) and then `m_infra.Initialize(..., usePipeline, ...)`
+(`EAOrchestrator.mqh:1789`), where `m_pipeline` is allocated only `if(m_usePipeline)`. Switch it off and the pipeline
+is NULL, the gate answers `TRADE_SIGNAL_NONE` for every symbol on every scan, and consensus trades stop - with no
+`[CONSENSUS-REJECT]`, `[ENTRY-GATE]` or error line to say why. That is Batch 253's shape again (a blocked book and a
+quiet market write identical journals) reached through one checkbox.
+
+**(4) The filter chain is not required for a decision.** Every pipeline dereference inside the evaluator is already
+NULL-guarded: `GetRegimeCategoryMultiplier` returns 1.0 at `:208`, the confidence-floor read is behind
+`if(pipeline != NULL)` at `:419`, the regime-snapshot confirmation test at `:515`, the filter pass at `:539` and the
+evidence snapshot at `:582` (numbers after this batch's +3 insert). `passedPipeline` is initialised `true` (`:538`) and only a filter *veto* clears it, so with no
+pipeline every vote passes unfiltered - which is exactly what "pipeline disabled" means everywhere else in the tree.
+The gate was the only place the input meant something else.
+
+**(5) Shipped.** The gate now reads `if(m_src.IsManagerInitialized())` (`ConsensusEngine.mqh:112`): the flag infra sets
+only after a successful `Initialize`, and the accessor already has two live readers (`StrategyLifecycle.mqh:97`,
+`StrategyRegistryState.mqh:56`), so no new dead getter was invented to fix this one. The fail-closed comment now names
+the real condition. With the shipped `true` the two tests agree on every reachable state - a failed
+`Initialize()` deletes the pipeline *and* returns false before setting `m_initialized`, and a manager that never
+initialized has both NULL and the flag false - so **no decision in this journal changes**: 11 `Pipeline: ENABLED`
+lines, 0 `DISABLED`. The off-direction fix is proved by reading, not observed: the input has never been switched off in
+an attached session.
+
+**(6) Deleted.** `Core/Signals/TimeframeConsistency.mqh` (608 lines: `STimeframeSignal`, `ENUM_CONFLICT_RESOLUTION`
+with its six modes, 24 methods, and `[TimeframeConsistency] Initialized with mode:` / `Conflict detected:` - both
+tags have no printer now). `CStrategyMgrInfrastructure`: the include, the `m_tfConsistency` member, its constructor
+initialiser, `GetTFConsistency()`, the 30-line allocate-initialise-rollback block and both teardown copies.
+`CEnterpriseStrategyManager`: the include and `GetTFConsistencyConst()`. `OrchestratorFwd.mqh`: the forward
+declaration. `CSignalDiagnostics` survives - the orchestrator owns its own instance (`EAOrchestrator.mqh:1497`) and
+hands it to the engine registry; the TF class was one of its consumers, not its only one.
+
+**(7) Docs.** §8 re-pointed 39 `file.mqh:NNN` citations moved by these hunks (+3 from `ConsensusEngine.mqh:110` down,
+-1/-2 in `EnterpriseStrategyManager.mqh`, -4/-34/-40/-46 in `StrategyMgrInfrastructure.mqh`), and two claims that cited
+deleted lines were re-anchored by content rather than numbered: Batch 260's `StrategyMgrInfrastructure.mqh:175` and
+`ConsensusEngine.mqh:109` references stay in the dated records that made them, and the current-state rows in
+`SYSTEM_STRUCTURE.md` (three), `RUNTIME_DECISION_GRAPH.md` (four) and `SYSTEM_AUDIT_TRACE.md` lose the pointer. The
+dated 2026-03-16 trace line "Manager consensus now resolves mixed-timeframe conflicts using
+`CTimeframeConsistency`" and the 2026-03-25 line claiming its hedging prevention was taken off the hot path are left as
+written - neither ever described a reachable path, and this entry is the correction.
+
+**(8) Totals.** 7 added / 661 deleted across five files, one of them deleted. No quorum, deadband, threshold, lot,
+stop, take-profit or exit moved.
+
+**Verification:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` read un-piped; eight programs, each with
+its own `Result:` line; 0 errors / 0 warnings; `OVERALL SUCCESS`; no source newer than the last `.ex5`; `cmp` identical
+on every edited header; the synced copy of the deleted header removed; artifacts removed. One window this opens and why it is closed: `m_initialized` stays true through `ReleaseOnDeinit()` (which deletes
+the pipeline) until `FinishDeinit()` clears it, so the new gate is weaker than the old one inside that gap. It is not
+reachable - the two calls are adjacent statements in `CEnterpriseStrategyManager::Deinit()`
+(`EnterpriseStrategyManager.mqh:801`/`:803`), and the only routes in are `OnDeinit` (`EAOrchestrator.mqh:375`) and the
+init-rollback path (`:1603`), neither of which can host a consensus scan.
+
+**Not runtime-observed:**
+newest journal 2026-10-23, so neither the removed init print nor the corrected `usePipeline=false` behaviour has been
+seen running.
+
 
 ### Batch 260: a strategy's vote reserved the daily risk budget, and every voter was polled twice per scan
 

@@ -3,7 +3,6 @@
 #define ENTERPRISE_STRATEGY_MANAGER_MQH
 
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
-#include "../Signals/TimeframeConsistency.mqh"
 #include "../Processing/DerivAssetProfiler.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Risk/VPINFilter.mqh"
@@ -270,7 +269,6 @@ public:
 
     //--- Accessors consumed by CConsensusEngine: it READS the enable / live-voting / intrabar-policy
     //--- flags here but does NOT own them.
-    CTimeframeConsistency* GetTFConsistencyConst() const   { return m_infra.GetTFConsistency(); }
     CStrategyRegistry*     GetStrategyRegistryConst() const { return m_infra.GetStrategyRegistry(); }
     ENUM_TIMEFRAMES        GetBaseTimeframe() const         { return m_infra.GetBaseTimeframe(); }
 
@@ -456,7 +454,7 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     m_infra.ReleaseOnDestruct();
 }
 
-//--- Fail-closed: a pipeline or TimeframeConsistency failure aborts Initialize() and rolls back the pipeline.
+//--- Fail-closed: a pipeline allocation or initialization failure aborts Initialize() and returns false.
 //--- The regime detector is optional; OFI, VPIN and the family matrix are injected pointers, never deleted here.
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool usePipeline,

@@ -5,7 +5,6 @@
 #define STRATEGY_MGR_INFRASTRUCTURE_MQH
 
 #include "../Pipeline/UnifiedSignalPipeline.mqh"          // CUnifiedSignalPipeline, SignalFilterSettings
-#include "../Signals/TimeframeConsistency.mqh"            // CTimeframeConsistency
 #include "../Processing/DerivAssetProfiler.mqh"           // CDerivAssetProfiler
 #include "../Processing/MultiAssetProfiler.mqh"           // CMultiAssetProfiler
 #include "../Risk/VPINFilter.mqh"                         // CVPINFilter
@@ -25,7 +24,6 @@ class CStrategyMgrInfrastructure
 {
 private:
     CUnifiedSignalPipeline*      m_pipeline;
-    CTimeframeConsistency*       m_tfConsistency;
     CTradeManager*               m_tradeManager;         // CRITICAL FIX: Store for strategy initialization
     CPositionSizer*              m_positionSizer;        // CRITICAL FIX: Store for strategy initialization
     CUnifiedRiskManager*         m_unifiedRiskManager;   // Unified risk validation gate (injected)
@@ -79,7 +77,6 @@ public:
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi)              { m_ofiEngine = ofi; }
 
     CUnifiedSignalPipeline*      GetPipeline() const               { return m_pipeline; }
-    CTimeframeConsistency*       GetTFConsistency() const          { return m_tfConsistency; }
     CTradeManager*               GetTradeManager() const           { return m_tradeManager; }
     CPositionSizer*              GetPositionSizer() const          { return m_positionSizer; }
     CUnifiedRiskManager*         GetUnifiedRiskManager() const     { return m_unifiedRiskManager; }
@@ -103,7 +100,6 @@ public:
 
 CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_pipeline(NULL),
-    m_tfConsistency(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_unifiedRiskManager(NULL),
@@ -130,7 +126,7 @@ void CStrategyMgrInfrastructure::AllocateHealthMonitor()
     m_healthMonitor = new CStrategyHealthMonitor();
 }
 
-// Pipeline and TimeframeConsistency are mandatory: either failure returns false (pipeline is deleted on rollback).
+// The pipeline is mandatory: allocation or initialization failure returns false.
 // FourStateRegimeDetector is optional: its failure only warns and leaves the pointer NULL.
 bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                             bool usePipeline,
@@ -164,36 +160,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
             Print("[EnterpriseStrategyManager] ERROR: Pipeline allocation failed for ", symbol);
             return false;
         }
-    }
-
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-    }
-
-    m_tfConsistency = new CTimeframeConsistency();
-    if(m_tfConsistency == NULL)
-    {
-        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency allocation failed for ", symbol);
-        if(m_pipeline != NULL)
-        {
-            delete m_pipeline;
-            m_pipeline = NULL;
-        }
-        return false;
-    }
-    if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
-    {
-        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for ", symbol);
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-        if(m_pipeline != NULL)
-        {
-            delete m_pipeline;
-            m_pipeline = NULL;
-        }
-        return false;
     }
 
     m_initialized = true;
@@ -255,12 +221,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
         m_fourStateRegimeDetector = NULL;
     }
 
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-    }
-
     // Do not delete m_attribution here (injected; the orchestrator owns it).
     if(m_healthMonitor != NULL)
     {
@@ -281,12 +241,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
     {
         delete m_fourStateRegimeDetector;
         m_fourStateRegimeDetector = NULL;
-    }
-
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
     }
 
     // m_attribution is injected from EAOrchestrator (&m_attributionManager, a by-value member);

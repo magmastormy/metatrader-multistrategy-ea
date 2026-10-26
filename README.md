@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-260-green)
+![Batch](https://img.shields.io/badge/batch-261-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -633,6 +633,35 @@ What shipped instead is the truth in two places: `[SIZING-CHAIN] ... vol_targeti
 needed from you is the target and whether a scaler may ever exceed 1.0 - then the wiring itself is mechanical, and
 one of the two duplicate implementations gets deleted so there is only one answer to the question.
 
+### Batch 261: the timeframe-consistency island is gone - and the gate that only pretended to consult it was switching consensus off
+
+Two things, found in the same line of code.
+
+- **A class nobody fed.** `CTimeframeConsistency` (608 lines) aggregates per-timeframe votes and resolves conflicts
+  between them. Nothing has ever handed it a vote: its two feeding methods lost their only caller when Batch 260 deleted
+  `ProcessMTFSignals`, and the 2026-10-23 journal says the same thing from the other side - 22
+  `[TimeframeConsistency] Initialized with mode:` lines (one per symbol for the manager's copy, one per symbol for the
+  pipeline's, which is now gone) and **zero** lines from any other printer in the file. Its conflict warning cannot fire
+  because its signal list is structurally empty. So the documents claiming consensus resolves mixed-timeframe conflicts
+  described a subsystem that only ever introduced itself.
+- **Its failure branch could not fail either.** The manager treated it as mandatory and printed
+  `ERROR: TimeframeConsistency initialization failed` if its `Initialize` returned false - but that `Initialize` assigns
+  three fields and returns `true`, with no other exit. Only an out-of-memory allocation could have stopped startup.
+- **The real bug was in the gate, not the island.** `ConsensusEngine.mqh:109` tested
+  `pipeline != NULL && tfConsistency != NULL` before running consensus. The second term was decorative. The first was not:
+  the pipeline is an operator input, `InpUseSignalPipeline` (default `true`). Switch it off and `m_pipeline` is NULL, the
+  gate answers `NONE` on every symbol on every scan, and the EA opens zero consensus trades - quietly, with no reject or
+  gate line to explain it. That is the "blocked book looks like a quiet market" failure, reached from one checkbox.
+- **Now:** the gate tests `m_src.IsManagerInitialized()` - the flag the manager sets only after a real initialization, and
+  an accessor that already has two live readers. This is the honest condition, because the filter chain is optional by
+  design: every pipeline use inside the evaluator is NULL-guarded (`:208`, `:419`, `:515`, `:539`, `:582`) and a vote
+  passes unfiltered when there is no filter to run. With the shipped `true` nothing moves - 11 `Pipeline: ENABLED` lines,
+  0 `DISABLED` in that session - so the fix is proved by reading rather than observed.
+- **Deleted:** `Core/Signals/TimeframeConsistency.mqh` with `STimeframeSignal`, `ENUM_CONFLICT_RESOLUTION` and both of
+  its prints; the manager's member, getter, 30-line allocate/rollback block and two teardown copies; the forwarder in
+  `EnterpriseStrategyManager.mqh`; the forward declaration in `OrchestratorFwd.mqh`. 7 added / 661 deleted across five
+  files. No quorum, deadband, threshold, lot, stop, take-profit or exit moved.
+
 ### Batch 260: a strategy's vote reserved the daily risk budget, and every voter was polled twice per scan
 
 Two money defects in the same seam, both counted out of the attached 2026-10-23 journal.
@@ -652,7 +681,7 @@ Two money defects in the same seam, both counted out of the attached 2026-10-23 
   `StatisticalArbitrageStrategy.mqh:263`), so a vote answers the gates and claims nothing. `final-lot` and the four engine
   pre-send tags still reserve - nothing was loosened for a trade.
 - **Every voter was polled twice, and the second answer destroyed the first.** `CConsensusEngine` polled the voter
-  (`ConsensusEngine.mqh:528`) and then handed the same strategy to `CUnifiedSignalPipeline::ProcessSignal`, which polled it
+  (`ConsensusEngine.mqh:531`) and then handed the same strategy to `CUnifiedSignalPipeline::ProcessSignal`, which polled it
   again. A strategy that records its emission - Momentum writes `m_lastSignalTimestamp` at
   `SimpleMomentumStrategy.mqh:769` - fails its own cooldown (`:566`) on the repeat call and returns NONE, so consensus dropped
   the vote and printed `[CONSENSUS-FILTERED] ... | filtered by ` with a blank name (`LogResult` names a filter only on a veto;
@@ -718,11 +747,11 @@ the pipeline had no engines at all.
   Liquidity=true Structure=true RegimeCostGate=true` prints at init, while `SignalPipelineFilter.mqh:41` returns
   "pass" for a NULL engine. So `[COST-GATE]`, `[ENTRY-VETO]`, `[PIPELINE-THRESHOLD]`, `[PIPELINE-HEALTH]`,
   `[REGIME-STATE]` and `[MARKET-REGIME]` each have **0** lines in the attached 2026-10-23 session, and so does
-  `[CONSENSUS-REGIME-VETO]`: `ConsensusEngine.mqh:208` fetches the regime engine, gets NULL, and `:210` returns
+  `[CONSENSUS-REGIME-VETO]`: `ConsensusEngine.mqh:211` fetches the regime engine, gets NULL, and `:213` returns
   weight `1.0`. Batch 204's regime veto, Batch 222's 0.30 stand-aside and the per-category regime multipliers have
   never touched a vote.
 - **And for sizing: the bonuses were paid from constants.** The live-authority ladder reads the pipeline's evidence
-  (`ConsensusEngine.mqh:578-601` -> `LiveAuthorityResolver.mqh:213-223`), and unbound that evidence is never
+  (`ConsensusEngine.mqh:581-604` -> `LiveAuthorityResolver.mqh:213-223`), and unbound that evidence is never
   measured - it is its own default: `contextScore = 0.5` (`SignalPipelineTypes.mqh:357`) against
   `InpAuthorityMinContextScore = 0.48`, `costScore = 0.72` written before the NULL return
   (`SignalPipelineFilter.mqh:38`) against `InpAuthorityMinCostScore = 0.50`, and readiness computed from
@@ -1795,7 +1824,7 @@ Core/
   Strategy/                     # AI adapters (ONNX, Transformer, Ensemble), StrategyBase, StrategyRegistry
   AI/                           # AIFeatureVectorBuilder, PipelineScaler, NNModelStorage
   Processing/                   # DerivAssetProfiler, MultiAssetProfiler
-  Signals/                      # SignalDiagnostics, TimeframeConsistency
+  Signals/                      # SignalDiagnostics
   Monitoring/                   # PerformanceAnalytics
   Visualization/                # VisualDashboard, ChartDrawingManager
   Utils/                        # PythonBridge, Instruments, Enums, SessionManager, ErrorHandling

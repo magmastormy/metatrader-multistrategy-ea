@@ -47,7 +47,6 @@ class CRegimeEngine;
 
 // Pipeline & Signals
 class CUnifiedSignalPipeline;
-class CTimeframeConsistency;
 struct SignalFilterSettings;
 struct SPipelineEvidenceSnapshot;
 
