@@ -888,7 +888,13 @@ if(m_adxModifier != NULL)
 {
     if(m_adxModifier.Initialize(_Symbol, PERIOD_CURRENT, 14))
     {
+        m_adxModifier.SetMinMultiplier(m_config.adxMinLotMultiplier);
+        m_adxModifier.SetAllowNoTrendTrading(m_config.adxAllowNoTrendTrading);
         m_positionSizer.AddModifier(m_adxModifier);
+        PrintFormat("[ADX-TIERING] floor=%.2f | noTrend=%s | tiers=weak0.50/normal1.00/strong1.30/veryStrong1.50(constants, no input) | weakTierShrinks=%s",
+                    m_config.adxMinLotMultiplier,
+                    m_config.adxAllowNoTrendTrading ? "no_adjustment" : "block_0x",
+                    m_config.adxMinLotMultiplier > 0.50 ? "no" : "yes");
         Print("[ADX-MODIFIER] Initialized and added to position sizer modifier chain");
     }
 else

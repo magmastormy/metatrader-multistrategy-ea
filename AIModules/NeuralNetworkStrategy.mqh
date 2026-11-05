@@ -342,6 +342,12 @@ private:
     int              m_assetClassId;
     long             m_resolvedLabelCount;
 
+    // Directional quality tracking (audit fix #4): counts barrier-resolved calls that
+    // originated from a directional prediction (signalClass != 0) and how many were correct.
+    // Feeds the beat-the-baseline gate so the net only trades once it shows real edge.
+    long             m_dirResolvedCount;
+    long             m_dirCorrectCount;
+
     string           m_symbol;
     ENUM_TIMEFRAMES  m_timeframe;
     bool             m_initialized;
@@ -590,7 +596,11 @@ private:
 
         for(int i = 0; i < size; i++)
         {
-            double variance = (m_featureCount > 1) ? (m_featureM2[i] / (double)(m_featureCount - 1)) : 1.0;
+            // m_featureM2[i] is an EMA estimate of the population variance (Welford-EMA, see
+            // UpdateNormalizationStats). It is NOT a sum-of-squares, so dividing by the sample
+            // count drove stddev -> 0 and saturated every feature at the +-3 clip, so the net
+            // trained on clipped garbage. Use it directly as the variance estimate.
+            double variance = m_featureM2[i];
             double stddev = MathSqrt(variance + 1e-9);
             features[i] = (features[i] - m_featureMean[i]) / stddev;
             features[i] = MathMax(-3.0, MathMin(3.0, features[i]));
@@ -836,28 +846,26 @@ private:
 
         double conformalUnc = m_conformal.GetQuantile();
 
-        // Momentum from raw features
+        // FIX (audit bug a): momentum must be a real return, not a cyclic time feature.
+        // Index 20 is sinHod (time-of-day sine). The lagged log-return momentum lives at
+        // index 23 (logRetLag5); fall back to index 22 (logRetLag1). Feeding sinHod here
+        // made the meta-labeler's momentum gate meaningless.
         double momentum = 0.0;
-        if(ArraySize(rawFeatures) > 20 && MathIsValidNumber(rawFeatures[20]))
-            momentum = rawFeatures[20];
+        if(ArraySize(rawFeatures) > 23 && MathIsValidNumber(rawFeatures[23]))
+            momentum = rawFeatures[23];
+        else if(ArraySize(rawFeatures) > 22 && MathIsValidNumber(rawFeatures[22]))
+            momentum = rawFeatures[22];
 
         // Theme 2 (articles 18770/19103): oscillator-state for the meta-labeler
         // reliability gate. Teach it "I am only reliable when the oscillator is not
         // pinned at an extreme" rather than learning that indirectly from levels.
         double rsiZone = (ArraySize(rawFeatures) > 10 && MathIsValidNumber(rawFeatures[10])) ?
                          (rawFeatures[10] - 0.5) * 2.0 : 0.0;   // rawFeatures[10] = rsi14 (0..1)
-        // Stochastic %K zone via indicator handle + CopyBuffer (barShift=1 = last
-        // closed bar, no look-ahead). iStochastic() only CREATES a handle, so the
-        // %K value must be read from buffer 0 (MODE_MAIN) explicitly.
-        double stochKZone = 0.0;
-        int hStoch = iStochastic(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
-        if(hStoch != INVALID_HANDLE)
-        {
-            double stochBuf[];
-            if(CopyBuffer(hStoch, 0, 1, 1, stochBuf) > 0 && ArraySize(stochBuf) > 0)
-                stochKZone = (stochBuf[0] - 50.0) / 50.0;   // %K (0..100) -> [-1,1]
-            IndicatorRelease(hStoch);
-        }
+        // FIX (audit bug e): the feature builder already computes the Stochastic %K zone at
+        // index 65 (stochKZone, already in [-1,1]). Reuse it instead of allocating a fresh
+        // iStochastic handle on every signal tick (handle churn + double computation).
+        double stochKZone = (ArraySize(rawFeatures) > 65 && MathIsValidNumber(rawFeatures[65])) ?
+                           rawFeatures[65] : 0.0;
 
         m_metaLabeler.BuildInput(confidence, regimeProbs, rawFeatures[15],
                                  noneProb, buyProb, sellProb, entropy,
@@ -883,6 +891,23 @@ private:
                 signal = TRADE_SIGNAL_NONE;
             else if(!m_metaLabeler.Approve(metaInput))
                 signal = TRADE_SIGNAL_NONE;
+            else if((m_dirResolvedCount < AI_MIN_DIRECTIONAL_SAMPLES) ||
+                    (GetDirectionalAccuracy() < AI_MIN_DIRECTIONAL_ACCURACY))
+            {
+                // Beat-the-baseline gate: do not trade directionally until the net shows edge
+                // on barrier-resolved directional calls. Silences a barely-trained net that
+                // merely clears the cold-start + confidence gates on noise.
+                signal = TRADE_SIGNAL_NONE;
+                confidence = 0.0;
+                static datetime s_lastAccLog = 0;
+                if(s_lastAccLog == 0 || (TimeCurrent() - s_lastAccLog) >= 600)
+                {
+                    PrintFormat("[NEURAL-NET] DIR-ACC-GATE | %s | dirResolved=%I64d dirCorrect=%I64d acc=%.3f floor=%.2f minSamples=%d | abstaining",
+                                m_symbol, m_dirResolvedCount, m_dirCorrectCount,
+                                GetDirectionalAccuracy(), (double)AI_MIN_DIRECTIONAL_ACCURACY, (int)AI_MIN_DIRECTIONAL_SAMPLES);
+                    s_lastAccLog = TimeCurrent();
+                }
+            }
         }
 
         if(signal == TRADE_SIGNAL_NONE)
@@ -1048,6 +1073,14 @@ private:
                 continue;
 
             bool directionalCorrect = (directionalLabel != 0 && directionalLabel == m_barrierBuffer[i].signalClass);
+            // Track directional quality only for barriers that came from an actual directional
+            // prediction (not HOLD pseudo-labels), so the accuracy floor measures real edge.
+            if(m_barrierBuffer[i].signalClass != 0)
+            {
+                m_dirResolvedCount++;
+                if(directionalCorrect)
+                    m_dirCorrectCount++;
+            }
             m_barrierBuffer[i].label = directionalLabel;
             m_barrierBuffer[i].resolved = true;
             AddTrainingExample(m_barrierBuffer[i].featureSnapshot,
@@ -1554,6 +1587,8 @@ public:
         m_totalObservations = 0;
         m_tradeLinkedLabels = 0;
         m_resolvedLabelCount = 0;
+        m_dirResolvedCount = 0;
+        m_dirCorrectCount = 0;
         m_barrierHead = 0;
         m_barrierCount = 0;
         m_barrierK = AI_DEFAULT_BARRIER_K;
@@ -1960,13 +1995,22 @@ public:
 
     int GetTrainingExampleCount()
     {
-        return m_trainCount;
-    }
+        return m_trainCount;    }
 
     int GetCompletedTradesCount()
     {
         return (int)m_resolvedLabelCount;
     }
+
+    double GetDirectionalAccuracy() const
+    {
+        if(m_dirResolvedCount <= 0)
+            return 0.0;
+        return (double)m_dirCorrectCount / (double)m_dirResolvedCount;
+    }
+
+    long GetDirectionalResolvedCount() const { return m_dirResolvedCount; }
+    long GetDirectionalCorrectCount() const  { return m_dirCorrectCount; }
 
     bool SaveNetwork()
     {

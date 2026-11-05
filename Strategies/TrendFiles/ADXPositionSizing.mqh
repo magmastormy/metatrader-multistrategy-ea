@@ -29,13 +29,12 @@ private:
     int                 m_adxHandle;
     
     // Configuration
-    double              m_baseRiskPercent;      // Base risk per trade (e.g., 1%)
     double              m_weakTrendMultiplier;
     double              m_normalMultiplier;     // 1.0x for normal trends
     double              m_strongMultiplier;     // 1.3x for strong trends
     double              m_veryStrongMultiplier;
     
-    // ADX thresholds (configurable via inputs)
+    // ADX tier boundaries - InitForAssetClass is the only writer
     double              m_noTrendThreshold;     // Below this = no trade
     double              m_weakThreshold;        // Weak trend threshold
     double              m_normalThreshold;      // Normal trend threshold
@@ -46,7 +45,7 @@ private:
     ENUM_ADX_TIER       GetADXTier(double adx);
     
 public:
-// Input Parameters - Standardized ADX Thresholds
+// Standardized ADX tiers
 // Rationale:
 // ADX < 20: No trend - range-bound market, avoid entries
 // ADX 20-25: Weak trend - low conviction, use half position size
@@ -61,19 +60,12 @@ public:
     
     // Position sizing
     double              GetPositionSizeMultiplier();
-    double              GetAdjustedRiskPercent();
-    double              CalculateLotSize(double entryPrice, double stopLossPrice);
     bool                ShouldTrade();
     bool                IsDirectionallyClear();
     
     ENUM_ADX_TIER       GetCurrentTier();
-    double              GetCurrentADX() { return GetADX(); }
-    string              GetTierName();
     
     // Configuration
-    void                SetBaseRiskPercent(double risk) { m_baseRiskPercent = risk; }
-    void                SetMultipliers(double weak, double normal, double strong, double veryStrong);
-    void                SetThresholds(double noTrend, double weak, double normal, double strong);
     void                InitForAssetClass(int assetClass);
 };
 
@@ -82,7 +74,6 @@ CADXPositionSizing::CADXPositionSizing() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_adxHandle(INVALID_HANDLE),
-    m_baseRiskPercent(1.0),
     m_weakTrendMultiplier(0.5),
     m_normalMultiplier(1.0),
     m_strongMultiplier(1.3),
@@ -163,28 +154,6 @@ ENUM_ADX_TIER CADXPositionSizing::GetCurrentTier()
     return GetADXTier(GetADX());
 }
 
-// Get Tier Name - Dynamic based on configured thresholds
-string CADXPositionSizing::GetTierName()
-{
-    ENUM_ADX_TIER tier = GetCurrentTier();
-    
-    switch(tier)
-    {
-        case ADX_NO_TREND:      
-            return StringFormat("No Trend (< %.0f)", m_noTrendThreshold);
-        case ADX_WEAK_TREND:    
-            return StringFormat("Weak Trend (%.0f-%.0f)", m_noTrendThreshold, m_weakThreshold);
-        case ADX_NORMAL_TREND:  
-            return StringFormat("Normal Trend (%.0f-%.0f)", m_weakThreshold, m_normalThreshold);
-        case ADX_STRONG_TREND:  
-            return StringFormat("Strong Trend (%.0f-%.0f)", m_normalThreshold, m_strongThreshold);
-        case ADX_VERY_STRONG:   
-            return StringFormat("Very Strong (> %.0f)", m_strongThreshold);
-        default:                
-            return "Unknown";
-    }
-}
-
 bool CADXPositionSizing::ShouldTrade()
 {
     return (GetADX() >= m_noTrendThreshold);
@@ -228,63 +197,6 @@ double CADXPositionSizing::GetPositionSizeMultiplier()
         case ADX_VERY_STRONG:   return m_veryStrongMultiplier;
         default:                return 0.0;
     }
-}
-
-double CADXPositionSizing::GetAdjustedRiskPercent()
-{
-    return m_baseRiskPercent * GetPositionSizeMultiplier();
-}
-
-double CADXPositionSizing::CalculateLotSize(double entryPrice, double stopLossPrice)
-{
-    if(entryPrice <= 0 || stopLossPrice <= 0 || entryPrice == stopLossPrice) return 0;
-    if(!ShouldTrade()) return 0;
-    
-    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double adjustedRisk = GetAdjustedRiskPercent() / 100.0;
-    double riskAmount = balance * adjustedRisk;
-    
-    // Get tick value and size
-    double tickValue = SymbolInfoDouble(m_symbol, SYMBOL_TRADE_TICK_VALUE);
-    double tickSize = SymbolInfoDouble(m_symbol, SYMBOL_TRADE_TICK_SIZE);
-    
-    if(tickValue <= 0 || tickSize <= 0)
-        return 0;
-    
-    // Calculate exact risk per lot based on price distance
-    double priceDistance = MathAbs(entryPrice - stopLossPrice);
-    double riskPerLot = (priceDistance / tickSize) * tickValue;
-    
-    if(riskPerLot <= 0) return 0;
-    
-    // Calculate lot size
-    double lots = riskAmount / riskPerLot;
-    
-    // Normalize to broker's lot step
-    double lotStep = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_STEP);
-    double minLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-    double maxLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MAX);
-    
-    lots = MathFloor(lots / lotStep) * lotStep;
-    lots = MathMax(minLot, MathMin(maxLot, lots));
-    
-    return lots;
-}
-
-void CADXPositionSizing::SetMultipliers(double weak, double normal, double strong, double veryStrong)
-{
-    m_weakTrendMultiplier = weak;
-    m_normalMultiplier = normal;
-    m_strongMultiplier = strong;
-    m_veryStrongMultiplier = veryStrong;
-}
-
-void CADXPositionSizing::SetThresholds(double noTrend, double weak, double normal, double strong)
-{
-    m_noTrendThreshold = noTrend;
-    m_weakThreshold = weak;
-    m_normalThreshold = normal;
-    m_strongThreshold = strong;
 }
 
 // Initialize ADX thresholds based on asset class

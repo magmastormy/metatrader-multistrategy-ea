@@ -68,8 +68,8 @@ struct SOrchestratorConfig
     bool    enableNYOpenGap;
     bool    enableAsianRangeBreak;
     bool    enableStatisticalArbitrage;
-    double  trendADXNoTrendThreshold;
-    double  syntheticADXNoTrendThreshold;
+    double  adxMinLotMultiplier;
+    bool    adxAllowNoTrendTrading;
     bool    useCuratedStrategySet;
     bool    useSymbolClassProfiles;
     bool    enableKalmanMR;
@@ -383,8 +383,8 @@ struct SOrchestratorConfig
         enableNYOpenGap = true;
         enableAsianRangeBreak = true;
         enableStatisticalArbitrage = false;
-        trendADXNoTrendThreshold = 12.0;
-        syntheticADXNoTrendThreshold = 10.0;
+        adxMinLotMultiplier = 1.0;
+        adxAllowNoTrendTrading = true;
         useCuratedStrategySet = true;
         useSymbolClassProfiles = false;
         enableKalmanMR = true;

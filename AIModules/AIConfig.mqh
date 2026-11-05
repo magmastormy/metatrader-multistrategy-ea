@@ -75,6 +75,18 @@
 #define AI_MIN_RESOLVED_LABELS   3
 #endif
 
+//--- Directional quality gate (beat-the-baseline discipline)
+// The net may only emit directional trades once it has a track record of
+// barrier-resolved directional calls whose accuracy clears a floor. This
+// prevents a barely-trained net from trading on noise once the cold-start
+// gate opens. Default floor is just above coin-flip.
+#ifndef AI_MIN_DIRECTIONAL_SAMPLES
+#define AI_MIN_DIRECTIONAL_SAMPLES  20
+#endif
+#ifndef AI_MIN_DIRECTIONAL_ACCURACY
+#define AI_MIN_DIRECTIONAL_ACCURACY 0.52
+#endif
+
 #ifndef AI_DEFAULT_BARRIER_K
 #define AI_DEFAULT_BARRIER_K      1.5
 #endif

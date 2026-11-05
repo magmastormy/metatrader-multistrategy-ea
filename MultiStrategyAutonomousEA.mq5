@@ -117,9 +117,9 @@ input bool     InpDerivProfilerEnabled = true;
 input bool     InpGridRecoveryEnabled = true;
 input bool     InpATRScalpingEnabled = true;
 
-input group "Trend & ADX Thresholds";
-input double   InpTrendADXNoTrendThreshold = 12.0;
-input double   InpSyntheticADXNoTrendThreshold = 10.0;
+input group "ADX Lot Tiering (CADXLotModifier)";
+input double   InpAdxMinLotMultiplier = 1.0;
+input bool     InpAdxTradeOnNoTrend = true;
 
 input group "Strategy Weights (Consensus)";
 input double   InpWeightMomentum = 1.0;
@@ -411,8 +411,8 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.enableNYOpenGap = InpEnableNYOpenGap;
     config.enableAsianRangeBreak = InpEnableAsianRangeBreak;
     config.enableStatisticalArbitrage = InpEnableStatisticalArbitrage;
-    config.trendADXNoTrendThreshold = InpTrendADXNoTrendThreshold;
-    config.syntheticADXNoTrendThreshold = InpSyntheticADXNoTrendThreshold;
+    config.adxMinLotMultiplier = InpAdxMinLotMultiplier;
+    config.adxAllowNoTrendTrading = InpAdxTradeOnNoTrend;
     config.useCuratedStrategySet = InpUseCuratedStrategySet;
     config.useSymbolClassProfiles = InpUseSymbolClassProfiles;
     

@@ -26,11 +26,7 @@ private:
     
     SignalFilterSettings m_filters;
     
-    int m_signalsProcessed;
-    int m_signalsFiltered;
-    int m_signalsPassed;
     string m_lastEvaluatedSymbol;
-    bool m_lastFilteredByPipeline;
     bool m_intrabarContext;
     bool m_lastRegimeSnapshotValid;
     ENUM_REGIME_STATE m_lastRegimeState;
@@ -45,8 +41,6 @@ private:
         bool m_cachedContextPrepared;
         bool m_cachedContextIntrabar;
     
-    datetime m_lastHealthCheckTime;
-    int m_healthCheckIntervalBars;
     
     bool m_budgetExhausted;
     datetime m_budgetExhaustedTime;
@@ -84,9 +78,6 @@ private:
     
     void CheckBudgetExhaustedAutoClear();
     
-    void CheckEngineHealth(const string symbol);
-    bool IsEngineHealthy();
-    
 public:
     CUnifiedSignalPipeline();
     ~CUnifiedSignalPipeline();
@@ -107,27 +98,12 @@ public:
     void SetSessionWeightManager(CSessionWeightManager* mgr) { m_sessionWeightManager = mgr; }
     void ApplyFilterPreset(ENUM_FILTER_PRESET preset);
     
-    int GetSignalsProcessed() const { return m_signalsProcessed; }
-    int GetSignalsFiltered() const { return m_signalsFiltered; }
-    int GetSignalsPassed() const { return m_signalsPassed; }
-    bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
-    
-    void PerformHealthCheck(const string symbol);
-    bool IsPipelineHealthy();
-    string GetEngineHealthStatus();
-    string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
     string GetLastFilterName() const { return m_lastFilterName; }
-    string GetLastFilterReason() const { return m_lastFilterReason; }
 
     // Spread cutoff called by CPostConsensusValidator; the ratio gate itself is in CSignalPipelineFilter
         bool ApplySpreadFilter(const string symbol, double &spreadScore, double overrideThreshold = -1.0, double atrValue = -1.0);
         void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
-    double GetFilterRate() const 
-    { 
-        return m_signalsProcessed > 0 ? 
-               (double)m_signalsFiltered / m_signalsProcessed : 0; 
-    }
     
         CTrendEngine* GetTrendEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL; }
         CStructureEngine* GetStructureEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL; }
@@ -145,11 +121,7 @@ public:
 CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_mathRegistry(NULL),
     m_sessionWeightManager(NULL),
-    m_signalsProcessed(0),
-    m_signalsFiltered(0),
-    m_signalsPassed(0),
     m_lastEvaluatedSymbol(""),
-    m_lastFilteredByPipeline(false),
     m_intrabarContext(false),
     m_lastRegimeSnapshotValid(false),
     m_lastRegimeState(REGIME_RANGE),
@@ -161,8 +133,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
         m_cachedContextBarTime(0),
         m_cachedContextPrepared(false),
         m_cachedContextIntrabar(false),
-        m_lastHealthCheckTime(0),
-    m_healthCheckIntervalBars(100),
     m_budgetExhausted(false),
     m_budgetExhaustedTime(0),
         m_budgetExhaustedResetTime(0),
@@ -297,7 +267,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
 {
     ResetEvidenceSnapshot(symbol, timeframe);
     m_lastEvaluatedSymbol = symbol;
-    m_lastFilteredByPipeline = false;
     m_lastRegimeSnapshotValid = false;
     m_lastRegimeState = REGIME_RANGE;
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, m_filters.confidence.minConfidence));
@@ -308,15 +277,10 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
 
     if(m_budgetExhausted)
     {
-        m_signalsProcessed++;
-        m_signalsFiltered++;
-        m_lastFilteredByPipeline = true;
         m_lastFilterName = "BudgetExhausted";
         confidence = 0;
         return TRADE_SIGNAL_NONE;
     }
-
-    m_signalsProcessed++;
 
     ENUM_TRADE_SIGNAL signal = rawSignal;
 
@@ -536,14 +500,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
     
     if(!passed)
     {
-        m_lastFilteredByPipeline = true;
-        m_signalsFiltered++;
         signal = TRADE_SIGNAL_NONE;
         confidence = 0;
-    }
-    else
-    {
-        m_signalsPassed++;
     }
     
     return signal;
@@ -621,102 +579,6 @@ double CUnifiedSignalPipeline::CalculateQualityScore(double confidence, int conf
 void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, const string reason)
 {
     CSignalPipelineFilter::LogResult(m_lastFilterName, m_lastFilterReason, filter, passed, reason);
-}
-
-void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
-{
-    // Only stamps m_lastHealthCheckTime, which no code reads; callers query the registry for health
-    m_lastHealthCheckTime = TimeCurrent();
-}
-
-bool CUnifiedSignalPipeline::IsEngineHealthy()
-{
-    if(m_mathRegistry == NULL || m_lastEvaluatedSymbol == "")
-        return false;
-    
-    CTrendEngine* trendEngine = m_mathRegistry.GetTrend(m_lastEvaluatedSymbol);
-    CStructureEngine* structureEngine = m_mathRegistry.GetStructure(m_lastEvaluatedSymbol);
-    CLiquidityEngine* liquidityEngine = m_mathRegistry.GetLiquidity(m_lastEvaluatedSymbol);
-    CVolatilityEngine* volatilityEngine = m_mathRegistry.GetVolatility(m_lastEvaluatedSymbol);
-    CRegimeEngine* regimeEngine = m_mathRegistry.GetRegime(m_lastEvaluatedSymbol);
-    
-    if(trendEngine == NULL || structureEngine == NULL || liquidityEngine == NULL || 
-       volatilityEngine == NULL || regimeEngine == NULL)
-        return false;
-    
-    // Trend is the only engine exposing a readiness snapshot; the other four are pointer-checked
-    STrendReadinessSnapshot trendReadiness = trendEngine.GetReadinessSnapshot();
-    if(trendReadiness.state != TREND_READINESS_HEALTHY && trendReadiness.state != TREND_READINESS_REUSED_SNAPSHOT)
-        return false;
-    
-    return true;
-}
-
-void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
-{
-    CheckEngineHealth(symbol);
-    
-    CTrendEngine* trendEngine = m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL;
-    CStructureEngine* structureEngine = m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL;
-    CLiquidityEngine* liquidityEngine = m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL;
-    CVolatilityEngine* volatilityEngine = m_mathRegistry ? m_mathRegistry.GetVolatility(symbol) : NULL;
-    CRegimeEngine* regimeEngine = m_mathRegistry ? m_mathRegistry.GetRegime(symbol) : NULL;
-    
-    bool trendOk = (trendEngine != NULL);
-    bool structureOk = (structureEngine != NULL);
-    bool liquidityOk = (liquidityEngine != NULL);
-    bool volatilityOk = (volatilityEngine != NULL);
-    bool regimeOk = (regimeEngine != NULL);
-    
-    if(trendOk)
-    {
-        STrendReadinessSnapshot trendReadiness = trendEngine.GetReadinessSnapshot();
-        trendOk = (trendReadiness.state == TREND_READINESS_HEALTHY || trendReadiness.state == TREND_READINESS_REUSED_SNAPSHOT);
-    }
-    
-    bool allHealthy = trendOk && structureOk && liquidityOk && volatilityOk && regimeOk;
-    
-    string status = allHealthy ? "HEALTHY" : "DEGRADED";
-    LOG_IF7(LOG_LEVEL_DEBUG, "[PIPELINE-HEALTH] Symbol=%s | Status=%s | Trend=%s | Structure=%s | Liquidity=%s | Volatility=%s | Regime=%s",
-                symbol,
-                status,
-                trendOk ? "OK" : "FAIL",
-                structureOk ? "OK" : "FAIL",
-                liquidityOk ? "OK" : "FAIL",
-                volatilityOk ? "OK" : "FAIL",
-                regimeOk ? "OK" : "FAIL");
-}
-
-bool CUnifiedSignalPipeline::IsPipelineHealthy()
-{
-    return IsEngineHealthy();
-}
-
-string CUnifiedSignalPipeline::GetEngineHealthStatus()
-{
-    if(IsEngineHealthy())
-        return "ALL_ENGINES_HEALTHY";
-    
-    if(m_mathRegistry == NULL || m_lastEvaluatedSymbol == "")
-        return "DEGRADED: NO_REGISTRY_OR_SYMBOL";
-    
-    string status = "DEGRADED:";
-    CTrendEngine* trendEngine = m_mathRegistry.GetTrend(m_lastEvaluatedSymbol);
-    if(trendEngine == NULL)
-        status += " TREND";
-    else
-    {
-        STrendReadinessSnapshot trendReadiness = trendEngine.GetReadinessSnapshot();
-        if(trendReadiness.state != TREND_READINESS_HEALTHY && trendReadiness.state != TREND_READINESS_REUSED_SNAPSHOT)
-            status += " TREND(" + EnumToString(trendReadiness.state) + ")";
-    }
-    
-    if(m_mathRegistry.GetStructure(m_lastEvaluatedSymbol) == NULL) status += " STRUCTURE";
-    if(m_mathRegistry.GetLiquidity(m_lastEvaluatedSymbol) == NULL) status += " LIQUIDITY";
-    if(m_mathRegistry.GetVolatility(m_lastEvaluatedSymbol) == NULL) status += " VOLATILITY";
-    if(m_mathRegistry.GetRegime(m_lastEvaluatedSymbol) == NULL) status += " REGIME";
-    
-    return status;
 }
 
 void CUnifiedSignalPipeline::ApplyFilterPreset(ENUM_FILTER_PRESET preset)

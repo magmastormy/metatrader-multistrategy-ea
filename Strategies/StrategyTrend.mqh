@@ -41,14 +41,8 @@ private:
     // Higher-timeframe confirmation
     ENUM_TIMEFRAMES     m_htf;
     int                 m_htfHandleADX;
-    int                 m_tradeParamATRHandle;  // cached ATR handle for GetTradeParameters
+    int                 m_tradeParamATRHandle;  // ATR(14) handle for the trailing stop's R measurement
     int                 m_macdHandle;  // MACD histogram momentum confirmation
-
-    // Configurable ADX thresholds (lowered for synthetic CFDs)
-    double              m_adxNoTrendThreshold;
-    double              m_adxWeakThreshold;
-    double              m_adxNormalThreshold;
-    double              m_adxStrongThreshold;
 
     bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
     {
@@ -85,22 +79,10 @@ public:
                 m_signalsGenerated(0),
                 m_htf(PERIOD_CURRENT),
                 m_htfHandleADX(INVALID_HANDLE),
-                m_macdHandle(INVALID_HANDLE),
-                m_adxNoTrendThreshold(0),
-                m_adxWeakThreshold(25.0),
-                m_adxNormalThreshold(30.0),
-                m_adxStrongThreshold(40.0)
+                m_macdHandle(INVALID_HANDLE)
     {
         m_strategyPrefix = "TREND v2.1";
         m_minConfidence = 0.55; // use base class field
-    }
-    //--- Set ADX thresholds (called from EA input parameters)
-    void SetADXThresholds(double noTrend, double weak, double normal, double strong)
-    {
-        m_adxNoTrendThreshold = noTrend;
-        m_adxWeakThreshold = weak;
-        m_adxNormalThreshold = normal;
-        m_adxStrongThreshold = strong;
     }
     //--- Set per-symbol Hurst engine (not owned)
     void SetHurstEngine(CHurstEngine* engine) { m_hurstEngine = engine; }
@@ -158,22 +140,12 @@ public:
             Print("[TREND v2.1] Failed to initialize ADX Sizing");
             return false;
         }
-        // Asset-class ADX thresholds apply only when the EA did not override them
-        if(m_adxNoTrendThreshold <= 0)
-        {
-            m_assetClassId = DetectAssetClassId(symbol);
-            m_adxSizing.InitForAssetClass(m_assetClassId);
-            PrintFormat("[TREND v2.1] Asset-class ADX thresholds applied | Class=%d | Symbol=%s",
-                        m_assetClassId, symbol);
-        }
-        else
-        {
-            // EA input overrides take precedence
-            m_assetClassId = DetectAssetClassId(symbol);
-            m_adxSizing.SetThresholds(m_adxNoTrendThreshold, m_adxWeakThreshold, m_adxNormalThreshold, m_adxStrongThreshold);
-        }
-        PrintFormat("[TREND v2.1] ADX thresholds applied | Symbol=%s | Source=%s",
-                    symbol, m_adxNoTrendThreshold > 0 ? "EA_INPUT" : "ASSET_CLASS");
+        // One ADX authority: the per-asset-class table. A wired EA-wide constant
+        // would replace that tuning on every symbol, so no input feeds these thresholds.
+        m_assetClassId = DetectAssetClassId(symbol);
+        m_adxSizing.InitForAssetClass(m_assetClassId);
+        PrintFormat("[TREND v2.1] Asset-class ADX thresholds applied | Class=%d | Symbol=%s",
+                    m_assetClassId, symbol);
 
         m_signalEnhancer = new CTrendSignalEnhancer();
         if(m_signalEnhancer != NULL)
@@ -345,55 +317,6 @@ public:
         return bestEntry.direction;
     }
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_TREND; }
-    bool GetTradeParameters(double &stopLoss, double &takeProfit, double &lotSize)
-    {
-        if(m_entryTypes == NULL || m_adxSizing == NULL)
-            return false;
-        STrendEntrySignal entry = m_entryTypes.GetBestEntry();
-        if(entry.direction == TRADE_SIGNAL_NONE)
-            return false;
-
-        stopLoss = entry.stopLoss;
-        takeProfit = entry.takeProfit;
-
-        // ATR-capped TP, using the cached CIndicatorManager ATR handle
-        if(m_tradeParamATRHandle == INVALID_HANDLE)
-            m_tradeParamATRHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
-        if(m_tradeParamATRHandle != INVALID_HANDLE)
-        {
-            double atrBuffer[1];
-            if(CopyBuffer(m_tradeParamATRHandle, 0, 0, 1, atrBuffer) == 1 && atrBuffer[0] > 0)
-            {
-                double atr = atrBuffer[0];
-
-                // Conservative TP: 2x ATR from entry
-                double atr_tp = entry.entryPrice + (entry.direction == TRADE_SIGNAL_BUY ? 2.0 : -2.0) * atr;
-
-                // Use ATR-based TP if it's more conservative than original TP
-                if(entry.direction == TRADE_SIGNAL_BUY && atr_tp < takeProfit)
-                {
-                    PrintFormat("[TREND-EXIT] ATR-adjusted TP | Original=%.5f | ATR_TP=%.5f (2x ATR=%.1f pts)",
-                               takeProfit, atr_tp, 2.0 * atr / SymbolInfoDouble(m_symbol, SYMBOL_POINT));
-                    takeProfit = atr_tp;
-                }
-                else if(entry.direction == TRADE_SIGNAL_SELL && atr_tp > takeProfit)
-                {
-                    PrintFormat("[TREND-EXIT] ATR-adjusted TP | Original=%.5f | ATR_TP=%.5f (2x ATR=%.1f pts)",
-                               takeProfit, atr_tp, 2.0 * atr / SymbolInfoDouble(m_symbol, SYMBOL_POINT));
-                    takeProfit = atr_tp;
-                }
-            }
-        }
-
-        lotSize = m_adxSizing.CalculateLotSize(entry.entryPrice, entry.stopLoss); // Base lot adjusted by ADX and Exact distance
-        return true;
-    }
-    double GetPositionSizeMultiplier()
-    {
-        if(m_adxSizing == NULL)
-            return 1.0;
-        return m_adxSizing.GetPositionSizeMultiplier();
-    }
     STrendState GetCurrentTrendState()
     {
         if(m_emaSystem == NULL)

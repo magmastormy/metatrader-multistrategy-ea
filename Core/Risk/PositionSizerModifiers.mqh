@@ -38,8 +38,8 @@ private:
     double m_veryStrongMultiplier;
 
     // Floor applied to tier multipliers > 0 so a no-trend read does not block the trade
-        double m_minMultiplier;
-        bool   m_allowNoTrendTrading;   // If false, returns 0 for no trend (blocks trade)
+        double m_minMultiplier;           // InpAdxMinLotMultiplier
+        bool   m_allowNoTrendTrading;   // InpAdxTradeOnNoTrend: false blocks the entry at 0x
         bool   m_lazyInitialized;
         bool   m_handleOwned;           // True only when the handle was created locally (iADX fallback); shared CIndicatorManager handles must never be released
 
@@ -127,28 +127,6 @@ public:
                     m_allowNoTrendTrading = allow;
                 }
 
-                // Inverted control: block == !m_allowNoTrendTrading
-                void SetBlockOnNoTrend(bool block)
-                {
-                    m_allowNoTrendTrading = !block;
-                }
-
-                void SetThresholds(double noTrend, double weak, double normal, double strong)
-        {
-            m_noTrendThreshold = noTrend;
-            m_weakThreshold = weak;
-            m_normalThreshold = normal;
-            m_strongThreshold = strong;
-        }
-
-    void SetMultipliers(double weak, double normal, double strong, double veryStrong)
-        {
-            m_weakMultiplier = weak;
-            m_normalMultiplier = normal;
-            m_strongMultiplier = strong;
-            m_veryStrongMultiplier = veryStrong;
-        }
-
         // Parameterless initialize for PositionSizer compatibility (lazy init on first symbol)
         bool Initialize()
         {
@@ -204,6 +182,7 @@ public:
                         else
                             multiplier = m_veryStrongMultiplier;
 
+                        // Above 0.50 this floor cancels the weak tier, so no ADX reading shrinks the lot.
                         if(multiplier > 0.0 && multiplier < m_minMultiplier)
                             multiplier = m_minMultiplier;
 

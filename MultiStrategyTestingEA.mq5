@@ -145,8 +145,8 @@ input bool     InpEnableBreakerBlock = false;
 input bool     InpEnableNYOpenGap = false;
 input bool     InpEnableAsianRangeBreak = false;
 input bool     InpEnableStatisticalArbitrage = false;
-input double   InpTrendADXNoTrendThreshold = 12.0;
-input double   InpSyntheticADXNoTrendThreshold = 10.0;
+input double   InpAdxMinLotMultiplier = 1.0;
+input bool     InpAdxTradeOnNoTrend = true;
 input bool     InpUseCuratedStrategySet = false;
 input bool     InpUseSymbolClassProfiles = false;
 
@@ -1047,8 +1047,8 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableHurstEngine = g_completeFlags.enableHurstEngine;
         config.enableOUProcess = g_completeFlags.enableOUProcess;
 
-        config.trendADXNoTrendThreshold = InpTrendADXNoTrendThreshold;
-        config.syntheticADXNoTrendThreshold = InpSyntheticADXNoTrendThreshold;
+        config.adxMinLotMultiplier = InpAdxMinLotMultiplier;
+        config.adxAllowNoTrendTrading = InpAdxTradeOnNoTrend;
     }
     else
     {
@@ -1099,8 +1099,8 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableHurstEngine = InpEnableHurstEngine;
         config.enableOUProcess = InpEnableOUProcess;
 
-        config.trendADXNoTrendThreshold = InpTrendADXNoTrendThreshold;
-        config.syntheticADXNoTrendThreshold = InpSyntheticADXNoTrendThreshold;
+        config.adxMinLotMultiplier = InpAdxMinLotMultiplier;
+        config.adxAllowNoTrendTrading = InpAdxTradeOnNoTrend;
     }
 
     // EA Operating Mode
