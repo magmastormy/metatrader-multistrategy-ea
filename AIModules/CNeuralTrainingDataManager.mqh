@@ -246,30 +246,28 @@ public:
 
             if(symbol != "" && m_barrierBuffer[i].entryBarTime > 0)
             {
-                datetime barTime = iTime(symbol, timeframe, 0);
-                if(barTime > m_barrierBuffer[i].entryBarTime)
+                int entryShift = iBarShift(symbol, timeframe, m_barrierBuffer[i].entryBarTime, false);
+                int firstShift = MathMin(entryShift - 1, 500);
+                int hitLabel = 0;
+                // Walk completed bars from entry forward in time; the stop is tested first so a bar touching both barriers counts as a loss.
+                for(int s = firstShift; s >= 1 && hitLabel == 0; s--)
                 {
-                    double high = iHigh(symbol, timeframe, 1);
-                    double low = iLow(symbol, timeframe, 1);
-                    if(high > 0 && low > 0)
-                    {
-                        if(high >= m_barrierBuffer[i].upperBarrier)
-                        {
-                            m_barrierBuffer[i].label = 2;
-                            m_barrierBuffer[i].resolved = true;
-                            m_resolvedLabelCount++;
-                            resolved++;
-                            continue;
-                        }
-                        if(low <= m_barrierBuffer[i].lowerBarrier)
-                        {
-                            m_barrierBuffer[i].label = 1;
-                            m_barrierBuffer[i].resolved = true;
-                            m_resolvedLabelCount++;
-                            resolved++;
-                            continue;
-                        }
-                    }
+                    double high = iHigh(symbol, timeframe, s);
+                    double low = iLow(symbol, timeframe, s);
+                    if(high <= 0 || low <= 0)
+                        continue;
+                    if(low <= m_barrierBuffer[i].lowerBarrier)
+                        hitLabel = 1;
+                    else if(high >= m_barrierBuffer[i].upperBarrier)
+                        hitLabel = 2;
+                }
+                if(hitLabel != 0)
+                {
+                    m_barrierBuffer[i].label = hitLabel;
+                    m_barrierBuffer[i].resolved = true;
+                    m_resolvedLabelCount++;
+                    resolved++;
+                    continue;
                 }
             }
 

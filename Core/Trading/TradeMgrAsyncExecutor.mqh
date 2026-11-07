@@ -150,6 +150,8 @@ public:
         m_pendingAsyncTrades[idx].retryCount = 0;
         m_pendingAsyncTrades[idx].persisted = false;
         m_pendingAsyncTrades[idx].persistedTime = 0;
+        m_pendingAsyncTrades[idx].filledVolume = 0.0;
+        m_pendingAsyncTrades[idx].filledValue = 0.0;
 
         PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u Key=%s",
                     symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order, idempotencyKey);
@@ -179,28 +181,41 @@ public:
         {
             if(m_pendingAsyncTrades[i].ticket == dealOrder && !m_pendingAsyncTrades[i].confirmed)
             {
+                m_pendingAsyncTrades[i].filledVolume += trans.volume;
+                m_pendingAsyncTrades[i].filledValue  += trans.price * trans.volume;
+
+                double filled = m_pendingAsyncTrades[i].filledVolume;
+                double requested = m_pendingAsyncTrades[i].lot;
+                if(filled + 1e-8 < requested)
+                {
+                    PrintFormat("[ASYNC-TRADE-PARTIAL] Ticket=%I64u filled=%.4f of %.4f - awaiting remainder or timeout",
+                                m_pendingAsyncTrades[i].ticket, filled, requested);
+                    break;
+                }
+
                 m_pendingAsyncTrades[i].confirmed = true;
+                double averagePrice = m_pendingAsyncTrades[i].filledValue / filled;
 
                 double pointSize = SymbolInfoDouble(m_pendingAsyncTrades[i].symbol, SYMBOL_POINT);
                 // Point size is the slippage divisor: clamp it so bad symbol data cannot give NaN.
                 if(pointSize <= 1e-15) pointSize = 1e-15;
                 double slippage = 0.0;
-                if(pointSize > 0.0 && trans.price > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
-                    slippage = MathAbs(trans.price - m_pendingAsyncTrades[i].price) / pointSize;
+                if(pointSize > 0.0 && averagePrice > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
+                    slippage = MathAbs(averagePrice - m_pendingAsyncTrades[i].price) / pointSize;
 
                 PrintFormat("[ASYNC-TRADE-CONFIRMED] Ticket=%I64u Price=%.5f (expected=%.5f slippage=%.1f pts)",
                             m_pendingAsyncTrades[i].ticket,
-                            trans.price,
+                            averagePrice,
                             m_pendingAsyncTrades[i].price,
                             slippage);
 
                 STradeExecutionReceipt receipt;
                 receipt.accepted        = true;
                 receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
-                receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
-                receipt.filledVolume    = trans.volume;
+                receipt.requestedVolume = requested;
+                receipt.filledVolume    = filled;
                 receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
-                receipt.averagePrice    = trans.price;
+                receipt.averagePrice    = averagePrice;
                 receipt.slippagePoints  = slippage;
                 receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
                 receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
@@ -248,16 +263,19 @@ public:
                             elapsedMs,
                             m_pendingAsyncTrades[i].timeoutMs);
 
+                double partialFilled = m_pendingAsyncTrades[i].filledVolume;
                 STradeExecutionReceipt receipt;
-                receipt.accepted        = false;
+                receipt.accepted        = partialFilled > 0.0;
                 receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
                 receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
+                receipt.filledVolume    = partialFilled;
+                receipt.averagePrice    = partialFilled > 0.0 ? m_pendingAsyncTrades[i].filledValue / partialFilled : 0.0;
                 receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
                 receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
                 receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
                 receipt.symbol          = m_pendingAsyncTrades[i].symbol;
                 receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-                receipt.note            = "async_timeout";
+                receipt.note            = partialFilled > 0.0 ? "async_partial_timeout" : "async_timeout";
                 if(m_pendingAsyncTrades[i].submitTime > 0)
                     receipt.roundTripMs = (ulong)elapsedMs;
                 execQuality.UpdateExecutionMetrics(receipt);

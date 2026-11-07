@@ -11,6 +11,8 @@
 #include "StrategyHealthMonitor.mqh"                   // CStrategyHealthMonitor
 #include "../../Core/AI/AIPerformanceFeedback.mqh"     // SAIModelMetrics
 
+#define AI_WEIGHT_MIN_PREDICTIONS 50
+
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
 // Performance / health facade over CEnterpriseStrategyManager
@@ -148,8 +150,10 @@ void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strateg
         return;
 
     // Field reuse: avgProfit carries AI profitability for these rows, which is what
-    // CConsensusWeightingConfig reads for the [AI-WEIGHT-ADJUST] multiplier.
-    m_src.SetStrategyAvgProfit(idx, metrics.profitability);
+    // CConsensusWeightingConfig reads for the [AI-WEIGHT-ADJUST] multiplier. Below the sample floor it
+    // reads as neutral so a handful of predictions cannot move the weight.
+    double weightingProfit = (metrics.totalPredictions >= AI_WEIGHT_MIN_PREDICTIONS) ? metrics.profitability : 0.0;
+    m_src.SetStrategyAvgProfit(idx, weightingProfit);
 
     double aiHealth = metrics.accuracy;
     if(aiHealth > 0.0)
