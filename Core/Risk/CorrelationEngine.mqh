@@ -307,8 +307,8 @@ void CCorrelationEngine::ForceRefresh()
     m_lastRefreshTime = TimeCurrent();
 }
 
-// Fail-open by construction: uninitialized engine, missing H1 history and a full registry all
-// answer m_conservativeFallback, which PortfolioRiskManager wires as 0.0 (= uncorrelated).
+// Uninitialized engine, missing H1 history and a full registry all answer m_conservativeFallback,
+// which PortfolioRiskManager wires as 1.0 (= fully correlated, so the cluster caps still bind).
 double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 {
     if(!m_initialized)

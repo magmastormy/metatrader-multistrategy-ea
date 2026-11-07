@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -225,17 +227,46 @@ def main() -> None:
     temp_output = Path(args.output).with_suffix(".tmp.onnx")
     export_onnx(best_model, metadata.seq_len, metadata.n_features, str(temp_output))
 
-    X_all = np.concatenate([train_split[0], val_split[0], test_split[0]], axis=0)
-    y_all = np.concatenate([train_split[1], val_split[1], test_split[1]], axis=0)
-    returns_all = np.concatenate([train_split[3], val_split[3], test_split[3]], axis=0)
-    cpcv = run_cpcv(
-        model_path=str(temp_output),
-        X=X_all,
-        y=y_all,
-        bar_returns=returns_all,
-        n_splits=args.cpcv_splits,
-        annualization=metadata.annualization,
-    )
+    arrays = [
+        np.concatenate([train_split[i], val_split[i], test_split[i]], axis=0) for i in range(5)
+    ]
+    X_all, _, _, returns_all, _ = arrays
+
+    fold_dir = Path(tempfile.mkdtemp(prefix="cpcv_folds_"))
+
+    def fold_model_path(fold_no: int, train_idx: np.ndarray) -> str:
+        n_val = max(1, int(len(train_idx) * 0.15))
+        fit_idx, val_idx = train_idx[:-n_val], train_idx[-n_val:]
+        fit_split = tuple(a[fit_idx] for a in arrays)
+        val_split_fold = tuple(a[val_idx] for a in arrays)
+        fold_model = instantiate_models(best_name, metadata.seq_len, metadata.n_features)[best_name]
+        _, _, trained = train_candidate(
+            name=f"{best_name}-fold{fold_no}",
+            model=fold_model,
+            train_split=fit_split,
+            val_split=val_split_fold,
+            test_split=val_split_fold,
+            metadata=metadata,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            device=args.device,
+        )
+        path = str(fold_dir / f"fold_{fold_no}.onnx")
+        export_onnx(trained, metadata.seq_len, metadata.n_features, path)
+        return path
+
+    try:
+        cpcv = run_cpcv(
+            X=X_all,
+            bar_returns=returns_all,
+            fold_model_path=fold_model_path,
+            n_splits=args.cpcv_splits,
+            annualization=metadata.annualization,
+        )
+    finally:
+        shutil.rmtree(fold_dir, ignore_errors=True)
 
     deploy_ok = best_test_ic >= args.min_ic and cpcv["deploy_gate"]
     if deploy_ok or args.force_export:

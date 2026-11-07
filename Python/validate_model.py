@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from itertools import combinations
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -50,22 +50,26 @@ def psr(sharpe_ratios: np.ndarray, sr_ref: float = 0.0) -> float:
 
 
 def run_cpcv(
-    model_path: str,
     X: np.ndarray,
-    y: np.ndarray,
     bar_returns: np.ndarray,
+    fold_model_path: Optional[Callable[[int, np.ndarray], str]] = None,
     n_splits: int = 6,
     annualization: float = 252.0,
 ) -> dict:
     if ort is None:
         raise ImportError("onnxruntime is required for CPCV validation but is not installed.")
 
-    session = ort.InferenceSession(model_path)
-    input_name = session.get_inputs()[0].name
     folds = cpcv_folds(len(X), n_splits=n_splits)
     sharpe = []
 
-    for _train_idx, test_idx in folds:
+    if fold_model_path is None:
+        raise ValueError(
+            "CPCV needs a model fit on each fold's training indices; a single pre-trained model is in-sample."
+        )
+
+    for fold_no, (train_idx, test_idx) in enumerate(folds):
+        session = ort.InferenceSession(fold_model_path(fold_no, train_idx))
+        input_name = session.get_inputs()[0].name
         X_test = X[test_idx].astype(np.float32)
         logits = session.run(None, {input_name: X_test})[0]
         preds = logits.argmax(axis=1) - 1
@@ -96,11 +100,15 @@ def run_cpcv(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run CPCV validation against an exported ONNX model.")
     parser.add_argument("--csv", required=True, help="OHLCV CSV used to rebuild aligned validation features.")
-    parser.add_argument("--model-path", required=True, help="Path to exported ONNX model.")
     parser.add_argument("--seq-len", type=int, default=60)
     parser.add_argument("--k", type=float, default=1.5)
     parser.add_argument("--vert", type=int, default=20)
     parser.add_argument("--splits", type=int, default=6)
+    parser.add_argument(
+        "--fold-model-template",
+        required=True,
+        help="ONNX path per CPCV fold, fit on that fold's training indices, e.g. models/cpcv_fold_{fold}.onnx",
+    )
     args = parser.parse_args()
 
     from data_pipeline import build_scaled_dataset_splits
@@ -112,14 +120,12 @@ def main() -> None:
         vertical_bars=args.vert,
     )
     X = np.concatenate([train[0], val[0], test[0]], axis=0)
-    y = np.concatenate([train[1], val[1], test[1]], axis=0)
     returns = np.concatenate([train[3], val[3], test[3]], axis=0)
 
     result = run_cpcv(
-        model_path=args.model_path,
         X=X,
-        y=y,
         bar_returns=returns,
+        fold_model_path=lambda fold, _train_idx: args.fold_model_template.format(fold=fold),
         n_splits=args.splits,
         annualization=metadata.annualization,
     )

@@ -114,10 +114,16 @@ public:
         string idempotencyKey = StringFormat("ASYNC_%s_%s_%.2f_%.5f_%.5f_%.5f_%I64u_%d",
                                              symbol, EnumToString(orderType), normalizedLot, executionPrice, sl, tp, magic, (int)TimeCurrent());
 
+        if(IsDuplicateIdempotencyKey(idempotencyKey))
+        {
+            PrintFormat("[ASYNC-TRADE-DUPLICATE] %s | key=%s - send suppressed", symbol, idempotencyKey);
+            return false;
+        }
+
         MqlTradeResult result = {};
         bool sent = OrderSendAsync(request, result);
 
-        if(!sent)
+        if(!sent || (result.retcode != TRADE_RETCODE_PLACED && result.retcode != TRADE_RETCODE_DONE))
         {
             PrintFormat("[ASYNC-TRADE-FAILED] %s | retcode=%u | comment=%s | err=%d",
                         symbol, result.retcode, result.comment, GetLastError());

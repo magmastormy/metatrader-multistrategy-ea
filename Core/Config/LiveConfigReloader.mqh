@@ -162,16 +162,37 @@ private:
 };
 
 // JSON parsing helpers (MQL5 Json functions are limited)
+bool JsonIsNumericLiteral(const string valueStr) {
+    if(valueStr == "") return false;
+    for(int i = 0; i < StringLen(valueStr); i++) {
+        ushort c = StringGetCharacter(valueStr, i);
+        bool digit = (c >= '0' && c <= '9');
+        bool sign = (c == '+' || c == '-');
+        bool point = (c == '.');
+        bool exponent = (c == 'e' || c == 'E');
+        if(!digit && !sign && !point && !exponent) return false;
+    }
+    return true;
+}
+
 double JsonGetDouble(string json, string path, double defaultVal) {
     // Simple dot-path parser: "risk.maxRiskPerTrade"
     string valueStr = JsonExtractValue(json, path);
     if(valueStr == "") return defaultVal;
+    if(!JsonIsNumericLiteral(valueStr)) {
+        PrintFormat("[LIVE-CONFIG] %s is not numeric (%s) - keeping default %.4f", path, valueStr, defaultVal);
+        return defaultVal;
+    }
     return StringToDouble(valueStr);
 }
 
 long JsonGetLong(string json, string path, long defaultVal) {
     string valueStr = JsonExtractValue(json, path);
     if(valueStr == "") return defaultVal;
+    if(!JsonIsNumericLiteral(valueStr)) {
+        PrintFormat("[LIVE-CONFIG] %s is not an integer (%s) - keeping default %d", path, valueStr, defaultVal);
+        return defaultVal;
+    }
     return StringToInteger(valueStr);
 }
 
@@ -179,7 +200,10 @@ bool JsonGetBool(string json, string path, bool defaultVal) {
     string valueStr = JsonExtractValue(json, path);
     if(valueStr == "") return defaultVal;
     StringToLower(valueStr);
-    return valueStr == "true" || valueStr == "1" || valueStr == "yes";
+    if(valueStr == "true" || valueStr == "1") return true;
+    if(valueStr == "false" || valueStr == "0") return false;
+    PrintFormat("[LIVE-CONFIG] %s is not boolean (%s) - keeping default %s", path, valueStr, defaultVal ? "true" : "false");
+    return defaultVal;
 }
 
 string JsonGetString(string json, string path, string defaultVal) {

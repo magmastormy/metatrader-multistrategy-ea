@@ -533,6 +533,7 @@ def _split_arrays(
     timestamps: np.ndarray,
     train_ratio: float,
     val_ratio: float,
+    purge: int,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
     n = len(X)
     if n < 48:
@@ -543,8 +544,11 @@ def _split_arrays(
     train_end = max(24, min(train_end, n - 24))
     val_end = max(train_end + 12, min(val_end, n - 12))
 
-    train = (X[:train_end], y[:train_end], weights[:train_end], returns[:train_end], timestamps[:train_end])
-    val = (X[train_end:val_end], y[train_end:val_end], weights[train_end:val_end], returns[train_end:val_end], timestamps[train_end:val_end])
+    # A triple-barrier label reads up to `purge` bars ahead, so the last samples before each boundary can see the next segment.
+    train_stop = train_end - purge
+    val_stop = val_end - purge
+    train = (X[:train_stop], y[:train_stop], weights[:train_stop], returns[:train_stop], timestamps[:train_stop])
+    val = (X[train_end:val_stop], y[train_end:val_stop], weights[train_end:val_stop], returns[train_end:val_stop], timestamps[train_end:val_stop])
     test = (X[val_end:], y[val_end:], weights[val_end:], returns[val_end:], timestamps[val_end:])
     return train, val, test
 
@@ -630,7 +634,7 @@ def build_dataset_splits(
         if len(X) < 48:
             continue
 
-        train, val, test = _split_arrays(X, y, w, r, ts, train_ratio, val_ratio)
+        train, val, test = _split_arrays(X, y, w, r, ts, train_ratio, val_ratio, purge=vertical_bars)
         train_parts.append(train)
         val_parts.append(val)
         test_parts.append(test)
