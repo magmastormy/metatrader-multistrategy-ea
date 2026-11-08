@@ -578,12 +578,12 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
     if(step <= 0.0)
         return volume;
     
-    // Same step floor as ValidatePositionSize: 8 digits, never 2dp
+    // Same step floor as ValidatePositionSize: 8 digits, never 2dp.
+    // Not raised to the broker minimum here: the risk gate owns that round-up and rescales risk for it,
+    // and sub-minimum lots are refused at execution.
     long wholeSteps = (long)MathFloor(volume / step + 1e-9);
     double normalized = NormalizeDouble(wholeSteps * step, 8);
-    
-    if(normalized < minVol)
-        normalized = minVol;
+
     if(normalized > maxVol)
         normalized = maxVol;
     

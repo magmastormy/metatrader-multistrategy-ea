@@ -145,32 +145,76 @@ public:
          return;
 
       uint nowMs = GetTickCount();
+      uint expireThresholdMs = m_maxLatencyMs * 3;
+      uint abandonThresholdMs = expireThresholdMs * 10;
 
       for(int i = m_pendingAsyncCount - 1; i >= 0; i--)
       {
-         if(m_pendingAsync[i].confirmed || m_pendingAsync[i].expired)
+         if(m_pendingAsync[i].confirmed)
             continue;
 
          uint elapsedMs = nowMs - m_pendingAsync[i].sendTimestampMs;
 
-         // Expire orders that exceed 3x max latency without confirmation
-         uint expireThresholdMs = m_maxLatencyMs * 3;
-         if(elapsedMs > expireThresholdMs)
+         if(!m_pendingAsync[i].expired)
          {
+            if(elapsedMs <= expireThresholdMs)
+               continue;
+
             m_pendingAsync[i].expired = true;
-
-            // Release risk budget for expired order
-            riskBudget.ReleaseFallback(riskManager);
-
-            PrintFormat("[SCALP-ASYNC-EXPIRED] %s | order=%I64u | elapsed=%u ms | threshold=%u ms",
+            PrintFormat("[SCALP-ASYNC-EXPIRED] %s | order=%I64u | elapsed=%u ms | threshold=%u ms - awaiting broker state",
                         m_pendingAsync[i].symbol,
                         m_pendingAsync[i].orderTicket,
                         elapsedMs,
                         expireThresholdMs);
-
-            RemovePendingAsync(i);
          }
+
+         // A late fill is still possible while the order is live, so the budget stays reserved.
+         ulong ticket = m_pendingAsync[i].orderTicket;
+         if(OrderSelect(ticket))
+         {
+            CancelLiveOrder(ticket);
+            if(OrderSelect(ticket))
+               continue;
+         }
+
+         HistorySelect(TimeCurrent() - 86400, TimeCurrent() + 60);
+         if(!HistoryOrderSelect(ticket))
+         {
+            if(elapsedMs > abandonThresholdMs)
+            {
+               PrintFormat("[SCALP-ASYNC-UNRESOLVED] %s | order=%I64u | no broker state after %u ms - budget kept reserved",
+                           m_pendingAsync[i].symbol, ticket, elapsedMs);
+               RemovePendingAsync(i);
+            }
+            continue;
+         }
+
+         double filled = HistoryOrderGetDouble(ticket, ORDER_VOLUME_INITIAL) - HistoryOrderGetDouble(ticket, ORDER_VOLUME_CURRENT);
+         if(filled > 0.0)
+         {
+            PrintFormat("[SCALP-ASYNC-LATE-FILL] %s | order=%I64u | filled=%.4f - budget stays reserved for the position",
+                        m_pendingAsync[i].symbol, ticket, filled);
+         }
+         else
+         {
+            riskBudget.ReleaseFallback(riskManager);
+            PrintFormat("[SCALP-ASYNC-RELEASED] %s | order=%I64u | no fill - risk budget released",
+                        m_pendingAsync[i].symbol, ticket);
+         }
+
+         RemovePendingAsync(i);
       }
+   }
+
+   static void CancelLiveOrder(const ulong ticket)
+   {
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+      request.action = TRADE_ACTION_REMOVE;
+      request.order = ticket;
+      if(!OrderSend(request, result) || result.retcode != TRADE_RETCODE_DONE)
+         PrintFormat("[SCALP-ASYNC-CANCEL] Ticket=%I64u cancel retcode=%u comment=%s",
+                     ticket, result.retcode, result.comment);
    }
 
    void RemovePendingAsync(int index)

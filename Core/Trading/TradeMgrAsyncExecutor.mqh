@@ -15,6 +15,8 @@
 #include "TradeDescriptor.mqh"
 #include "ExecutionQualityTracker.mqh"
 
+#define ASYNC_RECONCILE_MAX_ATTEMPTS 20
+
 class CTradeMgrAsyncExecutor
 {
 private:
@@ -221,17 +223,14 @@ public:
                 receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
                 receipt.symbol          = m_pendingAsyncTrades[i].symbol;
                 receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-                receipt.note            = "async_confirmed";
+                receipt.note            = m_pendingAsyncTrades[i].expired ? "async_late_fill" : "async_confirmed";
                 if(m_pendingAsyncTrades[i].submitTime > 0)
                 {
                     ulong elapsedMs = (ulong)(TimeCurrent() - m_pendingAsyncTrades[i].submitTime) * 1000;
                     receipt.roundTripMs = elapsedMs;
                 }
                 execQuality.UpdateExecutionMetrics(receipt);
-
-                for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
-                    m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
-                ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
+                RemovePendingAt(i);
 
                 break;
             }
@@ -241,50 +240,98 @@ public:
 // Check for timed-out async trades (call from OnTimer)
     void CheckAsyncTimeouts(CExecutionQualityTracker &execQuality)
     {
-        int pendingCount = ArraySize(m_pendingAsyncTrades);
-        if(pendingCount == 0)
-            return;
-
         datetime checkTime = TimeCurrent();
 
-        for(int i = pendingCount - 1; i >= 0; i--)
+        for(int i = ArraySize(m_pendingAsyncTrades) - 1; i >= 0; i--)
         {
-            if(m_pendingAsyncTrades[i].confirmed || m_pendingAsyncTrades[i].expired)
+            if(m_pendingAsyncTrades[i].confirmed)
                 continue;
 
-            long elapsedMs = (long)(checkTime - m_pendingAsyncTrades[i].submitTime) * 1000;
-
-            if(elapsedMs > m_pendingAsyncTrades[i].timeoutMs)
+            if(!m_pendingAsyncTrades[i].expired)
             {
-                m_pendingAsyncTrades[i].expired = true;
+                long elapsedMs = (long)(checkTime - m_pendingAsyncTrades[i].submitTime) * 1000;
+                if(elapsedMs <= m_pendingAsyncTrades[i].timeoutMs)
+                    continue;
 
-                PrintFormat("[ASYNC-TRADE-TIMEOUT] Ticket=%I64u expired after %I64dms (limit=%dms)",
+                m_pendingAsyncTrades[i].expired = true;
+                PrintFormat("[ASYNC-TRADE-TIMEOUT] Ticket=%I64u expired after %I64dms (limit=%dms) - reconciling with broker",
                             m_pendingAsyncTrades[i].ticket,
                             elapsedMs,
                             m_pendingAsyncTrades[i].timeoutMs);
-
-                double partialFilled = m_pendingAsyncTrades[i].filledVolume;
-                STradeExecutionReceipt receipt;
-                receipt.accepted        = partialFilled > 0.0;
-                receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
-                receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
-                receipt.filledVolume    = partialFilled;
-                receipt.averagePrice    = partialFilled > 0.0 ? m_pendingAsyncTrades[i].filledValue / partialFilled : 0.0;
-                receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
-                receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
-                receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
-                receipt.symbol          = m_pendingAsyncTrades[i].symbol;
-                receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-                receipt.note            = partialFilled > 0.0 ? "async_partial_timeout" : "async_timeout";
-                if(m_pendingAsyncTrades[i].submitTime > 0)
-                    receipt.roundTripMs = (ulong)elapsedMs;
-                execQuality.UpdateExecutionMetrics(receipt);
-
-                for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
-                    m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
-                ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
             }
+
+            if(SettleExpiredRequest(i, execQuality))
+                RemovePendingAt(i);
         }
+    }
+
+    // Returns true once the broker reports a final order state and the receipt has been emitted.
+    bool SettleExpiredRequest(const int i, CExecutionQualityTracker &execQuality)
+    {
+        const ulong ticket = m_pendingAsyncTrades[i].ticket;
+        m_pendingAsyncTrades[i].retryCount++;
+        HistorySelect(m_pendingAsyncTrades[i].submitTime - 3600, TimeCurrent() + 3600);
+
+        if(OrderSelect(ticket))
+        {
+            CancelOrderRemainder(ticket);
+            if(OrderSelect(ticket))
+                return false;
+        }
+
+        bool inHistory = HistoryOrderSelect(ticket);
+        bool unreconciled = !inHistory && m_pendingAsyncTrades[i].retryCount >= ASYNC_RECONCILE_MAX_ATTEMPTS;
+        if(!inHistory && !unreconciled)
+            return false;
+
+        double historyFilled = 0.0;
+        if(inHistory)
+            historyFilled = HistoryOrderGetDouble(ticket, ORDER_VOLUME_INITIAL) - HistoryOrderGetDouble(ticket, ORDER_VOLUME_CURRENT);
+
+        double filled = MathMax(m_pendingAsyncTrades[i].filledVolume, historyFilled);
+        if(unreconciled)
+            PrintFormat("[ASYNC-TRADE-UNRECONCILED] Ticket=%I64u | %s | no broker history after %d checks - manual position review required",
+                        ticket, m_pendingAsyncTrades[i].symbol, m_pendingAsyncTrades[i].retryCount);
+
+        STradeExecutionReceipt receipt;
+        receipt.accepted        = filled > 0.0;
+        receipt.orderTicket     = ticket;
+        receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
+        receipt.filledVolume    = filled;
+        receipt.averagePrice    = m_pendingAsyncTrades[i].filledVolume > 0.0
+                                  ? m_pendingAsyncTrades[i].filledValue / m_pendingAsyncTrades[i].filledVolume
+                                  : 0.0;
+        receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
+        receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
+        receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
+        receipt.symbol          = m_pendingAsyncTrades[i].symbol;
+        receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
+        if(unreconciled)
+            receipt.note = "async_unreconciled";
+        else
+            receipt.note = filled > 0.0 ? "async_partial_timeout" : "async_timeout";
+        if(m_pendingAsyncTrades[i].submitTime > 0)
+            receipt.roundTripMs = (ulong)(TimeCurrent() - m_pendingAsyncTrades[i].submitTime) * 1000;
+        execQuality.UpdateExecutionMetrics(receipt);
+        return true;
+    }
+
+    static void CancelOrderRemainder(const ulong ticket)
+    {
+        MqlTradeRequest request = {};
+        MqlTradeResult result = {};
+        request.action = TRADE_ACTION_REMOVE;
+        request.order = ticket;
+        if(!OrderSend(request, result) || result.retcode != TRADE_RETCODE_DONE)
+            PrintFormat("[ASYNC-TRADE-CANCEL] Ticket=%I64u remainder cancel retcode=%u comment=%s",
+                        ticket, result.retcode, result.comment);
+    }
+
+    void RemovePendingAt(const int index)
+    {
+        for(int j = index; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
+            m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
+        ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
     }
 
 // Persist async trade request to CSV for replay on restart

@@ -44,7 +44,23 @@ public:
     void ApplyQuorumProfile(const int profile);
     void ApplyFamilyEngineWeights(const string symbol);
     void ApplyAssetClassEngineWeights(const string symbol);
+
+private:
+    double LoadAIBaseWeight(const int index);
 };
+
+double CConsensusWeightingConfig::LoadAIBaseWeight(const int index)
+{
+    if(m_aiBaseWeights[index] >= 0.0)
+        return m_aiBaseWeights[index];
+
+    string key = StringSubstr("AIBW_" + m_src.GetManagedSymbol() + "_" + m_src.GetStrategyName(index), 0, 63);
+    if(!GlobalVariableCheck(key))
+        GlobalVariableSet(key, m_src.GetStrategyWeight(index));
+
+    m_aiBaseWeights[index] = GlobalVariableGet(key);
+    return m_aiBaseWeights[index];
+}
 
 void CConsensusWeightingConfig::UpdateStrategyWeights()
 {
@@ -58,9 +74,9 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         ArrayInitialize(m_aiBaseWeights, -1.0);
     }
 
-    // L6-016: AI profitability multiplier, AI rows only - avgProfit carries that number because
-    // UpdateAIPerformanceMetrics writes it there. The target is always derived from the first
-    // weight seen for the row, so repeated updates cannot compound; movement toward the target is smoothed.
+    // AI rows: the target is always derived from the persisted baseline, so repeated updates cannot
+    // compound. Insufficient evidence (below AI_WEIGHT_MIN_PREDICTIONS) yields a zero multiplier, which
+    // makes the target the baseline and the weight relaxes back toward it.
     for(int i = 0; i < strategyCount; i++)
     {
         IStrategy* strategy = m_src.GetStrategyPtr(i);
@@ -72,18 +88,16 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         if(!isAI)
             continue;
 
-        if(m_aiBaseWeights[i] < 0.0)
-            m_aiBaseWeights[i] = m_src.GetStrategyWeight(i);
-
+        double baseWeight = LoadAIBaseWeight(i);
         double aiProfitability = MathMax(-0.2, MathMin(0.2, m_src.GetStrategyAvgProfit(i)));
-        double target = MathMax(0.0, MathMin(10.0, m_aiBaseWeights[i] * (1.0 + aiProfitability)));
+        double target = MathMax(0.0, MathMin(10.0, baseWeight * (1.0 + aiProfitability)));
         double current = m_src.GetStrategyWeight(i);
         double newWeight = MathMax(0.0, MathMin(10.0, current + AI_WEIGHT_SMOOTHING * (target - current)));
         m_src.ApplyRawStrategyWeight(i, newWeight);
 
         PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | base=%.3f | target=%.3f | newWeight=%.3f",
                     m_src.GetManagedSymbol(), m_src.GetStrategyName(i), aiProfitability,
-                    m_aiBaseWeights[i], target, newWeight);
+                    baseWeight, target, newWeight);
     }
 }
 

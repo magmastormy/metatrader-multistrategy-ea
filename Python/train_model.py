@@ -230,7 +230,7 @@ def main() -> None:
     arrays = [
         np.concatenate([train_split[i], val_split[i], test_split[i]], axis=0) for i in range(5)
     ]
-    X_all, _, _, returns_all, _ = arrays
+    X_all, _, _, returns_all, timestamps_all = arrays
 
     fold_dir = Path(tempfile.mkdtemp(prefix="cpcv_folds_"))
 
@@ -261,6 +261,8 @@ def main() -> None:
         cpcv = run_cpcv(
             X=X_all,
             bar_returns=returns_all,
+            timestamps=timestamps_all,
+            vertical_bars=args.vert,
             fold_model_path=fold_model_path,
             n_splits=args.cpcv_splits,
             annualization=metadata.annualization,
