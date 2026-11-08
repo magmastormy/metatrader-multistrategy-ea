@@ -1945,7 +1945,7 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     UpdateDynamicSlippage(symbol);
 
     return m_asyncExecutor.SubmitAsync(orderType, symbol, normalizedLot, executionPrice, sl, tp,
-                                       magic, timeoutMs, m_slippage, m_orderFillMode);
+                                       magic, timeoutMs, m_slippage, m_trade.RequestTypeFilling());
 }
 
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,

@@ -227,9 +227,9 @@ public:
             tpPrice = currentPrice - 1.5 * slDistance;  // 1.5R
         }
 
-        // Pips are ATR-denominated (1 ATR = 1 unit): SYMBOL_POINT pips are FX-calibrated and break on synthetics
-        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
-        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
+        const double gatePoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double slPips = (gatePoint > 0 && slDistance > 0) ? (slDistance / gatePoint) : 0.0;
+        double tpPips = (gatePoint > 0) ? (MathAbs(tpPrice - currentPrice) / gatePoint) : 0.0;
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

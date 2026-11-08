@@ -140,9 +140,9 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
         ArraySetAsSeries(ma50Values, true);
         ArraySetAsSeries(ma200Values, true);
 
-        if(CopyBuffer(m_indicators.Ma20Handle(), 0, 0, 3, ma20Values) > 0 &&
-           CopyBuffer(m_indicators.Ma50Handle(), 0, 0, 3, ma50Values) > 0 &&
-           CopyBuffer(m_indicators.Ma200Handle(), 0, 0, 3, ma200Values) > 0) {
+        if(CopyBuffer(m_indicators.Ma20Handle(), 0, 0, 3, ma20Values) == 3 &&
+           CopyBuffer(m_indicators.Ma50Handle(), 0, 0, 3, ma50Values) == 3 &&
+           CopyBuffer(m_indicators.Ma200Handle(), 0, 0, 3, ma200Values) == 3) {
 
             bool uptrend = ma20Values[0] > ma50Values[0] && ma50Values[0] > ma200Values[0];
             bool downtrend = ma20Values[0] < ma50Values[0] && ma50Values[0] < ma200Values[0];

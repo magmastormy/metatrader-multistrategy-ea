@@ -63,6 +63,7 @@ private:
 
     bool   m_squeezeActive;
     int    m_squeezeBarCount;
+    datetime m_squeezeCountedBar;
     double m_lastBBUpper;
     double m_lastBBLower;
     double m_lastKCUpper;
@@ -118,6 +119,7 @@ public:
         m_riskManager(NULL),
         m_squeezeActive(false),
         m_squeezeBarCount(0),
+        m_squeezeCountedBar(0),
         m_lastBBUpper(0),
         m_lastBBLower(0),
         m_lastKCUpper(0),
@@ -219,7 +221,13 @@ public:
 
         if(currentSqueeze)
         {
-            m_squeezeBarCount++;
+            // Repeated evaluations inside one closed bar must not satisfy the minimum squeeze length.
+            datetime closedBarTime = iTime(m_symbol, m_timeframe, 1);
+            if(closedBarTime != m_squeezeCountedBar)
+            {
+                m_squeezeBarCount++;
+                m_squeezeCountedBar = closedBarTime;
+            }
             m_squeezeActive = true;
         }
         else
