@@ -80,6 +80,9 @@ public:
          else
             profitPoints = (openPrice - currentPrice) / point;
 
+         const double minStopDistance = (double)MathMax(SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL),
+                                                        SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) * point;
+
          // SL distance in points (1R)
          double slDistancePoints = 0.0;
          if(posType == POSITION_TYPE_BUY)
@@ -129,9 +132,9 @@ public:
             // Only move SL if it improves the position
             bool shouldMove = false;
             if(posType == POSITION_TYPE_BUY && (currentSL < beSL || currentSL == 0.0))
-               shouldMove = true;
+               shouldMove = (beSL <= currentPrice - minStopDistance);
             else if(posType == POSITION_TYPE_SELL && (currentSL > beSL || currentSL == 0.0))
-               shouldMove = true;
+               shouldMove = (beSL >= currentPrice + minStopDistance);
 
             if(shouldMove)
             {
@@ -162,7 +165,8 @@ public:
             double newSL = 0.0;
             if(posType == POSITION_TYPE_BUY)
             {
-               newSL = NormalizeDouble(currentPrice - trailingDistancePoints * point, digits);
+               newSL = NormalizeDouble(MathMin(currentPrice - trailingDistancePoints * point,
+                                               currentPrice - minStopDistance), digits);
                if(newSL > currentSL && !trade.PositionModify(ticket, newSL, currentTP))
                {
                   PrintFormat("[ATR-SCALP-MODIFY-FAILED] %s | ticket=%I64u | action=trail | retcode=%u",
@@ -171,7 +175,8 @@ public:
             }
             else
             {
-               newSL = NormalizeDouble(currentPrice + trailingDistancePoints * point, digits);
+               newSL = NormalizeDouble(MathMax(currentPrice + trailingDistancePoints * point,
+                                               currentPrice + minStopDistance), digits);
                if((currentSL == 0.0 || newSL < currentSL) && !trade.PositionModify(ticket, newSL, currentTP))
                {
                   PrintFormat("[ATR-SCALP-MODIFY-FAILED] %s | ticket=%I64u | action=trail | retcode=%u",

@@ -50,6 +50,19 @@ public:
             return false;
         }
 
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        double projectedMargin = AccountInfoDouble(ACCOUNT_MARGIN) + marginRequired;
+        if(projectedMargin > 0.0)
+        {
+            double projectedLevel = equity / projectedMargin * 100.0;
+            if(projectedLevel < m_minMarginLevel)
+            {
+                message = StringFormat("Projected post-trade margin level %.2f%% below threshold %.0f%% [mode: %s]",
+                                     projectedLevel, m_minMarginLevel, isHedging ? "hedging" : "netting");
+                return false;
+            }
+        }
+
         return true;
     }
 

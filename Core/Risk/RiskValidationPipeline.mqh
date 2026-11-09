@@ -607,32 +607,18 @@ public:
     double projectedPortfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, result.riskPercent);
     if(projectedPortfolioRisk > m_config.maxPortfolioRiskPercent)
     {
-        // Cold-start bypass of the portfolio cap: exceeding maxPortfolioRiskPercent is logged, not refused. Nothing
-        // splits the cap across symbols and no aggregate limit holds; GetEffectiveRiskPerTrade() is the only check left.
-        int openPositionCount = PositionsTotal();
-        int virtualReservationCount = preValidationReservations;
-        bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
-
-        if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= m_host.GetEffectiveRiskPerTrade(request.symbol))
-                {
-                    PrintFormat("[RISK-PORTFOLIO] Bootstrap mode: distributing %.2f%% cap across requesting symbols (no open positions)",
-                                m_config.maxPortfolioRiskPercent);
-                }
-                else
-                {
-                    result.approved = false;
-                    result.severity = ERROR_LEVEL_WARNING;
-                    result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                                  phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
-                    PrintFormat("[RISK-GATE-REJECT] %s | reason=portfolio_risk_exceeded | open=%.2f%% + reserved=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
-                                request.symbol, openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
-                    CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PORTFOLIO_RISK_EXCEEDED",
-                        StringFormat("Open %.2f%% + reserved %.2f%% + new %.2f%% > limit %.2f%%", openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent),
-                        openExposureRisk + reservedRisk + result.riskPercent, m_config.maxPortfolioRiskPercent, corrId);
-                    CJsonLogger::ClearCorrelationId();
-                    m_host.ReleaseVirtualPosition(virtualOwnerTag);
-                    return result;
-                }
+        result.approved = false;
+        result.severity = ERROR_LEVEL_WARNING;
+        result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+                                      phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
+        PrintFormat("[RISK-GATE-REJECT] %s | reason=portfolio_risk_exceeded | open=%.2f%% + reserved=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
+                    request.symbol, openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PORTFOLIO_RISK_EXCEEDED",
+            StringFormat("Open %.2f%% + reserved %.2f%% + new %.2f%% > limit %.2f%%", openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent),
+            openExposureRisk + reservedRisk + result.riskPercent, m_config.maxPortfolioRiskPercent, corrId);
+        CJsonLogger::ClearCorrelationId();
+        m_host.ReleaseVirtualPosition(virtualOwnerTag);
+        return result;
     }
 
     // Per-family position cap: 2 for crash/boom, step, jump and hybrid, 3 otherwise. DetectFamily answers

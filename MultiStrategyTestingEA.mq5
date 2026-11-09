@@ -397,7 +397,6 @@ input double   InpRiskMaxClusterExposurePct = 5.0;
 input group "=== PORTFOLIO PROFIT TARGET ==="
 input double   InpDailyProfitTargetPercent = 2.0;
 input double   InpProfitTrailFactor = 0.7;
-input double   InpProfitTargetHardFloorRatio = 0.50;
 input int      InpDailyHaltCooldownMinutes = 30;
 
 //--- Symbol Validation
@@ -1304,7 +1303,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     // Portfolio Profit Target
     config.dailyProfitTargetPercent = InpDailyProfitTargetPercent;
     config.profitTrailFactor = InpProfitTrailFactor;
-    config.profitTargetHardFloorRatio = InpProfitTargetHardFloorRatio;
     config.dailyHaltCooldownMinutes = InpDailyHaltCooldownMinutes;
 
     // Dual-Mode Auto-Switching
