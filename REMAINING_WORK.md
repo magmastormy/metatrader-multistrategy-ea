@@ -294,10 +294,38 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 
 ---
 
+## Additional findings (fourth pass)
+
+### 44. Missing tick data returns zero risk or zero size instead of refusing
+- **What:** `CUnifiedRiskManager` falls back to 0.0 risk when `SYMBOL_TRADE_TICK_VALUE` or `SYMBOL_TRADE_TICK_SIZE` is missing, and its own comment says this "charges no risk". `PositionSizer` returns 0.0 for the same missing values. A zero-risk trade passes the risk gate, and a zero size may be handled differently by each caller.
+- **Where:** `UnifiedRiskManager.mqh` lines 1642-1646; `PositionSizer.mqh` lines 688-696.
+- **Files:** `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/PositionSizer.mqh`, and the callers of both
+- **Fix idea:** Return a sentinel (for example a negative value or a bool with an error code) and make the risk gate reject the trade. Log the symbol and the missing field. Cache the last valid tick data per symbol for short gaps rather than using zero.
+
+### 45. mql5_v2.py installs dependencies through an unquoted shell string
+- **What:** The `pip install` strings contain `torch>=2.1.0` and similar specs and run with `shell=True`. The shell treats `>` as an output redirect, so the version constraints are dropped and files named like `=2.1.0` are created in the working directory. The install also runs as an import-time side effect of the script.
+- **Where:** `mql5_v2.py` lines 27-29.
+- **Files:** `Python/mql5_v2.py`, and any generated copy in `Python/write_colab.py`
+- **Fix idea:** Move the requirements to a pinned `requirements.txt` or a list passed to `subprocess.check_call([sys.executable, "-m", "pip", "install", ...])` without `shell=True`. Keep installs out of module import and check that the requirements file loads.
+
+### 46. Position-count caps may count positions this EA does not own
+- **What:** `PositionSizer` counts every open position on the account, and the comment says this is intentional. Other loops that count `PositionsTotal()` do not show a magic-number filter in the lines reviewed. Manual or other-EA positions could consume the EA's caps, or the cap could be enforced on the wrong set.
+- **Where:** `PositionSizer.mqh` lines 780-782; the count loops in `PortfolioRiskManager.mqh` (around 277, 350, 468, 510) and `RiskValidationPipeline.mqh` (around 1020). `RiskCircuitBreaker.mqh` line 390 already filters by magic.
+- **Files:** `Core/Risk/PositionSizer.mqh`, `Core/Risk/PortfolioRiskManager.mqh`, `Core/Risk/RiskValidationPipeline.mqh`, `Core/Risk/CorrelationEngine.mqh`
+- **Fix idea:** Decide one ownership rule. Use `IsMagicOwned()` for EA caps, and keep a separate account-wide check only where it is intended. Document the rule in one helper.
+
+### 47. Retraining request file is truncated before it is rewritten
+- **What:** The request log is opened with `FILE_WRITE`, which truncates it, and then the kept rows are written back. A crash or write failure between those steps loses the pending retraining requests.
+- **Where:** `AIPerformanceFeedback.mqh` lines 829-830 (rewrite) and 774-776 (append).
+- **Files:** `Core/AI/AIPerformanceFeedback.mqh`
+- **Fix idea:** Write the trimmed rows to a temp file and replace the original, the same approach as `crash_recovery_helpers.mqh`. Check the `FileMove` result and keep the original on failure.
+
+---
+
 ## Suggested order
 1. Items 1 to 6 and 24 to 27 (model validity; these affect every reported metric).
 2. Items 7 and 8 (AI label and weight logic).
 3. Items 9 to 14, 31, 43 (execution safety, including the raw `CTrade` paths).
-4. Items 15 to 19, 32 (risk, exposure and bar-state reads).
+4. Items 15 to 19, 32, 44 and 46 (risk, exposure and bar-state reads; fail-open sizing).
 5. Items 39 and 40 (dashboard exposure and unexecuted commands), then items 20, 28 to 30 and 41 (config parser, model loading, endpoints and ZMQ lifecycle).
-6. Items 42, 21 to 23 and 33 to 38 (blocking sleeps, compile, recovery, duplication, cleanup).
+6. Items 42, 45, 47, 21 to 23 and 33 to 38 (blocking sleeps, install script, retraining log, compile, recovery, duplication, cleanup).
