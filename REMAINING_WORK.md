@@ -260,10 +260,44 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 
 ---
 
+## Additional findings (third pass)
+
+### 39. Dashboard server is exposed on all interfaces without auth
+- **What:** `SERVER_HOST` is `0.0.0.0`, and `POST /state`, `POST /api/control/command`, and `POST /api/control/ack/{id}` have no authentication. Anyone on the same network can push fake state into the dashboard or queue commands.
+- **Where:** `config.py` line 4; `dashboard_server.py` lines 89-116 and 183-200.
+- **Files:** `Dashboard/server/config.py`, `Dashboard/server/dashboard_server.py`, `Core/Utils/DashBridgeTransport.mqh`
+- **Fix idea:** Default the host to `127.0.0.1`. Require a shared token from the environment in an `X-Api-Key` header on all write routes, and send it from `CDashBridgeTransport`. Keep `allow_credentials` off unless it is needed.
+
+### 40. Dashboard commands are acknowledged but never executed
+- **What:** `CDashBridgeTransport` polls `/api/control/commands`, logs `[DASHBOARD-CMD]`, and POSTs an ack for every command. There is no handler, so a command is reported as handled when nothing happened. The ack also happens before any validation.
+- **Where:** `DashBridgeTransport.mqh` lines 263-310.
+- **Files:** `Core/Utils/DashBridgeTransport.mqh`, `Dashboard/server/dashboard_server.py`
+- **Fix idea:** Either delete the command channel, or add a whitelist of command types (for example pause, resume) that route into existing orchestrator methods. Ack only after the handler returns a result, and send that result with the ack. Reject unknown types with an error ack.
+
+### 41. ZMQ heartbeat branch is unreachable and the server can shut itself down while idle
+- **What:** The EA's heartbeat is an HTTP `GET /heartbeat` (`PyBridgeHealth.mqh` line 127). The ZMQ `type == "heartbeat"` branch comes after the `features` check, so a heartbeat without `features` is rejected. `_run_zmq` also calls `shutdown()` when no request has arrived for `heartbeat_timeout` seconds, and with `--disable-http` nothing refreshes the timestamp during quiet periods.
+- **Where:** `zmq_server.py` lines 545-582 and 600-605 (`shutdown` call at 549); the HTTP heartbeat at line 271.
+- **Files:** `Python/zmq_server.py`, and the ZMQ client if one exists in MQL5 (no ZMQ client was found in this repo)
+- **Fix idea:** Move the heartbeat check above the `features` check. Have the heartbeat be a real client message, or drop the idle shutdown and rely on the HTTP heartbeat. Confirm which transport the EA uses before changing the timeout.
+
+### 42. Blocking Sleep calls remain on indicator and cache paths
+- **What:** `TrendADX.mqh` sleeps 50 ms on a retry, `MarketAnalysisIndicators.mqh` sleeps 50 ms per retry, and `MarketAnalysisMetrics.mqh` sleeps 10 ms. `ScalpSignalCache.mqh` sleeps 1500 ms and 1000 ms per symbol during load. `SafeCopyBuffer.mqh` already removed its Sleep for the same reason, so the policy is inconsistent.
+- **Where:** `TrendADX.mqh` line 265; `MarketAnalysisIndicators.mqh` lines 377-378; `MarketAnalysisMetrics.mqh` line 105; `ScalpSignalCache.mqh` lines 161 and 189.
+- **Files:** `Core/Engines/TrendADX.mqh`, `Core/Engines/MarketAnalysisIndicators.mqh`, `Core/Engines/MarketAnalysisMetrics.mqh`, `Core/Scalp/ScalpSignalCache.mqh`
+- **Fix idea:** Remove Sleep from any path that can run from `OnTick`. Return "not ready" and retry on the next tick. Move the `ScalpSignalCache` waits into `OnInit` with a bounded total budget, or check whether it is reached only on init.
+
+### 43. ATR scalp entry sends orders through a raw CTrade
+- **What:** `ATRScalpEntry.mqh` opens positions with `trade.Buy`/`trade.Sell`, so it does not use the central send path. It is not covered by the spike or grid items.
+- **Where:** `ATRScalpEntry.mqh` lines 195-200.
+- **Files:** `Core/Scalp/ATRScalpEntry.mqh`, `Core/Trading/TradeManager.mqh`
+- **Fix idea:** Route the entry through `CTradeManager` and `RiskValidationPipeline`, the same as item 11, and remove the raw `trade` object from this path.
+
+---
+
 ## Suggested order
 1. Items 1 to 6 and 24 to 27 (model validity; these affect every reported metric).
 2. Items 7 and 8 (AI label and weight logic).
-3. Items 9 to 14 and 31 (execution safety, including the raw `CTrade` paths).
-4. Items 15 to 19 and 32 (risk, exposure and bar-state reads).
-5. Items 20, 28 to 30 (config parser, model loading and external endpoints).
-6. Items 21 to 23 and 34 to 38 (compile, recovery, duplication, cleanup).
+3. Items 9 to 14, 31, 43 (execution safety, including the raw `CTrade` paths).
+4. Items 15 to 19, 32 (risk, exposure and bar-state reads).
+5. Items 39 and 40 (dashboard exposure and unexecuted commands), then items 20, 28 to 30 and 41 (config parser, model loading, endpoints and ZMQ lifecycle).
+6. Items 42, 21 to 23 and 33 to 38 (blocking sleeps, compile, recovery, duplication, cleanup).
