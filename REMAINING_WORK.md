@@ -127,7 +127,7 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 - **Fix idea:** Compute the US DST state for each candidate date (second Sunday of March to first Sunday of November, 2:00 local), and compute the broker offset per candidate using the bar's own time rather than `TimeCurrent()`.
 
 ### 19. Crisis limits and hardcoded thresholds
-- **What:** Some thresholds are fixed in code. They should be inputs so they can be tuned per account.
+- **What:** The ATR crisis ratio thresholds are already EA inputs (`InpAtrCrisisRatioThreshold*`), so they are done. Remaining fixed literals still need to be found and moved to inputs.
 - **Where:** Search for numeric literals in risk and crisis code.
 - **Files:** `Core/Config/OrchestratorConfig.mqh`, `Core/Risk/*.mqh`, `MultiStrategyAutonomousEA.mq5`, `MultiStrategyTestingEA.mq5`, and matching `.set` files
 - **Fix idea:** Add inputs with the current values as defaults. Update the `.set` files. Note that removing the unused profit-floor key already changed `.set` mapping.
@@ -162,14 +162,108 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 - **What:** Changes are meant to stay uncommitted. Recent status notices were inconsistent, so commit state has not been confirmed.
 - **Where:** Repository root.
 - **Files:** None
-- **Fix idea:** Check `git status` before any further work and confirm that only the intended files differ.
+- **Fix idea:** Git commands are blocked by the environment's ACL, so confirm the state through the UI History tab. A push notice showed commit `9bfe6fe` on branch `ai_main_3ae626c74d1641fb8261`; this was not triggered by a push request in this session, so check whether those commits contain the intended changes.
+
+---
+
+## Additional findings (second pass)
+
+### 24. mql5_v2.py CPCV purge is sample-count based and misses gaps between test groups
+- **What:** `purge_embargo` builds its mask only from `test_idx.min()` and `test_idx.max()`, and it purges by a fixed 5 samples. CPCV test sets are two non-contiguous groups, so training samples that sit between those groups are kept even though they overlap the test labels.
+- **Where:** `purge_embargo` (lines 826-829) and `cpcv_folds` (lines 831-839) in `mql5_v2.py`.
+- **Files:** `Python/mql5_v2.py`
+- **Fix idea:** Delete the local copy and import `purge_embargo` and `cpcv_folds` from `Python/validate_model.py`, which checks each training sample against every test start within the label horizon. This also closes the sample-count part of item 3.
+
+### 25. Duplicate label logic in mql5_v2.py
+- **What:** `triple_barrier_labels` (line 206) is a second implementation next to `data_pipeline.triple_barrier_labels` (line 102). Any fix to one can silently miss the other.
+- **Where:** `Python/mql5_v2.py` line 206; `Python/data_pipeline.py` line 102.
+- **Files:** `Python/mql5_v2.py`, `Python/data_pipeline.py`
+- **Fix idea:** Keep one implementation in `data_pipeline.py` and import it. Check that the two versions currently agree on tie-breaks and horizon before deleting the copy.
+
+### 26. Stacker meta-features are left as zeros for the first block
+- **What:** `TimeSeriesSplit` only puts the last `n_splits` blocks into validation folds. The first block of rows is only ever training data, so `meta_X` stays all zeros there, and the ridge meta-learner is fitted on those zero rows.
+- **Where:** `train_stacker.py` lines 77-92; `train_deriv_stacker.py` lines 95-110; `write_colab.py` lines 731-745 and 832-842 (generated Colab code).
+- **Files:** `Python/train_stacker.py`, `Python/train_deriv_stacker.py`, `Python/write_colab.py`
+- **Fix idea:** Build out-of-fold predictions that cover every row, for example by training each base model per fold as CPCV now does. Add an assertion that no `meta_X` row is all zeros.
+
+### 27. Stacker base-model predictions may be in-sample
+- **What:** The LightGBM, CatBoost and XGBoost pickles are loaded and then used to predict rows in `X_all`, which is the same train and validation data used to fit the stacker. The base models' training spans are not recorded, so the meta-learner may over-trust base models.
+- **Where:** `train_stacker.py` lines 52-75; `train_deriv_stacker.py` lines 70-95.
+- **Files:** `Python/train_stacker.py`, `Python/train_deriv_stacker.py`, `Python/write_colab.py`
+- **Fix idea:** Save each base model's training date range with its pickle. Generate stacker features only from out-of-fold or post-training data, and apply the same label-horizon purge used elsewhere.
+
+### 28. Pickle loads of model files
+- **What:** Models are loaded with `pickle.load`, which executes code embedded in the file. Files are local, so the risk is low, but a swapped or corrupted model file runs arbitrary code at startup.
+- **Where:** `zmq_server.py` lines 109-112 and 191-222; `train_stacker.py` lines 52-63; `train_deriv_stacker.py` lines 70-81; `write_colab.py` lines 720-729 and 818-819.
+- **Files:** `Python/zmq_server.py`, `Python/train_stacker.py`, `Python/train_deriv_stacker.py`, `Python/write_colab.py`
+- **Fix idea:** Use `joblib` with a SHA-256 manifest checked before load, or export the GBDT models to ONNX so the server does not unpickle at all.
+
+### 29. ZMQ prediction server has no authentication
+- **What:** The server binds to `127.0.0.1`, which is good, but any local process can request predictions or state.
+- **Where:** `zmq_server.py` line 138.
+- **Files:** `Python/zmq_server.py`
+- **Fix idea:** Require a shared secret in each request, loaded from the environment. Keep the loopback bind.
+
+### 30. External LLM endpoint defaults and influence on weights
+- **What:** When no endpoint is set, `CAIEngine` falls back to `http://localhost:11434` when `useExternalLLM` is on. `QueryExternalLLM` sends a market prompt over `WebRequest` on the adaptation path. It is not yet verified whether the LLM response can change strategy weights without bounds.
+- **Where:** `AIEngine.mqh` lines 171-175 and 181-205. Adaptation is called from `EAOrchestrator.mqh` lines 3044 and 3452.
+- **Files:** `Core/Engines/AIEngine.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
+- **Fix idea:** Make the endpoint explicit with no default. Treat any LLM output as advisory, clamp it to the same bounds as item 8, and log the query without the full prompt.
+
+### 31. Grid recovery bypasses TradeManager and uses a hardcoded slippage
+- **What:** `GridRecoveryExecution` sends orders through its own `CTrade` and falls back to a fixed 50-point deviation when `m_tradeManager` is NULL. Position closes also use the raw `CTrade` with no retry or reconciliation.
+- **Where:** `GridRecoveryExecution.mqh` lines 111-131 (send) and 227-231 (close).
+- **Files:** `Core/Scalp/GridRecoveryExecution.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
+- **Fix idea:** Route sends and closes through `CTradeManager` as the only path. Refuse to trade when it is NULL, and take slippage from `GetDynamicSlippage`.
+
+### 32. Market structure breaks read the forming bar
+- **What:** Consolidation breakout checks use `iHigh` and `iLow` at shift 0, which is the forming bar. Other break classification in the same file was moved to shift 1 for this reason, so this check flips tick by tick.
+- **Where:** `MarketStructureAnalyzer.mqh` lines 333-348.
+- **Files:** `Strategies/UnifiedICTFiles/MarketStructureAnalyzer.mqh`
+- **Fix idea:** Use shift 1 for `currentHigh` and `currentLow`, matching the comment at line 428.
+
+### 33. Support and resistance touch counts include the forming bar
+- **What:** `touches` is counted over 100 bars from shift 0, so the count changes with every tick.
+- **Where:** `SupportResistanceDetector.mqh` lines 474-492.
+- **Files:** `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh`
+- **Fix idea:** Start the copy at shift 1. Recompute touches only on a new bar.
+
+### 34. Model file copy and promotion are not verified
+- **What:** `NNModelStorage_CopyBinaryFile` does not compare byte counts or hashes after copying. `PromoteTempToPrimary` truncates the primary before writing, and the restore after a failed copy ignores its return value. `ArchiveOldCheckpoint` deletes the source without checking the result.
+- **Where:** `NNModelStorage.mqh` lines 88-121 (copy), 123-145 (promote), 147-157 (archive).
+- **Files:** `Core/AI/NNModelStorage.mqh`
+- **Fix idea:** Write to a temp file, compare size and a checksum against the source, then replace the primary. Check the return value of `FileDelete` and of the restore copy.
+
+### 35. Two near-identical EA entry points
+- **What:** `MultiStrategyAutonomousEA.mq5` and `MultiStrategyTestingEA.mq5` repeat the same inputs (for example `InpMaxPositionsTotal`, lines 55 and 128) and the same config-mapping blocks. Drift between them can change behavior between the test and live builds.
+- **Where:** Input blocks and config assignment sections in both files.
+- **Files:** `MultiStrategyAutonomousEA.mq5`, `MultiStrategyTestingEA.mq5`
+- **Fix idea:** Move shared inputs and the config builder into one `.mqh` include, with only the mode-specific inputs left in each EA.
+
+### 36. Many near-identical Python training scripts
+- **What:** The repo has separate scripts for each asset class and model (for example `train_xgboost.py`, `train_deriv_xgboost.py`, `train_energies_xgboost.py`, `train_indices_xgboost.py`, `train_metals_catboost.py`, `train_forex_lgbm.py`, `train_deriv_lgbm.py`). Each one repeats the split and labeling logic, so the H11 fix has to be applied to each.
+- **Where:** `Python/train_*.py`.
+- **Files:** All `Python/train_*.py` scripts
+- **Fix idea:** Make one parameterized trainer that takes asset class and model type. Keep the split and labeling in one place.
+
+### 37. Mojibake in source comments and log strings
+- **What:** Em dashes and arrows were saved in a different encoding and now appear as `�?`. This is visible in one log string.
+- **Where:** `ATRScalpEntry.mqh` line 58; `SpikeHunterExecutor.mqh` lines 51 and 116; `VolatilityEngine.mqh` lines 490, 588 and 611.
+- **Files:** Those four files
+- **Fix idea:** Replace the characters with ASCII (`-` and `->`) and save the files as UTF-8.
+
+### 38. Comment references to batch and issue IDs
+- **What:** Comments such as `Batch 156`, `Batch104-C1`, `L10-014` and `L7-015` reference past work and will rot as the code changes.
+- **Where:** Many files, for example `SupportResistanceDetector.mqh`, `LiquidityDetector.mqh` (line 789), `GridRecoveryExecution.mqh` (line 28), `SpikeHunterExecutor.mqh`.
+- **Files:** Search with `Batch\s*\d+|L\d+-\d+`
+- **Fix idea:** Remove the IDs and keep only the reason the code is written that way.
 
 ---
 
 ## Suggested order
-1. Items 1 to 6 (model validity; these affect every reported metric).
+1. Items 1 to 6 and 24 to 27 (model validity; these affect every reported metric).
 2. Items 7 and 8 (AI label and weight logic).
-3. Items 9 to 14 (execution safety).
-4. Items 15 to 19 (risk and exposure).
-5. Item 20 (config parser).
-6. Items 21 to 23 (compile, recovery, git state).
+3. Items 9 to 14 and 31 (execution safety, including the raw `CTrade` paths).
+4. Items 15 to 19 and 32 (risk, exposure and bar-state reads).
+5. Items 20, 28 to 30 (config parser, model loading and external endpoints).
+6. Items 21 to 23 and 34 to 38 (compile, recovery, duplication, cleanup).
