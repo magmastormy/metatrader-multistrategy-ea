@@ -247,7 +247,7 @@ public:
             if(symbol != "" && m_barrierBuffer[i].entryBarTime > 0)
             {
                 int entryShift = iBarShift(symbol, timeframe, m_barrierBuffer[i].entryBarTime, false);
-                int firstShift = MathMin(entryShift - 1, 500);
+                int firstShift = MathMin(entryShift - 1, m_barrierVertBars);
                 int hitLabel = 0;
                 // Walk completed bars from entry forward in time; the stop is tested first so a bar touching both barriers counts as a loss.
                 for(int s = firstShift; s >= 1 && hitLabel == 0; s--)

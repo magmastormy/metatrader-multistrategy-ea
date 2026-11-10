@@ -24,9 +24,13 @@
 # 1. Setup and Dependencies
 # ==============================================
 import subprocess
-subprocess.check_call('pip install -q torch>=2.1.0 numpy>=1.24.0 pandas>=2.0.0 scipy>=1.11.0 scikit-learn>=1.3.0', shell=True)
-subprocess.check_call('pip install -q onnx>=1.15.0 onnxruntime>=1.17.0 lightgbm>=4.3.0 onnxmltools>=1.12.0', shell=True)
-subprocess.check_call('pip install -q hmmlearn>=0.3.0 einops>=0.7.0 optuna>=3.6.0 matplotlib>=3.7.0 tqdm numba', shell=True)
+import sys
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+    "torch>=2.1.0", "numpy>=1.24.0", "pandas>=2.0.0", "scipy>=1.11.0", "scikit-learn>=1.3.0"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+    "onnx>=1.15.0", "onnxruntime>=1.17.0", "lightgbm>=4.3.0", "onnxmltools>=1.12.0"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+    "hmmlearn>=0.3.0", "einops>=0.7.0", "optuna>=3.6.0", "matplotlib>=3.7.0", "tqdm", "numba"])
 print('✅ All dependencies installed successfully!')
 
 # %%

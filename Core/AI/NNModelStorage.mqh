@@ -91,6 +91,8 @@ bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetF
     if(srcHandle == INVALID_HANDLE)
         return false;
 
+    long srcSize = (long)FileSize(srcHandle);
+
     int dstHandle = FileOpen(targetFile, FILE_WRITE | FILE_BIN | FILE_COMMON);
     if(dstHandle == INVALID_HANDLE)
     {
@@ -115,9 +117,12 @@ bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetF
         }
     }
 
+    long dstSize = (long)FileSize(dstHandle);
     FileClose(dstHandle);
     FileClose(srcHandle);
-    return true;
+
+    // Verify byte count matches after copy
+    return (dstSize == srcSize);
 }
 
 bool NNModelStorage_PromoteTempToPrimary(const string tempFile,
@@ -136,7 +141,12 @@ bool NNModelStorage_PromoteTempToPrimary(const string tempFile,
     if(!NNModelStorage_CopyBinaryFile(tempFile, primaryFile))
     {
         if(FileIsExist(backupFile, FILE_COMMON))
-            NNModelStorage_CopyBinaryFile(backupFile, primaryFile);
+        {
+            if(!NNModelStorage_CopyBinaryFile(backupFile, primaryFile))
+            {
+                PrintFormat("[NN-STORAGE] ERROR: Restore from backup failed for %s", primaryFile);
+            }
+        }
         return false;
     }
 

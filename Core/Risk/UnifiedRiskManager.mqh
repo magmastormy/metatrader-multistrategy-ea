@@ -1639,11 +1639,11 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     if(risk > 0.0)
         return risk;
 
-    // Fallback manual math when OrderCalcProfit fails; returns 0.0 if tickSize/tickValue are missing, which charges no risk.
+    // Fallback manual math when OrderCalcProfit fails. Missing tick data means we cannot size risk — refuse.
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize  = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     if(tickValue <= 0 || tickSize <= 0)
-        return 0.0;
+        return -1.0;
     double stopLossPrice = dist;
     double riskPerLot = (stopLossPrice / tickSize) * tickValue;
     return lotSize * riskPerLot;

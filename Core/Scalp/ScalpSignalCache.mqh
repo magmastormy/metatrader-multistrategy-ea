@@ -157,15 +157,10 @@ public:
          int symBars = iBars(sym, timeframe);
          if(symBars < 50)
          {
-            PrintFormat("[SCALP-CACHE] WAITING: %s has %d bars (need 50) — allowing load time", sym, symBars);
-            Sleep(1500);
-            symBars = iBars(sym, timeframe);
-            if(symBars < 50)
-            {
-               PrintFormat("[SCALP-CACHE] SKIP: %s still insufficient bars (%d) after wait", sym, symBars);
-               continue;
-            }
-         }
+            // Non-blocking: if bars still insufficient, skip and retry next init cycle
+            PrintFormat("[SCALP-CACHE] SKIP: %s still insufficient bars (%d)", sym, symBars);
+            continue;
+          }
 
          // iMA/iATR can transiently fail when symbol data is not yet loaded
          int maxHandleRetries = 3;
@@ -339,10 +334,6 @@ public:
       outCache = m_cache[idx];
       return true;
    }
-
-
-
-
 
    void Cleanup()
    {

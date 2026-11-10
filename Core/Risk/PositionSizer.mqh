@@ -692,7 +692,7 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
     string accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
 
     if(tickValue <= 0.0 || tickSize <= 0.0 || point <= 0.0) {
-        return 0.0;
+        return -1.0;
     }
 
     // pips*point is the convention everywhere (CTradeMgrPricing::CalculateStops places stops that way and URM risk

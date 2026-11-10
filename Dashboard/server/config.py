@@ -1,7 +1,7 @@
 """Dashboard server configuration."""
 
 # Server settings
-SERVER_HOST = "0.0.0.0"
+SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
 
 # CORS origins (Vite dev server defaults)

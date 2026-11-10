@@ -565,6 +565,18 @@ class SignalServer:
                         continue
 
                     # L16: Validate required keys
+                    message_type = message.get("type", "") if isinstance(message, dict) else ""
+                    if message_type == "heartbeat":
+                        self.last_heartbeat = datetime.now(timezone.utc)
+                        try:
+                            self.socket.send_json({
+                                "status": "ok",
+                                "ts": datetime.now(timezone.utc).isoformat()
+                            })
+                        except:
+                            pass
+                        continue
+
                     if not isinstance(message, dict) or "features" not in message:
                         try:
                             self.socket.send_json({"error": "Missing required key: 'features'"})

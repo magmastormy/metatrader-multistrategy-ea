@@ -261,8 +261,7 @@ bool CTrendAdxHealth::Acquire(const string symbol,
     int adxCopyErr = GetLastError();
     if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
     {
-        // Single retry with 50ms delay to handle transient race conditions
-        Sleep(50);
+        // Single retry without blocking delay — if copy still fails, mark invalid and retry next tick
         ResetLastError();
         adxCopyRet = CopyBuffer(handleADX, 0, 0, 1, adx);
         plusCopyRet = CopyBuffer(handleADX, 1, 0, 1, plusDI);

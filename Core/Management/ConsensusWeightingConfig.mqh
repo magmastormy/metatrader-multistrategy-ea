@@ -16,6 +16,7 @@
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
 #define AI_WEIGHT_SMOOTHING 0.25
+#define AI_WEIGHT_TAU 86400.0   // baseline decay time constant: 1 day in seconds
 
 // Quorum profile ids.
 // Mirrors CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE 1:1 by
@@ -34,6 +35,7 @@ class CConsensusWeightingConfig
 private:
     CEnterpriseStrategyManager* m_src;
     double                      m_aiBaseWeights[];
+    datetime                    m_aiBaseWeightTime[];   // last update time per strategy, for decay
 
 public:
     CConsensusWeightingConfig() : m_src(NULL) {}
@@ -54,12 +56,28 @@ double CConsensusWeightingConfig::LoadAIBaseWeight(const int index)
     if(m_aiBaseWeights[index] >= 0.0)
         return m_aiBaseWeights[index];
 
-    string key = StringSubstr("AIBW_" + m_src.GetManagedSymbol() + "_" + m_src.GetStrategyName(index), 0, 63);
-    if(!GlobalVariableCheck(key))
-        GlobalVariableSet(key, m_src.GetStrategyWeight(index));
+    // Hash-based key avoids 63-char truncation collisions: hash of symbol+name.
+    string rawKey = m_src.GetManagedSymbol() + "|" + m_src.GetStrategyName(index);
+    int hash = 5381;
+    for(int ci = 0; ci < StringLen(rawKey); ci++)
+        hash = ((hash << 5) + hash) + (int)StringGetCharacter(rawKey, ci);
+    string key = StringFormat("AIBW_%d", hash);
+    datetime now = TimeCurrent();
 
-    m_aiBaseWeights[index] = GlobalVariableGet(key);
-    return m_aiBaseWeights[index];
+    // Decay: baseline drifts toward the current weight over AI_WEIGHT_TAU seconds.
+    double baseWeight = GlobalVariableGet(key);
+    if(m_aiBaseWeightTime[index] > 0)
+    {
+        double dt = now - (double)m_aiBaseWeightTime[index];
+        if(dt > 0)
+        {
+            double decay = MathExp(-dt / AI_WEIGHT_TAU);
+            baseWeight = baseWeight * decay + m_src.GetStrategyWeight(index) * (1.0 - decay);
+        }
+    }
+    m_aiBaseWeightTime[index] = now;
+    m_aiBaseWeights[index] = baseWeight;
+    return baseWeight;
 }
 
 void CConsensusWeightingConfig::UpdateStrategyWeights()

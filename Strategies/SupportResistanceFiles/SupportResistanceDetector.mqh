@@ -473,7 +473,7 @@ void CSupportResistanceDetector::UpdateTouches()
     
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    int copied = CopyRates(m_symbol, m_timeframe, 0, 100, rates);
+    int copied = CopyRates(m_symbol, m_timeframe, 1, 100, rates);
     if(copied <= 0) return;
     
     for(int i = 0; i < m_levelCount; i++)

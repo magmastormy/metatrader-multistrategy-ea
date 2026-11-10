@@ -827,10 +827,11 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
         return;
 
     int skip = MathMax(0, labeledCount - limit);
-    int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI);
+    string tempFile = fileName + ".tmp";
+    int handle = FileOpen(tempFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
     if(handle == INVALID_HANDLE)
     {
-        LogFeedback("Failed to export labeled dataset: " + fileName);
+        LogFeedback("Failed to export labeled dataset: " + tempFile);
         return;
     }
 
@@ -865,6 +866,11 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
     }
 
     FileClose(handle);
+    if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
+    {
+        LogFeedback("Failed to promote temp file: " + fileName + " (err=" + IntegerToString(GetLastError()) + ")");
+        FileDelete(tempFile, 0);
+    }
 }
 
 // Appends one metrics row per call to AI_Health_Dashboard.csv (FILE_READ|FILE_WRITE + seek to end)

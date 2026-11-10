@@ -330,8 +330,8 @@ bool CMarketStructureAnalyzer::IdentifyISP(bool &isBullish)
     if(consolidationBars < 5)
         return false;
     
-    double currentHigh = iHigh(m_symbol, m_timeframe, 0);
-    double currentLow = iLow(m_symbol, m_timeframe, 0);
+    double currentHigh = iHigh(m_symbol, m_timeframe, 1);
+    double currentLow = iLow(m_symbol, m_timeframe, 1);
     
     if(currentHigh > consolidationHigh)
     {

@@ -11,6 +11,7 @@
 #include "../../IndicatorManager.mqh"
 #include "CorrelationEngine.mqh"
 #include "../Utils/RiskMath.mqh"
+#include "../Utils/MagicRange.mqh"
 
 class CPortfolioRiskManager
 {
@@ -469,7 +470,8 @@ int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
     {
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0 && PositionSelectByTicket(ticket) &&
-           PositionGetString(POSITION_SYMBOL) == symbol)
+           PositionGetString(POSITION_SYMBOL) == symbol &&
+           IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
         {
             count++;
         }

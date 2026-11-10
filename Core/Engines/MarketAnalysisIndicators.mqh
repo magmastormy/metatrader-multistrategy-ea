@@ -375,7 +375,7 @@ bool CMarketAnalysisIndicators::InitializeIndicators(const string symbolName, co
         if(!indicatorsReady) {
             retryCount++;
             if(retryCount < maxRetries) {
-                Sleep(50); // Reduced from 200ms to 50ms to minimize blocking
+                // Non-blocking: return false and retry on next tick instead of Sleep
             }
         }
     }

@@ -102,7 +102,7 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
         bool dataReady = false;
         while(attempts < 5 && !dataReady)
         {
-            Sleep(10); // Reduced from 50ms to 10ms to minimize blocking
+            // Non-blocking: if buffer not ready, mark invalid and retry next tick
             if(CopyBuffer(m_indicators.AdxHandle(), 0, 0, 3, adxValues) > 0) {
                 dataReady = true;
             }
