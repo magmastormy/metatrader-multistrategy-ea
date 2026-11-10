@@ -80,9 +80,13 @@ struct SAsyncTradeRequest
     bool persisted;         // Whether this request has been persisted to CSV
     datetime persistedTime; // When this was persisted
 
-    SAsyncTradeRequest() : ticket(0), orderType(ORDER_TYPE_BUY), lot(0), price(0), 
+    double filledVolume;    // Sum of deal volumes seen for this order
+    double filledValue;     // Sum of deal price*volume, for the average fill price
+
+    SAsyncTradeRequest() : ticket(0), orderType(ORDER_TYPE_BUY), lot(0), price(0),
                            sl(0), tp(0), magic(0), submitTime(0), timeoutMs(DEFAULT_ASYNC_TIMEOUT_MS),
-                           confirmed(false), expired(false), retryCount(0), persisted(false), persistedTime(0) {}
+                           confirmed(false), expired(false), retryCount(0), persisted(false), persistedTime(0),
+                           filledVolume(0), filledValue(0) {}
 };
 
 // Smart order routing parameters

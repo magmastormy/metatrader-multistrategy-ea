@@ -17,32 +17,30 @@ class CATRScalpExit
 {
 private:
    // Batch 152 (S-H-04): tickets that already took their 1R partial. Without
-   // this latch every tick re-closed half of the remaining volume - a geometric
-   // decay into repeated deal fees.
-   static ulong s_partialedTickets[];
-   static int   s_partialedCount;
+   // this latch every tick re-closed half of the remaining volume. The latch lives in
+   // terminal global variables so it survives a restart.
+   static string LatchName(const ulong ticket)
+   {
+      return "ATRS_P_" + IntegerToString((long)ticket);
+   }
 
    static void PrunePartialedLatches()
    {
-      for(int i = s_partialedCount - 1; i >= 0; i--)
+      const string prefix = "ATRS_P_";
+      for(int i = GlobalVariablesTotal() - 1; i >= 0; i--)
       {
-         if(!PositionSelectByTicket(s_partialedTickets[i]))
-         {
-            for(int j = i; j < s_partialedCount - 1; j++)
-               s_partialedTickets[j] = s_partialedTickets[j + 1];
-            s_partialedCount--;
-         }
+         string name = GlobalVariableName(i);
+         if(StringFind(name, prefix) != 0)
+            continue;
+         ulong ticket = (ulong)StringToInteger(StringSubstr(name, StringLen(prefix)));
+         if(!PositionSelectByTicket(ticket))
+            GlobalVariableDel(name);
       }
    }
 
    static bool HasTakenPartial(const ulong ticket)
    {
-      for(int p = 0; p < s_partialedCount; p++)
-      {
-         if(s_partialedTickets[p] == ticket)
-            return true;
-      }
-      return false;
+      return GlobalVariableCheck(LatchName(ticket));
    }
 
 public:
@@ -82,6 +80,9 @@ public:
          else
             profitPoints = (openPrice - currentPrice) / point;
 
+         const double minStopDistance = (double)MathMax(SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL),
+                                                        SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) * point;
+
          // SL distance in points (1R)
          double slDistancePoints = 0.0;
          if(posType == POSITION_TYPE_BUY)
@@ -100,14 +101,18 @@ public:
             halfVol = MathFloor((halfVol + 1e-12) / stepVol) * stepVol;
             halfVol = NormalizeDouble(halfVol, 2);
 
-            if(!HasTakenPartial(ticket) && halfVol >= minVol && halfVol < volume)
+            // The latch is written before the close so a crash mid-close cannot repeat the partial.
+            if(!HasTakenPartial(ticket) && halfVol >= minVol && halfVol < volume &&
+               GlobalVariableSet(LatchName(ticket), (double)TimeCurrent()) != 0)
             {
-               if(trade.PositionClosePartial(ticket, halfVol))
+               if(!trade.PositionClosePartial(ticket, halfVol))
                {
-                  if(s_partialedCount >= ArraySize(s_partialedTickets))
-                     ArrayResize(s_partialedTickets, s_partialedCount + 16);
-                  s_partialedTickets[s_partialedCount++] = ticket;
-
+                  GlobalVariableDel(LatchName(ticket));
+                  PrintFormat("[ATR-SCALP-PARTIAL-FAILED] %s | ticket=%I64u | retcode=%u",
+                              symbol, ticket, trade.ResultRetcode());
+               }
+               else
+               {
                   PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
                               symbol, ticket, halfVol, profitPoints, slDistancePoints);
                }
@@ -127,9 +132,9 @@ public:
             // Only move SL if it improves the position
             bool shouldMove = false;
             if(posType == POSITION_TYPE_BUY && (currentSL < beSL || currentSL == 0.0))
-               shouldMove = true;
+               shouldMove = (beSL <= currentPrice - minStopDistance);
             else if(posType == POSITION_TYPE_SELL && (currentSL > beSL || currentSL == 0.0))
-               shouldMove = true;
+               shouldMove = (beSL >= currentPrice + minStopDistance);
 
             if(shouldMove)
             {
@@ -137,6 +142,11 @@ public:
                {
                   PrintFormat("[ATR-SCALP-BREAKEVEN] %s | ticket=%I64u | SL=%.5f | profit_pts=%.1f",
                               symbol, ticket, beSL, profitPoints);
+               }
+               else
+               {
+                  PrintFormat("[ATR-SCALP-MODIFY-FAILED] %s | ticket=%I64u | action=breakeven | retcode=%u",
+                              symbol, ticket, trade.ResultRetcode());
                }
             }
          }
@@ -155,27 +165,27 @@ public:
             double newSL = 0.0;
             if(posType == POSITION_TYPE_BUY)
             {
-               newSL = NormalizeDouble(currentPrice - trailingDistancePoints * point, digits);
-               if(newSL > currentSL)
+               newSL = NormalizeDouble(MathMin(currentPrice - trailingDistancePoints * point,
+                                               currentPrice - minStopDistance), digits);
+               if(newSL > currentSL && !trade.PositionModify(ticket, newSL, currentTP))
                {
-                  trade.PositionModify(ticket, newSL, currentTP);
+                  PrintFormat("[ATR-SCALP-MODIFY-FAILED] %s | ticket=%I64u | action=trail | retcode=%u",
+                              symbol, ticket, trade.ResultRetcode());
                }
             }
             else
             {
-               newSL = NormalizeDouble(currentPrice + trailingDistancePoints * point, digits);
-               if(currentSL == 0.0 || newSL < currentSL)
+               newSL = NormalizeDouble(MathMax(currentPrice + trailingDistancePoints * point,
+                                               currentPrice + minStopDistance), digits);
+               if((currentSL == 0.0 || newSL < currentSL) && !trade.PositionModify(ticket, newSL, currentTP))
                {
-                  trade.PositionModify(ticket, newSL, currentTP);
+                  PrintFormat("[ATR-SCALP-MODIFY-FAILED] %s | ticket=%I64u | action=trail | retcode=%u",
+                              symbol, ticket, trade.ResultRetcode());
                }
             }
          }
       }
    }
 };
-
-//--- Batch 152 (S-H-04): static latch storage
-ulong CATRScalpExit::s_partialedTickets[];
-int   CATRScalpExit::s_partialedCount = 0;
 
 #endif // CORE_SCALP_ATR_SCALP_EXIT_MQH

@@ -210,9 +210,9 @@ public:
             tpPrice = currentPrice - 2.0 * slDistance;  // 2R
         }
 
-        // Pips are fed to the risk manager as ATR multiples (1 ATR = 1 unit) so they scale on every symbol
-        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
-        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
+        const double gatePoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double slPips = (gatePoint > 0 && slDistance > 0) ? (slDistance / gatePoint) : 0.0;
+        double tpPips = (gatePoint > 0) ? (MathAbs(tpPrice - currentPrice) / gatePoint) : 0.0;
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

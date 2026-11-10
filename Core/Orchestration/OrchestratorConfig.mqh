@@ -309,7 +309,6 @@ struct SOrchestratorConfig
     // Portfolio profit target
     double  dailyProfitTargetPercent;
     double  profitTrailFactor;
-    double  profitTargetHardFloorRatio;
     int     dailyHaltCooldownMinutes;
 
     // Dual-mode auto-switching
@@ -607,7 +606,6 @@ struct SOrchestratorConfig
 
         dailyProfitTargetPercent = 2.0;
         profitTrailFactor = 0.7;
-        profitTargetHardFloorRatio = 0.50;
         dailyHaltCooldownMinutes = 30;
 
 

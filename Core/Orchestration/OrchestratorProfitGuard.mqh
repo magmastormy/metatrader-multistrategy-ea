@@ -69,7 +69,6 @@ public:
 
                 if(dailyPnL < m_trailingProfitFloor)
                 {
-                    double hardFloor = config.dailyProfitTargetPercent * config.profitTargetHardFloorRatio;
                     m_dailyTradingHalt = true;
                     m_dailyTradingHaltStartTime = TimeCurrent();
                 }

@@ -15,6 +15,8 @@
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
+#define AI_WEIGHT_SMOOTHING 0.25
+
 // Quorum profile ids.
 // Mirrors CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE 1:1 by
 // ordinal. The nested enum is intentionally LEFT IN PLACE because
@@ -31,6 +33,7 @@ class CConsensusWeightingConfig
 {
 private:
     CEnterpriseStrategyManager* m_src;
+    double                      m_aiBaseWeights[];
 
 public:
     CConsensusWeightingConfig() : m_src(NULL) {}
@@ -41,7 +44,23 @@ public:
     void ApplyQuorumProfile(const int profile);
     void ApplyFamilyEngineWeights(const string symbol);
     void ApplyAssetClassEngineWeights(const string symbol);
+
+private:
+    double LoadAIBaseWeight(const int index);
 };
+
+double CConsensusWeightingConfig::LoadAIBaseWeight(const int index)
+{
+    if(m_aiBaseWeights[index] >= 0.0)
+        return m_aiBaseWeights[index];
+
+    string key = StringSubstr("AIBW_" + m_src.GetManagedSymbol() + "_" + m_src.GetStrategyName(index), 0, 63);
+    if(!GlobalVariableCheck(key))
+        GlobalVariableSet(key, m_src.GetStrategyWeight(index));
+
+    m_aiBaseWeights[index] = GlobalVariableGet(key);
+    return m_aiBaseWeights[index];
+}
 
 void CConsensusWeightingConfig::UpdateStrategyWeights()
 {
@@ -49,9 +68,15 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         return;
 
     const int strategyCount = m_src.GetStrategyCount();
+    if(ArraySize(m_aiBaseWeights) != strategyCount)
+    {
+        ArrayResize(m_aiBaseWeights, strategyCount);
+        ArrayInitialize(m_aiBaseWeights, -1.0);
+    }
 
-    // L6-016: AI profitability multiplier, AI rows only - avgProfit carries that number because
-    // UpdateAIPerformanceMetrics writes it there.
+    // AI rows: the target is always derived from the persisted baseline, so repeated updates cannot
+    // compound. Insufficient evidence (below AI_WEIGHT_MIN_PREDICTIONS) yields a zero multiplier, which
+    // makes the target the baseline and the weight relaxes back toward it.
     for(int i = 0; i < strategyCount; i++)
     {
         IStrategy* strategy = m_src.GetStrategyPtr(i);
@@ -60,17 +85,19 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
 
         ENUM_STRATEGY_TYPE stratType = strategy.GetType();
         bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
-        double aiProfitability = m_src.GetStrategyAvgProfit(i);
-        if(!isAI || aiProfitability == 0.0)
+        if(!isAI)
             continue;
 
-        // Multiplier spans 0.8x..1.2x for profitability in -0.2..+0.2
-        double profitMult = 1.0 + MathMax(-0.2, MathMin(0.2, aiProfitability));
-        double newWeight = MathMax(0.0, MathMin(10.0, m_src.GetStrategyWeight(i) * profitMult));
+        double baseWeight = LoadAIBaseWeight(i);
+        double aiProfitability = MathMax(-0.2, MathMin(0.2, m_src.GetStrategyAvgProfit(i)));
+        double target = MathMax(0.0, MathMin(10.0, baseWeight * (1.0 + aiProfitability)));
+        double current = m_src.GetStrategyWeight(i);
+        double newWeight = MathMax(0.0, MathMin(10.0, current + AI_WEIGHT_SMOOTHING * (target - current)));
         m_src.ApplyRawStrategyWeight(i, newWeight);
 
-        PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | mult=%.3f | newWeight=%.3f",
-                    m_src.GetManagedSymbol(), m_src.GetStrategyName(i), aiProfitability, profitMult, newWeight);
+        PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | base=%.3f | target=%.3f | newWeight=%.3f",
+                    m_src.GetManagedSymbol(), m_src.GetStrategyName(i), aiProfitability,
+                    baseWeight, target, newWeight);
     }
 }
 

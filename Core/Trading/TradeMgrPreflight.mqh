@@ -264,14 +264,12 @@ public:
             return true;
         }
 
-        // Optimistic return - broker accepted the order, confirmation deferred
-        receipt.accepted = true;
-        if(receipt.averagePrice <= 0.0)
-            receipt.averagePrice = fallbackPrice;
-        if(receipt.filledVolume <= 0.0)
-            receipt.filledVolume = 0.0;
-        receipt.note = "broker_accept_deferred";
-        return true;
+        receipt.accepted = false;
+        receipt.filledVolume = 0.0;
+        receipt.note = "broker_accept_unconfirmed";
+        PrintFormat("[EXECUTION-UNCONFIRMED-NO-FILL-EVIDENCE] %s | order=%I64u | retcode=%u - not treated as filled",
+                    symbolName, tradeResult.order, tradeResult.retcode);
+        return false;
     }
 
 // Used to confirm a fill whose deal is not in history yet, and

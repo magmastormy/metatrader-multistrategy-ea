@@ -12,7 +12,7 @@ class CCorrelationEngine
 private:
     int      m_lookback;            // H1 bars for Pearson calculation (default 30)
     int      m_refreshIntervalSec;  // Seconds between matrix rebuilds (default 300)
-    double   m_conservativeFallback;// Value returned when data insufficient (default 0.0)
+    double   m_conservativeFallback;// Value returned when data insufficient (default 1.0 = fully correlated)
     double   m_assetClassThreshold; // L5-016: Correlation threshold for same asset class (default 0.85)
     double   m_crossAssetThreshold; // L5-016: Correlation threshold for different asset classes (default 0.7)
 
@@ -73,7 +73,7 @@ public:
 CCorrelationEngine::CCorrelationEngine() :
     m_lookback(30),
     m_refreshIntervalSec(300),
-    m_conservativeFallback(0.0),
+    m_conservativeFallback(1.0),
     m_assetClassThreshold(0.85),
     m_crossAssetThreshold(0.7),
     m_symbolCount(0),
@@ -81,7 +81,7 @@ CCorrelationEngine::CCorrelationEngine() :
     m_initialized(false),
     m_symbolsChanged(false)
 {
-    ArrayInitialize(m_matrix, 0.0);
+    ArrayInitialize(m_matrix, 1.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 }
@@ -111,7 +111,7 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
     m_pinnedSymbolA = "";
     m_pinnedSymbolB = "";
 
-    ArrayInitialize(m_matrix, 0.0);
+    ArrayInitialize(m_matrix, 1.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 
@@ -307,8 +307,8 @@ void CCorrelationEngine::ForceRefresh()
     m_lastRefreshTime = TimeCurrent();
 }
 
-// Fail-open by construction: uninitialized engine, missing H1 history and a full registry all
-// answer m_conservativeFallback, which PortfolioRiskManager wires as 0.0 (= uncorrelated).
+// Uninitialized engine, missing H1 history and a full registry all answer m_conservativeFallback,
+// which PortfolioRiskManager wires as 1.0 (= fully correlated, so the cluster caps still bind).
 double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 {
     if(!m_initialized)
@@ -385,7 +385,7 @@ int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double thr
 void CCorrelationEngine::Reset()
 {
     m_symbolCount = 0;
-    ArrayInitialize(m_matrix, 0.0);
+    ArrayInitialize(m_matrix, 1.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
     m_lastRefreshTime = 0;
@@ -394,7 +394,7 @@ void CCorrelationEngine::Reset()
 CCorrelationEngine::~CCorrelationEngine()
 {
     m_symbolCount = 0;
-    ArrayInitialize(m_matrix, 0.0);
+    ArrayInitialize(m_matrix, 1.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 }

@@ -116,9 +116,13 @@ public:
       double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
       double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
       if(stepVol <= 0.0) stepVol = 0.01;
-      lotSize = MathRound(lotSize / stepVol) * stepVol;
+      lotSize = MathFloor((lotSize + 1e-12) / stepVol) * stepVol;
       if(lotSize < minVol)
-         lotSize = minVol;
+      {
+         PrintFormat("[ATR-SCALP] Lot below broker minimum after sizing for %s: %.4f < %.2f - trade skipped",
+                     symbol, lotSize, minVol);
+         return false;
+      }
 
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       double entryPrice = (direction == 1) ? ask : bid;
@@ -177,7 +181,8 @@ public:
       }
 
       trade.SetExpertMagicNumber(magic);
-      trade.SetDeviationInPoints(50);
+      const long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+      trade.SetDeviationInPoints((uint)MathMax(10, MathMin(100, spreadPoints * 2)));
       // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
       long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
       ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :

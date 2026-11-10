@@ -105,7 +105,6 @@ class Config:
     LR: float = 3e-4
     WEIGHT_DECAY: float = 1e-4
     DROPOUT: float = 0.20
-    PURGE_GAP: int = 25                     # seq_len + vertical_bars + buffer
     EMBARGO: int = 5
     COST_BPS: float = 1.0                   # estimated round-trip cost in basis points
     MIN_IC_THRESHOLD: float = 0.03
@@ -215,11 +214,11 @@ def triple_barrier_labels(close: np.ndarray, high: np.ndarray, low: np.ndarray,
         upper = close[i] + k * atr[i]
         lower = close[i] - k * atr[i]
         for j in range(i + 1, min(i + vertical_bars + 1, n)):
-            if high[j] >= upper:
-                labels[i] = 1
-                break
             if low[j] <= lower:
                 labels[i] = -1
+                break
+            if high[j] >= upper:
+                labels[i] = 1
                 break
     return labels
 
@@ -234,11 +233,11 @@ if HAS_NUMBA:
             upper = close[i] + k * atr[i]
             lower = close[i] - k * atr[i]
             for j in range(i + 1, min(i + vertical_bars + 1, n)):
-                if high[j] >= upper:
-                    labels[i] = 1
-                    break
                 if low[j] <= lower:
                     labels[i] = -1
+                    break
+                if high[j] >= upper:
+                    labels[i] = 1
                     break
         return labels
 
@@ -531,24 +530,28 @@ def prepare_sequences(features: np.ndarray, labels: np.ndarray, weights: np.ndar
 
 def _split_arrays_purged(X: np.ndarray, y: np.ndarray, weights: np.ndarray,
                          returns: np.ndarray, timestamps: np.ndarray,
+                         label_bars: np.ndarray,
                          train_ratio: float, val_ratio: float,
-                         purge_gap: int, embargo: int):
+                         vertical_bars: int, embargo: int):
     n = len(X)
     if n < 48:
         raise ValueError('Not enough samples to split safely.')
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
-    # Apply purge gap
-    train_end = max(24, min(train_end - purge_gap, n - 24 - purge_gap))
-    val_start = train_end + purge_gap
-    val_end = max(val_start + 12, min(val_end, n - 12 - embargo))
-    test_start = val_end + purge_gap
-    train = (X[:train_end], y[:train_end], weights[:train_end], returns[:train_end], timestamps[:train_end])
-    val = (X[val_start:val_end], y[val_start:val_end], weights[val_start:val_end],
-           returns[val_start:val_end], timestamps[val_start:val_end])
-    test = (X[test_start:n - embargo], y[test_start:n - embargo], weights[test_start:n - embargo],
-            returns[test_start:n - embargo], timestamps[test_start:n - embargo])
-    return train, val, test
+    train_end = max(24, min(train_end, n - 24))
+    val_end = max(train_end + 12, min(val_end, n - 12 - embargo))
+    # A sample's label resolves at label_bar + vertical_bars; keep it only if that
+    # horizon ends before the first bar of the next segment.
+    idx = np.arange(n)
+    horizon_end = label_bars + vertical_bars
+    train_sel = idx[(idx < train_end) & (horizon_end < label_bars[train_end])]
+    val_sel = idx[(idx >= train_end) & (idx < val_end) & (horizon_end < label_bars[val_end])]
+    test_sel = idx[val_end:n - embargo]
+
+    def take(sel):
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel])
+
+    return take(train_sel), take(val_sel), take(test_sel)
 
 def _estimate_annualization_factor(timestamps: np.ndarray):
     if len(timestamps) < 3:
@@ -580,7 +583,7 @@ def load_csv_robust(csv_path: str) -> pd.DataFrame:
 
 def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
                          vertical_bars: int = 20, train_ratio: float = 0.70,
-                         val_ratio: float = 0.15, purge_gap: int = 25, embargo: int = 5):
+                         val_ratio: float = 0.15, embargo: int = 5):
     required = {'date', 'open', 'high', 'low', 'close', 'volume'}
     missing = required - set(df.columns)
     if missing:
@@ -622,7 +625,9 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
                                            seq_len=seq_len, sample_indices=label_indices)
         if len(X) < 48:
             continue
-        train, val, test = _split_arrays_purged(X, y, w, r, ts, train_ratio, val_ratio, purge_gap, embargo)
+        kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
+        train, val, test = _split_arrays_purged(X, y, w, r, ts, kept_label_bars, train_ratio, val_ratio,
+                                                vertical_bars, embargo)
         train_parts.append(train)
         val_parts.append(val)
         test_parts.append(test)
@@ -659,12 +664,12 @@ def _scale_splits(train: Tuple[np.ndarray, ...], val: Tuple[np.ndarray, ...],
 
 def build_scaled_dataset_splits(csv_path: str, seq_len: int = 60, k: float = 1.5,
                                 vertical_bars: int = 20, train_ratio: float = 0.70,
-                                val_ratio: float = 0.15, purge_gap: int = 25, embargo: int = 5,
+                                val_ratio: float = 0.15, embargo: int = 5,
                                 scaler_output: Optional[str] = None):
     df = load_csv_robust(csv_path)
     train, val, test, annualization = build_dataset_splits(
         df, seq_len=seq_len, k=k, vertical_bars=vertical_bars,
-        train_ratio=train_ratio, val_ratio=val_ratio, purge_gap=purge_gap, embargo=embargo,
+        train_ratio=train_ratio, val_ratio=val_ratio, embargo=embargo,
     )
     train, val, test, _ = _scale_splits(train, val, test, scaler_output=scaler_output)
     metadata = PipelineMetadata(
@@ -1231,7 +1236,6 @@ train_split, val_split, test_split, metadata = build_scaled_dataset_splits(
     vertical_bars=CFG.VERTICAL_BARS,
     train_ratio=0.70,
     val_ratio=0.15,
-    purge_gap=CFG.PURGE_GAP,
     embargo=CFG.EMBARGO,
     scaler_output=SCALER_OUTPUT,
 )

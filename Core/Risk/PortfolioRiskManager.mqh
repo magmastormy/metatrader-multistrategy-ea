@@ -186,7 +186,7 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
 
     // One-time seed of the engine with both thresholds; SetAssetClassCorrThreshold/SetCrossAssetCorrThreshold have no
     // caller, so the ctor defaults (0.85 same-class / 0.70 cross-class) are what the engine keeps using
-    m_correlationEngine.Initialize(30, 300, 0.0, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
+    m_correlationEngine.Initialize(30, 300, 1.0, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
 
     PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f | AssetClass=%.2f CrossAsset=%.2f", 
                 m_maxPortfolioRisk, m_maxCorrelation, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
@@ -700,9 +700,13 @@ double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 // proposedRiskPct is a FRACTION (callers pass riskPercent/100), same scale as m_cvarMaxRisk (0.10 = 10%)
 bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 {
-    // Fail-open below 20 equity-curve samples (no tail estimate yet); the guard reads the equity buffer, not m_returnCount
+    // No tail estimate below 20 equity-curve samples: refuse rather than trade unmeasured tail risk.
     if(m_equityCurveReturnCount < 20)
-        return false;
+    {
+        PrintFormat("[CVAR-CHECK] insufficient equity history (%d/20) - proposed=%.2f%% DENIED",
+                    m_equityCurveReturnCount, proposedRiskPct * 100.0);
+        return true;
+    }
 
     double cvar = CalculateCVaR(m_cvarConfidence);
     double absCvar = MathAbs(cvar);
@@ -732,4 +736,3 @@ double CPortfolioRiskManager::GetCurrentCVaR() const
 }
 
 #endif // CORE_RISK_PORTFOLIO_MANAGER_MQH
-

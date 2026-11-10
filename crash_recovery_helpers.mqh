@@ -60,14 +60,9 @@ bool WriteCrashRecoveryState(const string &fileName,
     }
     FileClose(fh);
 
-    // MQL5 FileMove() does NOT overwrite an existing destination, so remove the
-    // stale state file first. flags=0 -> same local MQL5/Files dir used by the
-    // FileOpen() calls above and in ReadCrashRecoveryState(). A false return
-    // (file absent, e.g. first run) is harmless and intentionally ignored.
-    FileDelete(fileName, 0);
-
-    // Atomic move
-        if(!FileMove(tempFile, 0, fileName, 0))
+    // FILE_REWRITE replaces the destination in one step, so the last good state
+    // is never deleted ahead of a failed move.
+        if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
         {
             PrintFormat("[RECOVERY] ERROR: FileMove failed for %s -> %s (err=%d)", tempFile, fileName, GetLastError());
             // flags=0 -> local MQL5/Files dir, matching the FileOpen(tempFile, ...)

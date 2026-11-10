@@ -115,11 +115,12 @@ def triple_barrier_labels(
         upper = close[i] + k * atr[i]
         lower = close[i] - k * atr[i]
         for j in range(i + 1, min(i + vertical_bars + 1, n)):
-            if high[j] >= upper:
-                labels[i] = 1
-                break
+            # Stop is checked first: when one bar touches both barriers, the conservative outcome is the loss.
             if low[j] <= lower:
                 labels[i] = -1
+                break
+            if high[j] >= upper:
+                labels[i] = 1
                 break
     return labels
 
@@ -531,8 +532,10 @@ def _split_arrays(
     weights: np.ndarray,
     returns: np.ndarray,
     timestamps: np.ndarray,
+    label_bars: np.ndarray,
     train_ratio: float,
     val_ratio: float,
+    vertical_bars: int,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
     n = len(X)
     if n < 48:
@@ -543,10 +546,18 @@ def _split_arrays(
     train_end = max(24, min(train_end, n - 24))
     val_end = max(train_end + 12, min(val_end, n - 12))
 
-    train = (X[:train_end], y[:train_end], weights[:train_end], returns[:train_end], timestamps[:train_end])
-    val = (X[train_end:val_end], y[train_end:val_end], weights[train_end:val_end], returns[train_end:val_end], timestamps[train_end:val_end])
-    test = (X[val_end:], y[val_end:], weights[val_end:], returns[val_end:], timestamps[val_end:])
-    return train, val, test
+    # A sample's label is resolved at label_bar + vertical_bars, so it is kept only if that
+    # horizon ends strictly before the first bar of the next segment.
+    idx = np.arange(n)
+    horizon_end = label_bars + vertical_bars
+    train_sel = idx[(idx < train_end) & (horizon_end < label_bars[train_end])]
+    val_sel = idx[(idx >= train_end) & (idx < val_end) & (horizon_end < label_bars[val_end])]
+    test_sel = idx[val_end:]
+
+    def take(sel: np.ndarray) -> Tuple[np.ndarray, ...]:
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel])
+
+    return take(train_sel), take(val_sel), take(test_sel)
 
 
 def _estimate_annualization_factor(timestamps: np.ndarray) -> float:
@@ -630,7 +641,10 @@ def build_dataset_splits(
         if len(X) < 48:
             continue
 
-        train, val, test = _split_arrays(X, y, w, r, ts, train_ratio, val_ratio)
+        kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
+        train, val, test = _split_arrays(
+            X, y, w, r, ts, kept_label_bars, train_ratio, val_ratio, vertical_bars=vertical_bars,
+        )
         train_parts.append(train)
         val_parts.append(val)
         test_parts.append(test)

@@ -229,9 +229,10 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
     
-    if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
-    if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
-    if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
+    // Start at shift 1: the forming bar would repaint swing points.
+    if(CopyHigh(m_symbol, m_timeframe, 1, lookback, high) <= 0) return;
+    if(CopyLow(m_symbol, m_timeframe, 1, lookback, low) <= 0) return;
+    if(CopyTime(m_symbol, m_timeframe, 1, lookback, time) <= 0) return;
     
     int str = m_swingStrength;
     

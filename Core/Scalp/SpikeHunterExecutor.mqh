@@ -176,9 +176,13 @@ public:
       double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
       double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
       if(stepVol <= 0.0) stepVol = 0.01;
-      lotSize = MathRound(lotSize / stepVol) * stepVol;
+      lotSize = MathFloor(lotSize / stepVol + 1e-9) * stepVol;
       if(lotSize < minVol)
-         lotSize = minVol;
+      {
+         PrintFormat("[SPIKE-HUNT-TRADE] Lot below broker minimum, skipped | symbol=%s | lot=%.4f | min=%.4f",
+                     symbol, lotSize, minVol);
+         return false;
+      }
 
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       double entryPrice = (direction == 1) ? ask : bid;
@@ -285,13 +289,8 @@ public:
          // m_spikeHunter.Init(...) passes no CTradeManager, so the governed send
          // path above is unreachable and the stop gate had to be added here too.
          m_trade.SetExpertMagicNumber(magic);
-         // L10-014: Use dynamic slippage if TradeManager available, else default
-         uint fallbackSlippage = 50;
-         if(m_tradeManager != NULL)
-         {
-             fallbackSlippage = m_tradeManager.GetDynamicSlippage(symbol);
-         }
-         m_trade.SetDeviationInPoints(fallbackSlippage);
+         const long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+         m_trade.SetDeviationInPoints((uint)MathMax(10, MathMin(100, spreadPoints * 2)));
          // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
          long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
          ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :

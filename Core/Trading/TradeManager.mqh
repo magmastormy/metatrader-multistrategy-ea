@@ -1020,6 +1020,20 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     if(adjustedTP > 0)
         adjustedTP = NormalizeDouble(adjustedTP, digits);
 
+    if(currentSL > 0.0)
+    {
+        bool loosens = (adjustedSL <= 0.0) ||
+                       (posType == POSITION_TYPE_BUY && adjustedSL < currentSL) ||
+                       (posType == POSITION_TYPE_SELL && adjustedSL > currentSL);
+        if(loosens)
+        {
+            PrintFormat("[TRADE-GUARD] ModifyPosition refused to loosen SL | Symbol: %s | current=%.5f requested=%.5f",
+                        symbol, currentSL, adjustedSL);
+            adjustedSL = currentSL;
+            slAdjusted = false;
+        }
+    }
+
     if(adjustedSL > 0)
     {
         if(posType == POSITION_TYPE_BUY && adjustedSL >= referencePrice)
@@ -1931,7 +1945,7 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     UpdateDynamicSlippage(symbol);
 
     return m_asyncExecutor.SubmitAsync(orderType, symbol, normalizedLot, executionPrice, sl, tp,
-                                       magic, timeoutMs, m_slippage, m_orderFillMode);
+                                       magic, timeoutMs, m_slippage, m_trade.RequestTypeFilling());
 }
 
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,

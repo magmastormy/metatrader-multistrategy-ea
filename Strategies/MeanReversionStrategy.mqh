@@ -490,7 +490,7 @@ private:
     bool MeanRevertingRegime()
     {
         if(m_hurstEngine == NULL)
-            return true;  // engine not wired for this roster: no regime gate applies here
+            return false;  // mean-reversion premise is unverified without the regime engine
         // Wired but not warmed up: no regime opinion, so the lockout fails closed during warmup.
         if(!m_hurstEngine.IsWarmedUp())
             return false;
@@ -695,4 +695,3 @@ private:
 };
 
 #endif
-

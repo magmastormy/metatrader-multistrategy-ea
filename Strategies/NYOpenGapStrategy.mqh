@@ -15,7 +15,26 @@
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
 // CNYOpenGapStrategy trades the NDOG fade with FVG confluence during NY open.
-// Targets gap-fill tendency at 13:30-14:00 UTC (NY 09:30-10:00 local in US DST).
+// Day of month of the nth Sunday (nth >= 1) in a given month.
+int NYOpenNthSundayDay(const int year, const int month, const int nth)
+{
+    MqlDateTime d;
+    d.year = year; d.mon = month; d.day = 1; d.hour = 0; d.min = 0; d.sec = 0;
+    TimeToStruct(StructToTime(d), d);
+    int firstSunday = 1 + (7 - d.day_of_week) % 7;
+    return firstSunday + 7 * (nth - 1);
+}
+
+// US DST: second Sunday of March to first Sunday of November (date-level, transition hour ignored).
+bool NYOpenIsUSDaylightTime(const MqlDateTime &dt)
+{
+    if(dt.mon < 3 || dt.mon > 11) return false;
+    if(dt.mon > 3 && dt.mon < 11) return true;
+    if(dt.mon == 3) return dt.day >= NYOpenNthSundayDay(dt.year, 3, 2);
+    return dt.day < NYOpenNthSundayDay(dt.year, 11, 1);
+}
+
+// Targets gap-fill tendency at the 09:30 New York open (13:30 UTC in US DST, 14:30 UTC otherwise).
 class CNYOpenGapStrategy : public CStrategyBase
 {
 private:
@@ -95,13 +114,13 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Time filter: only trade during 13:30-14:00 UTC ---
-        // FIX (2026-08-14): use TimeGMT(), not TimeCurrent(). TimeCurrent() is broker-local
-        // time, so on a non-UTC broker the window would fire at the wrong clock hour (or never).
-        // The window is defined in UTC, so it must be evaluated in GMT.
+        // --- Time filter: 30 minutes after the 09:30 New York open, in UTC ---
+        // Evaluated in GMT: TimeCurrent() is broker-local and would shift the window on non-UTC brokers.
         MqlDateTime dt;
         TimeGMT(dt);
-        bool inWindow = (dt.hour == 13 && dt.min >= 30) || (dt.hour == 14 && dt.min == 0);
+        int windowStartMin = NYOpenIsUSDaylightTime(dt) ? (13 * 60 + 30) : (14 * 60 + 30);
+        int nowMin = dt.hour * 60 + dt.min;
+        bool inWindow = (nowMin >= windowStartMin && nowMin <= windowStartMin + 30);
         if(!inWindow)
         {
             SetDecisionReasonTag("NYGAP_OUTSIDE_WINDOW");
@@ -115,21 +134,42 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Detect gap: current day D1 open vs previous D1 close ---
-        // NOTE (2026-08-14): this is a daily-gap PROXY. A true NDOG (New York Day Open Gap)
-        // is the gap between the prior NY session close (~16:00 ET) and the current NY open
-        // (~09:30 ET). D1 bars roll at broker midnight, not the NY session, so on a UTC broker
-        // this measures the gap at ~19:00 ET, not 09:30 ET. The SessionGapDetector (m_sessionGapDetector)
-        // already computes the proper NDOG for the nearGapLevel check. A full fix = derive the gap
-        // from the H1 bar at the NY open (DST-aware). Documented as a follow-up (see STRATEGY_AUDIT_2026-08-14).
-        if(iBars(m_symbol, PERIOD_D1) < 3)
+        // --- Detect gap: open of the NY-open M30 bar vs close of the M30 bar ending at the prior NY close ---
+        // Both bars are located by GMT time converted to broker time, so the gap spans the real overnight
+        // session break (16:00 ET to 09:30 ET) on DST-aware boundaries and skips weekends.
+        const datetime gmtNow = TimeGMT();
+        const datetime gmtDay = gmtNow - (gmtNow % 86400);
+        const int brokerOffset = (int)MathRound((double)(TimeCurrent() - gmtNow) / 1800.0) * 1800;
+        const datetime nyOpenServer = gmtDay + windowStartMin * 60 + brokerOffset;
+
+        datetime priorNyCloseGmt = 0;
+        for(int back = 1; back <= 4 && priorNyCloseGmt == 0; back++)
         {
-            SetDecisionReasonTag("NYGAP_INSUFFICIENT_D1_BARS");
+            datetime candidate = gmtDay - back * 86400 + (windowStartMin + 390) * 60;
+            MqlDateTime candidateDt;
+            TimeToStruct(candidate, candidateDt);
+            if(candidateDt.day_of_week != 0 && candidateDt.day_of_week != 6)
+                priorNyCloseGmt = candidate;
+        }
+        if(priorNyCloseGmt == 0)
+        {
+            SetDecisionReasonTag("NYGAP_NO_PRIOR_SESSION");
             return TRADE_SIGNAL_NONE;
         }
 
-        double prevDayClose = iClose(m_symbol, PERIOD_D1, 1);
-        double todayOpen    = iOpen(m_symbol,  PERIOD_D1, 0);
+        const datetime nyPriorCloseBarOpen = priorNyCloseGmt - 1800 + brokerOffset;
+        const int openShift  = iBarShift(m_symbol, PERIOD_M30, nyOpenServer, false);
+        const int closeShift = iBarShift(m_symbol, PERIOD_M30, nyPriorCloseBarOpen, false);
+        if(openShift < 0 || closeShift < 0 ||
+           iTime(m_symbol, PERIOD_M30, openShift) != nyOpenServer ||
+           iTime(m_symbol, PERIOD_M30, closeShift) != nyPriorCloseBarOpen)
+        {
+            SetDecisionReasonTag("NYGAP_SESSION_BARS_MISSING");
+            return TRADE_SIGNAL_NONE;
+        }
+
+        double prevDayClose = iClose(m_symbol, PERIOD_M30, closeShift);
+        double todayOpen    = iOpen(m_symbol,  PERIOD_M30, openShift);
 
         if(prevDayClose <= 0 || todayOpen <= 0)
         {
