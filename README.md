@@ -148,4 +148,6 @@ docs/                           Supplementary documentation
 
 ## License
 
-Proprietary. All rights reserved.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
+
+Copyright (c) 2026 magmastormy / Axiom Engineering Studio.
