@@ -408,6 +408,55 @@ own name). `Tools\backtest_b290_scalp2.ini` (`InpScalpSymbolsCsv=XAUUSD,Step Ind
    win rates only, not dollars: the losing trades are precisely the invisible ones. Restoring a realised-P&L line on
    the scalp exit path is now a measurement prerequisite, not a nicety.
 
+## Batch 291 — the scalper-off arm became a distribution: 5 of 5 positive, mean +1.917%, t 3.3, shipped as the default
+
+Batch 290 ended on one swing: the same build and window returning −2.588% with the fast-scalp engine on and
++3.811% with it off. One window is an observation, not a gain, so this batch repeated the off arm across the
+neighbouring 7-day slices on the **same binary** (no recompile for arms 1–4) and then shipped what the
+distribution supports.
+
+**Setup, identical to Batch 290 except for the window:** `Volatility 75 Index` M15, `Model=1`, deposit 10,000,
+`InpQuorumProfile=1`, `InpMinLiveVoters=1`, four init-loaded state files cleared before every launch, scoreboard
+archived, `terminal64`/`metatester64` confirmed absent. P&L rebuilt from each run's own 10,080 heartbeats.
+
+| # | Window | P&L | fills | min / max | time |
+|---|---|---|---|---|---|
+| 1 | 2026.09.01 → 09.08 | **+381.07 (+3.811%)** | 270 | 9,891.96 / 10,381.42 | 1:13:52 |
+| 2 | 2026.09.08 → 09.15 | **+63.45 (+0.635%)** | 273 | 9,815.95 / 10,088.68 | 0:28:07 |
+| 3 | 2026.09.15 → 09.22 | **+148.92 (+1.489%)** | 261 | 9,976.99 / 10,168.43 | 0:25:24 |
+| 4 | 2026.09.22 → 09.29 | **+264.00 (+2.640%)** | 260 | 9,964.62 / 10,424.80 | 0:27:34 |
+| 5 | 2026.09.29 → 10.06 (factory default, `.set` parked) | **+100.93 (+1.009%)** | 279 | 9,943.67 / 10,255.71 | 0:28:23 |
+| — | control: same build, scalper **on**, 09.01 → 09.08 | **−258.77 (−2.588%)** | 2,265 | 9,560.27 / 10,000.00 | 0:41:23 |
+
+**mean +1.917% · sample stdev 1.300 pp · t 3.30 · 5 wins of 5 · range +0.635% … +3.811%.**
+Against the six-window scalper-on record (mean +0.46%, sd 0.92 pp, t 1.2), this is the first distribution in the
+repository whose mean sits three standard errors off zero on the same instrument and test harness.
+
+**The volume lesson, again.** 260–279 fills beat 2,265 fills by 6.4 pp on the paired window and stayed positive on
+every neighbour. Expectancy per trade is the quantity that moved (≈ +$0.23 to +$1.41 per fill against −$0.11), not
+throughput. It also kills the standing intuition that a "fast" book needs many fills: the four no-scalp windows
+trade *fewer than a third* of the receipts and earn more.
+
+**Arm 5 is the default, proven rather than assumed.** Its ini omits `InpEnableScalpEngine` entirely and
+`MQL5\Profiles\Tester\MultiStrategyAutonomousEA.set` — the file MT5 rewrites after each test and reuses as the
+next run's starting inputs, the Batch 283/288 hazard — was parked as `.set.parked_b291` before launch. The run
+printed **0** `[SCALP-SIGNAL-REJECT]` lines (58,935 in the 2,265-fill arm), so the compiled default executed. The
+`.set` was recreated by the run, which re-confirms that MT5 rebuilds it every time.
+
+**What shipped (compiled 0 errors / 0 warnings on all eight programs):**
+1. `Core\Config\SharedEAInputs.mqh` → `InpEnableScalpEngine = false`, with the measured block written above it
+   (both arms, four windows, mean/sd/t, and the paired-window rule before turning it back on).
+2. `Core\Management\StrategyMgrTradeFeedback.mqh` → `[ENGINE-CLOSE]` line carrying `net=…` for engine-managed
+   closes, which previously returned before logging. That invisible-close gap is why 260 recorded closes summed
+   +11.03 against a −258.77 account delta in Batch 290. Compiled; not yet observed in a run because the engine is
+   off by default.
+
+**Conclusion.** The default configuration for a fast book is *fewer, better trades*: consensus-only, one-voter
+quorum, and the scalper off. +1.917% per 7 days with 1.30 pp of noise is the current baseline to beat, and the next
+test is not another threshold — it is (a) one window on the post-logging build to confirm the default reproduces,
+and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
+which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
+
 ## Where the record stands
 
 | rule tested | windows | effect measured | verdict |
@@ -419,7 +468,8 @@ own name). `Tools\backtest_b290_scalp2.ini` (`InpScalpSymbolsCsv=XAUUSD,Step Ind
 | per-symbol loss brake (hold entry) | 1 window | **−4.75 pp** | **rejected** |
 | per-symbol streak sizing (half stake) | 2 windows | **+1.40 pp**, then **−5.68 pp** | **rejected** |
 | Batch 289 handle guard / correlation / portfolio / equity-curve fixes | 1 window | **−3.57 pp** vs the Batch 288 build, at **+167% fills** | **measured, not a gain on its own** |
-| fast-scalp engine ON vs OFF, same build and window | 2 arms, 1 window | **−2.588% on 2,265 fills** vs **+3.811% on 270 fills** | **+6.40 pp; not yet shipped as the default** |
+| fast-scalp engine ON vs OFF, same build and window | 2 arms, 1 window | **−2.588% on 2,265 fills** vs **+3.811% on 270 fills** | **+6.40 pp, one window** |
+| fast-scalp engine OFF, five consecutive windows | **5 windows** | mean **+1.917%**, sd **1.30 pp**, t **3.30**, **5/5 positive**, 260–279 fills each | **shipped as the factory default** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 
@@ -436,8 +486,8 @@ Three things are now true with numbers behind them, and they are what the next g
 
 **What is still not measured anywhere in this file:** MT5's own profit factor, max drawdown and Sharpe
 (`backtest_report.htm` is never written by this terminal), any walk-forward segment outside 2026-09/10 on one
-instrument, and any live attach. So "profitable system" is still a claim about a mean of **+0.46% per 7 days** with
-**0.92 pp** of noise on the consensus arm — plus one **+3.811%** window for the scalp-off arm, which is a single
-observation and needs its neighbours before it becomes a default.
+instrument, and any live attach. So "profitable system" is now a claim about a mean of **+1.917% per 7 days** with
+**1.30 pp** of noise (five consecutive windows, t 3.3) on one instrument under one test harness — out-of-window but
+not out-of-regime, and not yet a live result.
 
 

@@ -8,6 +8,35 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-13
 
+### Batch 291: five cold windows with the scalper off — 5 of 5 positive, mean +1.917%, t 3.3 — shipped as the factory default
+
+A single A/B on one window is an observation. This batch turned Batch 290's +3.811% into a distribution on the same binary (no recompile for the first four windows: `MultiStrategyAutonomousEA.ex5` 1,756,100 B, 13 Nov 18:09:39), then shipped what the distribution supports.
+
+**The five arms.** `Volatility 75 Index` M15, `Model=1`, deposit 10,000, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, every run cold (all four init-loaded state files deleted, scoreboard archived to `Tools\artifacts\scoreboards\`), `terminal64`/`metatester64` confirmed absent before each launch. P&L rebuilt from each run's own 10,080 `[COMPOUNDING-TIER-HEARTBEAT]` samples; fills counted from `[EXECUTION-RECEIPT]`.
+
+| Window | P&L | fills | min / max balance | tester time | ini |
+|---|---|---|---|---|---|
+| 2026.09.01->09.08 | **+381.07 (+3.811%)** | 270 | 9,891.96 / 10,381.42 | 1:13:52 | `backtest_b290_noscalp.ini` |
+| 2026.09.08->09.15 | **+63.45 (+0.635%)** | 273 | 9,815.95 / 10,088.68 | 0:28:07 | `backtest_b290_noscalp_w2.ini` |
+| 2026.09.15->09.22 | **+148.92 (+1.489%)** | 261 | 9,976.99 / 10,168.43 | 0:25:24 | `backtest_b290_noscalp_w3.ini` |
+| 2026.09.22->09.29 | **+264.00 (+2.640%)** | 260 | 9,964.62 / 10,424.80 | 0:27:34 | `backtest_b290_noscalp_w4.ini` |
+| 2026.09.29->10.06 | **+100.93 (+1.009%)** | 279 | 9,943.67 / 10,255.71 | 0:28:23 | `backtest_b291_default_w5.ini` |
+| control: same build, scalper ON, 09.01->09.08 | **-258.77 (-2.588%)** | 2,265 | 9,560.27 / 10,000.00 | 0:41:23 | `backtest_voters1.ini` |
+
+**Distribution:** mean **+1.917%**, sample stdev **1.300 pp**, **t 3.30**, **5 wins of 5**, range +0.635% to +3.811%. Compare the Batch 284 scalp-on build across six windows: mean +0.46%, stdev 0.92 pp, t 1.2, 3 wins of 6. The change moves the book from break-even-within-noise to a distribution whose mean is three standard errors from zero, on one instrument and one adjacent 7-day slice sequence.
+
+**Fill volume, again, is not signal:** the four no-scalp arms took 260-279 fills against 2,265 for the scalp-on arm, yet produced +0.635% to +3.811% where the 2,265-fill arm produced -2.588%. Consistent with Batch 285 (dollars live in a dozen closes, not in hundreds) and Batch 290 (the scalper is the loss). What changed is expectancy per trade, ~+70 to +1,000 USD per 270 fills against -0.11 per fill.
+
+**Arm 5 is the default test, not an explicit-input test.** `Tools\backtest_b291_default_w5.ini` sets only `InpQuorumProfile=1` and `InpMinLiveVoters=1` and **omits `InpEnableScalpEngine`**, and `MQL5\Profiles\Tester\MultiStrategyAutonomousEA.set` (the file MT5 rewrites after every run and reuses as the next run's starting inputs) was moved to `...set.parked_b291` before launch. The run shows **0 `[SCALP-SIGNAL-REJECT]` lines** (2,265-fill arm: 58,935) and no scalp-dominated symbol mix, i.e. the compiled default is what executed. That file now exists again, freshly written by this run - proof MT5 recreated it from the used inputs, and the Batches 283/288 hazard is confirmed again.
+
+**Shipped in this batch (compiled, `OVERALL SUCCESS`):**
+1. `Core\Config\SharedEAInputs.mqh`: `input bool InpEnableScalpEngine = false;` (was `true`), with the six-line measurement block above it: the two Batch 290 arms, the four-window spread, the mean/sd/t, and how to turn it back on (`InpEnableScalpEngine=true`, optionally bounded by `InpScalpSymbolsCsv`) with the instruction to measure a paired window before shipping it again.
+2. `Core\Management\StrategyMgrTradeFeedback.mqh`: engine-managed closes (scalp/grid, identified by `IsEngineManagedPosition(dealComment) || CMagicRange::IsEngineReservedOffset(...)`) used to `return` before any logging, which is why the 2,265-fill arm recorded 260 `Trade Closed` lines summing +11.03 against an account delta of -258.77 - roughly 270 USD of loss was invisible. The branch now computes `bool engineManaged` first and, for `DEAL_ENTRY_OUT/OUT_BY/INOUT`, prints `[ENGINE-CLOSE] <sym> | ticket=... | position=... | magic=... | net=%.2f | comment=...` before returning. The strategy-scoring path is untouched; this only adds a realised-P&L record. Compiled, **not yet runtime-observed** (the scalper is off by default, so it needs a scalp-on window to fire).
+
+**Verification:** `.\sync_files.ps1` (40 Python files + all MQH), then `.\sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> **`OVERALL SUCCESS` - 0 errors, 0 total warnings** on all eight programs: `MultiStrategyAutonomousEA` 65,590 ms, `MultiStrategyTestingEA` 69,669 ms, `TrainingDataExporter` 25,786 ms, `WalkForwardTesterEA` 1,837 ms, `MQHHyperparameterTuner` 4,858 ms, `MQHModelEvaluator` 2,289 ms, `MQHModelTrainer` 3,943 ms, `MQHModelVisualizer` 3,491 ms. Doc edits BOM-free UTF-8.
+
+**Not done:** no window has been run on this new build (the five arms above are the pre-logging binary; window 5 is the new binary but not identical-input comparable to the other four, since it also exercises the default path); the distribution is still one instrument, one contiguous 09/10 slice - out-of-window but not out-of-regime; `Tools\backtest_b290_scalp2.ini` (scalper limited to `XAUUSD,Step Index`) remains unrun, so "symbol coverage vs off entirely" is still open; `backtest_report.htm` is still not written by this terminal, so still no MT5 profit factor / drawdown / Sharpe.
+
 ### Batch 290: the repaired build was run cold — 2,265 fills, -2.588%, and without the scalper the same window makes +3.811%
 
 First measurement of the Batch 289 build (`MultiStrategyAutonomousEA.ex5` 1,755,140 B, 13 Nov 15:04:51). `Tools\backtest_voters1.ini`, `Volatility 75 Index` M15, `Model=1`, deposit 10,000, `2026.09.01`->`09.08`, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, all four state files cleared before launch, no `terminal64`/`metatester64` alive, port 3000 free. Tester: `last test passed with result "successfully finished" in 0:41:23.353 + history synchronization 0:00:03.613`.

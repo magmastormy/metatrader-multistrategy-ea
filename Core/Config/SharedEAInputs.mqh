@@ -331,7 +331,15 @@ input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
 input int      InpSyntheticSpikePauseSeconds = 30;
 
 input group "Scalp Engine";
-input bool     InpEnableScalpEngine = true;
+// OFF by factory default since Batch 291. Measured on the Batch 290 build, Volatility 75 Index M15,
+// Model=1, deposit 10,000, InpQuorumProfile=1, InpMinLiveVoters=1, every window cold:
+//   scalp ON  2026.09.01-09.08: -258.77 (-2.588%), 2,265 fills
+//   scalp OFF same build/window: +381.07 (+3.811%),   270 fills   (one input changed, no recompile)
+//   scalp OFF four windows: +3.811 / +0.635 / +1.489 / +2.640 -> mean +2.14%, sd 1.38 pp, t 3.1, 4 wins of 4
+// The engine is negative-expectancy once its stop admits every symbol; consistency beats fill volume.
+// Turn it back on with InpEnableScalpEngine=true (optionally bounded by InpScalpSymbolsCsv) and measure
+// a paired window before shipping it again.
+input bool     InpEnableScalpEngine = false;
 input bool     InpScalpAsyncMode = false;
 input uint     InpScalpMaxLatencyMs = 500;
 // Comma-separated symbols the fast-scalp engine may trade; "" = every symbol in the universe.

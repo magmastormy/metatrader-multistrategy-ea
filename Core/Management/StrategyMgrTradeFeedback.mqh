@@ -105,9 +105,30 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
             string dealComment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
             if(dealComment == "")
                 dealComment = request.comment;
-            if(IsEngineManagedPosition(dealComment) ||
-               CMagicRange::IsEngineReservedOffset((int)(dealMagic - m_managedMagic)))
+
+            bool engineManaged = IsEngineManagedPosition(dealComment) ||
+                                 CMagicRange::IsEngineReservedOffset((int)(dealMagic - m_managedMagic));
+
+            // Engine-managed exits are correctly excluded from strategy scoring, but they must still
+            // leave a realised-P&L record. Batch 290 measured 2,265 fills against only 260
+            // "Trade Closed" lines: the fast-scalp path closes on server-side SL/TP, lands here as an
+            // engine-managed deal, and returned before anything was printed - so roughly 270 USD of a
+            // -258.77 window had no journal line at all. This prints and returns; scoring is untouched.
+            if(engineManaged)
+            {
+                ENUM_DEAL_ENTRY engineEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+                if(engineEntry == DEAL_ENTRY_OUT || engineEntry == DEAL_ENTRY_OUT_BY || engineEntry == DEAL_ENTRY_INOUT)
+                {
+                    double engineProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+                    double engineSwap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+                    double engineCommission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                    PrintFormat("[ENGINE-CLOSE] %s | ticket=%I64u | position=%I64u | magic=%I64d | net=%.2f | comment=%s",
+                                dealSymbol, dealTicket,
+                                (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID),
+                                dealMagic, engineProfit + engineSwap + engineCommission, dealComment);
+                }
                 return;
+            }
 
             ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
             ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
