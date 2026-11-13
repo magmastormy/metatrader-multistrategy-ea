@@ -323,6 +323,19 @@ class CEAOrchestrator
         // Set the shutdown flag FIRST: OnTimer must not touch resources being released.
         m_shuttingDown = true;
 
+        // State that must survive goes to disk FIRST. The terminal kills an OnDeinit that runs past
+        // about 2.5 s, and this one does: the 2026-11-13 demo journal ends
+        // "[DASHBOARD-BRIDGE] ... shutting down" at 14:38:01.532 and "Abnormal termination" at
+        // 14:38:06.010 with neither the scoreboard line nor "[EAOrchestrator] Shutdown complete"
+        // between them. Both writes used to sit at the bottom of this method, behind the teardown
+        // that gets killed, so a removed EA lost its strategy scoreboard and its circuit-breaker
+        // state every time. Every object they read is still alive at this point.
+        if(m_systemInitialized)
+        {
+            PersistStrategyScoreboard();
+            PersistRiskRuntimeState(true);
+        }
+
         // Math engine Deinit()/delete ordering owned by ReleaseAll().
         m_mathEngineHub.ReleaseAll();
 
@@ -373,10 +386,7 @@ class CEAOrchestrator
         // Attribution diag print BEFORE releasing enterprise managers (which clears the data)
         m_attributionManager.NNDiagPrintSummary("deinit");
 
-        // Last-chance scoreboard write, before the managers that own the counters are released. This
-        // is the difference between the next run starting from the roster's own history and starting
-        // from the 0.55 prior again.
-        PersistStrategyScoreboard();
+        // (The scoreboard was written at the top of this method, before any teardown.)
 
         ReleaseEnterpriseManagers();
 
@@ -398,8 +408,7 @@ class CEAOrchestrator
 
         UncertaintyDeinit();
 
-        // Forced write: the 30 s throttle never applies here, and deinit must leave a record.
-        PersistRiskRuntimeState(true);
+        // (Risk runtime state was written at the top of this method, before any teardown.)
 
     m_systemInitialized = false;
     m_tradingEnabled = false;
@@ -2922,7 +2931,7 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     // only 457 distinct handle numbers, i.e. the cache was rebuilding itself continuously. A handle
     // is a symbol/timeframe/params identity - it is worth keeping for hours. The 50,000 cap in
     // CIndicatorManager still bounds the table.
-    CIndicatorManager::Instance().ReleaseUnused(14400); // Release handles idle for 4 hours
+    // No idle sweep: consumers cache handle numbers in members, so releasing an idle row hands them a dead (then reused) handle.
     s_lastIndicatorEviction = now;
 }
 

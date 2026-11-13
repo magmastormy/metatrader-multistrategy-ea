@@ -161,15 +161,34 @@ public:
             }
          }
 
-         // 2. Move to breakeven after breakevenProfitPoints
-         if(!state.breakevenSet && profitPoints >= config.breakevenProfitPoints)
+         // Management distances come from THIS position's own stop distance (1R), not from one
+         // engine-wide point count: 10 points of profit is 1.0 on Step Index and 0.10 on XAUUSD,
+         // which is less than XAUUSD's spread, so breakeven and the 15-point trail fired on noise.
+         // Breakeven arms at 0.6R with a 0.1R buffer; the trail follows at 0.6R. A position with no
+         // recorded 1R (adopted with SL=0) keeps the configured point values.
+         double beTriggerPts = (double)config.breakevenProfitPoints;
+         double beBufferPts  = (double)config.breakevenBufferPoints;
+         double trailPts     = (double)config.trailingDistancePoints;
+         if(state.oneRProfitPrice > 0.0 && state.entryPrice > 0.0)
+         {
+            double rPts = MathAbs(state.oneRProfitPrice - state.entryPrice) / point;
+            if(rPts >= 1.0)
+            {
+               beTriggerPts = 0.60 * rPts;
+               beBufferPts  = 0.10 * rPts;
+               trailPts     = 0.60 * rPts;
+            }
+         }
+
+         // 2. Move to breakeven after the breakeven trigger
+         if(!state.breakevenSet && profitPoints >= beTriggerPts)
          {
             double beSL = 0.0;
             if(posType == POSITION_TYPE_BUY)
-               beSL = NormalizeDouble(openPrice + config.breakevenBufferPoints * point,
+               beSL = NormalizeDouble(openPrice + beBufferPts * point,
                                       (int)SymbolInfoInteger(posSymbol, SYMBOL_DIGITS));
             else
-               beSL = NormalizeDouble(openPrice - config.breakevenBufferPoints * point,
+               beSL = NormalizeDouble(openPrice - beBufferPts * point,
                                       (int)SymbolInfoInteger(posSymbol, SYMBOL_DIGITS));
 
             // Only move SL if it improves the position
@@ -192,14 +211,14 @@ public:
          }
 
          // 3. Tight trailing after breakeven is set
-         if(state.breakevenSet && config.trailingDistancePoints > 0)
+         if(state.breakevenSet && trailPts > 0.0)
          {
             double newSL = 0.0;
             int digits = (int)SymbolInfoInteger(posSymbol, SYMBOL_DIGITS);
 
             if(posType == POSITION_TYPE_BUY)
             {
-               newSL = NormalizeDouble(currentPrice - config.trailingDistancePoints * point, digits);
+               newSL = NormalizeDouble(currentPrice - trailPts * point, digits);
                if(newSL > currentSL)
                {
                   tradeManager.ModifyPosition(ticket, newSL, currentTP);
@@ -207,7 +226,7 @@ public:
             }
             else
             {
-               newSL = NormalizeDouble(currentPrice + config.trailingDistancePoints * point, digits);
+               newSL = NormalizeDouble(currentPrice + trailPts * point, digits);
                if(currentSL == 0.0 || newSL < currentSL)
                {
                   tradeManager.ModifyPosition(ticket, newSL, currentTP);

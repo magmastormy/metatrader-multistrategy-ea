@@ -5,6 +5,8 @@
 #property version   "2.000"
 #property strict
 
+// First on purpose: it installs the IndicatorRelease guard every later header must compile under.
+#include "IndicatorManager.mqh"
 #include "Core/Orchestration/EAOrchestrator.mqh"
 
 // Global variable definitions (declared extern in OrchestratorFwd)

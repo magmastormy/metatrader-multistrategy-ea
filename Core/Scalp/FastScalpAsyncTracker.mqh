@@ -122,12 +122,15 @@ public:
          double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
          double oneRPrice = 0.0;
          // Guard: config.scalpSLPips must be > 0 here, else oneRPrice collapses onto the entry price and fires the 50% partial close on the first tick after the fill.
-         if(point > 0.0 && config.scalpSLPips > 0.0)
+         // 1R is this order's own stop distance: the engine-wide config no longer carries a
+         // per-symbol stop (CFastScalpEngine::BuildSymbolConfig prices each symbol separately).
+         double slDistance = (stopLoss > 0.0 && entryPrice > 0.0) ? MathAbs(entryPrice - stopLoss) : 0.0;
+         if(point > 0.0 && slDistance > 0.0)
          {
             if(direction == 1)  // BUY
-               oneRPrice = entryPrice + config.scalpSLPips * point;
+               oneRPrice = entryPrice + slDistance;
             else  // SELL
-               oneRPrice = entryPrice - config.scalpSLPips * point;
+               oneRPrice = entryPrice - slDistance;
          }
 
          positionTracker.RegisterScalpPosition(positionId, symbol, entryPrice,
@@ -197,12 +200,14 @@ public:
                double point = SymbolInfoDouble(m_pendingAsync[i].symbol, SYMBOL_POINT);
                double oneRPrice = 0.0;
                // Guard: config.scalpSLPips must be > 0 here, else oneRPrice collapses onto the entry price and fires the 50% partial close on the first tick after the fill.
-               if(point > 0.0 && config.scalpSLPips > 0.0)
+               double slDistance = (m_pendingAsync[i].stopLoss > 0.0 && m_pendingAsync[i].entryPrice > 0.0)
+                                   ? MathAbs(m_pendingAsync[i].entryPrice - m_pendingAsync[i].stopLoss) : 0.0;
+               if(point > 0.0 && slDistance > 0.0)
                {
                   if(m_pendingAsync[i].direction == 1)  // BUY
-                     oneRPrice = m_pendingAsync[i].entryPrice + config.scalpSLPips * point;
+                     oneRPrice = m_pendingAsync[i].entryPrice + slDistance;
                   else  // SELL
-                     oneRPrice = m_pendingAsync[i].entryPrice - config.scalpSLPips * point;
+                     oneRPrice = m_pendingAsync[i].entryPrice - slDistance;
                }
 
                positionTracker.RegisterScalpPosition(positionId, m_pendingAsync[i].symbol, m_pendingAsync[i].entryPrice,
