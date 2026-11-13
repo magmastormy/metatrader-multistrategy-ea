@@ -6,7 +6,30 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
-## [Unreleased] - 2026-11-13
+## [Unreleased] - 2026-11-14
+
+### Batch 294: MEASURED, NOT SHIPPED - the risk dial selects the trade set instead of scaling it
+
+The user's standing question is why the system is slow relative to bots that "fish money fast", and the implicit proposal is more risk per trade. This batch answers it with measurement, and answers it no.
+
+Diagnosis before any run: `InpMaxRiskPerTrade = 1.0` on a 10,000 deposit implies 100 USD of risk per trade, but realised closes across every window average about ±23 USD, because sizing lands on the broker minimum lot for most synthetic symbols. The book's true risk is ~0.2% per trade, so the 1% ceiling is not the constraint and never was.
+
+Three arms on two windows of the shipped trimmed universe, same Batch 293 binary, no source change, no recompile, all four state files cleared per run, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, eleven-symbol universe, `Model=1`, deposit 10,000:
+
+| window | 1% / 4% daily / 12% portfolio (factory) | 2% / 8% daily / 24% portfolio | 4% per trade only |
+|---|---|---|---|
+| 09.22 -> 09.29 | **+18.176%** (282 receipts) | **-1.217%**, min 9,634.71, max 10,155.90 | **+7.625%**, min 9,997.99, max 10,765.76 |
+| 10.06 -> 10.13 | **-0.599%** (307 receipts) | **-3.614%**, 450 receipts, min 9,589.31 | **+2.097%**, 293 receipts, min 9,894.02 |
+| mean | **+8.79%** | **-2.42%** | **+4.86%** |
+| cross-window sd | 13.28 pp | 1.70 pp | 3.91 pp |
+
+Mechanism: at 4% per trade the EA itself warns `[VALIDATION] WARNING: InpMaxRiskPerTrade * InpMaxPositionsTotal (60.00) > InpMaxPortfolioRisk * 1.5 (18.00)`, and `reason=daily_risk_would_exceed` rises from ~2,884 per window at 1% to 27,471 at 2% and 17,631 at 4%. A single candidate asks 1.00-2.00%, so the 4.00% daily budget admits two concurrent positions where the 1% book ran up to fifteen. The fill mix flips from `Crash 1000`-led (the instrument that pays every window) to `Jump 75`-led: 122 of 293 receipts at 4%, 172 of 450 at 2%.
+
+Conclusion: raising `InpMaxRiskPerTrade` does not enlarge the book, it re-selects it, and both re-selections are worse than the factory setting on mean across the two windows. No input changed. `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0` remain the measured best configuration.
+
+Measurement hazards hit and fixed here: the tester journal is recreated per run, so the first 4% window's equity was overwritten by the second and the window had to be re-launched (1,260 s) with the journal snapshotted at `last test passed`; and a heartbeat slice may begin inside the previous run, so the base is the sample with balance exactly 10,000.00 within the first ten samples of the last 10,080.
+
+New artefacts: `Tools\backtest_b294_risk4x_w4.ini`, `Tools\backtest_b294_risk4x_w6.ini`, `Tools\backtest_b294_scale2x_w4.ini`, `Tools\backtest_b294_scale2x_w6.ini`; archived scoreboards `scoreboard_b294_risk4x_20260922-20260929.csv`, `scoreboard_b294_risk4x_20261006-20261013.csv`, `scoreboard_b294_scale2x_w4.csv`, `scoreboard_b294_scale2x_w6.csv`. Not done: two windows per arm is a 3-point grid rather than a distribution, and the daily-ceiling-only arm (1% per trade, 8% daily budget) is still unrun.
 
 ### Batch 293: SHIPPED - the two Volatility indices are out of the factory universe, on five paired windows
 

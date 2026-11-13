@@ -457,6 +457,57 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 294 — the system is "slow" because it trades minimum size, and the risk dial is a selector, not a multiplier
+
+**Asked:** the user's framing is that other bots "fish money fast" while this EA is slow and ineffective, and the
+recurring question behind it is whether more risk per trade buys more profit.
+
+**Diagnosis first, before touching an input.** `InpMaxRiskPerTrade = 1.0` on a 10,000 deposit promises 100 USD of
+risk per trade. The realised closes in every measured window average about ±23 USD, because sizing lands on the
+broker's minimum lot for most synthetic symbols. So the percentage was never the amount at risk: the book risks
+roughly **0.2% per trade**, and the "1%" is a ceiling that min-lot arithmetic never reaches. That is the whole
+answer to "why is it slow": a 7-day window with 260–300 fills and ±23 USD each cannot produce more than a few
+percent without leverage, and the leverage is not in the numbers, it is in the lot size.
+
+**Run:** three risk settings on two windows of the shipped trimmed universe, no source changed, no recompile
+(the Batch 293 binary). Every `.ini` states `InpQuorumProfile=1`, `InpMinLiveVoters=1`, the eleven-symbol
+`InpSymbolsToTrade`, all four state files cleared before launch, `Model=1`, deposit 10,000.
+
+| window | shipped 1% / 4% daily / 12% portfolio | 2% / 8% daily / 24% portfolio | 4% per trade only |
+|---|---|---|---|
+| 09.22 → 09.29 | **+18.176%** (282 receipts) | **−1.217%**, min 9,634.71, max 10,155.90 | **+7.625%**, min 9,997.99, max 10,765.76 |
+| 10.06 → 10.13 | **−0.599%** (307 receipts) | **−3.614%**, 450 receipts, min 9,589.31 | **+2.097%**, 293 receipts, min 9,894.02 |
+| mean | **+8.79%** | **−2.42%** | **+4.86%** |
+| cross-window sd | 13.28 pp | 1.70 pp | 3.91 pp |
+
+**The mechanism, measured rather than inferred.** The EA's own validation line fires at 4×:
+`[VALIDATION] WARNING: InpMaxRiskPerTrade * InpMaxPositionsTotal (60.00) > InpMaxPortfolioRisk * 1.5 (18.00)`.
+Inside the runs, `reason=daily_risk_would_exceed` goes from about **2,884 per window at 1×** (Batch 281's histogram)
+to **27,471 at 2×** and **17,631 at 4×**. At 4× a single candidate asks 1.00–2.00% risk, so the 4.00% daily budget
+admits two concurrent positions where the 1× book ran up to fifteen. The book does not get bigger — it gets
+differently selected: fills move from Crash-led to Jump-led (`Jump 75` 122 of 293 receipts at 4×, 172 of 450 at 2×),
+and `Crash 1000` — the instrument that pays every window in Batch 293 — is the first thing the cap refuses.
+
+**Conclusion: raising risk on this EA does not scale the return, it re-selects the trade set**, and on both windows
+the re-selection is worse than the shipped configuration in mean terms. The 2× arm is also the least volatile
+(1.70 pp spread) precisely because it traded a smaller, more uniform book. So the "fast money" question has a
+measured answer: you cannot buy speed by turning up the risk percentage here, because the daily and portfolio
+budgets convert the extra ask into rejections rather than into size.
+
+**Nothing shipped.** `InpMaxRiskPerTrade = 1.0`, `InpMaxDailyRisk = 4.0` and `InpMaxPortfolioRisk = 12.0` stay at
+their factory values: across the three points measured they are the best mean configuration, and the two
+alternatives lost money on one window and underperformed on the other.
+
+**Measurement notes that cost real time here:** the tester journal is recreated per run, so the first 4× window's
+equity was overwritten by the second run — the window had to be re-launched (1,260 s) and the journal snapshotted
+the moment the tester wrote `last test passed`. A heartbeat slice can also begin inside the previous run, so the
+base is the sample whose balance is exactly 10,000.00 within the first ten samples of the last 10,080, never
+"last minus first".
+
+**Not done:** two windows per arm is a 3-point grid, not a distribution; the daily-ceiling-only arm (1% per trade
+with an 8% daily budget) is the one arm that could still raise throughput without touching per-trade risk, and it
+is unrun; nothing here is outside 2026-09/10.
+
 ## Batch 293 — the trim cleared its bar, so it is the factory universe now
 
 Batch 292 stopped at three paired windows. Two more finished the set, and the arm now meets the same standard
@@ -563,6 +614,7 @@ the window in 0:40:41. Two stale processes silently swallowed one launch — the
 | fast-scalp engine OFF, five consecutive windows | **5 windows** | mean **+1.917%**, sd **1.30 pp**, t **3.30**, **5/5 positive**, 260–279 fills each | **shipped as the factory default** |
 | fast-scalp engine OFF, sixth window | 1 window | **−2.696%**, 307 fills; `Volatility 75` −116.53 on 5 closes | **the distribution is now mean +1.148%, sd 2.213 pp, t 1.27, 5/6** |
 | universe trimmed (both Volatility indices removed) | 5 paired windows | **+2.13 / +7.05 / +5.97 / +15.54 / +2.10 pp**, 5/5 positive, paired t **2.72**; arm mean **+7.734%**, sd 6.74 pp, worst **−0.599%** | **SHIPPED as the factory universe** |
+| risk dial 1× / 2× / 4× per trade | 2 windows × 3 arms | mean **+8.79% / −2.42% / +4.86%**; daily-cap rejects 2,884 → 27,471 → 17,631; fills flip Crash-led to Jump-led | **1× stands — the dial selects the book, it does not scale it** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 
@@ -576,6 +628,10 @@ Three things are now true with numbers behind them, and they are what the next g
    the engine off returned +3.811% on the same build. Losing runs are still followed by the biggest winners —
    `−18, −19, −56, −32, +97 … +149` on V75 — so anything that treats a streak as decay is fighting the distribution
    that pays this book, and anything that adds fills is not automatically adding money.
+4. **Absolute size is set by the broker minimum, and the budgets above it are ceilings that reject instead of scale.**
+   Average realised risk is ~0.2% per trade against a 1% `InpMaxRiskPerTrade`, so the only way this EA can "fish
+   fast" is through more fills or larger lots — and Batch 294 measured that raising the per-trade ask converts into
+   daily-cap rejections, not into size, while the fills that survive are the ones least likely to pay.
 
 **What is still not measured anywhere in this file:** MT5's own profit factor, max drawdown and Sharpe
 (`backtest_report.htm` is never written by this terminal), any walk-forward segment outside 2026-09/10 on one
