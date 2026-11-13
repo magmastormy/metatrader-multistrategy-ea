@@ -94,7 +94,7 @@ private:
                                   double &bbUpper,
                                   double &bbLower,
                                   double &stdDevValue) const;
-        // L4-014 Fix: Shared ATR calculation helper to avoid duplication
+        // Shared ATR calculation helper to avoid duplication
         static double CalculateAtrFromRates(const MqlRates &rates[], int period, int startIndex, int copied);
         bool ApplyFallbackMetrics(const string symbol,
                               const ENUM_TIMEFRAMES timeframe,
@@ -311,7 +311,7 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
         if(copied < requiredBars)
             return false;
 
-        // L4-014 Fix: Use shared ATR calculation helper
+        // Use shared ATR calculation helper
         atrCurrent = CalculateAtrFromRates(rates, m_atrPeriod, 0, copied);
         atrPrevious = CalculateAtrFromRates(rates, m_atrPeriod, 1, copied);
 
@@ -360,7 +360,7 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
                 MathIsValidNumber(stdDevValue));
     }
 
-// Shared ATR calculation helper (L4-014 Fix)
+// Shared ATR calculation helper
         double CVolatilityEngine::CalculateAtrFromRates(const MqlRates &rates[], int period, int startIndex, int copied)
         {
             int atrWindow = MathMin(period, copied - startIndex - 1);
@@ -487,7 +487,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
        symbol == m_indicatorSymbol && timeframe == m_indicatorTimeframe &&
        m_metrics.lastUpdate > 0 && m_lastValidMetrics.lastUpdate > 0)
     {
-        // Same bar �?reuse cached metrics, no recalculation needed
+        // Same bar -reuse cached metrics, no recalculation needed
         return true;
     }
 
@@ -585,7 +585,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     m_metrics.atr = atr[0];
 
-    // Batch104-C1: ATR sanity validation �?corrupted multi-symbol indicator handles
+    // Batch104-C1: ATR sanity validation -corrupted multi-symbol indicator handles
     // can return values 1000x-100000x too high (e.g., 115783 for USDJPY instead of ~0.16).
     // If ATR exceeds 10x the asset price, the data is clearly corrupted.
     bool atrCorrupted = false;
@@ -608,7 +608,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     else
     {
         m_metrics.atrPercent = (atr[0] / price) * 100.0;
-        // Clamp atrPercent to 100.0% �?anything above is clearly corrupted data
+        // Clamp atrPercent to 100.0% -anything above is clearly corrupted data
         if(m_metrics.atrPercent > 100.0)
         {
             PrintFormat("[VOLATILITY-SANITY] ATR_PCT_CLAMPED | symbol=%s | timeframe=%s | raw_pct=%.2f | clamped=100.00",
@@ -688,7 +688,7 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
         return false;
     }
     
-    // L4-014 Fix: Use shared ATR calculation helper
+    // Use shared ATR calculation helper
     double atrValue = CalculateAtrFromRates(rates, m_atrPeriod, 0, copied);
     if(atrValue <= 0.0 || !MathIsValidNumber(atrValue))
     {
@@ -703,3 +703,4 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
 }
 
 #endif // VOLATILITY_ENGINE_MQH
+

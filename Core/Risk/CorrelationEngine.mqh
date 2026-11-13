@@ -2,8 +2,16 @@
 #ifndef CORE_RISK_CORRELATION_ENGINE_MQH
 #define CORE_RISK_CORRELATION_ENGINE_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 #define CORR_ENGINE_MAX_SYMBOLS  20
 #define CORR_ENGINE_INVALID_IDX  -1
+// A pair that was never measured is not a pair that measured 1.00. The matrix stores this
+// sentinel so a caller can tell "unknown" from "fully correlated"; GetCorrelation maps it to the
+// configured conservative fallback for callers that cannot express doubt (RiskTieredCorrelation),
+// and TryGetCorrelation reports it as false so the portfolio gate can act on the difference.
+#define CORR_ENGINE_UNKNOWN      -2.0
+#define CORR_ENGINE_IS_UNKNOWN(v) ((v) <= -1.5)
 
 // Pearson correlation on H1 simple returns over m_lookback bars, cached as a full matrix and
 // rebuilt on an interval (default 300s), not per query. Registry and matrix are fixed-size.
@@ -13,8 +21,8 @@ private:
     int      m_lookback;            // H1 bars for Pearson calculation (default 30)
     int      m_refreshIntervalSec;  // Seconds between matrix rebuilds (default 300)
     double   m_conservativeFallback;// Value returned when data insufficient (default 1.0 = fully correlated)
-    double   m_assetClassThreshold; // L5-016: Correlation threshold for same asset class (default 0.85)
-    double   m_crossAssetThreshold; // L5-016: Correlation threshold for different asset classes (default 0.7)
+    double   m_assetClassThreshold; // Correlation threshold for same asset class (default 0.85)
+    double   m_crossAssetThreshold; // Correlation threshold for different asset classes (default 0.7)
 
     string   m_symbols[CORR_ENGINE_MAX_SYMBOLS];
     int      m_symbolCount;
@@ -35,7 +43,7 @@ private:
 
     int      FindSymbolIndex(const string symbol) const;
     int      RegisterSymbol(const string symbol);
-    void     PruneStaleSymbols();  // Batch 119: remove symbols without open positions
+    void     PruneStaleSymbols();  // remove symbols without open positions
     void     ComputeMatrix();
     double   ComputePearson(const string symbol1, const string symbol2) const;
     double   GetCachedCorrelation(int idx1, int idx2) const;
@@ -60,6 +68,11 @@ public:
     void     SetSymbolsChanged(bool changed) { m_symbolsChanged = changed; }
 
     double   GetCorrelation(const string sym1, const string sym2);
+
+    // False means "this pair was never measured" (short/missing H1 history, full registry, uninitialised
+    // engine). `correlation` is untouched in that case. Callers that can act on doubt use this;
+    // callers that cannot keep using GetCorrelation, which maps doubt onto the conservative fallback.
+    bool     TryGetCorrelation(const string sym1, const string sym2, double &correlation);
 
     bool     IsCorrelatedCluster(const string symbol, double threshold = 0.7);
 
@@ -141,7 +154,7 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
 
     if(m_symbolCount >= CORR_ENGINE_MAX_SYMBOLS)
     {
-        PrintFormat("[CORR-ENGINE] Symbol registry full (%d) — cannot register %s",
+        PrintFormat("[CORR-ENGINE] Symbol registry full (%d) �?cannot register %s",
                     CORR_ENGINE_MAX_SYMBOLS, symbol);
         return CORR_ENGINE_INVALID_IDX;
     }
@@ -154,19 +167,19 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
 double CCorrelationEngine::ComputePearson(const string symbol1, const string symbol2) const
 {
     if(symbol1 == "" || symbol2 == "")
-        return m_conservativeFallback;
+        return CORR_ENGINE_UNKNOWN;
     if(symbol1 == symbol2)
         return 1.0;
 
     if(!SymbolSelect(symbol1, true) || !SymbolSelect(symbol2, true))
-        return m_conservativeFallback;
+        return CORR_ENGINE_UNKNOWN;
 
     double prices1[];
     double prices2[];
 
     if(CopyClose(symbol1, PERIOD_H1, 0, m_lookback, prices1) < m_lookback ||
        CopyClose(symbol2, PERIOD_H1, 0, m_lookback, prices2) < m_lookback)
-        return m_conservativeFallback;
+        return CORR_ENGINE_UNKNOWN;
 
     int n = m_lookback - 1;
     double sum1 = 0.0, sum2 = 0.0, sum12 = 0.0, sum1sq = 0.0, sum2sq = 0.0;
@@ -174,7 +187,7 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
     for(int i = 1; i < m_lookback; i++)
     {
         if(prices1[i - 1] <= 0.0 || prices2[i - 1] <= 0.0)
-            return m_conservativeFallback;
+            return CORR_ENGINE_UNKNOWN;
 
         double ret1 = (prices1[i] - prices1[i - 1]) / prices1[i - 1];
         double ret2 = (prices2[i] - prices2[i - 1]) / prices2[i - 1];
@@ -190,7 +203,7 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
     double denominator = MathSqrt((n * sum1sq - sum1 * sum1) * (n * sum2sq - sum2 * sum2));
 
     if(denominator <= 0.0)
-        return m_conservativeFallback;
+        return CORR_ENGINE_UNKNOWN;
 
     double correlation = numerator / denominator;
 
@@ -204,7 +217,7 @@ double CCorrelationEngine::ComputePearson(const string symbol1, const string sym
 double CCorrelationEngine::GetCachedCorrelation(int idx1, int idx2) const
 {
     if(idx1 < 0 || idx1 >= m_symbolCount || idx2 < 0 || idx2 >= m_symbolCount)
-        return m_conservativeFallback;
+        return CORR_ENGINE_UNKNOWN;
 
     return m_matrix[idx1 * CORR_ENGINE_MAX_SYMBOLS + idx2];
 }
@@ -215,6 +228,8 @@ void CCorrelationEngine::ComputeMatrix()
     {
         ulong ticket = PositionGetTicket(i);
         if(ticket <= 0 || !PositionSelectByTicket(ticket))
+            continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
             continue;
         string posSymbol = PositionGetString(POSITION_SYMBOL);
         RegisterSymbol(posSymbol);
@@ -263,13 +278,15 @@ void CCorrelationEngine::PruneStaleSymbols()
 
     for(int p = 0; p < PositionsTotal(); p++)
     {
-        if(PositionSelectByTicket(PositionGetTicket(p)))
-        {
-            string posSymbol = PositionGetString(POSITION_SYMBOL);
-            int idx = FindSymbolIndex(posSymbol);
-            if(idx != CORR_ENGINE_INVALID_IDX)
-                hasPosition[idx] = true;
-        }
+        ulong ticket = PositionGetTicket(p);
+        if(ticket <= 0 || !PositionSelectByTicket(ticket))
+            continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
+            continue;
+        string posSymbol = PositionGetString(POSITION_SYMBOL);
+        int idx = FindSymbolIndex(posSymbol);
+        if(idx != CORR_ENGINE_INVALID_IDX)
+            hasPosition[idx] = true;
     }
 
     // Drops symbols with no open position by shifting the registry left. Pinned query symbols
@@ -307,21 +324,36 @@ void CCorrelationEngine::ForceRefresh()
     m_lastRefreshTime = TimeCurrent();
 }
 
-// Uninitialized engine, missing H1 history and a full registry all answer m_conservativeFallback,
-// which PortfolioRiskManager wires as 1.0 (= fully correlated, so the cluster caps still bind).
+// GetCorrelation cannot express doubt, so an unmeasured pair answers m_conservativeFallback (the
+// PortfolioRiskManager wires it as 1.0). TryGetCorrelation is the doubt-aware form and is what the
+// portfolio gate uses: on 2026-11-12 a real tester run reported every pair as "1.00 > 0.85" because
+// the cached matrix held CORR_ENGINE_UNKNOWN for pairs whose H1 history was short, which converted a
+// missing measurement into a permanent ban on every symbol but the one already held.
 double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 {
+    double correlation = 0.0;
+    if(TryGetCorrelation(sym1, sym2, correlation))
+        return correlation;
+
+    return m_conservativeFallback;
+}
+
+bool CCorrelationEngine::TryGetCorrelation(const string sym1, const string sym2, double &correlation)
+{
     if(!m_initialized)
-        return m_conservativeFallback;
+        return false;
 
     if(sym1 == sym2)
-        return 1.0;
+    {
+        correlation = 1.0;
+        return true;
+    }
 
     int idx1 = RegisterSymbol(sym1);
     int idx2 = RegisterSymbol(sym2);
 
     if(idx1 == CORR_ENGINE_INVALID_IDX || idx2 == CORR_ENGINE_INVALID_IDX)
-        return m_conservativeFallback;
+        return false;
 
     // Pinned across the refresh so PruneStaleSymbols cannot drop the candidate or shift its index.
     m_pinnedSymbolA = sym1;
@@ -338,9 +370,14 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
     idx1 = FindSymbolIndex(sym1);
     idx2 = FindSymbolIndex(sym2);
     if(idx1 == CORR_ENGINE_INVALID_IDX || idx2 == CORR_ENGINE_INVALID_IDX)
-        return m_conservativeFallback;
+        return false;
 
-    return GetCachedCorrelation(idx1, idx2);
+    double cached = GetCachedCorrelation(idx1, idx2);
+    if(CORR_ENGINE_IS_UNKNOWN(cached))
+        return false;
+
+    correlation = cached;
+    return true;
 }
 
 string CCorrelationEngine::GetConfig() const
@@ -368,6 +405,8 @@ int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double thr
     {
         ulong ticket = PositionGetTicket(i);
         if(ticket <= 0 || !PositionSelectByTicket(ticket))
+            continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
             continue;
 
         string posSymbol = PositionGetString(POSITION_SYMBOL);
@@ -400,3 +439,5 @@ CCorrelationEngine::~CCorrelationEngine()
 }
 
 #endif // CORE_RISK_CORRELATION_ENGINE_MQH
+
+

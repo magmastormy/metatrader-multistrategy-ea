@@ -37,10 +37,9 @@ bool CEnhancedErrorHandler::HandleMT5Error(const string context)
             }
             
             m_lastRetryTime[error % 100] = TimeCurrent();
-            PrintFormat("Retryable error %d in %s, attempt %d/%d, retrying in %dms...",
-                       error, context, attempt + 1, m_defaultRetryConfig.maxRetries, delay);
+            PrintFormat("Retryable error %d in %s, attempt %d/%d, retrying immediately (non-blocking)",
+                       error, context, attempt + 1, m_defaultRetryConfig.maxRetries);
             
-            Sleep(delay);
             return true;
         }
     }

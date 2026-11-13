@@ -1,6 +1,6 @@
 // SubsystemLogger.mqh - Separated Log Files for Different Modules
 // Provides isolated logging for Drawing, AI, Trading, Risk, etc.
-// L9-007: Routes through CJsonLogger for unified correlation IDs
+// Routes through CJsonLogger for unified correlation IDs
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
 #property strict

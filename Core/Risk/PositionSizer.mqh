@@ -8,11 +8,13 @@
 #define CORE_POSITION_SIZER_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Utils/JsonLogger.mqh"   // CJsonLogger::GetCorrelationId() - the size decision is logged with it
 #include "../Utils/ErrorHandling.mqh"
 #include "../../IndicatorManager.mqh"
 #include "PositionSizerModifiers.mqh"
 #include "CorrelationEngine.mqh"
 #include "../Utils/RiskMath.mqh"
+#include "../Utils/MagicRange.mqh"
 
 class CEnhancedErrorHandler;
 class CPositionSizer;
@@ -777,12 +779,16 @@ void CPositionSizer::UpdateRiskMetrics()
     m_currentTotalRisk = 0.0;
     m_openPositions = 0;
 
-    // Counts every open position on the account: no magic-number filter here, unlike the daily-loss breaker
+    // Counts only EA-owned positions: positions opened by other EAs or manually do not
+    // reduce this EA's sizing headroom. IsMagicOwned() is the single ownership rule
+    // (Core/Utils/MagicRange.mqh); when ownership is not yet configured it returns false
+    // for everything, so this pass reports zero until ConfigureMagicOwnership has run.
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
         if(ticket <= 0) continue;
         if(!PositionSelectByTicket(ticket)) continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
 
         string symbol = PositionGetString(POSITION_SYMBOL);
         double volume = PositionGetDouble(POSITION_VOLUME);

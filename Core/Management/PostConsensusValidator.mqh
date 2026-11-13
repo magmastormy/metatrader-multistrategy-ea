@@ -363,7 +363,7 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
                                               double confidence,
                                               ulong scanCycleId)
 {
-    // Fail open on absent data: Batch 170 stopped building VPIN filters for synthetic-index
+    // Fail open on absent data: stopped building VPIN filters for synthetic-index
     // symbols because their brokers publish no traded volume, so NULL means "not measurable
     // here", not "toxic".
     CVPINFilter* vpinFilter = (m_src != NULL) ? m_src.GetVPINFilterConst() : NULL;
@@ -500,3 +500,4 @@ void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
 }
 
 #endif // POST_CONSENSUS_VALIDATOR_MQH
+

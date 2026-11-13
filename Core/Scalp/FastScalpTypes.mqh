@@ -111,6 +111,41 @@ struct SScalpPendingAsync
    }
 };
 
+// Reserved-budget ledger for async scalp orders that timed out but may still
+// receive a late fill. Keyed by order ticket so OnDealConfirmed() can match a
+// late deal, register the position, and keep the budget reserved instead of
+// orphaning it. Budget is released only on a final zero-fill outcome.
+struct SScalpReservedBudgetLedger
+{
+   ulong    orderTicket;        // key - the async order ticket
+   string   symbol;
+   int      direction;          // 1=BUY, -1=SELL
+   double   lotSize;            // Requested lots
+   double   entryPrice;         // Expected entry price
+   double   stopLoss;           // SL price
+   double   takeProfit;         // TP price
+   uint     sendTimestampMs;    // GetTickCount at send time
+   uint     quarantinedAtMs;    // GetTickCount when moved to the ledger
+   double   riskReservedPct;    // risk budget reserved for this ticket
+   bool     released;           // budget already released
+
+   // Field-wise reset - ZeroMemory corrupts the reference count of the string member.
+   void Reset()
+   {
+      symbol          = "";
+      orderTicket     = 0;
+      direction       = 0;
+      lotSize         = 0.0;
+      entryPrice      = 0.0;
+      stopLoss        = 0.0;
+      takeProfit      = 0.0;
+      sendTimestampMs = 0;
+      quarantinedAtMs = 0;
+      riskReservedPct = 0.0;
+      released        = false;
+   }
+};
+
 // Scalp position state for tick-level management
 struct SScalpPositionState
 {
@@ -139,3 +174,4 @@ struct SScalpPositionState
 };
 
 #endif // CORE_SCALP_FAST_SCALP_TYPES_MQH
+

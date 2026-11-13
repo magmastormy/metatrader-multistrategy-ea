@@ -6,6 +6,10 @@
 #ifndef UICT_ADVANCED_ORDER_BLOCKS_MQH
 #define UICT_ADVANCED_ORDER_BLOCKS_MQH
 
+// CIndicatorManager supplies the ATR handle used for displacement measurement; declare it here so this
+// header does not depend on the includer's include order.
+#include "../../IndicatorManager.mqh"
+
 enum ENUM_ORDER_BLOCK_TYPE
 {
     OB_NONE = 0,
@@ -363,7 +367,7 @@ int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
     return impulseStartBar;
 }
 
-// Detect Bullish Source OB — P1-A Rewrite
+// Detect Bullish Source OB �?P1-A Rewrite
 // Algorithm:
 // 1. Find the most recent bullish impulse (3+ strong bullish candles)
 // 2. Starting at the bar just BEFORE the impulse began, walk backward
@@ -386,7 +390,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
 
         if(c < o)  // Bearish candle
         {
-            // Batch 156: shift grows going OLDER, so the first match walking away
+            // shift grows going OLDER, so the first match walking away
             // from the impulse start IS the last sell before the flip.
             sourceOBBar = i;
             break;
@@ -403,7 +407,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
 
     double body = MathAbs(o - c);
 
-    double atr  = GetATRValue(14);  // Batch 157: shared handle - was an inline iATR create/release
+    double atr  = GetATRValue(14);  // shared handle - was an inline iATR create/release
 
     // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
     if(atr > 0 && body < atr * 0.10) return false;
@@ -427,7 +431,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-// Detect Bearish Source OB — P1-A Rewrite
+// Detect Bearish Source OB �?P1-A Rewrite
 bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
 {
     int impulseStartBar = FindImpulseStart(false, 50);  // false = bearish impulse
@@ -442,10 +446,10 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
         double o = iOpen(m_symbol,  m_timeframe, i);
         double c = iClose(m_symbol, m_timeframe, i);
 
-        if(c > o)  // Bullish candle — last one before bearish impulse = source OB
+        if(c > o)  // Bullish candle �?last one before bearish impulse = source OB
         {
             sourceOBBar = i;
-            break;  // Batch 156: first match is the closest to the impulse - see DetectBullishSourceOB
+            break;  // first match is the closest to the impulse - see DetectBullishSourceOB
         }
     }
 
@@ -457,7 +461,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
     double l = iLow(m_symbol,   m_timeframe, sourceOBBar);
     double body = MathAbs(o - c);
 
-    double atr = GetATRValue(14);  // Batch 157: shared handle - was an inline iATR create/release
+    double atr = GetATRValue(14);  // shared handle - was an inline iATR create/release
 
     // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
     if(atr > 0 && body < atr * 0.10) return false;
@@ -620,7 +624,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
     
     for(int i = swingHighBar - 3; i <= swingHighBar + 3; i++)
     {
-        if(i <= 0) continue;  // Batch 157: exclude the forming bar from breaker candidacy
+        if(i <= 0) continue;  // exclude the forming bar from breaker candidacy
 
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
@@ -674,7 +678,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
     
     for(int i = swingLowBar - 3; i <= swingLowBar + 3; i++)
     {
-        if(i <= 0) continue;  // Batch 157: exclude the forming bar from breaker candidacy
+        if(i <= 0) continue;  // exclude the forming bar from breaker candidacy
 
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
@@ -1073,11 +1077,11 @@ bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
     return false;
 }
 
-// Check Mitigation — P0-B Rewrite
+// Check Mitigation �?P0-B Rewrite
 // ICT Rule: OB is mitigated only when a candle CLOSES through the full boundary.
 // Bullish OBs: mitigated when close < bottom.
 // Bearish OBs: mitigated when close > top.
-// CE (midpoint) is NOT a mitigation level — it is an entry refinement target.
+// CE (midpoint) is NOT a mitigation level �?it is an entry refinement target.
 bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
 {
     if(ob.isMitigated) return true;
@@ -1122,7 +1126,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
         if(!isBullishOB && priceInOB && barClose < ob.bottom)
             ob.timesRejected++;
 
-        // MITIGATION CHECK — candle must CLOSE through the far boundary
+        // MITIGATION CHECK �?candle must CLOSE through the far boundary
         if(isBullishOB)
         {
             if(barClose < ob.bottom)
@@ -1149,7 +1153,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
         ob.strength = MathMin(1.0, ob.strength + 0.08);  // Multiple rejections = proven zone
 
     if(ob.timesRejected >= 3)
-        ob.isMitigated = true;  // OB exhausted after 3 rejections — treat as used up
+        ob.isMitigated = true;  // OB exhausted after 3 rejections �?treat as used up
 
     return ob.isMitigated;
 }
@@ -1311,7 +1315,7 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
     return bestIndex;
 }
 
-// Get Freshness — Batch 103: OB freshness decay 0.0-1.0
+// Get Freshness: OB freshness decay 0.0-1.0
 // Fresh OBs (0-5 bars old) = 1.0, linear decay to 0.0 over 50 bars
 double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
 {
@@ -1324,7 +1328,7 @@ double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
 
     int currentBar = iBars(m_symbol, m_timeframe);
     if(currentBar <= 0)
-        return 0.5;  // Unknown — return neutral
+        return 0.5;  // Unknown �?return neutral
 
     int obBar = iBarShift(m_symbol, m_timeframe, ob.time, false);
     if(obBar < 0)
@@ -1333,12 +1337,14 @@ double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
     int ageBars = obBar;  // How many bars since OB formed
 
     if(ageBars <= 5)
-        return 1.0;   // Fresh — full weight
+        return 1.0;   // Fresh �?full weight
     if(ageBars >= 50)
-        return 0.0;   // Stale — no weight
+        return 0.0;   // Stale �?no weight
 
-    // Linear decay: 1.0 at bar 5 → 0.0 at bar 50
+    // Linear decay: 1.0 at bar 5 �?0.0 at bar 50
     return 1.0 - ((double)(ageBars - 5) / 45.0);
 }
 
 #endif // __UICT_ADVANCED_ORDER_BLOCKS_MQH__
+
+

@@ -62,7 +62,7 @@ def main() -> None:
         with open(args.xgboost_pkl, "rb") as handle:
             xgboost = pickle.load(handle)
 
-    n_base = 3  # onnx + lgbm
+    n_base = 2  # onnx + lgbm
     if catboost is not None:
         n_base += 1
     if xgboost is not None:
@@ -124,3 +124,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -52,7 +52,7 @@ private:
    CAIAdapter*               m_aiAdapter;            // L10-018: AI adapter for AI-VOTE logging
 
    datetime                  m_lastScalpTime;        // Last scalp entry time
-   long                      m_magicNumber;          // EA magic number for pending orders — Batch 125: changed from uint to long
+   long                      m_magicNumber;          // EA magic number for pending orders �?Batch 125: changed from uint to long
    bool                      m_initialized;
 
    string                    m_refusalLogSymbols[];   // per-symbol refusal-log throttle
@@ -236,7 +236,7 @@ public:
       }
 
       // Slow path: RefreshIndicators does its own CopyBuffer reads. Reached from the same 1 s-throttled
-      // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry — there
+      // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry �?there
       // is no timer caller for this engine.
       return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators, gateReject);
    }
@@ -326,7 +326,7 @@ public:
 
    void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
-// 1R partial close / breakeven / trailing. No throttle of its own — it runs once per ProcessScalpFastPath
+// 1R partial close / breakeven / trailing. No throttle of its own �?it runs once per ProcessScalpFastPath
 // pass, and that driver is the thing limited to one call per second.
    void ManageScalpPositions()
    {
@@ -338,7 +338,7 @@ public:
    }
 
 // Counts every open position whose comment STARTS with "SCALP" (StringFind==0), terminal-wide and without
-// a magic-number or symbol filter — this is the number the maxScalpPositions gate is compared against.
+// a magic-number or symbol filter �?this is the number the maxScalpPositions gate is compared against.
    int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
 
    bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }
@@ -372,17 +372,19 @@ public:
    }
 
 // Live from ProcessScalpFastPath (tick path, 1 s throttle): expires async entries unconfirmed for
-// > 3x scalpMaxLatencyMs and releases budget through ReleaseFallback, which is not keyed to a ticket.
+// > 3x scalpMaxLatencyMs. Timed-out orders with no broker state are quarantined in the
+// reserved-budget ledger (budget stays reserved); budget is released only on a final
+// zero-fill outcome by the ledger re-check.
    void CheckPendingAsyncOrders()
    {
-      m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager);
+      m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager, m_config, m_posTracker);
    }
 
    void RemovePendingAsync(int index) { m_asyncTracker.RemovePendingAsync(index); }
 
    void PrintDiagnostics()
    {
-      PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | pending=%d | tracked=%d | async=%s | pendingAsync=%d",
+      PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | pending=%d | tracked=%d | async=%s | pendingAsync=%d | reservedLedger=%d",
                   m_initialized ? "true" : "false",
                   m_config.maxScalpPositions,
                   CountScalpPositions(),
@@ -391,7 +393,8 @@ public:
                   m_pendingBook.Count(),
                   m_posTracker.Count(),
                   m_asyncTracker.IsAsyncMode() ? "ON" : "OFF",
-                  m_asyncTracker.Count());
+                  m_asyncTracker.Count(),
+                  m_asyncTracker.GetReservedLedgerCount());
    }
 
    double GetUsedScalpRiskPct() const { return m_riskBudget.Get(); }
@@ -400,3 +403,4 @@ public:
 };
 
 #endif // CORE_SCALP_FAST_SCALP_ENGINE_MQH
+

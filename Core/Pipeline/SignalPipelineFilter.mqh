@@ -67,7 +67,7 @@ static bool ApplyRegimeAndCostGate(CMathematicalEngineRegistry* m_mathRegistry, 
 
         string regimeTag = regimeEngine.GetStateTag();
     
-        // L4-013 Fix: Regime gate log throttling
+        // Regime gate log throttling
         m_regimeGateLogCounter++;
         if(m_regimeGateLogCounter >= m_regimeGateLogInterval)
         {
@@ -161,7 +161,7 @@ static bool ApplyTrendFilter(CMathematicalEngineRegistry* m_mathRegistry, const 
         return true;
     }
     
-    // âœ¨ FIX: Allow ranging markets - check if trend is actively AGAINST the signal
+    // âœ?FIX: Allow ranging markets - check if trend is actively AGAINST the signal
     // Only reject if there's a STRONG opposing trend
     bool strongOpposingTrend = false;
     
@@ -187,7 +187,7 @@ static bool ApplyTrendFilter(CMathematicalEngineRegistry* m_mathRegistry, const 
         return true;
     }
     
-    // âœ¨ FIX: ALLOW signals in ranging markets (TREND_RANGING, TREND_NONE)
+    // âœ?FIX: ALLOW signals in ranging markets (TREND_RANGING, TREND_NONE)
     // These are valid trading opportunities
     if(trend == TREND_RANGING || trend == TREND_NONE)
     {
@@ -475,3 +475,4 @@ static bool ApplySpreadFilter(CMathematicalEngineRegistry* m_mathRegistry, const
 };
 
 #endif // SIGNAL_PIPELINE_FILTER_MQH
+

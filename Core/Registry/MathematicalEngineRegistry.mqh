@@ -29,20 +29,18 @@ private:
     struct SEngineSlot
         {
             string                     symbol;
-            // Batch 101/102
-            CHurstEngine*              hurst;
+                        CHurstEngine*              hurst;
             COrnsteinUhlenbeckEngine*  ou;
             COrderFlowImbalanceEngine* ofi;
             CVPINFilter*               vpin;
-            // Batch 114
-            CKalmanMeanReversion*      kalman;
+                        CKalmanMeanReversion*      kalman;
             CChangepointDetector*      cpd;
             CFourStateRegimeDetector*  fourState;
             CVolatilityTargeting*      volTarget;
-            // Batch 103 strategies with engines
+            // strategies with engines
             CLiquiditySweepStrategy*   liquiditySweep;
             CRangeCompressionBreakout* rangeComp;
-            // Pipeline engines (L1-006)
+            // Pipeline engines
             CTrendEngine*              trendEngine;
             CStructureEngine*          structureEngine;
             CLiquidityEngine*          liquidityEngine;
@@ -117,7 +115,7 @@ private:
         return idx;
     }
     
-    // --- Batch 101/102 Engines ---
+    // --- Engines ---
     CHurstEngine* GetHurst(const string symbol, bool createIfMissing = true)
     {
         int idx = GetSlotIndex(symbol, createIfMissing);
@@ -142,7 +140,7 @@ private:
         return (idx >= 0) ? m_slots[idx].vpin : NULL;
     }
     
-    // --- Batch 114 Engines ---
+    // --- Engines ---
     CKalmanMeanReversion* GetKalman(const string symbol, bool createIfMissing = true)
     {
         int idx = GetSlotIndex(symbol, createIfMissing);
@@ -167,7 +165,7 @@ private:
         return (idx >= 0) ? m_slots[idx].volTarget : NULL;
     }
     
-    // --- Batch 103 Strategies ---
+    // --- Strategies ---
         CLiquiditySweepStrategy* GetLiquiditySweep(const string symbol, bool createIfMissing = true)
         {
             int idx = GetSlotIndex(symbol, createIfMissing);

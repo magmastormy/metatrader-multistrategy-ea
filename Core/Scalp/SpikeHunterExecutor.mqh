@@ -10,6 +10,7 @@
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
 #include "../Trading/TradeMgrPreflight.mqh"
 #include <Trade\Trade.mqh>
@@ -48,7 +49,7 @@ public:
    {
    }
 
-// Dependency injection �?mirrors the CSpikeHunterEngine::Init
+// Dependency injection -mirrors the CSpikeHunterEngine::Init
 // assignment block one-for-one.
    void Init(const SSpikeHunterConfig &config,
              int baseMagic,
@@ -113,7 +114,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s �?cannot calculate SL/TP", symbol);
+         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s ->cannot calculate SL/TP", symbol);
          return false;
       }
 
@@ -285,66 +286,8 @@ public:
       }
       else
       {
-         // NOTE: this is the branch that actually runs - EAOrchestrator's
-         // m_spikeHunter.Init(...) passes no CTradeManager, so the governed send
-         // path above is unreachable and the stop gate had to be added here too.
-         m_trade.SetExpertMagicNumber(magic);
-         const long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-         m_trade.SetDeviationInPoints((uint)MathMax(10, MathMin(100, spreadPoints * 2)));
-         // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
-         long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
-         ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
-                                            (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
-         m_trade.SetTypeFilling(scalpFill);
-
-         bool result = false;
-         if(direction == 1)
-            result = m_trade.Buy(lotSize, symbol, entryPrice, sl, tp,
-                        "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_detector.GetConfluenceCount(idx)) + "/3");
-         else
-            result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp,
-                        "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_detector.GetConfluenceCount(idx)) + "/3");
-
-         // L10-018: AI-VOTE logging (fallback path)
-         if(m_aiAdapter != NULL)
-         {
-             PrintFormat("[AI-VOTE] symbol=%s strategy=SpikeHunter vote=%s",
-                         symbol, dirStr);
-         }
-
-         // Batch 177: DONE_PARTIAL arrives as result == false with a position open, and the caller
-         // would hunt the same spike again. Confirm from the position before declaring failure.
-         uint sendRetcode = m_trade.ResultRetcode();
-         if(!result)
-         {
-            ulong confirmTicket = 0;
-            double confirmVolume = 0.0;
-            if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
-                   (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                   lotSize, confirmTicket, confirmVolume, "SPIKE-HUNT"))
-            {
-               PrintFormat("[SPIKE-HUNT] FILL CONFIRMED BY POSITION | Symbol=%s | Direction=%s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | spike marked opened, not resent",
-                           symbol, dirStr, confirmTicket, confirmVolume, lotSize, sendRetcode);
-               result = true;
-            }
-         }
-
-         if(result)
-         {
-            m_detector.MarkSpikeTradeOpened(idx);
-            m_totalTradesOpened++;
-
-            PrintFormat("[SPIKE-HUNT-TRADE] Symbol=%s Direction=%s Lot=%.2f SL=%.5f TP=%.5f Confluence=%d/3 ATR=%.5f magic=%d",
-                        symbol, dirStr, lotSize, sl, tp,
-                        m_detector.GetConfluenceCount(idx), atr, magic);
-         }
-         else
-         {
-            PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
-                        symbol, dirStr, lotSize, sendRetcode);
-         }
-
-         return result;
+         PrintFormat("[SPIKE-HUNT] %s | TradeManager NULL — refusing to trade | magic=%d", symbol, magic);
+         return false;
       }
    }
 };

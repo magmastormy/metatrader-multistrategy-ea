@@ -1,4 +1,4 @@
-// Cumulative Volume Delta â€” measures buy vs sell pressure
+// Cumulative Volume Delta â€?measures buy vs sell pressure
 // For forex markets only
 #ifndef CORE_ENGINES_CVD_ENGINE_MQH
 #define CORE_ENGINES_CVD_ENGINE_MQH
@@ -24,7 +24,7 @@ private:
     int               m_cvdMALength;
     
     datetime m_sessionStartDate;
-    datetime m_lastProcessedBarTime;  // Batch 117: prevent CVD re-accumulation
+    datetime m_lastProcessedBarTime;  // prevent CVD re-accumulation
     double   m_sessionCVD;
     double   m_cvdHistory[];
     double   m_priceHistory[];
@@ -88,7 +88,7 @@ public:
             m_sessionStartDate = currentDay;
         }
         
-        // Batch 117: Skip if same bar â€” prevent CVD re-accumulation
+        // Skip if same bar â€?prevent CVD re-accumulation
         if(currentBarTime == m_lastProcessedBarTime)
         {
             m_lastResult.cvd = m_sessionCVD;
@@ -109,7 +109,7 @@ public:
                 delta = volume;  // Buy pressure
             else if(close < open)
                 delta = -volume; // Sell pressure
-            // else delta = 0 (doji â€” neutral)
+            // else delta = 0 (doji â€?neutral)
             
             m_sessionCVD += delta;
             
@@ -122,7 +122,7 @@ public:
         m_lastResult.delta = (iClose(m_symbol, m_timeframe, 1) > iOpen(m_symbol, m_timeframe, 1)) ? 
                              (double)iVolume(m_symbol, m_timeframe, 1) : -(double)iVolume(m_symbol, m_timeframe, 1);
         
-        // Calculate CVD MA â€” Batch 117: include zero values (valid CVD reading)
+        // Calculate CVD MA â€?include zero values (valid CVD reading)
         double sum = 0;
         int count = 0;
         for(int i = 0; i < MathMin(m_cvdMALength, m_historySize); i++)
@@ -204,3 +204,6 @@ public:
 };
 
 #endif // CORE_ENGINES_CVD_ENGINE_MQH
+
+
+

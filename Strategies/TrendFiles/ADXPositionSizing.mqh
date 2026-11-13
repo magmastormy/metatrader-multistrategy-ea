@@ -109,7 +109,7 @@ bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
 
 void CADXPositionSizing::Deinit()
 {
-    // Batch 156: this handle comes from CIndicatorManager's shared cache
+    // this handle comes from CIndicatorManager's shared cache
     // (GetADXHandle) and is the SAME handle CMultiEMASystem depends on.
     // Releasing it here killed the ADX feed for every consumer after any
     // strategy re-init (OnDeinit->OnInit on TF/input change), freezing EMA
@@ -239,3 +239,4 @@ void CADXPositionSizing::InitForAssetClass(int assetClass)
 }
 
 #endif // __TREND_ADX_POSITION_SIZING_MQH__
+

@@ -37,7 +37,7 @@ public:
         for(int i = 0; i < ATR_CACHE_MAX_ENTRIES; i++)
         {
             m_entries[i].symbol    = "";
-            m_entries[i].timeframe = (ENUM_TIMEFRAMES)0;  // L2-017: Use 0 as invalid sentinel instead of PERIOD_CURRENT
+            m_entries[i].timeframe = (ENUM_TIMEFRAMES)0;  // Use 0 as invalid sentinel instead of PERIOD_CURRENT
             m_entries[i].atrValue  = 0.0;
             m_entries[i].barTime   = 0;
             m_entries[i].isActive  = false;
@@ -119,3 +119,4 @@ public:
 };
 
 #endif // CORE_CACHE_ATR_CACHE_MQH
+

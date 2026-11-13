@@ -13,6 +13,7 @@
 #include "../../Core/Engines/SessionWeightManager.mqh"
 #include "../../Core/Engines/SkewStepAnalyzer.mqh"
 #include "../../Core/Utils/Enums.mqh"
+#include "../../Core/AI/VolatilityRegimeModel.mqh"   // Batch 278: sizes risk from predicted volatility regime
 #include "../../Core/Utils/JsonLogger.mqh"
 #include "../../Core/Utils/Instruments.mqh"
 
@@ -269,6 +270,12 @@ public:
 
         if(scaled < minLot)
         {
+            // Rounding UP to the broker minimum was built here and then measured away: the multipliers
+            // that reach this branch are far below 1 (bootstrapMult 0.50 times drawdown/session factors;
+            // the logged cases carried mult ~0.004 against base 0.01), so the ladder was asking for
+            // essentially no risk and the minimum lot was 250x that ask. A 7-day window with the round-up
+            // ran -3.32% on 321 fills against the same window without it at -0.80% on 302 fills, so the
+            // shrink decision stands and the trade is refused rather than over-risked.
             int symbolBlocks = NoteAuthorityBlock(symbol);
             m_authorityBlockedTotal++;
             PrintFormat("[AUTHORITY-REJECT] %s | authority mult=%.2f sizes the trade %.4f below broker min %.4f | REFUSED, not rounded up | reason=%s | symbol_refusals=%d session_total=%d",
@@ -351,10 +358,14 @@ public:
         return GetHybridGateRelaxed(symbol) ? m_aiStandaloneRelaxedConfidence : m_aiStandaloneMinConfidence;
     }
     
+        // `useStrategyStops` is a parameter rather than a read of `::InpUseStrategyStops`: an input only
+        // exists in the program, so reading it here made this header uncompilable outside a .mq5 and
+        // dragged two other orchestration headers into the same dependency. The EA passes its input in.
         bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
                             int confluence, const SConsensusDecisionContext& ctx,
                             CEnterpriseStrategyManager* manager, ulong scanCycleId,
-                            STradeCandidate &candidate, const string corrId = "")
+                            STradeCandidate &candidate, bool useStrategyStops = true,
+                            const string corrId = "", double symbolStreakScale = 1.0)
     {
         if(signal == TRADE_SIGNAL_NONE) return false;
         
@@ -429,9 +440,9 @@ public:
         if(candidate.entryPrice <= 0)
             return false;
         
-        // InpUseStrategyStops (EA default true) prefers the strategy's designed SL/TP, quoted in pips.
+        // useStrategyStops (EA default true) prefers the strategy's designed SL/TP, quoted in pips.
         double propSL = 0.0, propTP = 0.0;
-        bool useStratStops = (::InpUseStrategyStops) && manager.GetConsensusProposedStops(signal, propSL, propTP);
+        bool useStratStops = useStrategyStops && manager.GetConsensusProposedStops(signal, propSL, propTP);
         if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
             return false;
         
@@ -474,6 +485,44 @@ public:
         
         // The gate runs once, after the lot is final (below): each approval keeps a virtual
         // reservation until its TTL, so a second call would double-count portfolio risk.
+        // Batch 278: the second reader of VolReg_RiskScale. Risk is scaled before the sizer
+        // runs so the lot and the booked riskPercent stay the same number - scaling the lot
+        // afterwards would leave candidate.riskPercent describing a trade that does not
+        // exist (the Batch 251 shape). The per-trade cap and the daily budget below still
+        // clamp whatever this produces, and an unknown model (-1.0) changes nothing.
+                const double volScale = VolReg_RiskScale(symbol);
+                if(volScale > 0.0 && volScale < 1.0)
+                {
+                    static datetime s_lastVolSizeLog = 0;
+                    const double scaledRisk = proposedRisk * volScale;
+                    if(TimeCurrent() - s_lastVolSizeLog >= 300)
+                    {
+                        s_lastVolSizeLog = TimeCurrent();
+                        PrintFormat("[VOL-SIZE] %s | p(expansion)=%.3f | risk %.2f%% -> %.2f%% (scale %.2f, confidence band %.2f-%.2f)",
+                                    symbol, VolReg_Probability(symbol), proposedRisk, scaledRisk,
+                                    volScale, VOLREG_COMPRESSION_VETO, VOLREG_COMPRESSION_MAX);
+                    }
+                    proposedRisk = scaledRisk;
+                }
+
+                // Batch 287: per-symbol loss-streak sizing. The caller (EAOrchestrator) passes a scale below 1.0 when
+                // this symbol is in a losing run. Applied to the risk fraction BEFORE the sizer, exactly like the
+                // volatility band above and for the same reason: the lot and the booked riskPercent must stay one
+                // number. Unlike a held entry, this keeps the slot usable - Batch 286 measured that refusing the row
+                // hands its risk budget to the next symbol and moved a window from +0.983% to -3.767%.
+                if(symbolStreakScale > 0.0 && symbolStreakScale < 1.0 && proposedRisk > 0.0)
+                {
+                    static datetime s_lastStreakSizeLog = 0;
+                    const double scaledRisk = proposedRisk * symbolStreakScale;
+                    if(TimeCurrent() - s_lastStreakSizeLog >= 300)
+                    {
+                        s_lastStreakSizeLog = TimeCurrent();
+                        PrintFormat("[STREAK-SIZE] %s | losing run %d | risk %.2f%% -> %.2f%% (scale %.2f)",
+                                    symbol, manager.GetSymbolLossStreak(), proposedRisk, scaledRisk, symbolStreakScale);
+                    }
+                    proposedRisk = scaledRisk;
+                }
+
                 double lotSize = m_positionSizer.CalculatePositionSizeWithRisk(symbol, 
                                                                                 candidate.stopLossPips, 
                                                                                 proposedRisk, 
@@ -510,8 +559,19 @@ public:
         // Per-trade cap clamp: the lot here is the product of the modifiers above, so it is checked
         // against GetEffectiveRiskPerTrade before the full gate sees it at its final value.
         double finalTradeRisk = m_riskManager.CalculateTradeRisk(symbol, candidate.lotSize, candidate.stopLossPips);
+        // -1.0 means the broker would not price the stop (missing tick value/size) and 0.0 means the
+        // request itself was unsizable. Substituting proposedRisk here - the number the plan WANTED -
+        // would let an unmeasurable trade pass the cap by construction, which is the fail-open shape
+        // item 44 names; the full gate rejects it a few calls later with "Unable to calculate trade risk",
+        // so the only thing the old fallback bought was a less specific log line.
+        if(finalTradeRisk <= 0.0)
+        {
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable | lot=%.4f | stop=%.1f pips | the stop cannot be priced, so the risk cannot be capped",
+                        symbol, candidate.lotSize, candidate.stopLossPips);
+            return false;
+        }
         double riskDenom = CRiskMath::GetRiskDenominator();
-        double finalRiskPct = (finalTradeRisk > 0.0 && riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
+        double finalRiskPct = (riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
         double riskCap = m_riskManager.GetEffectiveRiskPerTrade(symbol);
         if(riskCap <= 0.0)
         {
@@ -584,7 +644,14 @@ public:
                 return false;
             }
             double adoptedRisk = m_riskManager.CalculateTradeRisk(symbol, adoptedLot, candidate.stopLossPips);
-            double adoptedPct = (adoptedRisk > 0.0 && riskDenom > 0.0) ? (adoptedRisk / riskDenom) * 100.0 : candidate.riskPercent;
+            // An adopted lot that the broker cannot price is refused, not booked at the previous percentage.
+            if(adoptedRisk <= 0.0)
+            {
+                PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable_after_adjust | lot=%.4f | %s",
+                            symbol, adoptedLot, riskResult.message);
+                return false;
+            }
+            double adoptedPct = (riskDenom > 0.0) ? (adoptedRisk / riskDenom) * 100.0 : candidate.riskPercent;
             PrintFormat("[RISK-GATE-ADJUST] %s | lot=%.4f -> %.4f | risk=%.3f%% -> %.3f%% | %s",
                         symbol, candidate.lotSize, adoptedLot, candidate.riskPercent, adoptedPct, riskResult.message);
             candidate.lotSize = adoptedLot;

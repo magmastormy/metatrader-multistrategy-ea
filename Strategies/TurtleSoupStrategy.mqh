@@ -4,6 +4,7 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 // Mandatory: every entry gates through CUnifiedRiskManager
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
@@ -132,8 +133,11 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // SL beyond the false-break extreme by 0.3*ATR, TP at 2R
-        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        // SL beyond the false-break extreme by 0.3*ATR, TP at 2R.
+        // Entry side matters: a BUY fills at the ask, so pricing the stop distance off the bid
+        // understated the stop by the spread on every long.
+        double currentPrice = (bullish) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                        : SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slPrice, slDistance, tpPrice;
@@ -156,6 +160,16 @@ public:
         double tpDistance = MathAbs(tpPrice - currentPrice);
         double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
         double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : 0.0;
+
+        // Pre-trade guard: when the sweep extreme sits on the entry the 0.3*ATR stop collapses to
+        // nothing, and an R:R below 1 or a spread wider than half the stop should never be sized.
+        double spreadPrice = (point > 0) ? (double)SymbolInfoInteger(m_symbol, SYMBOL_SPREAD) * point : 0.0;
+        if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+        {
+            SetDecisionReasonTag("TURTLE_NOT_TRADABLE");
+            confidence = 0.0;
+            return TRADE_SIGNAL_NONE;
+        }
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

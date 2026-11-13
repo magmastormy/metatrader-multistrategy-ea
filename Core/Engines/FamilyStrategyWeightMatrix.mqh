@@ -118,7 +118,7 @@ public:
          default:                     mult = 1.0; break;
       }
       
-      // L3-018: Log weight deviations for all families (not just Volatility)
+      // Log weight deviations for all families (not just Volatility)
       if(MathAbs(mult - 1.0) > 0.01)
       {
          PrintFormat("[FAMILY-WEIGHT] %s | family=%s | cluster=%s | mult=%.3f", 
@@ -141,7 +141,7 @@ public:
 
    bool IsInitialized() const { return m_initialized; }
 
-// Get heartbeat string for periodic logging (L9-004)
+// Get heartbeat string for periodic logging
       string GetHeartbeatString() const
       {
          if(!m_initialized)
@@ -165,3 +165,4 @@ public:
       };
 
    #endif // CORE_ENGINES_FAMILY_STRATEGY_WEIGHT_MATRIX_MQH
+

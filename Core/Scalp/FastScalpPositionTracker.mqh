@@ -138,3 +138,4 @@ public:
 };
 
 #endif // CORE_SCALP_FAST_SCALP_POSITION_TRACKER_MQH
+

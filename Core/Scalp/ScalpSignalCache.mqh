@@ -178,10 +178,9 @@ public:
 
             if(attempt < maxHandleRetries - 1)
             {
-               PrintFormat("[SCALP-CACHE] RETRY %d/%d: Critical handles incomplete for %s (emaFast=%d emaSlow=%d atr=%d) — waiting",
+               PrintFormat("[SCALP-CACHE] RETRY %d/%d: Critical handles incomplete for %s (emaFast=%d emaSlow=%d atr=%d) — retrying next cycle",
                            attempt + 1, maxHandleRetries, sym,
                            m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               Sleep(1000);
             }
          }
 

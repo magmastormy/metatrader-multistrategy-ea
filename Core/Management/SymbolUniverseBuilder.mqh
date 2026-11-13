@@ -313,7 +313,7 @@ public:
             PrintFormat("[SYMBOL-VALIDATION] Accepted symbols: %s", accepted);
         }
 
-        // L7-021: Auto-add chart symbol if provided and not already in universe
+        // Auto-add chart symbol if provided and not already in universe
         if(chartSymbol != "" && !ContainsSymbol(activePairs, chartSymbol))
         {
             if(SymbolSelect(chartSymbol, true))
@@ -342,3 +342,4 @@ public:
 };
 
 #endif
+

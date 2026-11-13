@@ -18,6 +18,7 @@
 // ('g_structLog' / 'g_corrIdManager').
 #include "Core/Utils/StructuredLogger.mqh"
 #include "Core/Utils/CorrelationId.mqh"
+#include "Core/Config/SharedEAInputs.mqh"
 
 CStructuredLogger     g_structLog;
 CCorrelationIdManager g_corrIdManager;
@@ -94,105 +95,271 @@ enum ENUM_COMPLETE_TEST_PROFILE
     TEST_PROFILE_EVERYTHING          = 74,  // Every single component enabled (max stress)
 };
 
-// 3.3 Input Parameters Addition
+// 3.3 Resolved profile flags
+//
+// The profile system resolves ONE struct and then writes it into `SOrchestratorConfig` inside
+// BuildOrchestratorConfig. It deliberately does not write the `InpEnable*` inputs: `input` variables
+// are read-only in MQL5, so an ApplyFlagsToInputs() step could not exist at all - which is what the
+// previous draft of this file assumed. The struct is the single carrier from profile to config.
+struct SCompleteTestFlags
+{
+    // Registry indicators
+    bool momentum;
+    bool trend;
+    bool supportResistance;
+    bool candlestick;
+    bool meanReversion;
+    bool volatilityBreakout;
+    bool fvgScalper;
+    bool turtleSoup;
+    bool breakerBlock;
+    bool nyOpenGap;
+    bool asianRangeBreak;
+    bool statisticalArbitrage;
+    bool liquiditySweep;
+    bool rangeCompression;
+    bool donchianBreakout;
+    bool rsi2Pullback;
+    bool dailyLevelBreakout;
+    bool dailyLevelFade;
+    bool emaRibbon;
+    bool gapContinuation;
+    bool openingRangeBreakout;
+    bool ictSessionGap;
+    bool ictStructureShift;
+    // AI roster
+    bool aiModeEnabled;
+    bool neuralNetwork;
+    bool transformer;
+    bool ensemble;
+    bool onnxAI;
+    // Independent engines
+    bool fastScalpEngine;
+    bool spikeHunterEngine;
+    bool gridRecoveryEngine;
+    bool atrScalpingEngine;
+    // Parked / dead-code engines - only switched on by an explicit include request
+    bool enableHurstEngine;
+    bool enableOUProcess;
+};
+
+SCompleteTestFlags g_completeFlags;
+
+void ClearCompleteTestFlags(SCompleteTestFlags &f)
+{
+    f.momentum = false;              f.trend = false;
+    f.supportResistance = false;     f.candlestick = false;
+    f.meanReversion = false;         f.volatilityBreakout = false;
+    f.fvgScalper = false;            f.turtleSoup = false;
+    f.breakerBlock = false;          f.nyOpenGap = false;
+    f.asianRangeBreak = false;       f.statisticalArbitrage = false;
+    f.liquiditySweep = false;        f.rangeCompression = false;
+    f.donchianBreakout = false;      f.rsi2Pullback = false;
+    f.dailyLevelBreakout = false;    f.dailyLevelFade = false;
+    f.emaRibbon = false;             f.gapContinuation = false;
+    f.openingRangeBreakout = false;  f.ictSessionGap = false;
+    f.ictStructureShift = false;
+    f.aiModeEnabled = false;         f.neuralNetwork = false;
+    f.transformer = false;           f.ensemble = false;
+    f.onnxAI = false;
+    f.fastScalpEngine = false;       f.spikeHunterEngine = false;
+    f.gridRecoveryEngine = false;    f.atrScalpingEngine = false;
+    f.enableHurstEngine = false;     f.enableOUProcess = false;
+}
+
+void EnableAllIndicators(SCompleteTestFlags &f)
+{
+    f.momentum = true;               f.trend = true;
+    f.supportResistance = true;      f.candlestick = true;
+    f.meanReversion = true;          f.volatilityBreakout = true;
+    f.fvgScalper = true;             f.turtleSoup = true;
+    f.breakerBlock = true;           f.nyOpenGap = true;
+    f.asianRangeBreak = true;        f.statisticalArbitrage = true;
+    f.liquiditySweep = true;         f.rangeCompression = true;
+    f.donchianBreakout = true;       f.rsi2Pullback = true;
+    f.dailyLevelBreakout = true;     f.dailyLevelFade = true;
+    f.emaRibbon = true;              f.gapContinuation = true;
+    f.openingRangeBreakout = true;   f.ictSessionGap = true;
+    f.ictStructureShift = true;
+}
+
+void EnableAllAI(SCompleteTestFlags &f)
+{
+    f.aiModeEnabled = true;
+    f.neuralNetwork = true;          f.transformer = true;
+    f.ensemble = true;               f.onnxAI = true;
+}
+
+void EnableAllEngines(SCompleteTestFlags &f)
+{
+    f.fastScalpEngine = true;        f.spikeHunterEngine = true;
+    f.gridRecoveryEngine = true;     f.atrScalpingEngine = true;
+}
+
+// Resolve one profile into the flags struct. Returns false only for an unknown profile id, so a caller
+// that trusts it cannot silently end up running the previous profile's flags.
+bool ApplyCompleteTestProfile(ENUM_COMPLETE_TEST_PROFILE profile, SCompleteTestFlags &flags,
+                              bool includeDeadCode)
+{
+    ClearCompleteTestFlags(flags);
+
+    switch(profile)
+    {
+        case TEST_PROFILE_CUSTOM:
+        case TEST_PROFILE_DISABLE_ALL:
+            return true;
+
+        //--- Single indicator strategies
+        case TEST_PROFILE_SINGLE_MOMENTUM:    flags.momentum = true;          return true;
+        case TEST_PROFILE_SINGLE_TREND:       flags.trend = true;             return true;
+        case TEST_PROFILE_SINGLE_SR:          flags.supportResistance = true; return true;
+        case TEST_PROFILE_SINGLE_CANDLE:      flags.candlestick = true;       return true;
+        case TEST_PROFILE_SINGLE_MR:          flags.meanReversion = true;     return true;
+        case TEST_PROFILE_SINGLE_VB:          flags.volatilityBreakout = true;return true;
+        case TEST_PROFILE_SINGLE_STATARB:     flags.statisticalArbitrage = true; return true;
+        case TEST_PROFILE_SINGLE_FVG:         flags.fvgScalper = true;        return true;
+        case TEST_PROFILE_SINGLE_TURTLE:      flags.turtleSoup = true;        return true;
+        case TEST_PROFILE_SINGLE_BREAKER:     flags.breakerBlock = true;      return true;
+        case TEST_PROFILE_SINGLE_NYGAP:       flags.nyOpenGap = true;         return true;
+        case TEST_PROFILE_SINGLE_ASIAN:       flags.asianRangeBreak = true;   return true;
+        case TEST_PROFILE_SINGLE_LIQSWEEP:    flags.liquiditySweep = true;    return true;
+        case TEST_PROFILE_SINGLE_RANGECOMP:   flags.rangeCompression = true;  return true;
+
+        //--- Profiles whose class no longer exists (Unified ICT / Unicorn Model / Power of Three left
+        //    the roster in Batch 207 - no class, so nothing could register them). They resolve to an
+        //    empty set rather than a false success, and print the reason.
+        case TEST_PROFILE_SINGLE_ICT:
+        case TEST_PROFILE_SINGLE_UNICORN:
+        case TEST_PROFILE_SINGLE_POT:
+            PrintFormat("[TEST-PROFILE] %s selects a strategy with no class in this roster; resolving empty.",
+                        EnumToString(profile));
+            return true;
+
+        //--- Single AI strategies
+        case TEST_PROFILE_SINGLE_NN:
+            flags.aiModeEnabled = true; flags.neuralNetwork = true;  return true;
+        case TEST_PROFILE_SINGLE_TRANSF:
+            flags.aiModeEnabled = true; flags.transformer = true;    return true;
+        case TEST_PROFILE_SINGLE_ENS:
+            flags.aiModeEnabled = true; flags.ensemble = true;       return true;
+        case TEST_PROFILE_SINGLE_ONNX:
+            flags.aiModeEnabled = true; flags.onnxAI = true;         return true;
+
+        //--- Single engines
+        case TEST_PROFILE_SINGLE_FASTSCALP:    flags.fastScalpEngine = true;   return true;
+        case TEST_PROFILE_SINGLE_SPIKEHUNTER:  flags.spikeHunterEngine = true; return true;
+        case TEST_PROFILE_SINGLE_GRIDRECOVERY: flags.gridRecoveryEngine = true;return true;
+        case TEST_PROFILE_SINGLE_ATRSCALP:     flags.atrScalpingEngine = true; return true;
+
+        //--- Curated families
+        case TEST_PROFILE_TREND_SUITE:
+            flags.trend = true; flags.momentum = true;
+            flags.volatilityBreakout = true; flags.supportResistance = true;
+            return true;
+        case TEST_PROFILE_MEANREV_SUITE:
+            flags.meanReversion = true; flags.fvgScalper = true;
+            flags.turtleSoup = true; flags.breakerBlock = true;
+            return true;
+        case TEST_PROFILE_ICT_SMC_SUITE:
+            flags.candlestick = true;    // the only ICT-family row that still has a class
+            return true;
+        case TEST_PROFILE_SESSION_SUITE:
+            flags.nyOpenGap = true; flags.asianRangeBreak = true;
+            flags.liquiditySweep = true; flags.rangeCompression = true;
+            return true;
+        case TEST_PROFILE_SCALP_ENGINES_SUITE:
+            EnableAllEngines(flags);
+            return true;
+
+        //--- Aggregate modes
+        case TEST_PROFILE_ALL_INDICATORS:
+        case TEST_PROFILE_ALL_INDICATORS_LIVE:
+        case TEST_PROFILE_FULL_INDICATORS:
+            EnableAllIndicators(flags);
+            return true;
+        case TEST_PROFILE_AI_SUITE:
+            EnableAllAI(flags);
+            return true;
+        case TEST_PROFILE_ALL_ENGINES:
+        case TEST_PROFILE_ALL_ENGINES_SAFE:
+            EnableAllEngines(flags);
+            return true;
+        case TEST_PROFILE_FULL_HYBRID:
+            EnableAllIndicators(flags);
+            EnableAllAI(flags);
+            return true;
+        case TEST_PROFILE_FULL_WITH_ENGINES:
+        case TEST_PROFILE_FULL_WITH_ENGINES_SAFE:
+            EnableAllIndicators(flags);
+            EnableAllAI(flags);
+            EnableAllEngines(flags);
+            return true;
+        case TEST_PROFILE_EVERYTHING:
+            EnableAllIndicators(flags);
+            EnableAllAI(flags);
+            EnableAllEngines(flags);
+            if(includeDeadCode)
+            {
+                flags.enableHurstEngine = true;
+                flags.enableOUProcess = true;
+            }
+            return true;
+    }
+
+    PrintFormat("[TEST-PROFILE] ERROR: unknown profile id %d - no flags applied.", (int)profile);
+    return false;
+}
+
+void LogCompleteActivationMatrix()
+{
+    Print("[TEST-PROFILE] ===== resolved activation matrix =====");
+    PrintFormat("[TEST-PROFILE] ind: mom=%d trend=%d sr=%d candle=%d mr=%d vb=%d fvg=%d turtle=%d breaker=%d nygap=%d asian=%d statarb=%d liqswp=%d range=%d",
+                (int)g_completeFlags.momentum, (int)g_completeFlags.trend,
+                (int)g_completeFlags.supportResistance, (int)g_completeFlags.candlestick,
+                (int)g_completeFlags.meanReversion, (int)g_completeFlags.volatilityBreakout,
+                (int)g_completeFlags.fvgScalper, (int)g_completeFlags.turtleSoup,
+                (int)g_completeFlags.breakerBlock, (int)g_completeFlags.nyOpenGap,
+                (int)g_completeFlags.asianRangeBreak, (int)g_completeFlags.statisticalArbitrage,
+                (int)g_completeFlags.liquiditySweep, (int)g_completeFlags.rangeCompression);
+    PrintFormat("[TEST-PROFILE] ind+: donchian=%d rsi2=%d dlbo=%d dlfade=%d ribbon=%d gapcont=%d orb=%d ictgap=%d ictshift=%d",
+                (int)g_completeFlags.donchianBreakout, (int)g_completeFlags.rsi2Pullback,
+                (int)g_completeFlags.dailyLevelBreakout, (int)g_completeFlags.dailyLevelFade,
+                (int)g_completeFlags.emaRibbon, (int)g_completeFlags.gapContinuation,
+                (int)g_completeFlags.openingRangeBreakout, (int)g_completeFlags.ictSessionGap,
+                (int)g_completeFlags.ictStructureShift);
+    PrintFormat("[TEST-PROFILE] ai: mode=%d nn=%d transf=%d ens=%d onnx=%d | engines: scalp=%d spike=%d grid=%d atr=%d | deadcode: hurst=%d ou=%d",
+                (int)g_completeFlags.aiModeEnabled, (int)g_completeFlags.neuralNetwork,
+                (int)g_completeFlags.transformer, (int)g_completeFlags.ensemble,
+                (int)g_completeFlags.onnxAI, (int)g_completeFlags.fastScalpEngine,
+                (int)g_completeFlags.spikeHunterEngine, (int)g_completeFlags.gridRecoveryEngine,
+                (int)g_completeFlags.atrScalpingEngine, (int)g_completeFlags.enableHurstEngine,
+                (int)g_completeFlags.enableOUProcess);
+}
 input group "=== COMPLETE TEST PROFILE SYSTEM ==="
 input ENUM_COMPLETE_TEST_PROFILE InpCompleteTestProfile = TEST_PROFILE_CUSTOM;
 input bool     InpTestProfileOverrideAll = true;      // If true, profile overrides all individual flags
 input bool     InpIncludeDeadCodeInProfiles = false;  // Include dead-code strategies in profiles
 
+//=== Mode-specific inputs (shared inputs are in Core/Config/SharedEAInputs.mqh) ===
+
 input group "=== GENERAL & RISK MANAGEMENT ==="
-input long     InpMagicNumber = 123456;
-input int      InpConfigVersion = 109;
-input double   InpLotSize = 0.1;
-input bool     InpUseEnhancedRisk = true;
 input double   InpMaxRiskPerTrade = 5.0;
 input double   InpMaxDailyRisk = 40.0;
-
-// FINDING 0 (STRATEGY_AUDIT_2026-08-14): use strategy-designed SL/TP instead of
-// the generic fallback in the consensus execution path. ENABLED for LIVE operation.
-input bool     InpUseStrategyStops = true;
 input double   InpMaxPortfolioRisk = 60.0;
-input double   InpMaxDrawdown = 15.0;
 input double   InpDailyLossLimitPercent = 10.0;
-input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE;
-input bool     InpEnableCompoundingTiers = true;
-input int      InpCompoundingTierCheckIntervalSec = 60;
-input bool     InpEnableSessionWeights = true;
-input int      InpSessionDSTOffsetHours = 0;
-input bool     InpEnableSkewStepAnalyzer = true;
-input bool     InpEnableFamilyWeightMatrix = true;
 input bool     InpAllowMinLotRoundUp = false;
 input double   InpMinLotRiskMultiplier = 1.0;
-input string   InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
-input int      InpMinSecondsBetweenTrades = 10;
-input int      InpMaxPositionsTotal = 15;
-input int      InpMaxPositionsTotalMin = 3;
-input int      InpMaxPositionsPerSymbol = 5;
-input int      InpMaxPositionsPerSymbolMin = 1;
-input int      InpMaxTradeSendsPerCycle = 3;
 
 input group "=== STRATEGY ENABLE / DISABLE ==="
-input bool     InpEnableMomentum = true;
-input bool     InpEnableTrend = false;
-input bool     InpEnableSupportResistance = false;
-input bool     InpEnableCandlestick = false;
-input bool     InpCandlestickRequireTrend = false;
-input bool     InpEnableMeanReversion = false;
-input bool     InpEnableVolatilityBreakout = false;
-input bool     InpEnableFVGScalper = false;
-input bool     InpEnableTurtleSoup = false;
-input bool     InpEnableBreakerBlock = false;
-input bool     InpEnableNYOpenGap = false;
-input bool     InpEnableAsianRangeBreak = false;
-input bool     InpEnableStatisticalArbitrage = false;
-input double   InpAdxMinLotMultiplier = 1.0;
-input bool     InpAdxTradeOnNoTrend = true;
 input bool     InpUseCuratedStrategySet = false;
-input bool     InpUseSymbolClassProfiles = false;
 
 input group "=== BATCH 114: KALMAN, REGIME, LIQUIDITY ==="
 input bool     InpEnableKalmanMR = false;
-input double   InpKalmanLambda = 500.0;
 input bool     InpEnableChangepointDetect = false;
-input double   InpCPDHazardThreshold = 0.3;
 input bool     InpEnableFourStateRegime = false;
 input bool     InpEnableVolTargeting = false;
-input double   InpTargetVol = 0.15;
-input double   InpVolMinScale = 0.2;
-input double   InpVolMaxScale = 3.0;
 input bool     InpEnableLiquiditySweep = false;
 input bool     InpEnableRangeCompression = false;
-
-input group "=== EA OPERATING MODE ==="
-input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
-input bool     InpEnableVisualAnalysis = true;
-input int      InpMaxVisualObjects = 500;
-input bool     InpStrictEAMode = false;
-
-input group "=== CONSENSUS QUORUM SETTINGS ==="
-input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
-input double   InpQuorumThreshold = 0.60;
-input int      InpMinLiveVoters = 2;
-input double   InpConsensusConflictDeadband = 0.35;
-input double   InpConsensusMinReadyWeightRatio = 0.40;
-input double   InpConsensusSupportFloorNewBar = 0.20;
-input double   InpConsensusSupportFloorIntrabar = 0.15;
-
-input group "=== STRATEGY WEIGHTS ==="
-input double   InpWeightMomentum = 1.0;
-input double   InpWeightTrend = 1.2;
-input double   InpWeightSupportResistance = 1.8;
-input double   InpWeightCandlestick = 0.8;
-input double   InpWeightMeanReversion = 1.8;
-input double   InpWeightVolatilityBreakout = 2.0;
-input double   InpWeightStatisticalArbitrage = 1.5;
-input double   InpWeightFVGScalper = 1.8;
-input double   InpWeightTurtleSoup = 1.6;
-input double   InpWeightBreakerBlock = 1.7;
-input double   InpWeightNYOpenGap = 1.3;
-input double   InpWeightAsianRangeBreak = 1.3;
-input double   InpWeightLiquiditySweep = 1.9;
-input double   InpWeightRangeCompression = 1.7;
 
 input group "=== AI ENGINE SETTINGS ==="
 input bool     InpEnableAIMode = false;
@@ -202,773 +369,22 @@ input bool     InpEnableEnsemble = false;
 input bool     InpEnableOnnxAI = false;
 input bool     InpEnablePythonBridgeAI = false;
 input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OFF;
-input string   InpPythonBridgeEndpoint = "http://127.0.0.1:8000";
-input int      InpPythonBridgeRequestTimeoutMs = 2000;
-input int      InpPythonBridgeHeartbeatTimeoutSec = 30;
-input int      InpPythonBridgeMaxReconnectAttempts = 5;
-input int      InpPythonBridgeReconnectBackoffMs = 2000;
-input bool     InpEnableExternalLLM = false;
-input string   InpExternalLLMEndpoint = "http://localhost:11434";
-input double   InpAIConfidenceThreshold = 0.70;
-input double   InpAIWeightMultiplier = 1.0;
-input double   InpAIDrawdownSizingLimit = 0.20;
 
-input group "=== DASHBOARD ==="
-input bool     InpDashboardEnabled = true;
-input string   InpDashboardEndpoint = "http://127.0.0.1:8765";
-input int      InpDashboardPushIntervalSec = 5;
-input bool     InpDashboardControlEnabled = false;
-
-input group "=== LIVE AUTHORITY GATE ==="
-input bool     InpEnableLiveAuthorityGate = false;
-input bool     InpAllowHybridAIStandalone = true;
-input double   InpAIStandaloneMinConfidence = 0.65;
-input double   InpAIStandaloneRelaxedConfidence = 0.60;
-input int      InpHybridGateRelaxAfterCycles = 5;
-input int      InpAuthorityMinSamples = 12;
-input double   InpAuthorityMinExpectancyR = 0.03;
-input double   InpAuthorityMinProfitFactor = 1.10;
-input double   InpAuthorityMinCostScore = 0.50;
-input double   InpAuthorityMinReadinessScore = 0.52;
-input double   InpAuthorityMinContextScore = 0.48;
-input double   InpAIBootstrapRiskMultiplier = 0.50;
-input double   InpAIPromotedRiskMultiplier = 1.00;
-
-input group "=== NN ATTRIBUTION ==="
-input bool     InpEnableNNAttributionDiagnostics = true;   // Batch 238: the setter is wired now; true is what every build has printed
-input bool     InpRunNNAttributionSelfTest = false;        // Batch 238: callable now; runs the prediction-comment and map round trip at init
-
-input group "=== RUNTIME CADENCE & INTRABAR ==="
-input bool     InpIntrabarDynamicQuorumEnabled = true;
-input double   InpPipelineMinConfidence = 0.55;
-input double   InpPipelineIntrabarConfidenceCap = 0.05;
-input bool     InpPipelineEnableRegimeCostGate = true;
-input double   InpPipelineMaxSpreadToAtrRatio = 0.50;
-input int      InpPipelineSpreadShockCooldownSec = 90;
-input double   InpPipelineLateEntryZScoreLimit = 4.00;
-input double   InpAtrCrisisRatioThreshold = 5.0;
-input double   InpAtrCrisisRatioThresholdSynthetic = 15.0;
-input double   InpAtrCrisisRatioThresholdVolatility = 10.0;
-input double   InpAtrCrisisRatioThresholdDefault = 8.0;
-input double   InpHardSpreadCutoffPoints = 200.0;
-input int      InpDeadlockAttributionIntervalSec = 60;
-input int      InpHeartbeatInterval = 60;
+input group "=== EA OPERATING MODE ==="
 input bool     InpEnableMomentumScalping = false;
-input int      InpMomentumScalpCooldownSeconds = 20;
-input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5;
-input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
-input int      InpMaxSignalEvaluationsPerCycle = 8;
-input int      InpReadinessReuseTtlSeconds = 60;
-input bool     InpEnableNNOnlineTraining = true;
-input bool     InpEnableNNWeightMutation = false;
-input bool     InpEnableNNPseudoLabeling = true;
-input int      InpNNPseudoLabelBarsAhead = 10;
-input int      InpNNSampleIntervalSeconds = 15;
-input int      InpNNCheckpointEveryLabeled = 3;
-
-input group "=== SIGNAL VALIDATOR ==="
-input int      InpValidatorNewBarMinConfluence = 1;
-input double   InpValidatorNewBarMinQuality = 0.68;
-input double   InpValidatorNewBarMinConfidence = 0.55;
-input int      InpValidatorIntrabarMinConfluence = 1;
-input double   InpValidatorIntrabarMinQuality = 0.70;
-input double   InpValidatorIntrabarMinConfidence = 0.60;
-
-input group "=== EXECUTION SAFETY & LIFECYCLE ==="
-input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
-input int      InpTradeSlippagePoints = 50;
-input double   InpMaxEntrySpreadPoints = 15000.0;
-input double   InpMaxEntryDriftPoints = 80.0;
-input int      InpProtectiveModifyCooldownSec = 5;
-input bool     InpEnableSignalReversalExit = true;
-input double   InpSignalReversalMinConfidence = 0.58;
-input bool     InpSignalReversalProfitGuard = true;
-input double   InpSignalReversalMinLossR = 0.25;
-input double   InpSignalReversalMaxLossR = 0.82;
-input int      InpSignalReversalMinTimeSec = 45;
-input bool     InpEnableStructuralInvalidation = true;
-input bool     InpEnablePositionLifecycleManager = true;
-input double   InpLifecycleBreakevenBufferPoints = 50.0;
-input double   InpLifecycleTrailingDistancePoints = 150.0;
-input double   InpLifecycleTrailingStepPoints = 30.0;
-input bool     InpLifecycleUseATRTrailing = false;
-input double   InpLifecycleATRMultiplier = 1.5;
-
-input group "=== MAX HOLD TIME ==="
-input bool     InpEnableMaxHoldTime = true;
-input int      InpMaxHoldHoursIntraday = 24;
-input int      InpMaxHoldHoursSwing = 120;
-input bool     InpMaxHoldOnlyIfLoss = true;
-
-input group "=== LOSS GUARD (unconfigurable until Batch 244) ==="
-input bool     InpLossGuardAdverseMomentumExit = false;          // off is what every build has done: the flag had no writer
-input double   InpLossGuardAdverseMomentumATR = 0.5;             // close when price moves this x ATR(14) against the entry
-input int      InpLossGuardConsecutiveLossLimit = 3;             // >0 also ARMS the whole guard: 0 and the flag off = path dormant
-input int      InpLossGuardConsecutiveLossCooldownSec = 1800;    // pause on the guard after that many guard-realized losses
-input double   InpLossGuardDailyLossCircuitBreakerPct = 50.0;    // of InpMaxDailyRisk, counted from guard closes only
-input double   InpLossGuardPositionLossLimitPct = 75.0;          // close at this fraction of the position's own SL distance
-
-input group "=== EMERGENCY PROTOCOLS ==="
-input bool     InpEmergencyFlattenAllAccountPositions = false; // Batch 168: opt-in account-wide flatten
-input int      InpUnprotectedRemediationIntervalSec = 15;
-input int      InpUnprotectedMaxRestoreAttempts = 3;
-input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
-input int      InpSyntheticSpikePauseSeconds = 30;
-
-input group "=== FAST SCALP ENGINE ==="
-input bool     InpEnableScalpEngine = true;
-input bool     InpScalpAsyncMode = false;
-input uint     InpScalpMaxLatencyMs = 500;
-
-input group "=== DYNAMIC SLIPPAGE ==="
-input bool     InpEnableDynamicSlippage = true;
-input double   InpDynamicSlippageAtrPercent = 0.20;
-input int      InpDynamicSlippageMinPoints = 10;
-input int      InpDynamicSlippageMaxMultiplier = 10;
-input int      InpDynamicSlippageAtrPeriod = 14;
-
-input group "=== SPIKE DETECTION ==="
-input int      InpSpikeConfirmWindows = 2;
-
-input group "=== SKEW STEP ANALYZER ==="
-input int      InpSkewStepBufferSize = 200;
-input double   InpSkewStepCalmThreshold = 0.80;
-input double   InpSkewStepSmallThreshold = 0.2;
-input double   InpSkewStepLargeThreshold = 0.5;
 
 input group "=== SPIKE HUNTER ENGINE ==="
 input bool     InpSpikeHunterEnabled = false;
-input double   InpSpikeHunterVelocityMult = 1.8;
-input int      InpSpikeHunterMinConsecTicks = 8;
-input int      InpSpikeHunterConsecWindowMs = 60000;
-input double   InpSpikeHunterATRCompression = 0.80;
-input double   InpSpikeHunterSLAtrMult = 1.5;
-input double   InpSpikeHunterTPAtrMult = 3.0;
-input int      InpSpikeHunterMaxPositions = 3;
-input int      InpSpikeHunterCooldownMs = 60000;
-input int      InpSpikeHunterLongTermCooldownMs = 60000;
-input bool     InpSpikeHunterPushAlerts = true;
-input int      InpSpikeHunterAlertThrottle = 120;
-input int      InpSpikeHunterMinConfluence = 2;
 
-input group "=== MULTI-ASSET PROFILER ==="
-input bool     InpMultiAssetProfilerEnabled = true;
-input bool     InpDerivProfilerEnabled = true;
-input bool     InpGridRecoveryEnabled = true;
-input bool     InpATRScalpingEnabled = true;
-
-input group "=== MATHEMATICAL ENGINES ==="
-input bool     InpEnableHurstEngine = true;
-input int      InpHurstLookback = 300;
-input bool     InpEnableOUProcess = true;
-input int      InpOULookback = 100;
-input bool     InpEnableOFIProxy = true;
-input int      InpOFISlowWindow = 100;
-input bool     InpEnableVPINFilter = true;
-input double   InpVPINExtremeThreshold = 0.7;
-input int      InpVPINNumBuckets = 50;
-
-input group "=== ENTERPRISE MODE & CLUSTER GOVERNANCE ==="
-input bool     InpUseSignalPipeline = true;
-input bool     InpPipelineEngineRegistry = false;  // binds the shared engines to the pipeline's five filters (tightens entries)
-input bool     InpAllowSyntheticOffHours = true;
-input double   InpMinTrendStrength = 50.0;
-input double   InpMaxVolatility = 3.0;
-input bool     InpEnableStructureFilter = true;
-input bool     InpEnableLiquidityFilter = true;
-input int      InpDormancyStrikeBars = 3;
-input int      InpDormancyCooldownMinutes = 30;
-input int      InpMaxPositionsSameBase = 3;
-input bool     InpEnableClusterRiskGovernance = true;
-input bool     InpEnableClusterMutex = true;
-input int      InpRiskMaxConcurrentPerCluster = 3;
-input double   InpRiskMaxClusterExposurePct = 5.0;
-
-input group "=== PORTFOLIO PROFIT TARGET ==="
-input double   InpDailyProfitTargetPercent = 2.0;
-input double   InpProfitTrailFactor = 0.7;
-input int      InpDailyHaltCooldownMinutes = 30;
-
-//--- Symbol Validation
-input long     InpSymbolMaxSpreadPoints = 1500;
-input long     InpSymbolMinDailyVolumeLots = 1000;
-input bool     InpSymbolEnableVolumeCheck = true;
-
-input int      InpLogLevel = 1;
-input int      InpLogVerbosity = 3;
-input bool     InpLogDerivFamilyDetection = true;
-
-//--- Symbol Universe
-input bool     InpAutoAddChartSymbol = true;
-
-//--- Batch 99
-input int      InpEquityCurveEmaPeriod = 20;
-input double   InpEquityCurveReductionFactor = 0.50;
-input double   InpKellyFraction = 0.25;
-
-struct SCompleteComponentFlags
-{
-    // Registry Strategies (19) - executed via ProcessTradingLogic() -> Pipeline -> CUnifiedRiskManager
-    bool momentum;
-    bool trend;
-    bool supportResistance;
-    bool unifiedICT;
-    bool candlestick;
-    bool unicornModel;
-    bool powerOfThree;
-    bool meanReversion;
-    bool volatilityBreakout;
-    bool statisticalArbitrage;
-    bool fvgScalper;
-    bool turtleSoup;
-    bool breakerBlock;
-    bool nyOpenGap;
-    bool asianRangeBreak;
-    bool liquiditySweep;
-    bool rangeCompression;
-
-    // AI Strategies (4) - registry
-    bool neuralNetwork;
-    bool transformer;
-    bool ensemble;
-    bool onnxAI;
-
-    // Independent Engines (4) - executed in OnTick() directly, bypassing consensus pipeline
-    bool fastScalpEngine;
-    bool spikeHunterEngine;
-    bool gridRecoveryEngine;
-    bool atrScalpingEngine;
-
-    // Dead Code (2) - initialized per-symbol, NEVER called
-    bool enableHurstEngine;
-    bool enableOUProcess;
-
-    // AI Mode master switch
-    bool aiModeEnabled;
-
-    //--- Default constructor: everything disabled
-    SCompleteComponentFlags()
-    {
-        momentum = false; trend = false; supportResistance = false;
-        unifiedICT = false; candlestick = false; unicornModel = false;
-        powerOfThree = false; meanReversion = false; volatilityBreakout = false;
-        statisticalArbitrage = false; fvgScalper = false; turtleSoup = false;
-        breakerBlock = false; nyOpenGap = false; asianRangeBreak = false;
-        liquiditySweep = false; rangeCompression = false;
-        neuralNetwork = false; transformer = false; ensemble = false; onnxAI = false;
-        fastScalpEngine = false; spikeHunterEngine = false;
-        gridRecoveryEngine = false; atrScalpingEngine = false;
-        enableHurstEngine = false; enableOUProcess = false;
-        aiModeEnabled = false;
-    }
-};
-
-// Global flags instance
-SCompleteComponentFlags g_completeFlags;
-
-// PROFILE APPLICATION LOGIC
-
-// 3.5 Helper functions for flag groups (replaced C++ lambdas for MQL5 compatibility)
-void SetIndicatorFlags(SCompleteComponentFlags &flags, bool m, bool t, bool sr, bool ict, bool cd, bool um, bool pot,
-                        bool mr, bool vb, bool sa, bool fvg, bool ts, bool bb,
-                        bool ny, bool ar, bool ls, bool rc)
-{
-    flags.momentum = m; flags.trend = t; flags.supportResistance = sr;
-    flags.unifiedICT = ict; flags.candlestick = cd; flags.unicornModel = um;
-    flags.powerOfThree = pot; flags.meanReversion = mr; flags.volatilityBreakout = vb;
-    flags.statisticalArbitrage = sa; flags.fvgScalper = fvg; flags.turtleSoup = ts;
-    flags.breakerBlock = bb; flags.nyOpenGap = ny; flags.asianRangeBreak = ar;
-    flags.liquiditySweep = ls; flags.rangeCompression = rc;
-}
-
-void SetAIFlags(SCompleteComponentFlags &flags, bool nn, bool tf, bool ens, bool onnx)
-{
-    flags.neuralNetwork = nn; flags.transformer = tf;
-    flags.ensemble = ens; flags.onnxAI = onnx;
-    flags.aiModeEnabled = (nn || tf || ens || onnx);
-}
-
-void SetEngineFlags(SCompleteComponentFlags &flags, bool fs, bool sh, bool gr, bool atr)
-{
-    flags.fastScalpEngine = fs; flags.spikeHunterEngine = sh;
-    flags.gridRecoveryEngine = gr; flags.atrScalpingEngine = atr;
-}
-
-void SetDeadFlags(SCompleteComponentFlags &flags, bool hurst, bool ou)
-{
-    flags.enableHurstEngine = hurst; flags.enableOUProcess = ou;
-}
-
-// 3.5 Profile Application Logic
-void ApplyCompleteTestProfile(ENUM_COMPLETE_TEST_PROFILE profile, SCompleteComponentFlags &flags, bool includeDead = false)
-{
-    // Reset all to false first
-    flags = SCompleteComponentFlags();
-
-    bool includeDeadCode = includeDead;
-
-    switch(profile)
-    {
-        //--- Special / Utility
-        case TEST_PROFILE_CUSTOM:
-            // No-op: keep manual input flags
-            return;
-
-        case TEST_PROFILE_DISABLE_ALL:
-            // All flags already false from reset
-            break;
-
-        //--- Single Indicator Strategies
-        case TEST_PROFILE_SINGLE_MOMENTUM:
-            SetIndicatorFlags(flags, true, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_TREND:
-            SetIndicatorFlags(flags, false, true, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_SR:
-            SetIndicatorFlags(flags, false, false, true, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_ICT:
-            SetIndicatorFlags(flags, false, false, false, true, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_CANDLE:
-            SetIndicatorFlags(flags, false, false, false, false, true, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_UNICORN:
-            SetIndicatorFlags(flags, false, false, false, false, false, true, false,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_POT:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, true,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_MR:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   true, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_VB:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, true, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_STATARB:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, true, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_FVG:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, true, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_TURTLE:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, true, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_BREAKER:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, true,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_NYGAP:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   true, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_ASIAN:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, true, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_LIQSWEEP:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, true, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_RANGECOMP:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   false, false, false, true);
-            break;
-
-        //--- Single AI Strategies
-        case TEST_PROFILE_SINGLE_NN:
-            SetAIFlags(flags, true, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_TRANSF:
-            SetAIFlags(flags, false, true, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_ENS:
-            SetAIFlags(flags, false, false, true, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_ONNX:
-            SetAIFlags(flags, false, false, false, true);
-            break;
-
-        //--- Single Independent Engines
-        case TEST_PROFILE_SINGLE_FASTSCALP:
-            SetEngineFlags(flags, true, false, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_SPIKEHUNTER:
-            SetEngineFlags(flags, false, true, false, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_GRIDRECOVERY:
-            SetEngineFlags(flags, false, false, true, false);
-            break;
-
-        case TEST_PROFILE_SINGLE_ATRSCALP:
-            SetEngineFlags(flags, false, false, false, true);
-            break;
-
-        //--- Curated Strategy Families
-        case TEST_PROFILE_TREND_SUITE:
-            SetIndicatorFlags(flags, true, true, true, false, false, false, false,
-                   false, true, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_MEANREV_SUITE:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   true, false, false, true, true, true,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_ICT_SMC_SUITE:
-            SetIndicatorFlags(flags, false, false, false, true, true, true, true,
-                   false, false, false, false, false, false,
-                   false, false, false, false);
-            break;
-
-        case TEST_PROFILE_SESSION_SUITE:
-            SetIndicatorFlags(flags, false, false, false, false, false, false, false,
-                   false, false, false, false, false, false,
-                   true, true, true, true);
-            break;
-
-        case TEST_PROFILE_SCALP_ENGINES_SUITE:
-            SetEngineFlags(flags, true, true, true, true);
-            break;
-
-        //--- Aggregate Modes
-        case TEST_PROFILE_ALL_INDICATORS:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            break;
-
-        case TEST_PROFILE_ALL_INDICATORS_LIVE:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            // Note: Live mode handled by EA operating mode input
-            break;
-
-        case TEST_PROFILE_AI_SUITE:
-            SetAIFlags(flags, true, true, true, true);
-            break;
-
-        case TEST_PROFILE_ALL_ENGINES:
-            SetEngineFlags(flags, true, true, true, true);
-            break;
-
-        case TEST_PROFILE_ALL_ENGINES_SAFE:
-            SetEngineFlags(flags, true, true, true, true);
-            // Conservative risk caps would be applied in ApplyFlagsToInputs
-            break;
-
-        //--- Full System Modes
-        case TEST_PROFILE_FULL_INDICATORS:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            break;
-
-        case TEST_PROFILE_FULL_HYBRID:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            SetAIFlags(flags, true, true, true, true);
-            break;
-
-        case TEST_PROFILE_FULL_WITH_ENGINES:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            SetAIFlags(flags, true, true, true, true);
-            SetEngineFlags(flags, true, true, true, true);
-            break;
-
-        case TEST_PROFILE_FULL_WITH_ENGINES_SAFE:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            SetAIFlags(flags, true, true, true, true);
-            SetEngineFlags(flags, true, true, true, true);
-            // Safety caps applied in ApplyFlagsToInputs
-            break;
-
-        case TEST_PROFILE_EVERYTHING:
-            SetIndicatorFlags(flags, true, true, true, true, true, true, true,
-                   true, true, true, true, true, true,
-                   true, true, true, true);
-            SetAIFlags(flags, true, true, true, true);
-            SetEngineFlags(flags, true, true, true, true);
-            SetDeadFlags(flags, includeDeadCode, includeDeadCode);
-            break;
-    }
-
-    // Handle dead code inclusion for all profiles if requested
-    if(includeDeadCode && profile != TEST_PROFILE_CUSTOM && profile != TEST_PROFILE_DISABLE_ALL)
-    {
-        SetDeadFlags(flags, true, true);
-    }
-}
-
-// 3.5 Apply Flags to Inputs - Maps component flags to actual EA input parameters
-void ApplyFlagsToInputs(const SCompleteComponentFlags &flags)
-{
-    // Note: In MQL5, input parameters are const at runtime.
-    // This function logs the effective configuration for verification.
-    // Actual input override requires InpTestProfileOverrideAll = true
-    // and the orchestrator config to respect these flags.
-
-    Print("[TEST-PROFILE] ========================================");
-    Print("[TEST-PROFILE] Effective Component Configuration:");
-    Print("[TEST-PROFILE] ========================================");
-
-    // Registry Strategies
-    PrintFormat("[TEST-PROFILE] Momentum: %s", flags.momentum ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Trend: %s", flags.trend ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Support/Resistance: %s", flags.supportResistance ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Unified ICT: %s", flags.unifiedICT ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Candlestick: %s", flags.candlestick ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Unicorn Model: %s", flags.unicornModel ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Power of Three: %s", flags.powerOfThree ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Mean Reversion: %s", flags.meanReversion ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Volatility Breakout: %s", flags.volatilityBreakout ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Statistical Arbitrage: %s", flags.statisticalArbitrage ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] FVG Scalper: %s", flags.fvgScalper ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Turtle Soup: %s", flags.turtleSoup ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Breaker Block: %s", flags.breakerBlock ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] NY Open Gap: %s", flags.nyOpenGap ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Asian Range Break: %s", flags.asianRangeBreak ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Liquidity Sweep: %s", flags.liquiditySweep ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Range Compression: %s", flags.rangeCompression ? "ON" : "OFF");
-
-    // AI Strategies
-    PrintFormat("[TEST-PROFILE] Neural Network AI: %s", flags.neuralNetwork ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Transformer AI: %s", flags.transformer ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Ensemble AI: %s", flags.ensemble ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] ONNX AI: %s", flags.onnxAI ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] AI Mode Enabled: %s", flags.aiModeEnabled ? "ON" : "OFF");
-
-    // Independent Engines
-    PrintFormat("[TEST-PROFILE] Fast Scalp Engine: %s", flags.fastScalpEngine ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Spike Hunter Engine: %s", flags.spikeHunterEngine ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] Grid Recovery Engine: %s", flags.gridRecoveryEngine ? "ON" : "OFF");
-    PrintFormat("[TEST-PROFILE] ATR Scalping Engine: %s", flags.atrScalpingEngine ? "ON" : "OFF");
-
-    if(InpIncludeDeadCodeInProfiles)
-    {
-        PrintFormat("[TEST-PROFILE] Hurst Engine (dead): %s", flags.enableHurstEngine ? "ON" : "OFF");
-        PrintFormat("[TEST-PROFILE] OU Process (dead): %s", flags.enableOUProcess ? "ON" : "OFF");
-    }
-
-    Print("[TEST-PROFILE] ========================================");
-}
-
-// 3.6 Enhanced: Complete Activation Matrix Visualization
-void LogCompleteActivationMatrix()
-{
-    Print("[ACTIVATION-MATRIX] ========================================");
-    Print("[ACTIVATION-MATRIX] COMPLETE COMPONENT ACTIVATION MATRIX");
-    Print("[ACTIVATION-MATRIX] ========================================");
-
-    // Registry Indicators
-    string indNames[19] = {
-        "Momentum", "Trend", "Support/Resistance", "Unified ICT",
-        "Candlestick", "Unicorn Model", "Power of Three", "Mean Reversion",
-        "Volatility Breakout", "Statistical Arbitrage", "FVG Scalper",
-        "Turtle Soup", "Breaker Block", "NY Open Gap", "Asian Range Break",
-        "Liquidity Sweep", "Range Compression", "Hurst Engine", "OU Process"
-    };
-
-    bool indActive[19] = {
-        g_completeFlags.momentum, g_completeFlags.trend, g_completeFlags.supportResistance,
-        g_completeFlags.unifiedICT, g_completeFlags.candlestick, g_completeFlags.unicornModel,
-        g_completeFlags.powerOfThree, g_completeFlags.meanReversion, g_completeFlags.volatilityBreakout,
-        g_completeFlags.statisticalArbitrage, g_completeFlags.fvgScalper, g_completeFlags.turtleSoup,
-        g_completeFlags.breakerBlock, g_completeFlags.nyOpenGap, g_completeFlags.asianRangeBreak,
-        g_completeFlags.liquiditySweep, g_completeFlags.rangeCompression,
-        g_completeFlags.enableHurstEngine, g_completeFlags.enableOUProcess
-    };
-
-    int activeCount = 0;
-    for(int i = 0; i < 19; i++)
-    {
-        string status = indActive[i] ? "[ACTIVE]" : "[OFF]";
-        string deadTag = (i >= 17) ? " (DEAD)" : "";
-        if(indActive[i]) activeCount++;
-        PrintFormat("[ACTIVATION-MATRIX] %2d. %-25s %s%s", i+1, indNames[i], status, deadTag);
-    }
-    PrintFormat("[ACTIVATION-MATRIX] Active Indicators: %d/19", activeCount);
-
-    // AI Strategies
-    string aiNames[4] = {"Neural Network", "Transformer", "Ensemble", "ONNX"};
-    bool aiActive[4] = {g_completeFlags.neuralNetwork, g_completeFlags.transformer,
-                        g_completeFlags.ensemble, g_completeFlags.onnxAI};
-
-    int aiCount = 0;
-    for(int i = 0; i < 4; i++)
-    {
-        string status = aiActive[i] ? "[ACTIVE]" : "[OFF]";
-        bool active = aiActive[i];
-        if(active) aiCount++;
-        PrintFormat("[ACTIVATION-MATRIX] AI:  %-20s %s", aiNames[i], status);
-    }
-    PrintFormat("[ACTIVATION-MATRIX] Active AI Modes: %d/4 (Master: %s)", aiCount,
-                g_completeFlags.aiModeEnabled ? "ON" : "OFF");
-
-    // Independent Engines
-    string engNames[4] = {"Fast Scalp", "Spike Hunter", "Grid Recovery", "ATR Scalp"};
-    string engRisk[4] = {"HIGH", "HIGH", "VERY HIGH", "HIGH"};
-    bool engActive[4] = {g_completeFlags.fastScalpEngine, g_completeFlags.spikeHunterEngine,
-                         g_completeFlags.gridRecoveryEngine, g_completeFlags.atrScalpingEngine};
-
-    int engCount = 0;
-    for(int i = 0; i < 4; i++)
-    {
-        string status = engActive[i] ? "[ACTIVE]" : "[OFF]";
-        if(engActive[i]) engCount++;
-        PrintFormat("[ACTIVATION-MATRIX] ENG: %-20s %s (Risk: %s)", engNames[i], status, engRisk[i]);
-    }
-    PrintFormat("[ACTIVATION-MATRIX] Active Engines: %d/4", engCount);
-
-    Print("[ACTIVATION-MATRIX] ========================================");
-}
-
-// 5. Per-Symbol Effective Component Report
-void LogPerSymbolEffectiveComponents()
-{
-    string symbols[] = {"Volatility 25 Index", "Volatility 75 Index", "Boom 1000 Index",
-                        "Crash 1000 Index", "Jump 25 Index", "Jump 75 Index",
-                        "Step Index", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD", "BTCUSD"};
-    int symbolCount = ArraySize(symbols);
-
-    Print("[PER-SYMBOL-REPORT] ========================================");
-    Print("[PER-SYMBOL-REPORT] PER-SYMBOL EFFECTIVE COMPONENT REPORT");
-    Print("[PER-SYMBOL-REPORT] ========================================");
-
-    for(int i = 0; i < symbolCount; i++)
-    {
-        string sym = symbols[i];
-        bool isSynthetic = IsSyntheticIndexSymbolName(sym);
-
-        // Engine eligibility per symbol
-        bool spikeActive = g_completeFlags.spikeHunterEngine && isSynthetic;
-        bool gridActive = g_completeFlags.gridRecoveryEngine && isSynthetic;
-        bool atrActive = g_completeFlags.atrScalpingEngine;
-        bool scalpActive = g_completeFlags.fastScalpEngine;
-
-        int count = 0;
-        string activeList = "";
-
-        // Registry strategies active for this symbol
-        string indNames[19] = {
-            "Momentum", "Trend", "SR", "ICT", "Candle", "Unicorn", "POT",
-            "MR", "VB", "StatArb", "FVG", "Turtle", "Breaker", "NYGap",
-            "Asian", "LiqSweep", "RangeComp", "Hurst", "OU"
-        };
-
-        bool indActive[19] = {
-            g_completeFlags.momentum, g_completeFlags.trend, g_completeFlags.supportResistance,
-            g_completeFlags.unifiedICT, g_completeFlags.candlestick, g_completeFlags.unicornModel,
-            g_completeFlags.powerOfThree, g_completeFlags.meanReversion, g_completeFlags.volatilityBreakout,
-            g_completeFlags.statisticalArbitrage, g_completeFlags.fvgScalper, g_completeFlags.turtleSoup,
-            g_completeFlags.breakerBlock, g_completeFlags.nyOpenGap, g_completeFlags.asianRangeBreak,
-            g_completeFlags.liquiditySweep, g_completeFlags.rangeCompression,
-            g_completeFlags.enableHurstEngine, g_completeFlags.enableOUProcess
-        };
-
-        for(int j = 0; j < 19; j++)
-        {
-            if(indActive[j] && (j < 17 || InpIncludeDeadCodeInProfiles))
-            {
-                if(StringLen(activeList) > 0) activeList += ", ";
-                activeList += indNames[j];
-                count++;
-            }
-        }
-
-        // Add engines
-        if(scalpActive) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "FastScalp"; count++; }
-        if(spikeActive) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "SpikeHunter"; count++; }
-        if(gridActive) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "GridRecovery"; count++; }
-        if(atrActive) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "ATRScalp"; count++; }
-
-        // AI
-        if(g_completeFlags.neuralNetwork) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "NN"; count++; }
-        if(g_completeFlags.transformer) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "Transformer"; count++; }
-        if(g_completeFlags.ensemble) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "Ensemble"; count++; }
-        if(g_completeFlags.onnxAI) { if(StringLen(activeList) > 0) activeList += ", "; activeList += "ONNX"; count++; }
-
-        PrintFormat("[PER-SYMBOL-REPORT] %-25s | Synthetic: %s | Active: %d | Components: %s",
-                    sym, isSynthetic ? "YES" : "NO", count, activeList);
-    }
-    Print("[PER-SYMBOL-REPORT] ========================================");
-}
 
 // ORCHESTRATOR CONFIG BUILDER (with test profile integration)
 
 SOrchestratorConfig BuildOrchestratorConfig()
 {
     SOrchestratorConfig config;
+    PopulateSharedOrchestratorConfig(config);
 
+    // Mode-specific overrides
     // General
     config.magicNumber = InpMagicNumber;
     config.configVersion = InpConfigVersion;
@@ -1016,6 +432,15 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableStatisticalArbitrage = g_completeFlags.statisticalArbitrage;
         config.enableLiquiditySweep = g_completeFlags.liquiditySweep;
         config.enableRangeCompression = g_completeFlags.rangeCompression;
+        config.enableDonchianBreakout = g_completeFlags.donchianBreakout;
+        config.enableRSI2Pullback = g_completeFlags.rsi2Pullback;
+        config.enableDailyLevelBreakout = g_completeFlags.dailyLevelBreakout;
+        config.enableDailyLevelFade = g_completeFlags.dailyLevelFade;
+        config.enableEMARibbon = g_completeFlags.emaRibbon;
+        config.enableGapContinuation = g_completeFlags.gapContinuation;
+        config.enableOpeningRangeBreakout = g_completeFlags.openingRangeBreakout;
+        config.enableICTSessionGap = g_completeFlags.ictSessionGap;
+        config.enableICTStructureShift = g_completeFlags.ictStructureShift;
 
         config.enableAIMode = g_completeFlags.aiModeEnabled;
         config.enableNeuralNetwork = g_completeFlags.neuralNetwork;
@@ -1067,6 +492,15 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableStatisticalArbitrage = InpEnableStatisticalArbitrage;
         config.enableLiquiditySweep = InpEnableLiquiditySweep;
         config.enableRangeCompression = InpEnableRangeCompression;
+        config.enableDonchianBreakout = InpEnableDonchianBreakout;
+        config.enableRSI2Pullback = InpEnableRSI2Pullback;
+        config.enableDailyLevelBreakout = InpEnableDailyLevelBreakout;
+        config.enableDailyLevelFade = InpEnableDailyLevelFade;
+        config.enableEMARibbon = InpEnableEMARibbon;
+        config.enableGapContinuation = InpEnableGapContinuation;
+        config.enableOpeningRangeBreakout = InpEnableOpeningRangeBreakout;
+        config.enableICTSessionGap = InpEnableICTSessionGap;
+        config.enableICTStructureShift = InpEnableICTStructureShift;
 
         // AI
         config.enableAIMode = InpEnableAIMode;
@@ -1116,6 +550,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.consensusMinReadyWeightRatio = InpConsensusMinReadyWeightRatio;
     config.consensusSupportFloorNewBar = InpConsensusSupportFloorNewBar;
     config.consensusSupportFloorIntrabar = InpConsensusSupportFloorIntrabar;
+    config.singleVoterFloor = InpSingleVoterFloor;
+    config.symbolLossStreakLimit = InpSymbolLossStreakLimit;
+    config.symbolLossStreakCooldownMin = InpSymbolLossStreakCooldownMin;
+    config.symbolStreakRiskScale = InpSymbolStreakRiskScale;
+    config.symbolStreakRiskMinCount = InpSymbolStreakRiskMinCount;
 
     // Strategy Weights
     config.weightMomentum = InpWeightMomentum;
@@ -1392,15 +831,16 @@ int OnInit()
         return INIT_FAILED;
     }
 
-    // Apply test profile if enabled
+    // Apply test profile if enabled - resolve the flags once at init so a bad profile id is reported
+    // before any trading starts, and so the matrix is readable beside the boot banner. The actual
+    // config is written in BuildOrchestratorConfig, from this same struct; there is no separate
+    // "apply flags to inputs" step because `input` variables are read-only in MQL5.
     if(InpTestProfileOverrideAll && InpCompleteTestProfile != TEST_PROFILE_CUSTOM)
     {
         PrintFormat("[TEST-PROFILE] Applying profile: %s (%d)",
                     EnumToString(InpCompleteTestProfile), InpCompleteTestProfile);
-        ApplyCompleteTestProfile(InpCompleteTestProfile, g_completeFlags, InpIncludeDeadCodeInProfiles);
-        ApplyFlagsToInputs(g_completeFlags);
-        LogCompleteActivationMatrix();
-        LogPerSymbolEffectiveComponents();
+        if(ApplyCompleteTestProfile(InpCompleteTestProfile, g_completeFlags, InpIncludeDeadCodeInProfiles))
+            LogCompleteActivationMatrix();
     }
 
     // Create and initialize orchestrator
@@ -1641,3 +1081,4 @@ bool ValidateInputs()
     }
     return true;
 }
+

@@ -8,6 +8,7 @@
 #ifndef POSITION_LIFECYCLE_MANAGER_MQH
 #define POSITION_LIFECYCLE_MANAGER_MQH
 
+#include "..\Utils\EAClock.mqh"
 #include "..\Utils\Enums.mqh"
 #include "..\Trading\TradeManager.mqh"
 #include "..\Management\EnterpriseStrategyManager.mqh"
@@ -16,7 +17,7 @@
 #include "..\Risk\SafeModeConfig.mqh"
 #include "..\..\IndicatorManager.mqh"
 
-// Phase H — extracted lifecycle modules (complete types required:
+// Phase H �?extracted lifecycle modules (complete types required:
 // they are owned BY VALUE by CPositionLifecycleManager below).
 // PosLifecyclePyramid.mqh    defines CPyramidState      (public type, re-exported)
 // PosLifecycleVolatility.mqh defines CVolatilityRegime  (public type, re-exported)
@@ -188,7 +189,7 @@ public:
         return CMagicRange::IsOwned(magic, m_magicNumber, (long)MagicMax());
     }
 
-    //--- Batch 170: the exit-side test. Same window, minus the scalp/grid/spike
+    //--- the exit-side test. Same window, minus the scalp/grid/spike
     //--- books whose own engines already own their exits. Reads the position the
     //--- caller selected.
     bool IsPositionLifecycleManaged() const
@@ -208,7 +209,7 @@ public:
         return NULL;
     }
 
-    //--- Main entry point — replaces ManageOpenPositionsIfNeeded()
+    //--- Main entry point �?replaces ManageOpenPositionsIfNeeded()
     void ManagePositions()
     {
         if(!m_initialized || PositionsTotal() <= 0)
@@ -233,7 +234,7 @@ public:
             ManageMaxHoldTime();
     }
 
-    //--- Signal Reversal Exit (SRE) — high-speed scalp logic
+    //--- Signal Reversal Exit (SRE) �?high-speed scalp logic
     bool CheckSignalReversalExit()
     {
         if(!m_sreEnabled)
@@ -301,7 +302,7 @@ public:
                     {
                         if(!hasBreathingRoom || lossR > 0.50)
                         {
-                            // Issue 9 fix: SRE profit guard — only trigger signal reversal
+                            // Issue 9 fix: SRE profit guard �?only trigger signal reversal
                             // exit when position is in profit or still near entry. If the
                             // position has drifted deep into loss (>25% of SL distance),
                             // skip SRE and let structural invalidation or hard SL decide.
@@ -366,11 +367,11 @@ public:
         if(!m_lifecycleEnabled)
             return;
 
-        uint nowMs = GetTickCount();
+        uint nowMs = EAClockMs();
         if(m_lastManageTimeMs != 0 && (nowMs - m_lastManageTimeMs) < 500)
             return;
 
-        // I2: Check regime state — pause trailing in ranging markets
+        // I2: Check regime state �?pause trailing in ranging markets
         bool pauseTrailing = false;
         if(m_regimeEngine != NULL)
         {
@@ -400,7 +401,7 @@ public:
                 bool isBuy = (type == POSITION_TYPE_BUY);
                 double buffer = m_breakevenBufferPts * point;
 
-                // Only move to breakeven — no trailing in ranging market
+                // Only move to breakeven �?no trailing in ranging market
                 if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
                 {
                     // Batch 116: SL at openPrice + buffer (full offset), not buffer * 0.1
@@ -427,7 +428,7 @@ public:
         }
         else
         {
-            // Normal mode — full BE + trailing
+            // Normal mode �?full BE + trailing
             m_tradeManager.ManageAllPositions(m_breakevenBufferPts,
                                               m_trailingDistancePts,
                                               m_trailingStepPoints,
@@ -444,7 +445,7 @@ public:
         m_lastManageTimeMs = nowMs;
     }
 
-    // AGGRESSIVE: Pyramiding management — delegated to CPosLifecyclePyramid
+    // AGGRESSIVE: Pyramiding management �?delegated to CPosLifecyclePyramid
     void ManagePyramiding()
     {
         m_pyramid.ManagePyramiding(m_tradeManager, m_magicNumber, MagicMax());
@@ -465,7 +466,7 @@ public:
         m_pyramid.CleanupPyramidStates();
     }
 
-    // AGGRESSIVE: Dynamic SL/TP management — delegated to CPosLifecycleVolatility
+    // AGGRESSIVE: Dynamic SL/TP management �?delegated to CPosLifecycleVolatility
     void ManageDynamicSLTP()
     {
         m_volatility.ManageDynamicSLTP(m_tradeManager, m_symbols, m_symbolCount,
@@ -492,26 +493,26 @@ public:
         return CPosLifecycleVolatility::GetATR(symbol, period);
     }
 
-    // EXECUTION REFINEMENT: Loss minimization management — delegated to CPosLifecycleLossGuard
+    // EXECUTION REFINEMENT: Loss minimization management �?delegated to CPosLifecycleLossGuard
     void ManageLossMinimization()
     {
         m_lossGuard.ManageLossMinimization(m_tradeManager, m_magicNumber, MagicMax());
     }
 
-    // Batch 170: the loss guard's daily-loss breaker needs a budget to compare
+    // the loss guard's daily-loss breaker needs a budget to compare
     // against; without this pass-through it had no way to be given one.
     void SetDailyRiskBudgetPercent(const double percent)
     {
         m_lossGuard.SetDailyRiskBudgetPercent(percent);
     }
 
-    // EXECUTION REFINEMENT: Partial profit taking management — delegated to CPosLifecycleExit
+    // EXECUTION REFINEMENT: Partial profit taking management �?delegated to CPosLifecycleExit
     void ManagePartialProfitTaking()
     {
         m_exitRules.ManagePartialProfitTaking(m_tradeManager, m_magicNumber, MagicMax());
     }
 
-    // Issue #44: Maximum position hold time management — delegated to CPosLifecycleExit
+    // Issue #44: Maximum position hold time management �?delegated to CPosLifecycleExit
     void ManageMaxHoldTime()
     {
         m_exitRules.ManageMaxHoldTime(m_tradeManager, m_magicNumber, MagicMax());
@@ -519,3 +520,5 @@ public:
 };
 
 #endif // __POSITION_LIFECYCLE_MANAGER_MQH__
+
+

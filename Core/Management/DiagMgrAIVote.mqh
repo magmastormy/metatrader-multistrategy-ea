@@ -1,5 +1,5 @@
 // Extracted from DiagnosticsManager.mqh (God-Object decomposition)
-// Owns AI vote heartbeat tracking state [L11-004]:
+// Owns AI vote heartbeat tracking state:
 // the per-symbol / per-AI-type last-activity matrix and the
 // staleness warnings emitted during the heartbeat cycle.
 // CDiagnosticsManager keeps a by-value CDiagMgrAIVoteTracker member
@@ -20,7 +20,7 @@ enum ENUM_AI_VOTE_TYPE
     AI_VOTE_COUNT = 4
 };
 
-// CDiagMgrAIVoteTracker â€” AI vote heartbeat activity tracking
+// CDiagMgrAIVoteTracker â€?AI vote heartbeat activity tracking
 class CDiagMgrAIVoteTracker
 {
 private:
@@ -151,3 +151,4 @@ public:
 };
 
 #endif // DIAG_MGR_AI_VOTE_MQH
+

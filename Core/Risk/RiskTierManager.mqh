@@ -136,12 +136,12 @@ private:
             return c;
         }
 
-    // I2: Compounding tier presets â€” used by CCompoundingTierManager
+    // I2: Compounding tier presets â€?used by CCompoundingTierManager
     static STierConfig GetMicroAggressiveConfig()
     {
         STierConfig c;
         c.riskPerTradePct     = 4.0;
-        // Batch 152: this preset omitted the override - ApplyTierOverrides wrote
+        // this preset omitted the override - ApplyTierOverrides wrote
         // maxRiskPerTradePercent=0 and adaptive sizing collapsed to its floor.
         c.maxRiskPerTradeOverride = 8.0;  // L5-006: 2x riskPerTradePct (mirrors CompoundingTierManager)
         c.dailyRiskPct        = 12.0;
@@ -295,7 +295,7 @@ private:
                             double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0,
                             double inputDailyLossLimit = 0.0)
     {
-        // Tier values are defaults, but user input params serve as floors â€”
+        // Tier values are defaults, but user input params serve as floors â€?
         // the effective value is the higher of tier preset and user input.
         double effectiveDaily     = (inputDailyFloor > 0.0)     ? MathMax(m_config.dailyRiskPct, inputDailyFloor)     : m_config.dailyRiskPct;
         double effectivePortfolio = (inputPortfolioFloor > 0.0) ? MathMax(m_config.portfolioRiskPct, inputPortfolioFloor) : m_config.portfolioRiskPct;
@@ -304,7 +304,7 @@ private:
 
         // Floor cap: if effective value exceeds 2x the tier preset, cap at 2x tier preset.
         // This prevents floor values from overriding tier-defined risk constraints
-        // (e.g., daily 5%â†’40%, portfolio 15%â†’60%, riskPerTrade 1%â†’10%).
+        // (e.g., daily 5%â†?0%, portfolio 15%â†?0%, riskPerTrade 1%â†?0%).
         double dailyCap     = m_config.dailyRiskPct * 2.0;
         double portfolioCap = m_config.portfolioRiskPct * 2.0;
         double ddWarningCap = m_config.ddWarningPct * 2.0;
@@ -385,10 +385,10 @@ private:
     }
 
 // Apply breakeven/trailing from tier to CTradeManager
-// Batch 117: Store tier params as static defaults for callers
+// Store tier params as static defaults for callers
     void ApplyToTradeManager(CTradeManager &tradeMgr)
     {
-        // Store tier params as static defaults â€” callers read via GetBreakevenBufferPts/GetTrailingDistancePts
+        // Store tier params as static defaults â€?callers read via GetBreakevenBufferPts/GetTrailingDistancePts
         PrintFormat("[RISK-TIER] TradeManager tier params applied | breakeven=%.0f pts | trailing=%.0f pts",
                     m_config.breakevenBufferPts, m_config.trailingDistancePts);
     }
@@ -493,3 +493,4 @@ private:
 };
 
 #endif // CORE_RISK_RISK_TIER_MANAGER_MQH
+

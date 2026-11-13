@@ -1,8 +1,8 @@
 // Last-decided-signal bookkeeping and the per-cycle funnel counters, formerly loose members of
 // CEnterpriseStrategyManager. Leaf value object: no back-pointer, and JoinContributors() is passed in because the
-// attribution delegator owns it. Before Batch 199 the contributor fields had no writer, so attribution, authority
+// attribution delegator owns it. Before the contributor fields had no writer, so attribution, authority
 // learning, role/cluster tags and strategy health all read an empty list. The lifetime signal counters that used to sit
-// here are gone (Batch 250): their only reader was a status report with no entry point.
+// here are gone: their only reader was a status report with no entry point.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef ENT_STRATEGY_SIGNAL_CONTEXT_MQH
 #define ENT_STRATEGY_SIGNAL_CONTEXT_MQH
@@ -136,3 +136,5 @@ void CEntStrategySignalContext::SetContributors(const string &names[], const int
 }
 
 #endif // ENT_STRATEGY_SIGNAL_CONTEXT_MQH
+
+

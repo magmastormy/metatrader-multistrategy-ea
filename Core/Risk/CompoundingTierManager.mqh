@@ -27,10 +27,10 @@ struct SCompoundingTierConfig
 {
     double minEquity;
     double maxEquity;
-    ENUM_COMPOUNDING_TIER compoundingTier; // L5-021: Use separate compounding tier enum
+    ENUM_COMPOUNDING_TIER compoundingTier; // Use separate compounding tier enum
     ENUM_RISK_TIER riskTier;               // Which static risk tier to map to
     double riskPerTradeOverride;           // Override risk % (0 = use tier default)
-    double maxRiskPerTradeOverride;        // Explicit max risk per trade (L5-006 fix)
+    double maxRiskPerTradeOverride;        // Explicit max risk per trade
     double maxDailyRiskOverride;
     double maxPortfolioRiskOverride;
     double drawdownWarnOverride;
@@ -46,14 +46,14 @@ private:
     int    m_tierCount;
     int    m_currentTierIndex;
     double m_previousEquity;
-    double m_startingEquity;  // L5-005: Track starting equity for % milestones
+    double m_startingEquity;  // Track starting equity for % milestones
     bool   m_autoSwitchEnabled;
     bool   m_initialized;
 
     datetime m_lastTierSwitchTime;
     double   m_peakEquity;
     int      m_switchCount;
-    double   m_highestMilestoneReached;  // Batch 117: one-way watermark for milestones
+    double   m_highestMilestoneReached;  // one-way watermark for milestones
 
         void BuildTierConfigs()
         {
@@ -66,7 +66,7 @@ private:
                     m_tiers[0].compoundingTier          = COMPOUNDING_TIER_MICRO_AGGRESSIVE;
                     m_tiers[0].riskTier                = RISK_TIER_MICRO_AGGRESSIVE;
                     m_tiers[0].riskPerTradeOverride    = 4.0;
-                    m_tiers[0].maxRiskPerTradeOverride = 8.0;    // L5-006: explicit override (2x riskPerTradeOverride)
+                    m_tiers[0].maxRiskPerTradeOverride = 8.0;    // explicit override (2x riskPerTradeOverride)
                     m_tiers[0].maxDailyRiskOverride    = 12.0;
                     m_tiers[0].maxPortfolioRiskOverride= 20.0;
                     m_tiers[0].drawdownWarnOverride    = 18.0;
@@ -80,7 +80,7 @@ private:
                     m_tiers[1].compoundingTier          = COMPOUNDING_TIER_GROWTH;
                     m_tiers[1].riskTier                = RISK_TIER_GROWTH;
                     m_tiers[1].riskPerTradeOverride    = 5.0;
-                    m_tiers[1].maxRiskPerTradeOverride = 10.0;   // L5-006: explicit override
+                    m_tiers[1].maxRiskPerTradeOverride = 10.0;   // explicit override
                     m_tiers[1].maxDailyRiskOverride    = 14.0;
                     m_tiers[1].maxPortfolioRiskOverride= 25.0;
                     m_tiers[1].drawdownWarnOverride    = 16.0;
@@ -94,7 +94,7 @@ private:
                     m_tiers[2].compoundingTier          = COMPOUNDING_TIER_ACCELERATION;
                     m_tiers[2].riskTier                = RISK_TIER_ACCELERATION;
                     m_tiers[2].riskPerTradeOverride    = 4.0;
-                    m_tiers[2].maxRiskPerTradeOverride = 8.0;    // L5-006: explicit override
+                    m_tiers[2].maxRiskPerTradeOverride = 8.0;    // explicit override
                     m_tiers[2].maxDailyRiskOverride    = 12.0;
                     m_tiers[2].maxPortfolioRiskOverride= 22.0;
                     m_tiers[2].drawdownWarnOverride    = 14.0;
@@ -108,7 +108,7 @@ private:
                     m_tiers[3].compoundingTier          = COMPOUNDING_TIER_INSTITUTIONAL;
                     m_tiers[3].riskTier                = RISK_TIER_INSTITUTIONAL;
                     m_tiers[3].riskPerTradeOverride    = 2.5;
-                    m_tiers[3].maxRiskPerTradeOverride = 5.0;    // L5-006: explicit override
+                    m_tiers[3].maxRiskPerTradeOverride = 5.0;    // explicit override
                     m_tiers[3].maxDailyRiskOverride    = 8.0;
                     m_tiers[3].maxPortfolioRiskOverride= 18.0;
                     m_tiers[3].drawdownWarnOverride    = 10.0;
@@ -122,7 +122,7 @@ private:
                     m_tiers[4].compoundingTier          = COMPOUNDING_TIER_PROFESSIONAL;
                     m_tiers[4].riskTier                = RISK_TIER_PROFESSIONAL;
                     m_tiers[4].riskPerTradeOverride    = 1.5;
-                    m_tiers[4].maxRiskPerTradeOverride = 3.0;    // L5-006: explicit override
+                    m_tiers[4].maxRiskPerTradeOverride = 3.0;    // explicit override
                     m_tiers[4].maxDailyRiskOverride    = 5.0;
                     m_tiers[4].maxPortfolioRiskOverride= 15.0;
                     m_tiers[4].drawdownWarnOverride    = 8.0;
@@ -136,7 +136,7 @@ private:
                     m_tiers[5].compoundingTier          = COMPOUNDING_TIER_HIGH_GROWTH;
                     m_tiers[5].riskTier                = RISK_TIER_GROWTH;  // Reuse GROWTH tier
                     m_tiers[5].riskPerTradeOverride    = 5.0;   // 5% risk per trade for <$1K equity
-                    m_tiers[5].maxRiskPerTradeOverride = 10.0;  // L5-006: explicit override
+                    m_tiers[5].maxRiskPerTradeOverride = 10.0;  // explicit override
                     m_tiers[5].maxDailyRiskOverride    = 15.0;
                     m_tiers[5].maxPortfolioRiskOverride= 30.0;
                     m_tiers[5].drawdownWarnOverride    = 10.0;
@@ -150,7 +150,7 @@ private:
                     m_tiers[6].compoundingTier          = COMPOUNDING_TIER_AGGRESSIVE_GROWTH;
                     m_tiers[6].riskTier                = RISK_TIER_ACCELERATION;  // Reuse ACCELERATION tier
                     m_tiers[6].riskPerTradeOverride    = 10.0;  // 10% risk per trade for <$5K equity
-                    m_tiers[6].maxRiskPerTradeOverride = 20.0;  // L5-006: explicit override
+                    m_tiers[6].maxRiskPerTradeOverride = 20.0;  // explicit override
                     m_tiers[6].maxDailyRiskOverride    = 25.0;
                     m_tiers[6].maxPortfolioRiskOverride= 40.0;
                     m_tiers[6].drawdownWarnOverride    = 12.0;
@@ -164,7 +164,7 @@ private:
                     m_tiers[7].compoundingTier          = COMPOUNDING_TIER_MAXIMUM_GROWTH;
                     m_tiers[7].riskTier                = RISK_TIER_MICRO_AGGRESSIVE;  // Reuse MICRO_AGGRESSIVE tier
                     m_tiers[7].riskPerTradeOverride    = 15.0;  // 15% risk per trade for <$10K equity
-                    m_tiers[7].maxRiskPerTradeOverride = 30.0;  // L5-006: explicit override
+                    m_tiers[7].maxRiskPerTradeOverride = 30.0;  // explicit override
                     m_tiers[7].maxDailyRiskOverride    = 35.0;
                     m_tiers[7].maxPortfolioRiskOverride= 50.0;
                     m_tiers[7].drawdownWarnOverride    = 15.0;
@@ -178,7 +178,7 @@ private:
                     m_tiers[8].compoundingTier          = COMPOUNDING_TIER_CAPITAL_PRESERVATION;
                     m_tiers[8].riskTier                = RISK_TIER_INSTITUTIONAL;
                     m_tiers[8].riskPerTradeOverride    = 1.5;
-                    m_tiers[8].maxRiskPerTradeOverride = 3.0;   // L5-006: explicit override
+                    m_tiers[8].maxRiskPerTradeOverride = 3.0;   // explicit override
                     m_tiers[8].maxDailyRiskOverride    = 5.0;
                     m_tiers[8].maxPortfolioRiskOverride= 18.0;
                     m_tiers[8].drawdownWarnOverride    = 8.0;
@@ -191,19 +191,14 @@ private:
 // returns the LAST one (Capital Preservation, the most conservative), not the most aggressive
     int FindTierIndex(double equity)
     {
-        PrintFormat("[COMPOUNDING-TIER-DEBUG] FindTierIndex called | equity=%.2f | tierCount=%d", equity, m_tierCount);
+        // No per-call tracing: this runs on the sizing path and printed its entire bracket table
+        // (1 + tierCount lines) on every evaluation - 5,861 lines in a 7-hour window. The selected
+        // tier is already reported at Initialize and on every transition.
         for(int i = 0; i < m_tierCount; i++)
         {
-            PrintFormat("[COMPOUNDING-TIER-DEBUG]   Tier %d: min=%.2f max=%.2f riskTier=%s risk=%.1f%%", 
-                                i, m_tiers[i].minEquity, m_tiers[i].maxEquity, 
-                                GetTierName(i), m_tiers[i].riskPerTradeOverride);
             if(equity >= m_tiers[i].minEquity && equity < m_tiers[i].maxEquity)
-            {
-                PrintFormat("[COMPOUNDING-TIER-DEBUG]   -> MATCHED Tier %d (%s)", i, GetTierName(i));
                 return i;
-            }
         }
-        PrintFormat("[COMPOUNDING-TIER-DEBUG]   -> NO MATCH, returning highest tier %d", m_tierCount - 1);
         return m_tierCount - 1; // highest tier
     }
 
@@ -238,6 +233,79 @@ private:
             return compoundingTierName + "/" + riskTierName;
         }
 
+    // Key/value text in MQL5\Files: starting equity, peak equity, the milestone watermark, the tier
+    // index, the switch count and the last switch time. Written on every transition and at teardown.
+    static string StateFileName()
+    {
+        return "compounding_tier_state.csv";
+    }
+
+    int Load()
+    {
+        if(!FileIsExist(StateFileName()))
+            return 0;
+
+        int handle = FileOpen(StateFileName(), FILE_READ | FILE_TXT | FILE_ANSI);
+        if(handle == INVALID_HANDLE)
+        {
+            PrintFormat("[COMPOUNDING-TIER] read failed | file=%s | err=%d", StateFileName(), GetLastError());
+            return 0;
+        }
+
+        int rows = 0;
+        if(!FileIsEnding(handle))
+            FileReadString(handle); // header
+
+        while(!FileIsEnding(handle))
+        {
+            string line = FileReadString(handle);
+            if(StringLen(line) <= 0)
+                continue;
+
+            string parts[];
+            int n = StringSplit(line, ';', parts);
+            if(n < 2)
+                continue;
+
+            string key = parts[0];
+            double value = StringToDouble(parts[1]);
+
+            if(key == "startingEquity")      { m_startingEquity = value;           rows++; }
+            else if(key == "peakEquity")     { m_peakEquity = value;               rows++; }
+            else if(key == "highestMilestone"){ m_highestMilestoneReached = value; rows++; }
+            else if(key == "tierIndex")      { m_currentTierIndex = (int)value;    rows++; }
+            else if(key == "switches")       { m_switchCount = (int)value;         rows++; }
+            else if(key == "lastSwitchTime") { m_lastTierSwitchTime = (datetime)(long)value; rows++; }
+        }
+
+        FileClose(handle);
+        return rows;
+    }
+
+public:
+    bool Save()
+    {
+        if(!m_initialized)
+            return false;
+
+        int handle = FileOpen(StateFileName(), FILE_WRITE | FILE_TXT | FILE_ANSI);
+        if(handle == INVALID_HANDLE)
+        {
+            PrintFormat("[COMPOUNDING-TIER] save failed | file=%s | err=%d", StateFileName(), GetLastError());
+            return false;
+        }
+
+        FileWriteString(handle, "key;value\r\n");
+        FileWriteString(handle, StringFormat("startingEquity;%.2f\r\n", m_startingEquity));
+        FileWriteString(handle, StringFormat("peakEquity;%.2f\r\n", m_peakEquity));
+        FileWriteString(handle, StringFormat("highestMilestone;%.2f\r\n", m_highestMilestoneReached));
+        FileWriteString(handle, StringFormat("tierIndex;%d\r\n", m_currentTierIndex));
+        FileWriteString(handle, StringFormat("switches;%d\r\n", m_switchCount));
+        FileWriteString(handle, StringFormat("lastSwitchTime;%I64d\r\n", (long)m_lastTierSwitchTime));
+        FileClose(handle);
+        return true;
+    }
+
 public:
     CCompoundingTierManager() : m_tierCount(0), m_currentTierIndex(-1),
         m_previousEquity(0), m_autoSwitchEnabled(true), m_initialized(false),
@@ -250,11 +318,37 @@ public:
             m_autoSwitchEnabled = autoSwitch;
             m_previousEquity = AccountInfoDouble(ACCOUNT_EQUITY);
             m_peakEquity = m_previousEquity;
-            m_startingEquity = m_previousEquity;  // L5-005: Track starting equity for % milestones
+            m_startingEquity = m_previousEquity;  // Track starting equity for % milestones
 
-            // Nothing is persisted: each init re-seeds starting/peak equity and the milestone watermark from the live
-            // account, so a restart lowers the milestone baseline to the equity at restart
-            m_currentTierIndex = FindTierIndex(m_previousEquity);
+            // Restore what a restart used to throw away. Before this, every init re-seeded starting/peak
+            // equity and the milestone watermark from the live account, so a restart silently lowered the
+            // milestone baseline to the equity at restart and reset the tier history.
+            int restored = Load();
+
+            // The live account is authoritative for current equity; the file only supplies history.
+            if(restored > 0)
+            {
+                double liveEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+                if(m_startingEquity <= 0.0)
+                    m_startingEquity = liveEquity;
+                if(liveEquity > m_peakEquity)
+                {
+                    PrintFormat("[COMPOUNDING-TIER] restored peak=%.2f is below live equity=%.2f | peak raised to live",
+                                m_peakEquity, liveEquity);
+                    m_peakEquity = liveEquity;
+                }
+                if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
+                    m_currentTierIndex = FindTierIndex(m_previousEquity);
+
+                PrintFormat("[COMPOUNDING-TIER] restored state | started=%.2f | peak=%.2f | highestMilestone=%.2f | tierIndex=%d | switches=%d",
+                            m_startingEquity, m_peakEquity, m_highestMilestoneReached, m_currentTierIndex, m_switchCount);
+            }
+            else
+            {
+                m_currentTierIndex = FindTierIndex(m_previousEquity);
+                PrintFormat("[COMPOUNDING-TIER] no saved state | file=%s | starting from live equity %.2f",
+                            StateFileName(), m_previousEquity);
+            }
             m_initialized = true;
 
         PrintFormat("[COMPOUNDING-TIER] Initialized | equity=%.2f | tier=%s | autoSwitch=%s",
@@ -341,6 +435,7 @@ public:
 
                 ApplyTierToRiskManager(riskMgr);
                 ApplyTierToPositionSizer(posSizer, riskMgr);
+                Save(); // a transition is the one moment the watermark must survive a restart
 
                 string direction = isUpgrade ? "UPGRADE" : "DOWNGRADE";
                 Alert("COMPOUNDING TIER ", direction, ": Account $", DoubleToString(equity, 2),
@@ -372,7 +467,7 @@ public:
                 tier.drawdownWarnOverride,
                 tier.drawdownCriticalOverride,
                 tier.dailyLossLimitOverride,
-                tier.maxRiskPerTradeOverride  // L5-006: pass explicit override
+                tier.maxRiskPerTradeOverride  // pass explicit override
             );
 
             PrintFormat("[COMPOUNDING-TIER] Applied to RiskManager | risk=%.1f%% | maxRisk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%% | maxPos=%d | dailyLoss=%.1f%%",
@@ -512,3 +607,5 @@ public:
 };
 
 #endif // CORE_RISK_COMPOUNDING_TIER_MANAGER_MQH
+
+

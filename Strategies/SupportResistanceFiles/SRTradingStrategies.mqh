@@ -81,7 +81,7 @@ CSRBounceStrategy::CSRBounceStrategy() :
 
 CSRBounceStrategy::~CSRBounceStrategy()
 {
-    // Handles managed by CIndicatorManager â€” no IndicatorRelease needed
+    // Handles managed by CIndicatorManager â€?no IndicatorRelease needed
     m_emaFastHandle = INVALID_HANDLE;
     m_emaSlowHandle = INVALID_HANDLE;
     m_atrHandle = INVALID_HANDLE;
@@ -96,7 +96,7 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     m_srDetector = srDetector;
     m_trendDetector = trendDetector;
 
-    // Handles managed by CIndicatorManager â€” no IndicatorRelease needed
+    // Handles managed by CIndicatorManager â€?no IndicatorRelease needed
     m_emaFastHandle = INVALID_HANDLE;
     m_emaSlowHandle = INVALID_HANDLE;
     m_atrHandle = INVALID_HANDLE;
@@ -108,7 +108,7 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
 }
 
-// Get Bounce Signal (Batch 103: Soft confluence scoring)
+// Get Bounce Signal (Soft confluence scoring)
 SSRSignalResult CSRBounceStrategy::GetSignal()
 {
     SSRSignalResult result;
@@ -132,7 +132,7 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     double distance = MathAbs(price - nearestLevel.price);
     double tolerance = (atr > 0) ? (atr * 0.20) : (15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT));
 
-    // Batch 103: Soft confluence scoring (0-100) replaces hard AND logic
+    // Soft confluence scoring (0-100) replaces hard AND logic
     CSRSignalScorer scorer;
     scorer.Reset();
     scorer.AddPriceAtLevel(distance <= tolerance);                                    // 30 pts
@@ -146,7 +146,7 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     scorer.AddMultipleTouches(nearestLevel.touches >= 3);                             // 10 pts
 
     if(!scorer.HasSignal())
-        return result;  // Score < 60 â†’ no signal
+        return result;  // Score < 60 â†?no signal
 
     // Determine direction from rejection pattern
     bool isSupport = (price >= nearestLevel.price);
@@ -164,7 +164,7 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     else
         return result;  // No directional rejection candle
 
-    // Confidence from score (60-100 â†’ 0.60-1.00)
+    // Confidence from score (60-100 â†?0.60-1.00)
     result.confidence = scorer.GetScore() / 100.0;
     result.entryPrice = price;
 
@@ -211,7 +211,7 @@ bool CSRBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    // Batch 156: judge the last CLOSED bar (shift 1). The old start=0 read
+    // judge the last CLOSED bar (shift 1). The old start=0 read
     // the forming bar - at bar open its body is ~zero so rejection never
     // passed, mid-bar it fired on candles that could vanish by close.
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
@@ -239,7 +239,7 @@ bool CSRBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    // Batch 156: closed bar (shift 1) - see HasBullishRejection
+    // closed bar (shift 1) - see HasBullishRejection
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
     
@@ -341,7 +341,7 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
 
 CSRBreakoutStrategy::~CSRBreakoutStrategy()
 {
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 }
 
@@ -351,14 +351,14 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_srDetector = srDetector;
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
     return (m_srDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
-// Get Breakout Signal (Batch 103: False breakout detection added)
+// Get Breakout Signal (False breakout detection added)
 SSRSignalResult CSRBreakoutStrategy::GetSignal()
 {
     SSRSignalResult result;
@@ -369,7 +369,7 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
-    // Batch 103: Check for false breakout first (higher-value signal)
+    // Check for false breakout first (higher-value signal)
     int falseBreakDir = 0;
     if(FalseBreakoutDetected(falseBreakDir))
     {
@@ -377,7 +377,7 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
         double defaultTarget = (atr > 0) ? (atr * 1.5) : (30 * point);
         double defaultStop = (atr > 0) ? (atr * 0.8) : (15 * point);
 
-        if(falseBreakDir == 1)  // False breakout down â†’ buy
+        if(falseBreakDir == 1)  // False breakout down â†?buy
         {
             result.signal = TRADE_SIGNAL_BUY;
             result.entryPrice = price;
@@ -387,7 +387,7 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
             result.reason = "False breakout below support";
             result.confidence = 0.70;
         }
-        else if(falseBreakDir == -1)  // False breakout up â†’ sell
+        else if(falseBreakDir == -1)  // False breakout up â†?sell
         {
             result.signal = TRADE_SIGNAL_SELL;
             result.entryPrice = price;
@@ -511,7 +511,7 @@ double CSRBreakoutStrategy::GetATR(int period)
     return 0;
 }
 
-// Detect False Breakout (Batch 103)
+// Detect False Breakout
 // Level broken within last 3 bars then reclaimed = counter signal
 bool CSRBreakoutStrategy::FalseBreakoutDetected(int &outDirection)
 {
@@ -612,7 +612,7 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
 
 CTrendlineBounceStrategy::~CTrendlineBounceStrategy()
 {
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 }
 
@@ -624,7 +624,7 @@ bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES t
     m_timeframe = timeframe;
     m_trendDetector = trendDetector;
     m_srDetector = srDetector;
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
@@ -788,3 +788,6 @@ double CTrendlineBounceStrategy::GetATR(int period)
 }
 
 #endif // __SR_TRADING_STRATEGIES_MQH__
+
+
+

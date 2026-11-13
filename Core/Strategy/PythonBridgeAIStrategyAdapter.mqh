@@ -242,97 +242,12 @@ public:
             return m_cachedSignal;
         }
 
-        m_voteCount++;
-        
-        // Build features using centralized pipeline
-        double features[];
-        if(m_featurePipeline == NULL || !m_featurePipeline.BuildFeatures(m_symbol, m_timeframe, features, 1))
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "PYTHON_FEATURES_UNAVAILABLE";
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        SPythonBridgeResponse response = m_pythonBridge.Predict(features, ArraySize(features), m_predictionMode, m_familyId, m_symbol);
-        
-        if(!response.success)
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "PYTHON_PREDICTION_FAILED: " + response.error_message;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        // Determine signal from probabilities
-        double buyProb = response.buy_prob;
-        double sellProb = response.sell_prob;
-        double holdProb = response.hold_prob;
-        
-        // Use the highest probability
-        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        double maxProb = holdProb;
-        
-        if(buyProb > maxProb && buyProb >= m_minConfidence)
-        {
-            maxProb = buyProb;
-            signal = TRADE_SIGNAL_BUY;
-        }
-        else if(sellProb > maxProb && sellProb >= m_minConfidence)
-        {
-            maxProb = sellProb;
-            signal = TRADE_SIGNAL_SELL;
-        }
-        else
-        {
-            // No clear signal
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "PYTHON_NO_CLEAR_SIGNAL";
-            confidence = maxProb;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        confidence = maxProb;
-        
-        if(!IsValidConfidence(confidence))
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "PYTHON_INVALID_CONFIDENCE";
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        m_cachedSignal = signal;
-        m_cachedConfidence = confidence;
-        m_cacheBarTime = currentBarTime;
-        m_cacheRefreshTime = cacheNow;
-        m_hasCachedSignal = true;
-
-        if(signal == TRADE_SIGNAL_BUY)
-        {
-            m_buyVotes++;
-            m_lastSignalTime = TimeCurrent();
-            m_lastDecisionReasonTag = "PYTHON_SIGNAL_BUY";
-        }
-        else if(signal == TRADE_SIGNAL_SELL)
-        {
-            m_sellVotes++;
-            m_lastSignalTime = TimeCurrent();
-            m_lastDecisionReasonTag = "PYTHON_SIGNAL_SELL";
-        }
-        else
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "PYTHON_NO_SIGNAL";
-            confidence = 0.0;
-        }
-
-        // Record prediction for direction calibration
-        RecordDirectionPrediction(signal);
-
+        // Cache miss: do not block on the synchronous WebRequest/Predict call. The timer
+        // refreshes the prediction (OnTimer) so the next tick can read cached data.
+        m_lastDecisionReasonTag = "PYTHON_CACHE_MISS";
+        PrintFormat("[PYTHON-BRIDGE] %s | cache miss | returning NONE | next refresh on timer", m_symbol);
         LogVoteHeartbeat();
-        return signal;
+        return TRADE_SIGNAL_NONE;
     }
     
     virtual string GetName(void) const override { return "Python Bridge AI (" + m_predictionMode + ")"; }
@@ -424,7 +339,96 @@ public:
 
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
     virtual void OnTick(void) override {}
-    virtual void OnTimer(void) override {}
+    virtual void OnTimer(void) override
+    {
+        if(!m_enabled || m_pythonBridge == NULL || !m_pythonBridge.IsInitialized() || m_featurePipeline == NULL)
+            return;
+
+        datetime now = TimeCurrent();
+        // Refresh the prediction at most once every 10 seconds so the tick path never blocks on WebRequest.
+        if(m_cacheRefreshTime > 0 && (now - m_cacheRefreshTime) < 10)
+            return;
+
+        datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
+
+        // Build features using centralized pipeline
+        double features[];
+        if(m_featurePipeline == NULL || !m_featurePipeline.BuildFeatures(m_symbol, m_timeframe, features, 1))
+        {
+            m_lastDecisionReasonTag = "PYTHON_FEATURES_UNAVAILABLE";
+            m_hasCachedSignal = false;
+            return;
+        }
+
+        SPythonBridgeResponse response = m_pythonBridge.Predict(features, ArraySize(features), m_predictionMode, m_familyId, m_symbol);
+
+        if(!response.success)
+        {
+            m_lastDecisionReasonTag = "PYTHON_PREDICTION_FAILED: " + response.error_message;
+            m_hasCachedSignal = false;
+            return;
+        }
+
+        // Determine signal from probabilities
+        double buyProb = response.buy_prob;
+        double sellProb = response.sell_prob;
+        double holdProb = response.hold_prob;
+
+        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
+        double maxProb = holdProb;
+
+        if(buyProb > maxProb && buyProb >= m_minConfidence)
+        {
+            maxProb = buyProb;
+            signal = TRADE_SIGNAL_BUY;
+        }
+        else if(sellProb > maxProb && sellProb >= m_minConfidence)
+        {
+            maxProb = sellProb;
+            signal = TRADE_SIGNAL_SELL;
+        }
+
+        double confidence = maxProb;
+
+        if(!IsValidConfidence(confidence))
+        {
+            m_lastDecisionReasonTag = "PYTHON_INVALID_CONFIDENCE";
+            m_hasCachedSignal = false;
+            return;
+        }
+
+        m_cachedSignal = signal;
+        m_cachedConfidence = confidence;
+        m_cacheBarTime = currentBarTime;
+        m_cacheRefreshTime = now;
+        m_hasCachedSignal = true;
+
+        m_voteCount++;
+        if(signal == TRADE_SIGNAL_BUY)
+        {
+            m_buyVotes++;
+            m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "PYTHON_SIGNAL_BUY";
+        }
+        else if(signal == TRADE_SIGNAL_SELL)
+        {
+            m_sellVotes++;
+            m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "PYTHON_SIGNAL_SELL";
+        }
+        else
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "PYTHON_NO_SIGNAL";
+            confidence = 0.0;
+        }
+
+        RecordDirectionPrediction(signal);
+
+        PrintFormat("[PYTHON-BRIDGE] %s | timer refresh | signal=%s | conf=%.3f | mode=%s",
+                    m_symbol, (signal == TRADE_SIGNAL_BUY ? "BUY" : signal == TRADE_SIGNAL_SELL ? "SELL" : "NONE"),
+                    confidence, m_predictionMode);
+    }
 
     virtual double GetUncertainty(void) override
     {

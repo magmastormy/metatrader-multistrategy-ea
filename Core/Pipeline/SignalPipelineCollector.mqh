@@ -131,7 +131,7 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
         cacheStale = (barsDiff >= MAX_CACHE_STALENESS_BARS);
     }
 
-    // L4-002: Include intrabar context in cache validation
+    // Include intrabar context in cache validation
     bool cacheHit = (m_cachedContextPrepared &&
                      !cacheStale &&
                      m_cachedContextSymbol == symbol &&
@@ -219,3 +219,4 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
 };
 
 #endif // SIGNAL_PIPELINE_COLLECTOR_MQH
+

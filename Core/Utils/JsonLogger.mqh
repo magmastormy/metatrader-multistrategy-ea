@@ -307,7 +307,13 @@ public:
         else if(entry.level == "WARNING") entryVerbosity = VERBOSITY_WARNING;
         else if(entry.level == "ERROR" || entry.level == "CRITICAL") entryVerbosity = VERBOSITY_ERRORS_ONLY;
         
-        if(entryVerbosity < m_minVerbosity) return;
+        // ENUM_LOG_VERBOSITY is ordered by importance: SILENT 0, ERRORS_ONLY 1, WARNING 2, NORMAL 3,
+        // VERBOSE 4, DEBUG 5. `minVerbosity` is the most verbose level that may be emitted, so an entry
+        // is kept when its own level is at or below that ceiling. The previous test was `entry < min`,
+        // which under the default NORMAL (3) printed DEBUG (5) and dropped ERROR (1) and WARNING (2) -
+        // the journal carried 113,844 per-cycle DEBUG lines while a real error had no reader.
+        if(m_minVerbosity == VERBOSITY_SILENT) return;
+        if(entryVerbosity > (int)m_minVerbosity) return;
         
         // Use current correlation ID if not set in entry
         SJsonLogEntry e = entry;
@@ -319,11 +325,19 @@ public:
         string jsonLine = BuildJsonLine(e);
         WriteToFile(jsonLine);
         
-        // Also print to standard log for compatibility
-        string logPrefix = "[" + e.level + "] " + e.component + " | " + e.message;
-        if(e.correlationId != "") logPrefix += " | corr=" + e.correlationId;
-        if(e.symbol != "") logPrefix += " | sym=" + e.symbol;
-        Print(logPrefix);
+        // Also print to standard log for compatibility - but only when the level is louder than INFO.
+        // A measured 24 h window logged 13,590 "[INFO] <component> | <message>" lines, and every one of
+        // them was a duplicate: the caller already PrintFormat's its own "[TAG] ..." line for the same
+        // event, so the journal carried the event twice and the structured JSONL carried it once more.
+        // INFO and DEBUG stay in the JSONL (that is the durable record); the journal only gets what a
+        // human has to read mid-run.
+        if(e.level != "INFO" && e.level != "DEBUG")
+        {
+            string logPrefix = "[" + e.level + "] " + e.component + " | " + e.message;
+            if(e.correlationId != "") logPrefix += " | corr=" + e.correlationId;
+            if(e.symbol != "") logPrefix += " | sym=" + e.symbol;
+            Print(logPrefix);
+        }
         
         m_logCount++;
     }
@@ -476,11 +490,23 @@ public:
         Log(entry);
     }
     
+    // Both risk-event entry points hardcoded level "WARNING", so a measured 24 h window logged 3,000+
+    // "[WARNING] RISK | Risk event: APPROVED" lines - normal flow printed at the severity reserved for
+    // something a human must look at. Severity now follows the event: an approval is the risk machinery
+    // working, a denial is the thing worth reading. Unknown events keep WARNING, so a new label cannot
+    // silently downgrade itself into invisibility.
+    static string SeverityForRiskEvent(const string event) {
+        if(event == "APPROVED" || event == "AUTHORIZED" || event == "ALLOWED" ||
+           event == "PASSED"   || event == "OK"         || event == "SIZED")
+            return "INFO";
+        return "WARNING";
+    }
+
     static void LogRiskEvent(const string category, const string symbol, const string event,
                              const string message, const double value, const double additionalValue,
                              const string correlationId) {
         SJsonLogEntry entry;
-        entry.level = "WARNING";
+        entry.level = SeverityForRiskEvent(event);
         entry.component = "RISK";
         entry.message = "Risk event: " + event;
         entry.eventType = category;
@@ -501,7 +527,7 @@ public:
                              const double value, const string correlationId,
                              const string jsonData = "{}") {
         SJsonLogEntry entry;
-        entry.level = "WARNING";
+        entry.level = SeverityForRiskEvent(event);
         entry.component = "RISK";
         entry.message = "Risk event: " + event;
         entry.eventType = "RISK_EVENT";

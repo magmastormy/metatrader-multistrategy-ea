@@ -2,6 +2,7 @@
 #define FVG_SCALPER_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
@@ -240,6 +241,16 @@ public:
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";
+
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+        if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+        {
+            SetDecisionReasonTag("FVG_SCALPER_NOT_TRADABLE");
+            return TRADE_SIGNAL_NONE;
+        }
 
         SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "FVG_SCALPER", confidence))

@@ -117,7 +117,7 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
 
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     ArrayFree(m_levels);
 }
@@ -125,7 +125,7 @@ CSupportResistanceDetector::~CSupportResistanceDetector()
 bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            double clusterPips, int swingStrength)
 {
-    // ATR handle managed by CIndicatorManager â€” no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 
     m_symbol = symbol;
@@ -449,7 +449,7 @@ void CSupportResistanceDetector::CalculateStrength()
         strength += (m_levels[i].touches - 1) * 0.05;
         strength = MathMin(1.0, strength);
 
-        // Batch 103: Exponential decay based on bar age (replaces step-function)
+        // Exponential decay based on bar age (replaces step-function)
         // 0.99^barsOld provides smooth degradation instead of hard cutoff at 30 days
         if(m_levels[i].createdTime > 0)
         {
@@ -582,14 +582,14 @@ bool CSupportResistanceDetector::IsAtResistanceLevel(double price, double tolera
 
 bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIndex)
 {
-    // Batch 156: scale-free floor - 5*point is ~0.05 absolute on synthetics, so
+    // scale-free floor - 5*point is ~0.05 absolute on synthetics, so
     // noise wicks could permanently consume levels; 1bp of price keeps it sane
-    // on FX (â‰ˆ0.5 pip) and synthetics alike.
+    // on FX (â‰?.5 pip) and synthetics alike.
     double tolerance = MathMax(5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT), price * 0.0001);
 
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    // Batch 156: closed bars only - rates[0] was the forming bar, letting an
+    // closed bars only - rates[0] was the forming bar, letting an
     // intrabar transient mark m_levels[].isBroken permanently.
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) < 3)
         return false;
@@ -633,7 +633,7 @@ bool CSupportResistanceDetector::HasRoleReversed(double price)
     {
         if(m_levels[i].isBroken && !m_levels[i].roleReversed)
         {
-            // Batch 157: scale-free floor - 10*point (~0.1 absolute on synthetics)
+            // scale-free floor - 10*point (~0.1 absolute on synthetics)
             // meant price crossing a broken level could never register.
             double tolerance = MathMax(10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT), price * 0.0001);
 
@@ -650,3 +650,5 @@ bool CSupportResistanceDetector::HasRoleReversed(double price)
 }
 
 #endif // __SR_SUPPORT_RESISTANCE_DETECTOR_MQH__
+
+

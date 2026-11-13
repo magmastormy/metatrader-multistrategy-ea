@@ -8,6 +8,7 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Visualization/ChartDrawingManager.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "CandlestickFiles/CandleAnalyzer.mqh"
 #include "CandlestickFiles/PinBarDetector.mqh"
 #include "CandlestickFiles/EngulfingDetector.mqh"
@@ -451,6 +452,14 @@ private:
             return RejectSignal("CANDLE_SL_INVALID");
 
         double tp = CalculateTakeProfit(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, sl);
+
+        // A pattern whose stop and target leave less than 1R on the table, or whose stop is thinner
+        // than twice the spread, is refused before the risk gate rather than sized around.
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+        if(!CSignalGuards::IsSignalTradable(patternPrice, sl, tp, spreadPrice))
+            return RejectSignal("CANDLE_NOT_TRADABLE");
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

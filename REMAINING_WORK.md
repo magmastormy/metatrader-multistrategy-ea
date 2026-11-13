@@ -329,3 +329,16 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 4. Items 15 to 19, 32, 44 and 46 (risk, exposure and bar-state reads; fail-open sizing).
 5. Items 39 and 40 (dashboard exposure and unexecuted commands), then items 20, 28 to 30 and 41 (config parser, model loading, endpoints and ZMQ lifecycle).
 6. Items 42, 45, 47, 21 to 23 and 33 to 38 (blocking sleeps, install script, retraining log, compile, recovery, duplication, cleanup).
+
+---
+
+## Status update - Batch 288 (2026-11-13)
+
+The run-by-run record now lives in `RUNS_AND_GAINS.md`; this list stays as the open-item backlog.
+
+- **Closed by measurement, not by opinion:** the "thresholds" are not a tuning surface. `InpSingleVoterFloor`, `InpQuorumProfile`, the support floors and the quorum threshold are inert on the tested windows; `ApplyQuorumProfile` never writes `intrabarMinQuorum`, and every reject in the window was an intrabar evaluation.
+- **The one lever with evidence is shipped:** `InpMinLiveVoters` default 2 -> 1 (six windows, mean +0.46%, stdev 0.92 pp, paired +1.80 pp, t 2.6, p ~ 0.08). Rejects 2,054-2,819 -> 139-227 per window.
+- **Item 50 (per-symbol loss streak):** measured in both forms - blocking entries (Batch 286, -4.75 pp) and scaling position size (Batch 287, mean -2.14 pp). Both are off factory-default (`InpSymbolLossStreakLimit=0`, `InpSymbolStreakRiskScale=1.0`) because a skipped or shrunk entry reallocates the risk instead of removing it, and the trades after a losing run are the largest winners.
+- **Reproducibility is fixed (Batch 282):** `Core/Utils/EAClock.mqh` gives `EAClockMs()`, simulated time under `MQL_TESTER` and `GetTickCount()` live. Two cold runs are bit-identical now; before the fix the same build and window differed by 10 pp.
+- **Still open here:** items 15, 43, 19, 20, 8, 41, 47; `backtest_report.htm` is never produced by this terminal, so there is no MT5 profit factor / max drawdown / Sharpe and every figure is rebuilt from `[COMPOUNDING-TIER-HEARTBEAT]` equity samples.
+- **Not yet done:** the EA now trades a Deriv-Demo chart (V75 M15, shipped defaults) - behaviour under real tick timing has never been observed, and the six-window +0.46% mean is break-even inside noise, not a proven profit.

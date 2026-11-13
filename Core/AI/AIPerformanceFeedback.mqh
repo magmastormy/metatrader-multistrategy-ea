@@ -772,24 +772,35 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
     StringReplace(cleanReason, "\n", " ");
 
     string fileName = "AI_Retraining_Requests.csv";
-    int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI);
-    if(handle == INVALID_HANDLE)
-    {
-        LogFeedback("Failed to open retraining request log: " + fileName);
-        return;
-    }
+    string tempFile = fileName + ".tmp";
 
-    bool writeHeader = (FileSize(handle) == 0);
-    FileSeek(handle, 0, SEEK_END);
-
-    if(writeHeader)
+    // Read the existing log verbatim so pending requests survive the rewrite.
+    // The previous code opened the live file with FILE_READ | FILE_WRITE, which
+    // truncates it ahead of writing back only the new row; a crash or write
+    // failure between those steps lost every pending retraining request. We now
+    // stage the full log in a temp file and atomically replace the original with
+    // FileMove(FILE_REWRITE), the same approach as crash_recovery_helpers.mqh.
+    uchar existing[];
     {
-        if(FileWriteString(handle, "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n") <= 0)
+        int inHandle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI);
+        if(inHandle != INVALID_HANDLE)
         {
-            FileClose(handle);
-            return;
+            uchar buffer[];
+            ArrayResize(buffer, 4096);
+            while(!FileIsEnding(inHandle))
+            {
+                uint bytesRead = FileReadArray(inHandle, buffer, 0, 4096);
+                if(bytesRead <= 0)
+                    break;
+                int old = ArraySize(existing);
+                ArrayResize(existing, old + (int)bytesRead);
+                ArrayCopy(existing, buffer, old, 0, (int)bytesRead);
+            }
+            FileClose(inHandle);
         }
     }
+
+    bool writeHeader = (ArraySize(existing) == 0);
 
     string line = StringFormat("%s,%s,%d,%.6f,%.6f,%.6f\n",
                                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
@@ -798,12 +809,48 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
                                m_currentMetrics.recentAccuracy,
                                m_currentMetrics.recentProfitability,
                                m_currentMetrics.calibrationError);
-    if(FileWriteString(handle, line) <= 0)
+
+    // Write the complete log to the temp file first. The original is never
+    // truncated ahead of a successful write, so a crash cannot destroy the log.
+    int handle = FileOpen(tempFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if(handle == INVALID_HANDLE)
     {
-        FileClose(handle);
+        LogFeedback("Failed to open retraining request log: " + tempFile);
         return;
     }
+
+    bool ok = true;
+    if(writeHeader)
+        ok = FileWriteString(handle, "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n") > 0;
+    if(ok && ArraySize(existing) > 0)
+        ok = FileWriteArray(handle, existing, 0, ArraySize(existing)) == ArraySize(existing);
+    if(ok)
+        ok = FileWriteString(handle, line) > 0;
     FileClose(handle);
+
+    if(!ok)
+    {
+        FileDelete(tempFile, 0);
+        return;
+    }
+
+    // FILE_REWRITE replaces the destination in one step, so the last good state
+    // is never deleted ahead of a failed move. This terminal rejects FILE_REWRITE
+    // (err 5020, measured in the live journal), so the fallback is the same one
+    // crash recovery learned: remove the destination, then plain-move the temp.
+    if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
+    {
+        int rewriteErr = GetLastError();
+        if(FileIsExist(fileName, 0))
+            FileDelete(fileName, 0);
+        if(!FileMove(tempFile, 0, fileName, 0))
+        {
+            // Both failed. The temp file is the only complete copy, so keep it instead of deleting it.
+            LogFeedback("Failed to promote temp retraining log: " + fileName +
+                        " (rewriteErr=" + IntegerToString(rewriteErr) +
+                        " moveErr=" + IntegerToString(GetLastError()) + ") - kept " + tempFile + " as the only copy");
+        }
+    }
 }
 
 // Writes the newest maxRows labelled records; FILE_WRITE truncates the previous export

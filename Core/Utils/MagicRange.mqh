@@ -16,7 +16,7 @@
 #define MAGIC_CLUSTER_SPAN 99
 #endif
 
-//--- Magic layout (Batch 197). One number identifies one owner; the symbol comes from the
+//--- Magic layout. One number identifies one owner; the symbol comes from the
 //--- position itself, so no engine has to encode it.
 //---     consensus = base + assetClassOffset + symbolIndex * MAGIC_SYMBOL_MULTIPLIER
 //---     fast scalp = base + 6000 | ATR scalp = base + 6100 | grid = base + 6200 + level | spike = base + 6300
@@ -86,7 +86,7 @@ bool IsMagicOwnershipConfigured()
 
 // The scalp/grid/spike engines exit their own positions, so lifecycle exits skip them while risk,
 // exposure and daily-loss accounting still count them as EA-owned. Each engine ships its own magic
-// band since Batch 197, but the comment stays the discriminator: positions opened before the
+// band since then, but the comment stays the discriminator: positions opened before the
 // renumber still carry a consensus-band magic, and only the comment tells those apart.
 string g_enginePositionTags[4] = {"ATR-SCALP", "GRID-RECOVERY", "SPIKE-HUNT", "SCALP|"};
 
@@ -127,3 +127,4 @@ bool ValidateMagicOwnershipCoverage(const long base, const int maxShippedOffset)
 }
 
 #endif // CORE_UTILS_MAGIC_RANGE_MQH
+

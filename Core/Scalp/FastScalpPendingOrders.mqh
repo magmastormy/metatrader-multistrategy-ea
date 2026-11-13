@@ -143,7 +143,7 @@ public:
          pendingType = ORDER_TYPE_SELL_LIMIT;
       }
 
-      // Batch 170: shared stop-feasibility and expectancy gate. The validator keys
+      // shared stop-feasibility and expectancy gate. The validator keys
       // its adjustment direction on ORDER_TYPE_BUY, so the pending type is mapped
       // to its market equivalent here rather than passed through.
       string scalpStopError = "";
@@ -156,7 +156,7 @@ public:
       }
 
       // Use CTradeManager's underlying CTrade object via OpenPosition is not suitable
-      // for pending orders â€” use MQL5 trade API directly
+      // for pending orders â€?use MQL5 trade API directly
       MqlTradeRequest request = {};
       MqlTradeResult  result  = {};
 
@@ -177,7 +177,7 @@ public:
 
       if(!OrderSend(request, result))
       {
-         // Batch 177: a timeout, transport error or server close returns false while the server may
+         // a timeout, transport error or server close returns false while the server may
          // have accepted the order anyway. An untracked pending order still fires later, and the
          // next scan places a second one - double exposure from a response the engine dropped.
          bool ambiguous = (result.retcode == TRADE_RETCODE_TIMEOUT ||
@@ -236,7 +236,7 @@ public:
          // Check if order still exists
          if(!OrderSelect(m_pendingOrders[i].ticket))
          {
-            // Order no longer exists â€” either filled or cancelled
+            // Order no longer exists â€?either filled or cancelled
             // If filled, it becomes a position that ManageScalpPositions will pick up
             RemovePendingOrder(i);
             continue;
@@ -274,3 +274,4 @@ public:
 };
 
 #endif // CORE_SCALP_FAST_SCALP_PENDING_ORDERS_MQH
+

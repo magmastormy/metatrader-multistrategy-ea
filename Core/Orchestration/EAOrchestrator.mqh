@@ -4,6 +4,7 @@
 #ifndef CORE_ORCHESTRATION_EA_ORCHESTRATOR_MQH
 #define CORE_ORCHESTRATION_EA_ORCHESTRATOR_MQH
 
+#include "../Utils/EAClock.mqh"
 #include "OrchestratorFwd.mqh"
 #include "SignalGenerator.mqh"
 #include "CandidateBuilder.mqh"
@@ -15,6 +16,7 @@
 #include "../../Core/Registry/DrawingManagerRegistry.mqh"
 #include "../../Core/Registry/ScanSchedulerRegistry.mqh"
 #include "../../Core/Management/EnterpriseStrategyManager.mqh"
+#include "../../Core/Management/StrategyScoreboard.mqh"
 #include "../../Core/Risk/UnifiedRiskManager.mqh"
 #include "../../Core/Risk/PositionSizer.mqh"
 #include "../../Core/Trading/TradeManager.mqh"
@@ -82,7 +84,7 @@
 #define MAGIC_SYMBOL_MULTIPLIER 100
 #endif
 
-#define STRATEGY_COUNT 21  // Number of indicator strategies in flags array (0-20, max enum value is STRATEGY_EXIT_OPTIMIZER=20)
+#define STRATEGY_COUNT 32  // Capacity of the flags array, not a row count: slots 0-31 (SI_MAX = 32), 23 used by the catalog today. Reads are bounds-checked and the builder loops catalog rows, so spare slots stay inert.
 
 #define CRASH_RECOVERY_STATE_FILE "CrashRecoveryState.json"
 
@@ -370,6 +372,11 @@ class CEAOrchestrator
 
         // Attribution diag print BEFORE releasing enterprise managers (which clears the data)
         m_attributionManager.NNDiagPrintSummary("deinit");
+
+        // Last-chance scoreboard write, before the managers that own the counters are released. This
+        // is the difference between the next run starting from the roster's own history and starting
+        // from the 0.55 prior again.
+        PersistStrategyScoreboard();
 
         ReleaseEnterpriseManagers();
 
@@ -685,12 +692,14 @@ if(m_dashboardBridge == NULL)
 }
 m_dashboardBridge.Initialize(
 m_config.dashboardEndpoint,
-false,
+m_config.dashboardEnabled,
 m_config.dashboardControlEnabled,
 m_config.dashboardPushIntervalSec,
 1000
 );
-m_dashboardBridge.SetEnabled(m_config.dashboardEnabled);
+// No SetEnabled here: a second writer re-enabled the bridge after Initialize had already decided
+// from the same input, so a "disabled by configuration" line was followed by 1208 failed pushes in
+// one session. One input, one decision.
 
 Print("[HEALTH-CHECK] Performing startup validation...");
 bool healthCheckPassed = true;
@@ -737,6 +746,11 @@ if(!InitializeComponents())
         if(m_enterpriseManagers[mi] != NULL)
             m_enterpriseManagers[mi].SyncEnabledWithRegistry();
     }
+
+    // Restore the per-strategy scoreboard AFTER the roster is populated and reconciled, so the
+    // per-row counters land on existing rows. Without this every restart reset every row to the
+    // 0.55 prior, and the pruning loop could never learn which rows earn.
+    RestoreStrategyScoreboard();
 
     // All cross-manager SetDependencies/SetManagers calls plus their validation live here;
     // a forgotten wiring fails init loudly instead of dereferencing NULL mid-trade.
@@ -795,6 +809,8 @@ bool InitializeSubsystems()
     unifiedRiskConfig.correlationReduceThreshold = 0.4;
     unifiedRiskConfig.correlationBlockThreshold  = 0.7;
     unifiedRiskConfig.maxPositionsSameBase    = m_config.maxPositionsSameBase;
+    unifiedRiskConfig.maxPositionsTotal       = m_config.maxPositionsTotal;
+    unifiedRiskConfig.maxPositionsPerSymbol   = m_config.maxPositionsPerSymbol;
     unifiedRiskConfig.drawdownWarningPercent  = m_config.maxDrawdown * 0.7;
     unifiedRiskConfig.drawdownCriticalPercent = m_config.maxDrawdown;
     unifiedRiskConfig.adaptationMinTrades     = 10;
@@ -804,6 +820,7 @@ bool InitializeSubsystems()
     unifiedRiskConfig.minLotRiskMultiplier    = m_config.EffectiveMinLotRiskMultiplier();
     unifiedRiskConfig.allowMinLotRoundUp      = m_config.allowMinLotRoundUp;
     unifiedRiskConfig.dailyLossLimitPercent   = m_config.dailyLossLimitPercent;
+    unifiedRiskConfig.minAccountBalance       = m_config.riskValidationMinAccountBalance;
 
     if(!m_unifiedRiskManager.Initialize(unifiedRiskConfig, &m_performanceAnalytics))
     {
@@ -816,22 +833,32 @@ bool InitializeSubsystems()
     m_unifiedRiskManager.SetEAMagicNumber(m_config.magicNumber);
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
+    // Crisis limits and hardcoded thresholds (Item 19): bind operator inputs to class members.
+    m_unifiedRiskManager.GetPortfolioRiskManager().SetCVaRConfidence(m_config.portfolioRiskCvarConfidence);
+    m_unifiedRiskManager.GetPortfolioRiskManager().SetCVaRMaxRisk(m_config.portfolioRiskCvarMaxRisk);
+    m_unifiedRiskManager.GetPortfolioRiskManager().SetMaxEquityCurveHistory(m_config.portfolioRiskMaxEquityCurveHistory);
+    m_unifiedRiskManager.GetPortfolioRiskManager().SetStopFallbackPoints(m_config.portfolioRiskStopFallbackPoints);
+    m_unifiedRiskManager.ConfigureMarginHealth(m_config.riskMarginHealthMaxFreeMarginUsage,
+                                               m_config.riskMarginHealthMinMarginLevel);
+
     SPositionSizingParams sizingParams;
     sizingParams.sizingMode       = POSITION_SIZING_FIXED_RISK;
     sizingParams.fixedLotSize     = m_config.lotSize;
     sizingParams.riskPercent      = m_config.maxRiskPerTrade;
     sizingParams.atrPeriod        = 14;
     sizingParams.atrMultiplier    = 1.5;
-    sizingParams.maxLotSize       = MAX_LOT_SIZE;
+    sizingParams.maxLotSize       = m_config.positionSizerMaxLotSize;
     sizingParams.minLotSize       = MIN_LOT_SIZE;
+    sizingParams.volatilityLookback = m_config.positionSizerVolatilityLookback;
+    sizingParams.equityCurveLookback = m_config.positionSizerEquityCurveLookback;
 
     if(!m_positionSizer.SetParameters(sizingParams))
     {
-        Print("[CRITICAL] PositionSizer initialization FAILED — will use min lot fallback!");
+        Print("[CRITICAL] PositionSizer initialization FAILED �?will use min lot fallback!");
     }
 else
 {
-    Print("[INIT] PositionSizer initialized — Mode: RISK_PERCENT, Risk: ", DoubleToString(sizingParams.riskPercent, 2), "%");
+    Print("[INIT] PositionSizer initialized �?Mode: RISK_PERCENT, Risk: ", DoubleToString(sizingParams.riskPercent, 2), "%");
 }
 
 m_riskTierManager.SetTier(m_config.riskTier);
@@ -853,7 +880,7 @@ m_equityCurveManager = new CEquityCurveManager(m_config.equityCurveEmaPeriod, m_
 if(m_equityCurveManager != NULL)
 PrintFormat("[RISK] EquityCurveManager initialized with emaPeriod=%d", m_config.equityCurveEmaPeriod);
 else
-Print("[RISK] WARNING: Failed to create EquityCurveManager — equity curve sizing disabled");
+Print("[RISK] WARNING: Failed to create EquityCurveManager �?equity curve sizing disabled");
 
 // Basket equity stop: configure before the trading loop
 m_basketEquityStop.Configure(m_config.basketEquityStopEnabled,
@@ -899,7 +926,7 @@ if(m_adxModifier != NULL)
     }
 else
 {
-    Print("[ADX-MODIFIER] WARNING: Failed to initialize — ADX sizing disabled");
+    Print("[ADX-MODIFIER] WARNING: Failed to initialize �?ADX sizing disabled");
     delete m_adxModifier;
     m_adxModifier = NULL;
 }
@@ -917,22 +944,22 @@ if(m_config.enableCompoundingTiers)
     {
         m_compoundingTierManager.ApplyTierToRiskManager(m_unifiedRiskManager);
         m_compoundingTierManager.ApplyTierToPositionSizer(m_positionSizer, m_unifiedRiskManager);
-        Print("[INIT] CompoundingTierManager initialized — auto-switch ENABLED");
+        Print("[INIT] CompoundingTierManager initialized �?auto-switch ENABLED");
     }
 else
 {
-    Print("[INIT] WARNING: CompoundingTierManager initialization failed — using static tier");
+    Print("[INIT] WARNING: CompoundingTierManager initialization failed �?using static tier");
 }
 }
 else
 {
-    Print("[INIT] CompoundingTierManager disabled — using static tier");
+    Print("[INIT] CompoundingTierManager disabled �?using static tier");
 }
 
 if(m_config.enableSessionWeights)
 {
     m_sessionWeightManager.Initialize(true, m_config.sessionDSTOffsetHours);
-    PrintFormat("[INIT] SessionWeightManager initialized — session-aware adjustments ENABLED (DST offset=%d hours)", m_config.sessionDSTOffsetHours);
+    PrintFormat("[INIT] SessionWeightManager initialized �?session-aware adjustments ENABLED (DST offset=%d hours)", m_config.sessionDSTOffsetHours);
 }
 else
 {
@@ -942,7 +969,7 @@ else
 if(m_config.enableSkewStepAnalyzer)
 {
     m_skewStepAnalyzer.Initialize(m_config.skewStepBufferSize, m_config.skewStepCalmThreshold, m_config.skewStepSmallThreshold, m_config.skewStepLargeThreshold);
-    PrintFormat("[INIT] SkewStepAnalyzer initialized — bufferSize=%d, calmThreshold=%.2f, smallThreshold=%.2f, largeThreshold=%.2f",
+    PrintFormat("[INIT] SkewStepAnalyzer initialized �?bufferSize=%d, calmThreshold=%.2f, smallThreshold=%.2f, largeThreshold=%.2f",
     m_config.skewStepBufferSize, m_config.skewStepCalmThreshold, m_config.skewStepSmallThreshold, m_config.skewStepLargeThreshold);
 }
 else
@@ -953,7 +980,7 @@ else
 if(m_config.enableFamilyWeightMatrix)
 {
     m_familyWeightMatrix.Initialize();
-    Print("[INIT] FamilyStrategyWeightMatrix initialized — per-family cluster weighting ENABLED");
+    Print("[INIT] FamilyStrategyWeightMatrix initialized �?per-family cluster weighting ENABLED");
 }
 else
 {
@@ -1316,7 +1343,7 @@ Print("[ATR-SCALP] Initialization FAILED");
 }
 }
 
-// Batch 178: three engines take an enable input that defaults ON, initialize, register their
+// three engines take an enable input that defaults ON, initialize, register their
 // symbols and deinit -- and have no tick-loop caller, so they open nothing. Each prints its own
 // PARKED line above, but the "[INIT] ... enabled" lines around them read as live trading, so name
 // the whole set once with the input responsible for each.
@@ -1851,12 +1878,22 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.SetSupportFloors(inputSupportFloorNewBar, inputSupportFloorIntrabar);
     manager.SetIntrabarDynamicQuorumEnabled(m_config.intrabarDynamicQuorumEnabled);
 
+    // Per-symbol loss-streak breaker policy (0 = off). Pushed here because this loop already walks every per-symbol
+    // manager once, and the streak itself lives on that manager - the symbol is the instance.
+    manager.SetSymbolLossStreakPolicy(MathMax(0, m_config.symbolLossStreakLimit),
+                                      MathMax(0, m_config.symbolLossStreakCooldownMin) * 60);
+
+    // The lone-voter confidence floor is the gate that decided every reject in the measured window
+    // (103 of 103), so it is carried from config instead of living only in a #define: an A/B of 0.70 vs
+    // 0.65 needs a rebuild otherwise, and a floor that cannot be varied cannot be measured.
+    manager.SetSingleVoterFloor(MathMax(0.50, MathMin(0.95, m_config.singleVoterFloor)));
+
     // The profile owns min quorum, quorum threshold, both support floors and the intrabar dynamic-quorum
     // switch, and runs after the setters so InpQuorumProfile wins over those four inputs. enforced= applies
     // MIN_CONSENSUS_VOTERS on top; the per-decision number is [CONSENSUS-QUORUM] minVoters=.
     manager.ApplyQuorumProfile(m_config.quorumProfile);
 
-    // Batch 175: safe mode is an override that may only tighten, and ApplyQuorumProfile has just
+    // safe mode is an override that may only tighten, and ApplyQuorumProfile has just
     // written the profile's own floor, so the clamp belongs after it. minConfluence has no
     // consensus knob to tighten and is not enforced.
     if(m_config.riskTier == RISK_TIER_CONSERVATIVE && m_safeMode.IsInitialized())
@@ -1888,7 +1925,12 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 m_config.intrabarDynamicQuorumEnabled ? "true" : "false",
                 manager.IsIntrabarDynamicQuorumEnabled() ? "true" : "false");
 
-    // The arms below are the validator's only configuration call site (Batch 175): before it they ran on
+    // The lone-voter bar is the only consensus constant that was not printed at init, so a run could not
+    // say which floor it was judged against. Printed with its clamped value, not the raw input.
+    PrintFormat("[CONSENSUS-VOTER-FLOOR] %s | singleVoterFloor=%.2f | rejects below this number print single voter confidence < floor",
+                symbol, manager.GetSingleVoterFloor());
+
+    // The arms below are the validator's only configuration call site: before it they ran on
     // constructor defaults - OFI/VPIN off whatever the inputs said, floors 0.72/0.75 not 0.70/0.68.
     // The spread cutoff must not come straight from config: the 200-point default sits below synthetic
     // spreads of 1,727-11,140 points and would veto the whole synthetic book, so floor it at entry spread.
@@ -1913,7 +1955,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 VALIDATOR_BASE_SPREAD_ATR_RATIO,
                 VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO,
                 m_config.spikeHunterEnabled ? "set(no-op branch)" : "OFF");
-    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | intrabar_dynamic_quorum_input=%s | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) — only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | intrabar_dynamic_quorum_input=%s | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) �?only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
     symbol,
     symbolClass,
     symbolProfile,
@@ -2059,6 +2101,15 @@ double StrategyConfigWeight(const int siIndex, const double catalogFallback)
         case SI_ASIAN_RANGE_BREAK:      return m_config.weightAsianRangeBreak;
         case SI_LIQUIDITY_SWEEP:        return m_config.weightLiquiditySweep;
         case SI_RANGE_COMPRESSION:      return m_config.weightRangeCompression;
+        case SI_DONCHIAN_BREAKOUT:      return m_config.weightDonchianBreakout;
+        case SI_RSI2_PULLBACK:          return m_config.weightRSI2Pullback;
+        case SI_DAILY_LEVEL_BREAKOUT:   return m_config.weightDailyLevelBreakout;
+        case SI_DAILY_LEVEL_FADE:       return m_config.weightDailyLevelFade;
+        case SI_EMA_RIBBON:             return m_config.weightEMARibbon;
+        case SI_GAP_CONTINUATION:       return m_config.weightGapContinuation;
+        case SI_OPENING_RANGE_BREAKOUT: return m_config.weightOpeningRangeBreakout;
+        case SI_ICT_SESSION_GAP:        return m_config.weightICTSessionGap;
+        case SI_ICT_STRUCTURE_SHIFT:    return m_config.weightICTStructureShift;
     }
     return catalogFallback;
 }
@@ -2564,7 +2615,7 @@ void OnTick()
     if(m_config.enableSkewStepAnalyzer && m_skewStepAnalyzer.IsInitialized())
     {
         static uint s_lastSkewStepFeed = 0;
-        uint nowMs = GetTickCount();
+        uint nowMs = EAClockMs();
         if(nowMs - s_lastSkewStepFeed >= 500)
         {
             CDerivAssetProfiler* derivProf = m_multiAssetProfiler.GetDerivProfiler();
@@ -2593,7 +2644,7 @@ void OnTick()
     // Fast-path scalp evaluation on ticks (dual-path architecture), throttled to 1 s:
     // ShouldEnterScalp does indicator/ATR/cost/risk work for every symbol in the universe.
     static uint s_lastScalpFastPathMs = 0;
-    uint scalpNowMs = GetTickCount();
+    uint scalpNowMs = EAClockMs();
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized()
        && scalpNowMs - s_lastScalpFastPathMs >= 1000)
     {
@@ -2673,7 +2724,7 @@ if(m_pythonBridge != NULL)
     string bridgeStatusStr = "[PYTHON-BRIDGE-DASHBOARD] ";
     bool skipDashboardLog = false;
 
-    // Connection state — differentiate by mode to avoid false CONN:ERROR
+    // Connection state �?differentiate by mode to avoid false CONN:ERROR
     if(m_config.pythonBridgeMode == PYTHON_BRIDGE_OFF)
     {
         bridgeStatusStr += "CONN:DISABLED | ";
@@ -2808,7 +2859,9 @@ if(m_dashboardBridge != NULL && m_dashboardBridge.IsEnabled() && m_bridgesReady
         );
     }
 
-    if(m_dashboardBridge.PushState() && m_dashboardBridge.IsControlEnabled())
+    // A push is a blocking WebRequest. Never start one on the way out: a call still in flight when the
+    // EA is removed from the chart is the shape behind "Abnormal termination" 2 s into a teardown.
+    if(!m_shuttingDown && m_dashboardBridge.PushState() && m_dashboardBridge.IsControlEnabled())
     m_dashboardBridge.PollCommands();
 }
 
@@ -2825,7 +2878,7 @@ ProcessTickSafetyLoop();
         int totalBefore = ObjectsTotal(0);
         if(totalBefore > 400)
         {
-            PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects — cleanup triggered", totalBefore);
+            PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects �?cleanup triggered", totalBefore);
             for(int d = 0; d < ArraySize(m_drawingManagers); d++)
             {
                 if(m_drawingManagers[d] != NULL)
@@ -2863,7 +2916,13 @@ if(m_lastCvarLogTime == 0 || (nowCvar - m_lastCvarLogTime) >= 300)
 static datetime s_lastIndicatorEviction = 0;
 if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
 {
-    CIndicatorManager::Instance().ReleaseUnused(300); // Release handles older than 5 minutes
+    // 5 minutes was shorter than one evaluation cycle: strategies read a handle once per closed bar
+    // (M15 = 15 min), so every handle was idle past the window, released, and re-created on the next
+    // bar. Measured in the tester journal: 9,933 `Created ... handle=` lines in a 7-hour window over
+    // only 457 distinct handle numbers, i.e. the cache was rebuilding itself continuously. A handle
+    // is a symbol/timeframe/params identity - it is worth keeping for hours. The 50,000 cap in
+    // CIndicatorManager still bounds the table.
+    CIndicatorManager::Instance().ReleaseUnused(14400); // Release handles idle for 4 hours
     s_lastIndicatorEviction = now;
 }
 
@@ -2878,8 +2937,27 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
     static datetime s_lastHeartbeat = 0;
     if(s_lastHeartbeat == 0 || (now - s_lastHeartbeat) >= m_config.heartbeatInterval)
     {
+        // Scan cost as a reading, not as 15k journal lines: average and worst cycle since the last
+        // heartbeat. A second line is only worth printing when the budget is being spent, so the
+        // operator sees the slow path without having to grep the DEBUG perf metrics.
+        if(m_heartbeat.GetScanCostSamples() > 0)
+        {
+            PrintFormat("[SCAN-COST] cycles=%I64u | avgUs=%I64u | maxUs=%I64u",
+                        m_heartbeat.GetScanCostSamples(), m_heartbeat.GetScanCostAvgUs(), m_heartbeat.GetScanCostMaxUs());
+            m_heartbeat.ResetScanCost();
+        }
         m_heartbeat.Emit(GetPointer(m_diagnosticsManager), m_spikeMonitor.IsPaused());
         s_lastHeartbeat = now;
+
+        // Scoreboard durability on the same cadence: counters and park flags, so a restart does not
+        // erase what the roster learned. Small file (rows = strategies x symbols), so this is not a
+        // hot-path cost; it is throttled to every 5 minutes rather than every heartbeat.
+        static datetime s_lastScoreboardSave = 0;
+        if(s_lastScoreboardSave == 0 || (now - s_lastScoreboardSave) >= 300)
+        {
+            PersistStrategyScoreboard();
+            s_lastScoreboardSave = now;
+        }
     }
     
     m_configReloader.CheckAndReload();
@@ -3029,6 +3107,27 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 
         // Persist circuit-breaker state on the runtime cadence (30 s throttle inside) for crash recovery.
         PersistRiskRuntimeState(false);
+    }
+
+    // Per-strategy scoreboard (counters + park flags), keyed by symbol+strategy. Restored after the
+    // rosters are built, persisted periodically and at teardown, so the selection state survives a
+    // restart instead of resetting every row to the 0.55 prior.
+    void RestoreStrategyScoreboard()
+    {
+        if(ArraySize(m_enterpriseManagers) <= 0)
+            return;
+        CStrategyScoreboard::Load(m_enterpriseManagers, ArraySize(m_enterpriseManagers));
+    }
+
+    void PersistStrategyScoreboard()
+    {
+        if(!m_systemInitialized || ArraySize(m_enterpriseManagers) <= 0)
+            return;
+        CStrategyScoreboard::Save(m_enterpriseManagers, ArraySize(m_enterpriseManagers));
+        // The compounding watermark travels with it: a restart that forgets the tier history lowers
+        // the milestone baseline to the equity at restart, which is the state before this batch.
+        if(m_compoundingTierManager.IsInitialized())
+            m_compoundingTierManager.Save();
     }
 
     void ProcessAISubsystems()
@@ -3528,7 +3627,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
             continue;
         }
 
-        // Top of the funnel. Until Batch 254 this had no writer, so signals_generated printed 0 in
+        // Top of the funnel. Until this had no writer, so signals_generated printed 0 in
         // every journal while a later stage counted 1, and every [CONVERSION-RATES] percentage that
         // divides by a stage was pinned at 0.0%.
         m_heartbeat.IncSignalsGenerated();
@@ -3553,6 +3652,88 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         CEnterpriseStrategyManager* manager = m_enterpriseManagers[i];
         if(manager == NULL) continue;
 
+        // Batch 272: the symbol health monitor used to print "disabling trading" for every symbol
+        // and nothing read it. This is the reader. A frozen feed cannot fill an order, but it can
+        // still price a signal off stale bars, so the row is held here - and named here, throttled
+        // once a minute, because a held symbol that says nothing is indistinguishable from a quiet
+        // strategy.
+        if(!m_symbolHealth.IsHealthy(symbol))
+        {
+            static datetime s_lastFeedHoldLog = 0;
+            m_heartbeat.IncNoSignalCount();
+            if(TimeCurrent() - s_lastFeedHoldLog >= 60)
+            {
+                s_lastFeedHoldLog = TimeCurrent();
+                const SSymbolHealth feed = m_symbolHealth.GetHealth(symbol);
+                // lastTickTime == 0 means never quoted; TimeCurrent() - 0 is the epoch, not an age.
+                const string ageText = (feed.lastTickTime > 0)
+                                       ? StringFormat("%ds", (int)(TimeCurrent() - feed.lastTickTime))
+                                       : "never";
+                PrintFormat("[ENTRY-GATE] entry held mid-cycle | reason=symbol_feed | %s state=%d tickAge=%s",
+                            symbol, feed.state, ageText);
+            }
+            continue;
+        }
+
+        // Batch 280: the same incident, one step earlier. A symbol whose market is shut or whose
+        // broker supplies no quote still had consensus run for it and still reached the sender, where
+        // every attempt ended as `[EXECUTION-BLOCKED] ... reason=market_unavailable` - measured 280
+        // such lines in one 7-hour test window, all for the same symbols, each preceded by a full
+        // strategy round. An entry that cannot be priced is not a signal; hold the row here.
+        MqlTick quoteCheck;
+        if(!SymbolInfoTick(symbol, quoteCheck) ||
+           (quoteCheck.bid <= 0.0 && quoteCheck.ask <= 0.0))
+        {
+            static datetime s_lastNoQuoteLog = 0;
+            m_heartbeat.IncNoSignalCount();
+            if(TimeCurrent() - s_lastNoQuoteLog >= 300)
+            {
+                s_lastNoQuoteLog = TimeCurrent();
+                PrintFormat("[ENTRY-GATE] entry held mid-cycle | reason=no_quote | %s | no bid/ask, any order would block as market_unavailable",
+                            symbol);
+            }
+            continue;
+        }
+
+        // Batch 286: per-symbol loss-streak hold. The measured 7-day window lost 244 of its 299 dollars inside
+        // losing runs of 2+ closes on a single instrument, and no risk rule knew that - each entry was sized
+        // normally and the series was never seen as a series. One manager per symbol, so the streak is already
+        // symbol-scoped; this is the reader, and it is off unless InpSymbolLossStreakLimit > 0.
+        if(manager.IsSymbolStreakBlocked())
+        {
+            static datetime s_lastStreakHoldLog = 0;
+            m_heartbeat.IncNoSignalCount();
+            if(TimeCurrent() - s_lastStreakHoldLog >= 60)
+            {
+                s_lastStreakHoldLog = TimeCurrent();
+                PrintFormat("[ENTRY-GATE] entry held mid-cycle | reason=symbol_loss_streak | %s | %d losing closes, held %d min",
+                            symbol, manager.GetSymbolLossStreak(), manager.GetSymbolLossStreakCooldownSec() / 60);
+            }
+            continue;
+        }
+
+        // Batch 278: the volatility model now grades risk instead of only blocking entries.
+        // Batch 277 held every row at p <= 0.25, which is a veto that teaches the book
+        // nothing - this EA has taken zero orders for thirteen batches, and a model allowed
+        // only to subtract entries keeps it at zero. The bands (one source, two readers):
+        //   p <= 0.15  -> veto (extreme compression)
+        //   p <= 0.25  -> half risk, entry allowed (CandidateBuilder applies the 0.5)
+        //   otherwise  -> unchanged
+        // -1.0 (no model / stale) vetoes nothing.
+        const double volScale = VolReg_RiskScale(symbol);
+        if(volScale == 0.0)
+        {
+            static datetime s_lastVolHoldLog = 0;
+            m_heartbeat.IncNoSignalCount();
+            if(TimeCurrent() - s_lastVolHoldLog >= 60)
+            {
+                s_lastVolHoldLog = TimeCurrent();
+                PrintFormat("[VOL-GATE] entry held | reason=extreme_compression | %s p(expansion)=%.3f <= %.2f",
+                            symbol, VolReg_Probability(symbol), VOLREG_COMPRESSION_VETO);
+            }
+            continue;
+        }
+
         STradeCandidate candidate;
         bool candidateBuilt = false;
 
@@ -3570,9 +3751,15 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         }
         m_heartbeat.IncSignalsValidated();
 
+        // Batch 287: sizing, not holding. A symbol in a losing run keeps its entry and its slot; its risk fraction
+        // shrinks instead, so the book composition stays constant and the effect on mean/stdev is separable from
+        // the effect on which trades happen. 1.0 (the default) changes nothing.
+        const double symbolStreakScale = manager.GetSymbolStreakRiskScale(m_config.symbolStreakRiskMinCount,
+                                                                          m_config.symbolStreakRiskScale);
+
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, newBarSignals[i].decisionContext,
-                manager, m_scanCycleSequence, candidate, cycleCorrId))
+                manager, m_scanCycleSequence, candidate, m_config.useStrategyStops, cycleCorrId, symbolStreakScale))
                 continue;
         candidateBuilt = true;
         candidatesBuilt++;
@@ -3594,7 +3781,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         if(!authority.allowed) continue;
 
-        // Batch 173: this multiplier sets the shipped lot. It is shrink-only, and a lot that drops under the
+        // this multiplier sets the shipped lot. It is shrink-only, and a lot that drops under the
         // broker minimum is refused loudly rather than rounded back up, so no normalization undoes the gate.
         if(!m_candidateBuilder.ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId))
             continue;
@@ -3655,7 +3842,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
             }
     
-        CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_Total_us", (double)(GetMicrosecondCount() - startTotal), cycleCorrId);
+        // One measured cycle: feed the heartbeat accumulator so [SCAN-COST] reports a real average
+        // rather than leaving the number inside the per-cycle perf-metric lines.
+        ulong cycleElapsedUs = GetMicrosecondCount() - startTotal;
+        m_heartbeat.IncScanCost(cycleElapsedUs);
+        CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_Total_us", (double)cycleElapsedUs, cycleCorrId);
 }
 
 int GetEAPositionCount() const
@@ -3829,3 +4020,5 @@ void UpdateAIVoteActivity()
 };
 
 #endif // CORE_ORCHESTRATION_EA_ORCHESTRATOR_MQH
+
+

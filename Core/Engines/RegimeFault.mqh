@@ -138,7 +138,7 @@ bool CRegimeFaultTracker::TryReuseRecentSnapshot(SRegimeSnapshot &snapshot,
     if(snapshotAgeSeconds > GetSnapshotReuseWindowSeconds(timeframe))
         return false;
 
-    // L4-011 Fix: Validate regime state consistency before reusing snapshot
+    // Validate regime state consistency before reusing snapshot
     // Estimate current regime state from fallback indicators
     double atrValue = 0.0, bbUpperValue = 0.0, bbLowerValue = 0.0;
     ENUM_REGIME_STATE currentRegimeState = REGIME_TREND;
@@ -180,3 +180,4 @@ bool CRegimeFaultTracker::TryReuseRecentSnapshot(SRegimeSnapshot &snapshot,
 }
 
 #endif // REGIME_FAULT_MQH
+

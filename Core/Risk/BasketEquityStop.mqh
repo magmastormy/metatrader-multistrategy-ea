@@ -9,8 +9,10 @@
 #define CORE_RISK_BASKET_EQUITY_STOP_MQH
 
 #include "../Position/PositionMgrMagicFilter.mqh"
-
-class CTradeManager;   // forward declaration; resolved by EAOrchestrator include order
+// CTradeManager is dereferenced below, so it needs the definition, not a forward declaration: the
+// previous `class CTradeManager;` compiled only because EAOrchestrator happened to include the
+// trade manager earlier in its own list.
+#include "../Trading/TradeManager.mqh"
 
 class CBasketEquityStop
 {

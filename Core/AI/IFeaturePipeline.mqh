@@ -5,6 +5,7 @@
 #define CORE_AI_IFEATURE_PIPELINE_MQH
 
 #include "../../Interfaces/IStrategy.mqh"
+#include "../../AIModules/AIConfig.mqh"   // FEATURE_VECTOR_SIZE - the pipeline sizes its buffers from it
 
 struct SFeaturePipelineConfig
 {

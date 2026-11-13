@@ -21,6 +21,21 @@ class CStrategyPerformanceHealth
 private:
     CEnterpriseStrategyManager* m_src;
 
+    // Last AI metric set applied per strategy row. The orchestrator calls UpdateAIPerformanceMetrics
+    // for every symbol on the runtime cadence, so with 11 symbols the identical global model metrics
+    // were re-applied and re-printed about eight times a second - 174,804 of the 237,954 journal lines
+    // in the 2026-10-23 session were this one print, and the health blend 0.70/0.30 was compounded
+    // thousands of times per metrics update instead of once. Both stop here: the setters and the print
+    // run only when the metrics actually change.
+    struct SAIMetricStamp
+    {
+        double accuracy;
+        double profitability;
+        double recentAccuracy;
+        bool   valid;
+    };
+    SAIMetricStamp m_aiMetricStamps[64];
+
 public:
     CStrategyPerformanceHealth() : m_src(NULL) {}
 
@@ -152,6 +167,22 @@ void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strateg
     // Field reuse: avgProfit carries AI profitability for these rows, which is what
     // CConsensusWeightingConfig reads for the [AI-WEIGHT-ADJUST] multiplier. Below the sample floor it
     // reads as neutral so a handful of predictions cannot move the weight.
+    // Idempotence gate first: an unchanged metric set must not touch the roster or the journal, because
+    // the caller runs this per symbol per tick-cadence while the metrics are global.
+    if(idx < ArraySize(m_aiMetricStamps) && m_aiMetricStamps[idx].valid
+       && m_aiMetricStamps[idx].accuracy == metrics.accuracy
+       && m_aiMetricStamps[idx].profitability == metrics.profitability
+       && m_aiMetricStamps[idx].recentAccuracy == metrics.recentAccuracy)
+        return;
+
+    if(idx < ArraySize(m_aiMetricStamps))
+    {
+        m_aiMetricStamps[idx].accuracy       = metrics.accuracy;
+        m_aiMetricStamps[idx].profitability  = metrics.profitability;
+        m_aiMetricStamps[idx].recentAccuracy = metrics.recentAccuracy;
+        m_aiMetricStamps[idx].valid          = true;
+    }
+
     double weightingProfit = (metrics.totalPredictions >= AI_WEIGHT_MIN_PREDICTIONS) ? metrics.profitability : 0.0;
     m_src.SetStrategyAvgProfit(idx, weightingProfit);
 

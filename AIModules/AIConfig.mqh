@@ -128,6 +128,18 @@
 #ifndef AI_FEATURE_VECTOR_SIZE
 #define AI_FEATURE_VECTOR_SIZE  70
 #endif
+
+//--- Derived aliases. The tree writes these numbers under short names (`FEATURE_VECTOR_SIZE`,
+// `ONNX_SEQ_LEN`) in a dozen headers, and until the header sweep each of those headers either re-typed
+// the literal or inherited it from an include it never declared. Deriving them from the AI_* constants
+// above leaves one source of truth: the literal used to exist twice (here and in the feature-vector
+// builder) and could drift silently.
+#ifndef FEATURE_VECTOR_SIZE
+#define FEATURE_VECTOR_SIZE  AI_FEATURE_VECTOR_SIZE
+#endif
+#ifndef ONNX_SEQ_LEN
+#define ONNX_SEQ_LEN         AI_ONNX_SEQ_LEN
+#endif
 #ifndef AI_NN_CHECKPOINT_VERSION
 #define AI_NN_CHECKPOINT_VERSION    8
 #endif

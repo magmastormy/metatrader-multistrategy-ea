@@ -7,6 +7,7 @@
 // none was injected, but registration refuses such a strategy (StrategyRegistryState.mqh:122).
 #include "../Utilities/SafeCopyBuffer.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 
 class CSimpleMomentumStrategy : public CStrategyBase
 {
@@ -683,14 +684,18 @@ public:
         if(signal == TRADE_SIGNAL_SELL && rsi < m_rsiOversold)
             return RejectSignal("MOMENTUM_RSI_OVERSOLD");
 
-        // Trending market required; without it only a pullback entry or 2x-threshold momentum passes
-        if(!StrongTrend())
+        // Trending market required; without it only a pullback entry or 2x-threshold momentum passes.
+        // Read once: the same two buffer copies used to be repeated for the log line below.
+        bool strongTrend = StrongTrend();
+        if(!strongTrend)
         {
             if(!PullbackEntry(signal) && MathAbs(diffNow) < threshold * 2.0)
                 return RejectSignal("MOMENTUM_ADX_WEAK_TREND");
         }
 
-        if(!MACDConfirmed(signal))
+        // One MACD read per signal: this was fetched three times (gate, confidence, log).
+        bool macdConfirmed = MACDConfirmed(signal);
+        if(!macdConfirmed)
         {
             // MACD is soft confirmation, not a gate: reduce confidence, never block
             PrintFormat("[MOMENTUM-ENHANCED] MACD not confirmed for %s | Confidence reduced",
@@ -724,13 +729,23 @@ public:
             double freshnessMod = GetMomentumFreshnessConfidence(signal);
             momentumConfidence *= freshnessMod;
 
-            if(MACDConfirmed(signal))
+            if(macdConfirmed)
                 momentumConfidence *= 1.10;
             else
                 momentumConfidence *= 0.85;
 
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
-            
+
+            // This strategy was the only voter with no floor: a decayed crossover (ROC 0.7 x MACD
+            // 0.85 x halved freshness) still reached consensus at ~0.25 with weight 1.0, which
+            // counts toward quorum and dilutes the ready-weight ratio. Every sibling enforces a
+            // floor; this one now enforces the base class's configured one.
+            if(confidence < m_minConfidence)
+            {
+                m_lowConfidenceFiltered++;
+                return RejectSignal("MOMENTUM_LOW_CONFIDENCE");
+            }
+
             // ATR-based stop distance, handed to the risk manager below
             double atrBuffer[2];
             double atr = 0.0;
@@ -740,6 +755,15 @@ public:
             double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
             double slPips = (point > 0) ? (slDistance / point) : 0;
+
+            // Local pre-trade guard: a zero/NaN stop, a target that does not cover the stop, or a
+            // spread wider than half the stop is not a trade worth sending to the risk gate.
+            double slPrice = (signal == TRADE_SIGNAL_BUY) ? (currentPrice - slDistance) : (currentPrice + slDistance);
+            double tpPrice = (signal == TRADE_SIGNAL_BUY) ? (currentPrice + 2.0 * slDistance) : (currentPrice - 2.0 * slDistance);
+            long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+            double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+            if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+                return RejectSignal("MOMENTUM_NOT_TRADABLE");
             
             // CalculateSize clamps to SYMBOL_VOLUME_MAX and applies margin checks
             double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
@@ -772,7 +796,7 @@ public:
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
             
             // [CONSENSUS-DIAG] is a mandated log signature (AGENTS.md section 6); do not drop it.
-            LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, MACDConfirmed(signal) ? "YES" : "NO", StrongTrend() ? "STRONG" : "WEAK"), confidence);
+            LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, macdConfirmed ? "YES" : "NO", strongTrend ? "STRONG" : "WEAK"), confidence);
             
             PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",
                        m_symbol,

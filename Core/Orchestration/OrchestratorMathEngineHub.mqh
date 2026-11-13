@@ -10,6 +10,7 @@
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_MATH_ENGINE_HUB_MQH
 #define CORE_ORCHESTRATION_ORCHESTRATOR_MATH_ENGINE_HUB_MQH
 
+#include "../Utils/EAClock.mqh"
 #include "OrchestratorConfig.mqh"
 #include "OrchestratorSymbolClassifier.mqh"
 #include "../../Core/Registry/MathematicalEngineRegistry.mqh"
@@ -302,7 +303,7 @@ public:
     void FeedMicrostructure(int managerCount)
     {
         static uint s_lastVpinOfiFeed = 0;
-        uint nowMs = GetTickCount();
+        uint nowMs = EAClockMs();
         if(nowMs - s_lastVpinOfiFeed >= 200)
         {
             for(int i = 0; i < managerCount; i++)

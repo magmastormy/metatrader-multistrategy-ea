@@ -21,6 +21,7 @@
 #include "RiskCircuitBreaker.mqh"
 #include "RiskMarginHealth.mqh"
 #include "RiskTieredCorrelation.mqh"
+#include "../Utils/MagicRange.mqh"
 
 // All percent fields in SUnifiedRiskConfig use the 0-100 scale (1.0 = 1%), never 0-1 fractions.
 struct SUnifiedRiskConfig
@@ -34,6 +35,8 @@ struct SUnifiedRiskConfig
     double correlationReduceThreshold;  // 0-1 scale (not a risk percent)
     double correlationBlockThreshold;   // 0-1 scale (not a risk percent)
     int maxPositionsSameBase;
+    int maxPositionsTotal;       // Total EA-owned position cap (0 = unchecked)
+    int maxPositionsPerSymbol;   // Per-symbol EA-owned position cap (0 = unchecked)
     double drawdownWarningPercent;
     double drawdownCriticalPercent;
     double dailyLossLimitPercent;
@@ -43,6 +46,7 @@ struct SUnifiedRiskConfig
     bool enableAdaptiveSizing;
     bool enableAuditLogging;
     string auditLogFile;
+    double minAccountBalance;           // Crisis limit (Item 19): minimum account balance to allow trading
 };
 
 struct STradeValidationRequest
@@ -265,6 +269,10 @@ public:
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
     bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent = 0.0);
+    // Item 15: one shared exposure check used by every entry route (consensus, ATR scalp, spike hunter,
+    // fast scalp). Validates per-symbol count, total EA-owned position count and total risk percent
+    // against configured caps before any risk is reserved.
+    bool ValidateExposure(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     bool ValidateClusterGovernance(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     bool ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk);
     bool ValidateMarginRequirements(const STradeValidationRequest &request, string &message);
@@ -460,6 +468,21 @@ public:
         return result;
     }
 
+    // Item 15: shared exposure check - per-symbol count, total EA-owned position count and total
+    // risk percent against configured caps. Runs for every entry route (consensus, ATR scalp,
+    // spike hunter, fast scalp) because all of them pass through RunInternal().
+    if(!ValidateExposure(request, tradeRisk, validationMessage))
+    {
+        result.message = "Exposure validation failed: " + validationMessage;
+        result.severity = ERROR_LEVEL_WARNING;
+        if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "EXPOSURE_CAP",
+            validationMessage, tradeRisk, 0.0, corrId);
+        m_host.LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
+        return result;
+    }
+
     if(!ValidateClusterGovernance(request, tradeRisk, validationMessage))
     {
         result.message = "Cluster governance validation failed: " + validationMessage;
@@ -636,6 +659,7 @@ public:
             {
                 ulong ticket = PositionGetTicket(i);
                 if(ticket <= 0) continue;
+                if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
                 string posSymbol = PositionGetString(POSITION_SYMBOL);
                 ENUM_DERIV_FAMILY posFamily = m_derivAssetProfiler.DetectFamily(posSymbol);
                 if(posFamily == reqFamily)
@@ -681,6 +705,7 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0) continue;
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
             string posSymbol = PositionGetString(POSITION_SYMBOL);
             if(posSymbol == request.symbol) continue;
             double corr = m_tieredCorrelation.GetSymbolCorrelation(request.symbol, posSymbol);
@@ -989,6 +1014,82 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
     return true;
 }
 
+// Item 15: shared exposure check used by every entry route. Validates per-symbol count,
+// total EA-owned position count and total risk percent against configured caps.
+// Per-symbol counting uses CPortfolioRiskManager::GetPositionsOnSymbol() which already
+// filters by IsMagicOwned() (Core/Utils/MagicRange.mqh). Total counting applies the same
+// magic filter so positions from other EAs or manual trades are not counted against this EA's caps.
+bool CRiskValidationPipeline::ValidateExposure(const STradeValidationRequest &request,
+                                                const double tradeRiskPercent,
+                                                string &message)
+{
+    if(!IsWired())
+    {
+        message = "Risk validation pipeline is not wired";
+        return false;
+    }
+    SyncConfig();
+
+    //--- Per-symbol position count (EA-owned only)
+    if(m_config.maxPositionsPerSymbol > 0)
+    {
+        int positionsOnSymbol = m_portfolioRiskManager.GetPositionsOnSymbol(request.symbol);
+        if(positionsOnSymbol >= m_config.maxPositionsPerSymbol)
+        {
+            message = StringFormat("Per-symbol position cap reached: %d/%d on %s",
+                                   positionsOnSymbol, m_config.maxPositionsPerSymbol, request.symbol);
+            PrintFormat("[RISK-EXPOSURE] %s | per_symbol_count=%d/%d | entry refused",
+                        request.symbol, positionsOnSymbol, m_config.maxPositionsPerSymbol);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PER_SYMBOL_CAP",
+                StringFormat("Per-symbol cap %d/%d on %s", positionsOnSymbol, m_config.maxPositionsPerSymbol, request.symbol),
+                (double)positionsOnSymbol, (double)m_config.maxPositionsPerSymbol, "");
+            return false;
+        }
+    }
+
+    //--- Total EA-owned position count (magic-filtered, same as GetEAPositionCount in EAOrchestrator)
+    if(m_config.maxPositionsTotal > 0)
+    {
+        int totalPositions = 0;
+        for(int i = 0; i < PositionsTotal(); i++)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0 || !PositionSelectByTicket(ticket)) continue;
+            if(IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
+                totalPositions++;
+        }
+        if(totalPositions >= m_config.maxPositionsTotal)
+        {
+            message = StringFormat("Total position cap reached: %d/%d EA-owned positions",
+                                   totalPositions, m_config.maxPositionsTotal);
+            PrintFormat("[RISK-EXPOSURE] total_count=%d/%d | entry refused",
+                        totalPositions, m_config.maxPositionsTotal);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "TOTAL_POSITION_CAP",
+                StringFormat("Total cap %d/%d", totalPositions, m_config.maxPositionsTotal),
+                (double)totalPositions, (double)m_config.maxPositionsTotal, "");
+            return false;
+        }
+    }
+
+    //--- Total risk percent (open exposure + virtual reservations + this trade)
+    double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
+    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent();
+    double totalRisk = openExposureRisk + reservedRisk + MathMax(0.0, tradeRiskPercent);
+    if(totalRisk > m_config.maxPortfolioRiskPercent)
+    {
+        message = StringFormat("Total portfolio risk %.2f%% would exceed maximum %.2f%%",
+                               totalRisk, m_config.maxPortfolioRiskPercent);
+        PrintFormat("[RISK-EXPOSURE] total_risk=%.2f%% > limit=%.2f%% | entry refused",
+                    totalRisk, m_config.maxPortfolioRiskPercent);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "TOTAL_RISK_CAP",
+            StringFormat("Total risk %.2f%% > limit %.2f%%", totalRisk, m_config.maxPortfolioRiskPercent),
+            totalRisk, m_config.maxPortfolioRiskPercent, "");
+        return false;
+    }
+
+    return true;
+}
+
 bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRequest &request,
                                                         const double tradeRiskPercent,
                                                         string &message)
@@ -1021,6 +1122,8 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
     {
         ulong ticket = PositionGetTicket(i);
         if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
             continue;
         
         string existingSymbol = PositionGetString(POSITION_SYMBOL);
@@ -1141,6 +1244,7 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0) continue;
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
             
             string posSymbol = PositionGetString(POSITION_SYMBOL);
             if(posSymbol != request.symbol) continue;
@@ -1188,7 +1292,7 @@ bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationReques
     SyncConfig();
 
     double accountBalanceLocal2 = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(accountBalanceLocal2 < 100.0)  // MIN_ACCOUNT_BALANCE
+    if(accountBalanceLocal2 < m_config.minAccountBalance)  // MIN_ACCOUNT_BALANCE
     {
         message = StringFormat("Account balance too low: %.2f", accountBalanceLocal2);
         return false;

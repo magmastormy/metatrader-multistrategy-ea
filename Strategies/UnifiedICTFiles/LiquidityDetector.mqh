@@ -547,7 +547,7 @@ bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
     {
         if(m_liquidityPools[i].isSwept && m_liquidityPools[i].confirmedReversal)
         {
-            // Check if sweep was recent (within last 15 bars — widened from 5 for synthetics
+            // Check if sweep was recent (within last 15 bars �?widened from 5 for synthetics
             // where liquidity sweeps may take more bars to develop on M15+)
             int barsAgo = iBarShift(m_symbol, m_timeframe, m_liquidityPools[i].sweptTime);
             if(barsAgo >= 0 && barsAgo <= 15)
@@ -608,7 +608,7 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
                 signal.sweepPrice = high;
                 signal.reclaimClose = close;
                 signal.eventTime = iTime(m_symbol, m_timeframe, shift);
-                // Batch 157: penetration normalized by the sweep bar's own range
+                // penetration normalized by the sweep bar's own range
                 // (scale-free) - the old points-based term saturated instantly on
                 // synthetics and carried zero discrimination.
                 double barRange = high - low;
@@ -779,7 +779,7 @@ bool CLiquidityDetector::HasSellsideLiquidity(double price)
     return (FindNearestLiquidity(price, false) >= 0);
 }
 
-// Detect External Swing Liquidity — Batch 103
+// Detect External Swing Liquidity
 // Scans for swing highs/lows that align with daily/weekly levels
 // Returns count of pools found, fills the pools array
 int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100)
@@ -869,3 +869,5 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
 }
 
 #endif // __UICT_LIQUIDITY_DETECTOR_MQH__
+
+

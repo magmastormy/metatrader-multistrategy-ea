@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import pickle
 from pathlib import Path
 
-import numpy as np
-from scipy.stats import spearmanr
-
-from data_pipeline import build_scaled_dataset_splits
+from train_common import compute_test_ic, export_onnx, load_split, save_pickle
 
 
 def main() -> None:
@@ -25,16 +21,9 @@ def main() -> None:
     except ImportError as exc:  # pragma: no cover
         raise SystemExit("catboost is required for train_catboost.py") from exc
 
-    train, val, test, metadata = build_scaled_dataset_splits(
-        args.csv,
-        seq_len=args.seq_len,
-        k=args.k,
-        vertical_bars=args.vert,
+    X_tr, X_va, X_te, y_tr, y_va, y_te, metadata = load_split(
+        args.csv, seq_len=args.seq_len, k=args.k, vert=args.vert
     )
-    X_tr = train[0].reshape(len(train[0]), -1)
-    X_va = val[0].reshape(len(val[0]), -1)
-    X_te = test[0].reshape(len(test[0]), -1)
-    y_tr, y_va, y_te = train[1], val[1], test[1]
 
     model = CatBoostClassifier(
         iterations=1000,
@@ -52,31 +41,22 @@ def main() -> None:
     model.fit(train_pool, eval_set=val_pool)
 
     pkl_output = args.pkl_output or str(Path(args.output).with_suffix(".pkl"))
-    with open(pkl_output, "wb") as handle:
-        pickle.dump(model, handle)
+    save_pickle(model, pkl_output)
 
     preds = model.predict_proba(X_te)
-    test_ic, _ = spearmanr(preds[:, 2] - preds[:, 0], test[3])
+    test_ic = compute_test_ic(preds, y_te)
     print(
         f"trained=catboost samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "
         f"test_ic={float(test_ic):.4f} pkl={pkl_output}"
     )
 
-    try:
-        import onnxmltools
-        from onnxmltools.convert.common.data_types import FloatTensorType
-
-        onnx_model = onnxmltools.convert_catboost(
-            model,
-            name="catboost_trading",
-            initial_types=[("float_input", FloatTensorType([None, X_tr.shape[1]]))],
-            target_opset=12,
-        )
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        onnxmltools.utils.save_model(onnx_model, args.output)
-        print(f"onnx={args.output}")
-    except ImportError:
-        print("onnxmltools not installed; skipped ONNX export")
+    export_onnx(
+        "catboost",
+        model,
+        args.output,
+        X_tr.shape[1],
+        "catboost_trading",
+    )
 
 
 if __name__ == "__main__":

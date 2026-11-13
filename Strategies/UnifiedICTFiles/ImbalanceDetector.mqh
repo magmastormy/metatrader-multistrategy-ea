@@ -292,7 +292,7 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
         double filledBottom = MathMax(low, imb.bottom);
         double filledRange  = MathMax(0.0, filledTop - filledBottom);
         if(imb.size > 0)
-            imb.fillPercent = MathMax(imb.fillPercent, (filledRange / imb.size) * 100.0);  // Batch 156: keep deepest penetration, not the oldest bar's
+            imb.fillPercent = MathMax(imb.fillPercent, (filledRange / imb.size) * 100.0);  // keep deepest penetration, not the oldest bar's
 
         if(imb.isBullish)
         {
@@ -468,3 +468,4 @@ bool CImbalanceDetector::IsInImbalance(double price)
 }
 
 #endif // __UICT_IMBALANCE_DETECTOR_MQH__
+

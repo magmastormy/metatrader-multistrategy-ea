@@ -18,7 +18,7 @@ private:
    int                     m_atrHandles[];         // ATR indicator handles per symbol
    // ATR SMA is computed manually from ATR buffer (MQL5 cannot apply MA to indicator output)
 
-   // Family-specific overrides (Batch 102) â€” held BY VALUE
+   // Family-specific overrides (Batch 102) â€?held BY VALUE
    CSpikeHunterOverrides   m_overrides;
 
 public:
@@ -137,11 +137,11 @@ public:
          return false;
       }
 
-      // ATR SMA is computed manually from ATR buffer â€” no separate handle needed
+      // ATR SMA is computed manually from ATR buffer â€?no separate handle needed
 
       int newSize = m_symbolCount + 1;
 
-      // Resize symbol states â€” construct temp struct to handle string members
+      // Resize symbol states â€?construct temp struct to handle string members
       SSpikeSymbolState tempStates[];
       ArrayResize(tempStates, newSize);
       for(int i = 0; i < m_symbolCount; i++)
@@ -216,7 +216,7 @@ public:
       long windowElapsedMs = (long)((now - m_symbolStates[idx].directionWindowStart) * 1000);
       if(windowElapsedMs > m_config.consecutiveTickWindowMs)
       {
-         // Window expired â€” reset counters
+         // Window expired â€?reset counters
          m_symbolStates[idx].consecutiveUpTicks   = 0;
          m_symbolStates[idx].consecutiveDownTicks = 0;
          m_symbolStates[idx].directionWindowStart = now;
@@ -242,7 +242,7 @@ public:
       }
       else
       {
-         // No change â€” reset both
+         // No change â€?reset both
          m_symbolStates[idx].consecutiveUpTicks   = 0;
          m_symbolStates[idx].consecutiveDownTicks = 0;
       }
@@ -332,14 +332,14 @@ public:
    bool     IsDirectionTriggered(int idx) const    { return m_symbolStates[idx].directionTriggered; }
    bool     IsCompressionTriggered(int idx) const  { return m_symbolStates[idx].compressionTriggered; }
 
-// Spike detected â€” record detection time for long-term cooldown
+// Spike detected â€?record detection time for long-term cooldown
    void MarkSpikeDetected(int idx)
    {
       m_symbolStates[idx].lastSpikeDetectionTime = TimeCurrent();
       m_symbolStates[idx].inSpikeCooldown = true;
    }
 
-// Spike trade filled â€” record trade time and arm the cooldown
+// Spike trade filled â€?record trade time and arm the cooldown
    void MarkSpikeTradeOpened(int idx)
    {
       m_symbolStates[idx].lastSpikeTradeTime = TimeCurrent();
@@ -420,3 +420,4 @@ public:
 };
 
 #endif // CORE_SCALP_SPIKE_HUNTER_DETECTOR_MQH
+

@@ -4,6 +4,7 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 // Mandatory: every entry gates through CUnifiedRiskManager
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "../Core/Utils/Instruments.mqh"
 #include "SMCFiles/KillZones.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
@@ -209,7 +210,9 @@ public:
         }
 
         ENUM_TRADE_SIGNAL signal = bullishBreakout ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        // A long fills at the ask; pricing its stop distance off the bid understated it by the spread
+        double currentPrice = (bullishBreakout) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                                 : SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
         // SL at the opposite range boundary, TP at 2x range size
         double slPrice = bullishBreakout ? asianLow : asianHigh;
@@ -221,6 +224,17 @@ public:
         if(slPips <= 0)
         {
             SetDecisionReasonTag("ASIANRB_INVALID_SL");
+            return TRADE_SIGNAL_NONE;
+        }
+
+        // Pre-trade guard: a stop/target under 1R or a spread wider than half the stop is refused
+        // before the risk gate, where it would otherwise be accepted and sized around.
+        double tpPrice = bullishBreakout ? (currentPrice + 2.0 * asianRange)
+                                         : (currentPrice - 2.0 * asianRange);
+        double spreadPrice = (point > 0) ? (double)SymbolInfoInteger(m_symbol, SYMBOL_SPREAD) * point : 0.0;
+        if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+        {
+            SetDecisionReasonTag("ASIANRB_NOT_TRADABLE");
             return TRADE_SIGNAL_NONE;
         }
 

@@ -12,7 +12,7 @@ class CRegimeHandles
 private:
     int m_atrHandle;
     int m_bbHandle;
-    int m_adxHandle;  // ENHANCEMENT: ADX for trend strength (Batch 93 - Week 5)
+    int m_adxHandle;  // ENHANCEMENT: ADX for trend strength
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
 
@@ -20,7 +20,7 @@ public:
     CRegimeHandles() :
         m_atrHandle(INVALID_HANDLE),
         m_bbHandle(INVALID_HANDLE),
-        m_adxHandle(INVALID_HANDLE),  // Batch 117: initialize to INVALID_HANDLE
+        m_adxHandle(INVALID_HANDLE),  // initialize to INVALID_HANDLE
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT)
     {
@@ -52,7 +52,7 @@ public:
             IndicatorRelease(m_bbHandle);
             m_bbHandle = INVALID_HANDLE;
         }
-        // ENHANCEMENT: Release ADX handle (Batch 93 - Week 5)
+        // ENHANCEMENT: Release ADX handle
         if(m_adxHandle != INVALID_HANDLE)
         {
             IndicatorRelease(m_adxHandle);
@@ -79,7 +79,7 @@ public:
         m_timeframe = resolvedTimeframe;
         m_atrHandle = iATR(symbol, resolvedTimeframe, config.atrPeriod);
         m_bbHandle = iBands(symbol, resolvedTimeframe, config.bbPeriod, 0, config.bbDeviation, PRICE_CLOSE);
-        // ENHANCEMENT: Create ADX handle for trend strength (Batch 93 - Week 5)
+        // ENHANCEMENT: Create ADX handle for trend strength
         m_adxHandle = iADX(symbol, resolvedTimeframe, 14);
 
         return AreHandlesReady();
@@ -93,3 +93,4 @@ public:
 };
 
 #endif // REGIME_HANDLES_MQH
+

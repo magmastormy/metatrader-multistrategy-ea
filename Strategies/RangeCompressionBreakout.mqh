@@ -3,6 +3,7 @@
 #define RANGE_COMPRESSION_BREAKOUT_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
@@ -137,6 +138,19 @@ public:
         if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
         if(m_volumeHandle != INVALID_HANDLE) IndicatorRelease(m_volumeHandle);
         if(m_maHandle != INVALID_HANDLE) IndicatorRelease(m_maHandle);
+    }
+
+    // Same seam as LiquiditySweepStrategy: the catalog creator passes no arguments and registration
+    // only calls Init(), so this class's own Initialize() never ran for the voting instance and every
+    // handle stayed INVALID, which made GetSignal() return an empty struct on every scan. The Hurst
+    // engine is deliberately NULL here: without one the class takes its neutral momentum path, so a
+    // missing engine cannot turn into a fade the voter was never given evidence for.
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
+                      void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
+    {
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
+            return false;
+        return Initialize(symbol, timeframe, NULL, GetUnifiedRiskManager());
     }
 
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
@@ -409,6 +423,15 @@ public:
         if(sig.direction != TRADE_SIGNAL_NONE && sig.entryPrice > 0)
         {
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+            double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+            if(!CSignalGuards::IsSignalTradable(sig.entryPrice, sig.stopLoss, sig.takeProfit, spreadPrice))
+            {
+                LogRejectEvent("COMPRESSION_NOT_TRADABLE");
+                return TRADE_SIGNAL_NONE;
+            }
+
             if(point > 0)
                 SetProposedStops(MathAbs(sig.entryPrice - sig.stopLoss) / point,
                                  MathAbs(sig.takeProfit - sig.entryPrice) / point);

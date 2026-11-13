@@ -113,7 +113,7 @@ public:
             {
                 if(!resolved)
                 {
-                    // Batch 169: this branch used to print and drop, leaving a send that
+                    // this branch used to print and drop, leaving a send that
                     // the broker may well have filled with no deal ever attributed to it -
                     // the order was counted as executed downstream but never reconciled.
                     // On expiry, look for the position the send actually produced so the
@@ -199,3 +199,4 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_MGR_CONFIRMATION_QUEUE_MQH
+

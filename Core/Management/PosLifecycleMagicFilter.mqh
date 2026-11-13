@@ -1,5 +1,5 @@
 // Ownership predicate for the CPositionLifecycleManager family.
-// Batch 168: the arithmetic moved to CMagicRange so this predicate
+// the arithmetic moved to CMagicRange so this predicate
 // and every other ownership test in the EA agree on one window.
 // Callers still pre-compute [magicBase, magicMax] via
 // CPositionLifecycleManager::MagicMax(), which now delegates to
@@ -9,7 +9,7 @@
 
 #include "../Utils/MagicRange.mqh"
 
-// Stateless helper â€” all methods are static.
+// Stateless helper â€?all methods are static.
 class CPosLifecycleMagicFilter
 {
 public:
@@ -20,7 +20,7 @@ public:
         return CMagicRange::IsOwned(magic, magicBase, magicMax);
     }
 
-    //--- Batch 170: owned, and not one of the engine-managed books whose exits
+    //--- owned, and not one of the engine-managed books whose exits
     //--- their own engines already own. Use this wherever an EXIT decision is
     //--- made; use IsOwned() for ownership/accounting.
     static bool IsLifecycleManaged(const long magic, const string comment,
@@ -33,3 +33,4 @@ public:
 };
 
 #endif // POS_LIFECYCLE_MAGIC_FILTER_MQH
+

@@ -1,6 +1,6 @@
 // Multi-asset class profiler extending Deriv-only profiling
 // Covers Forex, Metals, Indices, Energies + all Deriv families
-// Batch 103: Full asset universe support
+// Full asset universe support
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -12,7 +12,7 @@
 #include "../Utils/Instruments.mqh"
 #include "DerivAssetProfiler.mqh"
 
-// Asset class enumeration â€” coarse grouping for all instruments
+// Asset class enumeration â€?coarse grouping for all instruments
 enum ENUM_ASSET_CLASS
 {
    ASSET_FOREX,            // 0 - EURUSD, GBPUSD, etc.
@@ -49,7 +49,7 @@ struct SAssetProfile
    int               featureSetSize;      // 65 = universal, 73 = deriv
    string            pythonModelFamily;   // Python model directory name
 
-   // Default constructor â€” MQL5 requires explicit string initialization
+   // Default constructor â€?MQL5 requires explicit string initialization
    SAssetProfile()
    {
       assetClass          = ASSET_UNIVERSAL;
@@ -290,7 +290,7 @@ public:
    }
 
 // Detect the asset class for a symbol using priority-ordered
-// detection â€” Deriv first, then traditional asset classes
+// detection â€?Deriv first, then traditional asset classes
    ENUM_ASSET_CLASS DetectAssetClass(const string symbol)
    {
       string sym = NormalizeInstrumentSymbolName(symbol);
@@ -420,3 +420,4 @@ public:
 };
 
 #endif // CORE_PROCESSING_MULTI_ASSET_PROFILER_MQH
+

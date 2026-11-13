@@ -194,8 +194,8 @@ public:
         }
     }
 
-    // Batch 151: sync a reservation to the validated numbers once they exist. Reserve() books the provisional lot and
-    // risk and refuses riskPercent<=0, so a zero-risk placeholder can never sit in the book. Batch 239 adds the lot:
+    // sync a reservation to the validated numbers once they exist. Reserve() books the provisional lot and
+    // risk and refuses riskPercent<=0, so a zero-risk placeholder can never sit in the book. adds the lot:
     // a correlation shrink or lot-floor change lands after Reserve, and a reservation still carrying the pre-adjustment
     // lot can never be matched by the position that actually filled, so it would double-charge the portfolio cap.
     bool UpdateRisk(const string ownerTag, const double lotSize, const double riskPercent)
@@ -295,7 +295,7 @@ public:
 
     // An opposing reservation on the same symbol is a conflict whatever its cluster. The cluster
     // code used to be compared here and returned "no conflict" when the two matched, which was
-    // unreachable while callers passed "" (the guard then always conflicted); Batch 199 started
+    // unreachable while callers passed "" (the guard then always conflicted); started
     // populating cluster codes, so that inverted branch would have gone live as a loosening.
     bool HasOpposingReservation(const string symbol,
                                 const ENUM_ORDER_TYPE orderType) const
@@ -321,3 +321,4 @@ public:
 };
 
 #endif // CORE_RISK_VIRTUAL_POSITION_MQH
+

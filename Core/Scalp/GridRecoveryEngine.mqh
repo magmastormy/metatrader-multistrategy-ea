@@ -14,6 +14,7 @@
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeManager.mqh"
 #include <Trade\Trade.mqh>
 
 class CUnifiedRiskManager;

@@ -38,7 +38,7 @@ private:
     
 public:
     CCandleAnalyzer() : m_atrHandle(INVALID_HANDLE) {}
-    ~CCandleAnalyzer() { /* ATR handle owned by CIndicatorManager â€” do NOT release here */ }
+    ~CCandleAnalyzer() { /* ATR handle owned by CIndicatorManager â€?do NOT release here */ }
     
     bool Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     {
@@ -95,7 +95,7 @@ public:
         double atr[];
         ArraySetAsSeries(atr, true);
 
-        // Batch 156: closed bar (shift 1) - patterns are judged on closed
+        // closed bar (shift 1) - patterns are judged on closed
         // bars, normalizing against the forming bar's partial ATR flipped
         // range gates early in each bar.
         if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) <= 0)
@@ -107,3 +107,4 @@ public:
     string GetSymbol() const { return m_symbol; }
     ENUM_TIMEFRAMES GetTimeframe() const { return m_timeframe; }
 };
+

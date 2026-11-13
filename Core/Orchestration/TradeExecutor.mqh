@@ -253,7 +253,7 @@ public:
     {
         if(m_attributionManager == NULL) return;
         
-        // Batch 153: the summary CSV used to be stored as a single-element
+        // the summary CSV used to be stored as a single-element
         // array ("would split by comma" was never implemented), so every
         // attribution row carried one malformed "S1,S3,AI:x" string instead
         // of the individual contributor names.
@@ -379,7 +379,7 @@ public:
                                     cidShort,
                                     stratCode);
         
-        // Include prediction ID in comment for NN training linkage (L11-014)
+        // Include prediction ID in comment for NN training linkage
         if(candidate.predictionId != "" && m_attributionManager != NULL)
         {
             return m_attributionManager.BuildTradeCommentWithPrediction(baseComment, candidate.predictionId);
@@ -390,7 +390,7 @@ public:
     
     string GetTradeErrorDescription(int errorCode)
     {
-        // Batch 152 (T-11): this table used invented retcode mappings (e.g. 10008
+        // this table used invented retcode mappings (e.g. 10008
         // PLACED labeled "Invalid volume", 10009 DONE labeled "Market closed"),
         // poisoning rejection reasons. Delegate to the authoritative descriptor.
         return CTradeDescriptor::GetTradeErrorDescription(errorCode);

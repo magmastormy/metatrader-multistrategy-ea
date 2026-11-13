@@ -14,10 +14,19 @@
 #include "../Risk/RiskClusterCodec.mqh"           // cluster-code letter for the risk cluster gates
 #include "DiagnosticsManager.mqh"                 // CDiagnosticsManager
 
-// Minimum independent voters for an entry: a lone voter would be 100% consensus, and no quorum
-// profile may lower this floor.
+// Floor on independent voters: a book with no vote cannot trade (bacatch by votes>0 below), but the
+// quorum profile owns the real number - CONSERVATIVE 2, BALANCED/AGGRESSIVE 1. The floor used to be a
+// hard 2, which made the profiles' own minQuorum=1 unreachable and, on a live session where the
+// roster emitted nine signals in 46 minutes, rejected every one of them with
+// "Winning votes 1 < minVoters 2". One voter is now allowed, but only when its own weighted score
+// carries it over SINGLE_VOTER_MIN_CONFIDENCE: a lone weak opinion is not a committee, while a lone
+// strong one is the whole point of asking the best strategy first.
 #ifndef MIN_CONSENSUS_VOTERS
-#define MIN_CONSENSUS_VOTERS 2
+#define MIN_CONSENSUS_VOTERS 1
+#endif
+
+#ifndef SINGLE_VOTER_MIN_CONFIDENCE
+#define SINGLE_VOTER_MIN_CONFIDENCE 0.70
 #endif
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
@@ -30,11 +39,24 @@ private:
     SConsensusDecisionContext m_lastDecisionContext;
 
     // Per-symbol, not a function static: one shared slot would let the first symbol to dissent mute the
-    // other twelve (the Batch 214 shape).
+    // other twelve).
     datetime m_lastDeadbandFloorLog;
+    datetime m_lastAdvisoryLog;
+
+    // The lone-voter confidence floor. Kept as a member rather than the bare macro so the operator (and,
+    // later, a measured calibration pass) can move it without a rebuild: a 24 h window rejected 103
+    // candidates, every one of them on this floor, with a mean rejected confidence of ~0.64. A threshold
+    // nobody can vary is a threshold nobody can A/B.
+    double m_singleVoterFloor;
 
 public:
-    CConsensusEngine() : m_src(NULL), m_lastDeadbandFloorLog(0) {}
+    CConsensusEngine() : m_src(NULL), m_lastDeadbandFloorLog(0), m_lastAdvisoryLog(0),
+                         m_singleVoterFloor(SINGLE_VOTER_MIN_CONFIDENCE) {}
+
+    // Clamped to [0.50, 0.95]: below 0.50 the floor stops discriminating, above 0.95 it becomes a
+    // no-trade switch dressed as a confidence gate.
+    void   SetSingleVoterFloor(const double floor) { m_singleVoterFloor = MathMax(0.50, MathMin(0.95, floor)); }
+    double GetSingleVoterFloor() const             { return m_singleVoterFloor; }
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
@@ -490,9 +512,12 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     int sellVotes = 0;
     int eligibleLiveVoterCount = 0;
     int regimeVetoedVotes = 0;
+    int advisoryVotes = 0;          // weight<=0 adapters that signalled but must not be counted
     double regimeVetoedWeight = 0.0;
     double buyScore = 0.0;
     double sellScore = 0.0;
+    double buyWeight = 0.0;
+    double sellWeight = 0.0;
     double buyDirectionalQuality = 0.0;
     double sellDirectionalQuality = 0.0;
     double buyConviction = 0.0;
@@ -563,6 +588,21 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
         double weight = m_src.GetStrategyWeight(i);
 
+        // Weight 0.0 means "no allocation given", not "a quiet voter". Counting a zero-weight vote
+        // anyway still increments every vote counter and every quality denominator while adding
+        // nothing to the numerators, so one unallocated adapter beside one real voter reports
+        // quality ~0.3 for an agreement that only had one real participant - and the same vote
+        // pads the quorum ratio and the validator's confluence count. The five AI adapters ship
+        // at weight 0.0 on purpose (advisory until they earn an allocation through outcomes), so
+        // this is the difference between "the AI arm is advisory" and "the AI arm vetoes every
+        // trade": the 2026-11-12 journal has an Ensemble vote at conf=0.94 in the same millisecond
+        // as a `single voter score 0.649 < singleVoterFloor 0.70` rejection on the same symbol.
+        if(weight <= 0.0)
+        {
+            advisoryVotes++;
+            continue;
+        }
+
         // The composite is clamped to >= 0.01, so zero here is RegimeStateHardGate's veto. A vetoed
         // strategy must not be a voter at all: counting it feeds quorum while its weight only
         // dilutes the ready ratio.
@@ -586,6 +626,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         {
             buyVotes++;
             buyScore += score;
+            buyWeight += weight;
             buyDirectionalQuality += stratConf * weight;
             buyConviction += stratConf;
             buyReadiness += evidence.readinessScore;
@@ -599,6 +640,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         {
             sellVotes++;
             sellScore += score;
+            sellWeight += weight;
             sellDirectionalQuality += stratConf * weight;
             sellConviction += stratConf;
             sellReadiness += evidence.readinessScore;
@@ -612,7 +654,14 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(buyVotes > 0)
     {
-        buyDirectionalQuality /= buyVotes;
+        // Divided by buyWeight, not by buyVotes. `conf * weight` summed and then divided by the
+        // vote count scales the result by the average registration weight: a 1.70-weight voter at
+        // 0.69 confidence reads 1.17, and every consumer of this number treats it as quality in
+        // [0,1] - the >0.70 quorum discount at :435 fires for it unconditionally, and the
+        // 0.55 floor cannot be missed by any row heavy enough, while a 0.50-weight row can never
+        // reach it. Dividing by the weight actually cast makes this a weighted mean confidence,
+        // which is the quantity the 0.55 / 0.68 / 0.70 constants are documented to be.
+        buyDirectionalQuality /= (buyWeight > 0.0 ? buyWeight : 1.0);
         buyConviction /= buyVotes;
         buyReadiness /= buyVotes;
         buyContext /= buyVotes;
@@ -620,7 +669,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     }
     if(sellVotes > 0)
     {
-        sellDirectionalQuality /= sellVotes;
+        sellDirectionalQuality /= (sellWeight > 0.0 ? sellWeight : 1.0);
         sellConviction /= sellVotes;
         sellReadiness /= sellVotes;
         sellContext /= sellVotes;
@@ -630,6 +679,14 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     if(regimeVetoedVotes > 0)
         PrintFormat("[CONSENSUS-REGIME-VETO] %s | %d vote(s) hard-gated by regime | excluded weight %.2f | counted votes %d buy / %d sell",
                     symbol, regimeVetoedVotes, regimeVetoedWeight, buyVotes, sellVotes);
+
+    // Once a minute per instance: this is a standing property of the roster, not a per-scan event.
+    if(advisoryVotes > 0 && TimeCurrent() - m_lastAdvisoryLog >= 60)
+    {
+        m_lastAdvisoryLog = TimeCurrent();
+        PrintFormat("[CONSENSUS-ADVISORY] %s | %d vote(s) from weight=0.00 adapters not counted | counted %d buy / %d sell | those rows must earn an allocation before their confidence moves a decision",
+                    symbol, advisoryVotes, buyVotes, sellVotes);
+    }
 
     if(buyVotes == 0 && sellVotes == 0)
     {
@@ -672,6 +729,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     double losingScore = 0.0;
     int winningVotes = 0;
     int losingVotes = 0;
+    double winningConviction = 0.0;
 
     if(buyScore > sellScore)
     {
@@ -680,6 +738,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         losingScore = sellScore;
         winningVotes = buyVotes;
         losingVotes = sellVotes;
+        winningConviction = buyConviction;
     }
     else if(sellScore > buyScore)
     {
@@ -688,10 +747,14 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         losingScore = buyScore;
         winningVotes = sellVotes;
         losingVotes = buyVotes;
+        winningConviction = sellConviction;
     }
+    // Arbitration rule: opposing votes that tie (equal aggregate weight on both sides) mean no trade.
+    // A lone voter cannot tie, so reaching this branch requires buyVotes>0 and sellVotes>0.
     else
     {
-        PrintFormat("[CONSENSUS-TIE] %s | buyScore=%.3f sellScore=%.3f", symbol, buyScore, sellScore);
+        PrintFormat("[CONSENSUS-TIE] %s | buyVotes=%d buyWeight=%.2f sellVotes=%d sellWeight=%.2f | buyScore=%.3f sellScore=%.3f",
+                    symbol, buyVotes, buyWeight, sellVotes, sellWeight, buyScore, sellScore);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -699,6 +762,18 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     {
         PrintFormat("[CONSENSUS-REJECT] %s | Winning votes %d < minVoters %d",
                     symbol, winningVotes, effectiveMinVoters);
+        return TRADE_SIGNAL_NONE;
+    }
+
+    // A lone voter carries the decision alone, so it has to be a strong one. The bar is the
+    // winning side's MEAN CONFIDENCE, not winningScore: score is conf x weight x participation x
+    // reliability x regime, so a 1.70-weight row clears a 0.70 score at 0.41 confidence while a
+    // 0.50-weight row never clears it at any confidence. Measured on 2026-11-12, that gate held
+    // the book at zero trades on scores 0.649 and 0.657 while naming a "confidence" floor.
+    if(winningVotes == 1 && winningConviction < m_singleVoterFloor)
+    {
+        PrintFormat("[CONSENSUS-REJECT] %s | single voter confidence %.3f < singleVoterFloor %.2f (needs a second agreeing vote)",
+                    symbol, winningConviction, m_singleVoterFloor);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -830,3 +905,4 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 }
 
 #endif // CONSENSUS_ENGINE_MQH
+

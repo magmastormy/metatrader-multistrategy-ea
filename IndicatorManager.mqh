@@ -149,7 +149,7 @@ void CIndicatorManager::DestroyInstance()
 {
    if(m_instance != NULL)
    {
-      // L2-014: Explicitly release all handles before delete to prevent use-after-free
+      // Explicitly release all handles before delete to prevent use-after-free
       if(ArraySize(m_instance.m_handles) > 0)
       {
          PrintFormat("[INDICATOR-MANAGER] WARNING: DestroyInstance called with %d active handles - releasing them", ArraySize(m_instance.m_handles));
@@ -784,9 +784,10 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
 CIndicatorManager::~CIndicatorManager()
 {
    ReleaseAll();
-   // AUDIT FIX: Removed 'delete m_instance' â€” destructor must not delete itself (double-free / UB)
+   // AUDIT FIX: Removed 'delete m_instance' â€?destructor must not delete itself (double-free / UB)
    m_instance = NULL;
 }
 
 #endif // __INDICATOR_MANAGER_MQH__
+
 

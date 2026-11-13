@@ -1,5 +1,5 @@
 // Weighted Soft Confluence Scoring for S/R Bounce Strategy
-// Batch 103: Replaces hard AND logic with 0-100 scoring
+// Replaces hard AND logic with 0-100 scoring
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -30,3 +30,4 @@ public:
 };
 
 #endif // __SR_SIGNAL_SCORER_MQH__
+

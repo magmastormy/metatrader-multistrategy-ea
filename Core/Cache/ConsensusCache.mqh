@@ -3,6 +3,7 @@
 #ifndef CONSENSUS_CACHE_MQH
 #define CONSENSUS_CACHE_MQH
 
+#include "..\Utils\EAClock.mqh"
 #include "..\Utils\Enums.mqh"
 
 struct SConsensusCacheEntry
@@ -98,7 +99,7 @@ public:
         if(idx < 0 || !m_entries[idx].valid)
             return false;
 
-        uint nowMs = GetTickCount();
+        uint nowMs = EAClockMs();
         if(nowMs - m_entries[idx].computedAtMs > m_ttlMs)
         {
             m_entries[idx].valid = false;
@@ -126,7 +127,7 @@ public:
         m_entries[idx].signal = signal;
         m_entries[idx].confidence = confidence;
         m_entries[idx].confluence = confluence;
-        m_entries[idx].computedAtMs = GetTickCount();
+        m_entries[idx].computedAtMs = EAClockMs();
         m_entries[idx].valid = true;
     }
 

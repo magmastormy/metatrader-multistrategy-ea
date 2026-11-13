@@ -54,7 +54,7 @@ struct SReadinessScoreConfig
     }
 };
 
-// Signal Filter Settings - Grouped Nested Structs (L4-012 Fix)
+// Signal Filter Settings - Grouped Nested Structs
 
 struct STrendFilterSettings
 {
@@ -193,7 +193,7 @@ struct SFilterOrderSettings
     }
 };
 
-// Readiness Component Weights (for L4-015 fix)
+// Readiness Component Weights
 struct SReadinessComponentWeights
 {
     double trendWeight;
@@ -363,3 +363,4 @@ struct SPipelineEvidenceSnapshot
 };
 
 #endif // SIGNAL_PIPELINE_TYPES_MQH
+

@@ -62,7 +62,7 @@ private:
     static IStrategy* CreateNeuralNetworkAI()
         {
             CNeuralNetworkStrategy* nn = new CNeuralNetworkStrategy();
-            return new CAIStrategyAdapter(nn, true); // L1-008: Adapter owns NN when factory-created
+            return new CAIStrategyAdapter(nn, true); // Adapter owns NN when factory-created
         }
     
     static IStrategy* CreateTransformerAI()

@@ -143,7 +143,7 @@ bool IsGainFlipSyntheticSymbolName(const string symbol)
             StringFind(normalized, "FLIP ") >= 0);
 }
 
-//--- Batch 102: Extended Deriv family detection (18 families)
+//--- Extended Deriv family detection (18 families)
 
 bool IsDexSyntheticSymbolName(const string symbol)
 {
@@ -274,7 +274,7 @@ int DetectFamilyId(const string symbol)
     return -1;
 }
 
-// Batch 103: Non-Deriv asset class detection functions
+// Non-Deriv asset class detection functions
 
 bool IsMetalsSymbolName(const string symbol)
 {
@@ -578,3 +578,4 @@ public:
 };
 
 #endif // CORE_INSTRUMENTS_MQH
+

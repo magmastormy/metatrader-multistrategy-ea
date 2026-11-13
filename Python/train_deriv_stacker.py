@@ -12,13 +12,7 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 
 from data_pipeline import build_scaled_dataset_splits
-
-FAMILY_PREFIXES = [
-    "crashboom", "volatility", "step", "jump", "dex",
-    "multistep", "exponential", "hybrid", "rangebreak",
-    "skewstep", "volswitch", "driftswitch", "trek",
-    "tactical", "derived", "stablespread", "pairsarbitrage", "spotvolatility",
-]
+from train_common import FAMILY_PREFIXES, adjust_seq_len_for_family
 
 
 def get_onnx_probs(path: str, X: np.ndarray) -> np.ndarray:
@@ -48,8 +42,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Jump (3) and DEX (4) use longer sequences
-    if args.family_id in (3, 4) and args.seq_len == 60:
-        args.seq_len = 120
+    args.seq_len = adjust_seq_len_for_family(args.family_id, args.seq_len)
 
     prefix = FAMILY_PREFIXES[args.family_id]
 
@@ -80,7 +73,7 @@ def main() -> None:
         with open(args.xgboost_pkl, "rb") as handle:
             xgboost = pickle.load(handle)
 
-    n_base = 3  # onnx + lgbm minimum
+    n_base = 2  # onnx + lgbm minimum
     if catboost is not None:
         n_base += 1
     if xgboost is not None:
@@ -148,3 +141,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

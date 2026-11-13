@@ -23,7 +23,7 @@
 
 //--- Management includes
 #include "Core\Strategy\StrategyRegistry.mqh"
-// CStrategyRegistry* g_strategyRegistry = NULL;  // REMOVED: Unused global (L1-004)
+// CStrategyRegistry* g_strategyRegistry = NULL;  // REMOVED: Unused global
 #include "Core\Management\EnterpriseStrategyManager.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
@@ -48,8 +48,14 @@ input bool            InpExportConsensusData  = true;    // Consensus metrics
 input bool            InpExportTargetLabels   = true;    // Triple-barrier labels
 
 input group "Label Configuration"
-input string          InpLabelHorizons        = "5,10,20"; // Comma-separated bar horizons
-input double          InpLabelATRMultiplier   = 0.5;    // ATR multiplier for barrier distance
+// These two defaults must match the geometry the live network grades itself against,
+// or the export teaches a target the EA never resolves. CNeuralNetworkStrategy labels
+// with AI_DEFAULT_BARRIER_K (1.5 ATR) over AI_DEFAULT_BARRIER_VERT_BARS (12 bars)
+// (AIModules/AIConfig.mqh:90-94). Measured consequence of the old 0.5 ATR / 5-bar
+// defaults: 164,035 exported rows whose labels no model could beat the majority
+// baseline on (see Tools/OFFLINE_NN_FINDINGS.md), so training on them was worthless.
+input string          InpLabelHorizons        = "5,12,20"; // Comma-separated bar horizons (12 = the live vertical barrier)
+input double          InpLabelATRMultiplier   = 1.5;    // ATR multiplier for barrier distance (== AI_DEFAULT_BARRIER_K)
 
 input group "Engine Configuration"
 input int             InpHurstLookback        = 300;
@@ -709,7 +715,7 @@ void Cleanup()
         // InitializeStrategies). Its destructor tears them down via CStrategyMgrRoster
         // (Deinit+delete). Deleting them here too caused a double-free / invalid-pointer
         // crash (StrategyMgrRoster.mqh:392). Do NOT delete g_contexts[i].strategies[s]
-        // directly — let the manager own them. Only delete the manager below.
+        // directly �?let the manager own them. Only delete the manager below.
 
         // Delete manager
         if(g_contexts[i].strategyManager != NULL)
@@ -781,7 +787,7 @@ int OnInit()
 
         if(!InitializeEngines(activeSymbols, InpExportTimeframe))
         {
-            PrintFormat("[TRAIN-EXPORT] Engine init failed for %s — skipping", symbol);
+            PrintFormat("[TRAIN-EXPORT] Engine init failed for %s �?skipping", symbol);
             continue;
         }
 
@@ -789,7 +795,7 @@ int OnInit()
         {
             if(!InitializeStrategies(activeSymbols, InpExportTimeframe))
             {
-                PrintFormat("[TRAIN-EXPORT] Strategy init failed for %s — skipping", symbol);
+                PrintFormat("[TRAIN-EXPORT] Strategy init failed for %s �?skipping", symbol);
                 continue;
             }
         }
@@ -824,7 +830,8 @@ void OnDeinit(const int reason)
     Cleanup();
 }
 
-// Tick handler (unused — one-shot exporter)
+// Tick handler (unused �?one-shot exporter)
 void OnTick()
 {
 }
+

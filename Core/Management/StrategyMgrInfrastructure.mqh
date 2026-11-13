@@ -19,6 +19,7 @@
 // Pointer-only collaborators (never dereferenced here)
 class CTradeManager;
 class CPositionSizer;
+class CChartDrawingManager;   // m_drawingManager is stored, never dereferenced in this header
 
 class CStrategyMgrInfrastructure
 {
@@ -28,13 +29,13 @@ private:
     CPositionSizer*              m_positionSizer;        // CRITICAL FIX: Store for strategy initialization
     CUnifiedRiskManager*         m_unifiedRiskManager;   // Unified risk validation gate (injected)
     CDerivAssetProfiler*         m_derivProfiler;        // Deriv family profiler for engine weighting
-    CMultiAssetProfiler*         m_multiAssetProfiler;   // Multi-asset profiler (Batch 103)
+    CMultiAssetProfiler*         m_multiAssetProfiler;   // Multi-asset profiler
     CChartDrawingManager*        m_drawingManager;       // Central drawing manager for the symbol
-    CVPINFilter*                 m_vpinFilter;           // VPIN toxicity filter for consensus (Batch 104)
-    COrderFlowImbalanceEngine*   m_ofiEngine;            // OFI for regime integration (Batch 104)
+    CVPINFilter*                 m_vpinFilter;           // VPIN toxicity filter for consensus
+    COrderFlowImbalanceEngine*   m_ofiEngine;            // OFI for regime integration
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;   // I1: Per-family cluster weight multipliers
     CFourStateRegimeDetector*    m_fourStateRegimeDetector;
-    CStrategyRegistry*           m_strategyRegistry;     // L1-004: Injected registry (no global singleton)
+    CStrategyRegistry*           m_strategyRegistry;     // Injected registry (no global singleton)
     bool                         m_regimeDetectorInitialized;
 
     CTradeAttributionManager* m_attribution;
@@ -110,7 +111,7 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_ofiEngine(NULL),
     m_familyWeightMatrix(NULL),
     m_fourStateRegimeDetector(NULL),
-    m_strategyRegistry(NULL),                // L1-004: Injected registry
+    m_strategyRegistry(NULL),                // Injected registry
     m_regimeDetectorInitialized(false),
     m_attribution(NULL),
     m_healthMonitor(NULL),
@@ -278,3 +279,4 @@ void CStrategyMgrInfrastructure::ApplyPipelineFilters(SignalFilterSettings &sett
 }
 
 #endif // STRATEGY_MGR_INFRASTRUCTURE_MQH
+

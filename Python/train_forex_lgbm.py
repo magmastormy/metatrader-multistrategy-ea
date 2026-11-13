@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import argparse
-import pickle
-from pathlib import Path
 
-import numpy as np
-from scipy.stats import spearmanr
+from train_common import ASSET_CLASS_IDS, ASSET_CLASS_NAMES, compute_test_ic, load_split, save_pickle
 
-from data_pipeline import build_scaled_dataset_splits, build_forex_features, get_asset_class_feature_count
 
 ASSET_CLASS_NAME = "forex"
-ASSET_CLASS_ID = 0
+ASSET_CLASS_ID = ASSET_CLASS_IDS[ASSET_CLASS_NAME]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a LightGBM model for Forex currency pairs.")
     parser.add_argument("--csv", required=True)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--pkl-output", default=None)
     parser.add_argument("--seq-len", type=int, default=60)
     parser.add_argument("--k", type=float, default=1.5)
     parser.add_argument("--vert", type=int, default=20)
@@ -27,17 +24,13 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("lightgbm is required for train_forex_lgbm.py") from exc
 
-    train, val, test, metadata = build_scaled_dataset_splits(
+    X_tr, X_va, X_te, y_tr, y_va, y_te, metadata = load_split(
         args.csv,
         seq_len=args.seq_len,
         k=args.k,
-        vertical_bars=args.vert,
+        vert=args.vert,
         asset_class=ASSET_CLASS_ID,
     )
-    X_tr = train[0].reshape(len(train[0]), -1)
-    X_va = val[0].reshape(len(val[0]), -1)
-    X_te = test[0].reshape(len(test[0]), -1)
-    y_tr, y_va, y_te = train[1], val[1], test[1]
 
     # Forex-specific hyperparameters: lower learning rate, fewer leaves for smoother signals
     params = {
@@ -63,12 +56,11 @@ def main() -> None:
         callbacks=[lgb.early_stopping(50)],
     )
 
-    pkl_output = args.output or f"{ASSET_CLASS_NAME}_lgbm.pkl"
-    with open(pkl_output, "wb") as handle:
-        pickle.dump(model, handle)
+    pkl_output = args.pkl_output or f"{ASSET_CLASS_NAME}_lgbm.pkl"
+    save_pickle(model, pkl_output)
 
     preds = model.predict(X_te)
-    test_ic, _ = spearmanr(preds[:, 2] - preds[:, 0], test[3])
+    test_ic = compute_test_ic(preds, y_te)
     print(
         f"trained=forex_lgbm asset_class={ASSET_CLASS_NAME}({ASSET_CLASS_ID}) "
         f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "

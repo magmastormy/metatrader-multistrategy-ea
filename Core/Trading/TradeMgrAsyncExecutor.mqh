@@ -21,6 +21,7 @@ class CTradeMgrAsyncExecutor
 {
 private:
     SAsyncTradeRequest m_pendingAsyncTrades[];  // Dynamic array of pending async confirmations
+    SAsyncTradeRequest m_quarantineTrades[];    // Quarantine list for unresolved orders awaiting broker history
     int                m_maxPendingAsync;       // Maximum pending async trades (default 10)
     bool               m_asyncModeEnabled;      // Whether async mode is active
 
@@ -29,15 +30,21 @@ public:
                                m_asyncModeEnabled(false)
     {
         ArrayResize(m_pendingAsyncTrades, 0);
+        ArrayResize(m_quarantineTrades, 0);
     }
 
     bool IsAsyncModeEnabled() const { return m_asyncModeEnabled; }
     void SetAsyncModeEnabled(const bool enabled) { m_asyncModeEnabled = enabled; }
-    void FreePending() { ArrayFree(m_pendingAsyncTrades); }
+    void FreePending() { ArrayFree(m_pendingAsyncTrades); ArrayFree(m_quarantineTrades); }
 
     int GetPendingAsyncCount() const
     {
         return ArraySize(m_pendingAsyncTrades);
+    }
+
+    int GetQuarantineCount() const
+    {
+        return ArraySize(m_quarantineTrades);
     }
 
     ulong GetPendingAsyncTicket(int index) const
@@ -45,6 +52,13 @@ public:
         if(index < 0 || index >= ArraySize(m_pendingAsyncTrades))
             return 0;
         return m_pendingAsyncTrades[index].ticket;
+    }
+
+    ulong GetQuarantineTicket(int index) const
+    {
+        if(index < 0 || index >= ArraySize(m_quarantineTrades))
+            return 0;
+        return m_quarantineTrades[index].ticket;
     }
 
     bool IsDuplicateIdempotencyKey(const string key) const
@@ -263,53 +277,193 @@ public:
             if(SettleExpiredRequest(i, execQuality))
                 RemovePendingAt(i);
         }
+
+        // Re-check quarantined orders against broker history every timer tick so a late
+        // fill is still reconciled instead of escaping tracking.
+        CheckQuarantineReconciliation(execQuality);
     }
 
-    // Returns true once the broker reports a final order state and the receipt has been emitted.
+    // Re-check quarantined orders against broker history on each timer tick.
+    // An order stays in quarantine until the broker shows a deal for it; only then is it
+    // reconciled and removed, so a later fill can never escape reconciliation.
+    void CheckQuarantineReconciliation(CExecutionQualityTracker &execQuality)
+    {
+        if(ArraySize(m_quarantineTrades) == 0)
+            return;
+
+        datetime historyFrom = TimeCurrent() - 3600;
+        datetime historyTo   = TimeCurrent() + 3600;
+        if(!HistorySelect(historyFrom, historyTo))
+            return;
+
+        int total = HistoryDealsTotal();
+
+        for(int i = ArraySize(m_quarantineTrades) - 1; i >= 0; i--)
+        {
+            ulong ticket = m_quarantineTrades[i].ticket;
+            string symbol = m_quarantineTrades[i].symbol;
+
+            double filledVolume = 0.0;
+            double filledValue  = 0.0;
+            bool found = false;
+
+            for(int d = 0; d < total; d++)
+            {
+                ulong dealTicket = HistoryDealGetTicket(d);
+                if(dealTicket == 0)
+                    continue;
+                long dealOrder = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+                if((ulong)dealOrder != ticket)
+                    continue;
+                string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+                if(dealSymbol != symbol)
+                    continue;
+
+                double dealVol  = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+                double dealPrice= HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+                filledVolume   += dealVol;
+                filledValue    += dealPrice * dealVol;
+                found = true;
+            }
+
+            if(!found)
+                continue;   // still awaiting broker history
+
+            m_quarantineTrades[i].filledVolume = filledVolume;
+            m_quarantineTrades[i].filledValue  = filledValue;
+            double averagePrice = filledVolume > 0.0 ? filledValue / filledVolume : 0.0;
+
+            PrintFormat("[ASYNC-TRADE-RECONCILED] Ticket=%I64u | %s | quarantined fill volume=%.4f of %.4f | avgPrice=%.5f",
+                        ticket, symbol, filledVolume, m_quarantineTrades[i].lot, averagePrice);
+
+            STradeExecutionReceipt receipt;
+            receipt.accepted        = true;
+            receipt.orderTicket     = ticket;
+            receipt.requestedVolume = m_quarantineTrades[i].lot;
+            receipt.filledVolume    = filledVolume;
+            receipt.averagePrice    = averagePrice;
+            receipt.requestedPrice  = m_quarantineTrades[i].price;
+            receipt.stopLoss        = m_quarantineTrades[i].sl;
+            receipt.takeProfit      = m_quarantineTrades[i].tp;
+            receipt.symbol          = symbol;
+            receipt.submitTime      = m_quarantineTrades[i].submitTime;
+            receipt.note            = "async_quarantine_reconciled";
+            if(m_quarantineTrades[i].submitTime > 0)
+                receipt.roundTripMs = (ulong)(TimeCurrent() - m_quarantineTrades[i].submitTime) * 1000;
+            execQuality.UpdateExecutionMetrics(receipt);
+
+            RemoveQuarantineAt(i);
+        }
+    }
+
+    void RemoveQuarantineAt(const int index)
+    {
+        for(int j = index; j < ArraySize(m_quarantineTrades) - 1; j++)
+            m_quarantineTrades[j] = m_quarantineTrades[j + 1];
+        ArrayResize(m_quarantineTrades, ArraySize(m_quarantineTrades) - 1);
+    }
+
+    // Sum fill volume and value from broker deals filtered by DEAL_ORDER for a given order ticket.
+    bool FillVolumeFromDeals(const ulong ticket, const string symbol, double &filledVolume, double &filledValue)
+    {
+        filledVolume = 0.0;
+        filledValue  = 0.0;
+        datetime historyFrom = TimeCurrent() - 3600;
+        datetime historyTo   = TimeCurrent() + 3600;
+        if(!HistorySelect(historyFrom, historyTo))
+            return false;
+
+        int total = HistoryDealsTotal();
+        for(int d = 0; d < total; d++)
+        {
+            ulong dealTicket = HistoryDealGetTicket(d);
+            if(dealTicket == 0)
+                continue;
+            long dealOrder = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+            if((ulong)dealOrder != ticket)
+                continue;
+            string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+            if(dealSymbol != symbol)
+                continue;
+
+            double dealVol  = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+            double dealPrice= HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+            filledVolume   += dealVol;
+            filledValue    += dealPrice * dealVol;
+        }
+        return filledVolume > 0.0;
+    }
+
+    // Returns true once the broker reports a final order state and the receipt has been emitted,
+    // or the order has been moved to quarantine (removed from pending either way).
     bool SettleExpiredRequest(const int i, CExecutionQualityTracker &execQuality)
     {
         const ulong ticket = m_pendingAsyncTrades[i].ticket;
         m_pendingAsyncTrades[i].retryCount++;
         HistorySelect(m_pendingAsyncTrades[i].submitTime - 3600, TimeCurrent() + 3600);
 
+        // Order still live on the broker: cancel the remainder, then re-test.
         if(OrderSelect(ticket))
         {
             CancelOrderRemainder(ticket);
             if(OrderSelect(ticket))
-                return false;
+                return false;   // still live, keep waiting for a fill
         }
 
         bool inHistory = HistoryOrderSelect(ticket);
-        bool unreconciled = !inHistory && m_pendingAsyncTrades[i].retryCount >= ASYNC_RECONCILE_MAX_ATTEMPTS;
-        if(!inHistory && !unreconciled)
+
+        // Not in history yet and still within the retry budget: keep pending, re-check next tick.
+        if(!inHistory && m_pendingAsyncTrades[i].retryCount < ASYNC_RECONCILE_MAX_ATTEMPTS)
             return false;
 
+        // Resolve fill volume and average price from broker deals filtered by DEAL_ORDER,
+        // not from order-level volumes (a partial fill need not move ORDER_VOLUME_CURRENT).
         double historyFilled = 0.0;
+        double historyValue  = 0.0;
         if(inHistory)
-            historyFilled = HistoryOrderGetDouble(ticket, ORDER_VOLUME_INITIAL) - HistoryOrderGetDouble(ticket, ORDER_VOLUME_CURRENT);
+            FillVolumeFromDeals(ticket, m_pendingAsyncTrades[i].symbol, historyFilled, historyValue);
 
         double filled = MathMax(m_pendingAsyncTrades[i].filledVolume, historyFilled);
+        double filledValue = (historyFilled >= m_pendingAsyncTrades[i].filledVolume && historyFilled > 0.0)
+                             ? historyValue
+                             : m_pendingAsyncTrades[i].filledValue;
+
+        bool unreconciled = !inHistory && m_pendingAsyncTrades[i].retryCount >= ASYNC_RECONCILE_MAX_ATTEMPTS;
+
         if(unreconciled)
-            PrintFormat("[ASYNC-TRADE-UNRECONCILED] Ticket=%I64u | %s | no broker history after %d checks - manual position review required",
+        {
+            // Do not drop the order: a later fill must still be reconcilable.
+            // Move it to quarantine; the timer re-checks quarantine each tick until the broker shows a final state.
+            int newSize = ArraySize(m_quarantineTrades) + 1;
+            ArrayResize(m_quarantineTrades, newSize);
+            int qidx = newSize - 1;
+            m_quarantineTrades[qidx] = m_pendingAsyncTrades[i];
+            m_quarantineTrades[qidx].filledVolume = filled;
+            m_quarantineTrades[qidx].filledValue  = filledValue;
+            PrintFormat("[ASYNC-TRADE-QUARANTINED] Ticket=%I64u | %s | no broker history after %d checks - awaiting broker final state",
                         ticket, m_pendingAsyncTrades[i].symbol, m_pendingAsyncTrades[i].retryCount);
+            return true;   // removed from pending; lifecycle continues in quarantine
+        }
+
+        if(inHistory)
+        {
+            PrintFormat("[ASYNC-TRADE-RECONCILED] Ticket=%I64u | %s | filled=%.4f of %.4f | avgPrice=%.5f",
+                        ticket, m_pendingAsyncTrades[i].symbol, filled, m_pendingAsyncTrades[i].lot,
+                        filled > 0.0 ? filledValue / filled : 0.0);
+        }
 
         STradeExecutionReceipt receipt;
         receipt.accepted        = filled > 0.0;
         receipt.orderTicket     = ticket;
         receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
         receipt.filledVolume    = filled;
-        receipt.averagePrice    = m_pendingAsyncTrades[i].filledVolume > 0.0
-                                  ? m_pendingAsyncTrades[i].filledValue / m_pendingAsyncTrades[i].filledVolume
-                                  : 0.0;
+        receipt.averagePrice    = filled > 0.0 ? filledValue / filled : 0.0;
         receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
         receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
         receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
         receipt.symbol          = m_pendingAsyncTrades[i].symbol;
         receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-        if(unreconciled)
-            receipt.note = "async_unreconciled";
-        else
-            receipt.note = filled > 0.0 ? "async_partial_timeout" : "async_timeout";
+        receipt.note            = filled > 0.0 ? "async_partial_timeout" : "async_timeout";
         if(m_pendingAsyncTrades[i].submitTime > 0)
             receipt.roundTripMs = (ulong)(TimeCurrent() - m_pendingAsyncTrades[i].submitTime) * 1000;
         execQuality.UpdateExecutionMetrics(receipt);

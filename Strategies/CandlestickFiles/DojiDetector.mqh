@@ -44,7 +44,7 @@ public:
             return false;
 
         double atr = m_analyzer.GetATR(14);
-        // Batch 156: fail CLOSED during ATR warmup like the other detectors
+        // fail CLOSED during ATR warmup like the other detectors
         if(atr <= 0 || candle.totalRange < atr * 0.3)  // Doji must have some range
             return false;
 
@@ -117,3 +117,4 @@ private:
         return MathMin(1.0, strength);
     }
 };
+

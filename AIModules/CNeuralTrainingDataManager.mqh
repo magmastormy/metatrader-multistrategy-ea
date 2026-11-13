@@ -332,3 +332,4 @@ public:
 };
 
 #endif // __NEURAL_TRAINING_DATA_MANAGER_MQH__
+

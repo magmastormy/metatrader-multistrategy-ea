@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import pickle
-from pathlib import Path
 
-import numpy as np
-from scipy.stats import spearmanr
+from train_common import ASSET_CLASS_IDS, ASSET_CLASS_NAMES, compute_test_ic, load_split, save_pickle
 
-from data_pipeline import build_scaled_dataset_splits, build_metals_features, get_asset_class_feature_count
 
 ASSET_CLASS_NAME = "metals"
-ASSET_CLASS_ID = 1
+ASSET_CLASS_ID = ASSET_CLASS_IDS[ASSET_CLASS_NAME]
 
 
 def main() -> None:
@@ -32,20 +28,15 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("xgboost is required for train_metals_catboost.py") from exc
 
-    train, val, test, metadata = build_scaled_dataset_splits(
+    X_tr, X_va, X_te, y_tr, y_va, y_te, metadata = load_split(
         args.csv,
         seq_len=args.seq_len,
         k=args.k,
-        vertical_bars=args.vert,
+        vert=args.vert,
         asset_class=ASSET_CLASS_ID,
     )
-    X_tr = train[0].reshape(len(train[0]), -1)
-    X_va = val[0].reshape(len(val[0]), -1)
-    X_te = test[0].reshape(len(test[0]), -1)
-    y_tr, y_va, y_te = train[1], val[1], test[1]
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = args.output_dir
 
     # CatBoost: deeper trees for breakout detection
     cb_model = cb.CatBoostClassifier(
@@ -60,12 +51,11 @@ def main() -> None:
     )
     cb_model.fit(X_tr, y_tr, eval_set=(X_va, y_va))
 
-    cb_path = output_dir / f"{ASSET_CLASS_NAME}_catboost.pkl"
-    with open(cb_path, "wb") as handle:
-        pickle.dump(cb_model, handle)
+    cb_path = f"{output_dir}/{ASSET_CLASS_NAME}_catboost.pkl"
+    save_pickle(cb_model, cb_path)
 
     cb_preds = cb_model.predict_proba(X_te)
-    cb_ic, _ = spearmanr(cb_preds[:, 2] - cb_preds[:, 0], test[3])
+    cb_ic = compute_test_ic(cb_preds, y_te)
     print(
         f"trained=metals_catboost asset_class={ASSET_CLASS_NAME}({ASSET_CLASS_ID}) "
         f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "
@@ -87,12 +77,11 @@ def main() -> None:
     )
     xgb_model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
 
-    xgb_path = output_dir / f"{ASSET_CLASS_NAME}_xgboost.pkl"
-    with open(xgb_path, "wb") as handle:
-        pickle.dump(xgb_model, handle)
+    xgb_path = f"{output_dir}/{ASSET_CLASS_NAME}_xgboost.pkl"
+    save_pickle(xgb_model, xgb_path)
 
     xgb_preds = xgb_model.predict_proba(X_te)
-    xgb_ic, _ = spearmanr(xgb_preds[:, 2] - xgb_preds[:, 0], test[3])
+    xgb_ic = compute_test_ic(xgb_preds, y_te)
     print(
         f"trained=metals_xgboost asset_class={ASSET_CLASS_NAME}({ASSET_CLASS_ID}) "
         f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "

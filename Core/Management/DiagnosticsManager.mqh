@@ -18,7 +18,12 @@
 #include "../Risk/SafeModeConfig.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
 #include "../../IndicatorManager.mqh"
-#include "EnterpriseStrategyManager.mqh"
+// The manager is held only as `CEnterpriseStrategyManager* m_managers[]` here, never dereferenced, so a
+// forward declaration is the whole requirement. Including EnterpriseStrategyManager.mqh closed a cycle:
+// it includes ConsensusEngine.mqh, which includes this file - and the cycle resolved only by include
+// order (whichever of the three a translation unit happened to include first decided whether the type
+// was complete when the other two needed it).
+class CEnterpriseStrategyManager;
 #include "../Processing/DerivAssetProfiler.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Engines/SessionWeightManager.mqh"
@@ -91,7 +96,7 @@ private:
         string                      m_symbols[];
         int                         m_symbolCount;
 
-        // AI vote heartbeat tracking [L11-004]
+        // AI vote heartbeat tracking
         CDiagMgrAIVoteTracker m_aiVoteTracker;
 
 public:
@@ -201,7 +206,7 @@ void UpdateCounters(ulong scans, ulong noSignal, ulong validatorReject,
                     m_aiVoteTracker.ConfigureSymbols(m_symbolCount);
                 }
 
-// [L11-004] Stamp AI-vote activity when an AI adapter logs an [AI-VOTE] heartbeat
+// Stamp AI-vote activity when an AI adapter logs an [AI-VOTE] heartbeat
                 void UpdateAIVoteActivity(const string symbol, const string aiType)
                 {
                     m_aiVoteTracker.UpdateActivity(m_symbols, m_symbolCount, symbol, aiType);
@@ -238,13 +243,13 @@ void UpdateCounters(ulong scans, ulong noSignal, ulong validatorReject,
         if(m_scalpEngine != NULL && m_scalpEngine.IsInitialized())
             m_scalpEngine.PrintDiagnostics();
 
-        //--- L5-013 / L9-001..L9-004: compounding tier, session weight, skew step, family weight
+        //--- compounding tier, session weight, skew step, family weight
         if(ShouldLogNormal())
         {
             CDiagMgrHeartbeat::EmitModuleHeartbeats(m_compoundingTierManager, m_sessionWeightManager,
                                                     m_skewStepAnalyzer, m_familyWeightMatrix, corrId);
 
-            //--- [L11-004] Warn when an enabled AI adapter stops logging [AI-VOTE]
+            //--- Warn when an enabled AI adapter stops logging [AI-VOTE]
             if(m_aiEnabled && m_aiVoteTracker.IsTrackingEnabled() && m_symbolCount > 0)
             {
                 m_aiVoteTracker.EmitMissingVoteWarnings(m_symbols, m_symbolCount,
@@ -318,3 +323,4 @@ void UpdateCounters(ulong scans, ulong noSignal, ulong validatorReject,
 };
 
 #endif // DIAGNOSTICS_MANAGER_MQH
+

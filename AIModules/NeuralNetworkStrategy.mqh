@@ -6,8 +6,10 @@
 #define NEURAL_NETWORK_STRATEGY_MQH
 
 #include "../Core/Utils/Enums.mqh"
+#include "../Core/Management/EntStrategyTypes.mqh"   // TradeSignalToString - the diag line at ~:1833 prints it
 #include "../Core/AI/NNModelStorage.mqh"
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../Core/AI/VolatilityRegimeModel.mqh"   // Batch 277: fed here, read by the entry gate
 #include "TransformerBrain.mqh"
 #include "MetaLabeler.mqh"
 #include "CNeuralCore.mqh"
@@ -1804,6 +1806,13 @@ public:
         double rawFeatures[];
         if(!ExtractFeatures(normalizedFeatures, rawFeatures))
             return TRADE_SIGNAL_NONE;
+
+        // Batch 277: the 70-feature vector carries no directional information (measured at
+        // noise level at every barrier geometry) but does carry volatility-regime
+        // information (+1.0 to +5.4 points per symbol). This is where those features exist,
+        // so this is the only place that can feed the regime model; the reader is the
+        // entry gate in EAOrchestrator, which never treats a missing model as a veto.
+        VolReg_Feed(m_symbol, rawFeatures);
 
         ENUM_TRADE_SIGNAL signal;
         double metaInput[];

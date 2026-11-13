@@ -8,6 +8,7 @@
 #include "../Utilities/SafeCopyBuffer.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 
 enum ENUM_VB_ENTRY_TYPE
 {
@@ -61,6 +62,7 @@ private:
     CUnifiedRiskManager* m_riskManager;
     
     datetime m_lastSignalBar;
+    datetime m_lastDeferLog;      // throttles the not-ready notice
     int m_signalsGenerated;
     bool m_inSqueeze;
     int     m_kcEmaHandle;        // Keltner Channel EMA midline
@@ -71,62 +73,15 @@ private:
     bool    m_breakoutFailed;
     ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of the failed breakout
     
-    // BB fallback for when the indicator handle fails
-    bool CalculateFallbackBB(double &outUpper, double &outMiddle, double &outLower)
+    // One notice per minute per instance: at a bar close every symbol asks at the same instant,
+    // so an unthrottled line here would be 13 lines per bar for a condition that lasts milliseconds.
+    void NoticeDeferredRead(const string what)
     {
-        MqlRates rates[];
-        ArraySetAsSeries(rates, true);
-        int needed = m_bbPeriod + 5;
-        // Copy from shift 1: copying from 0 puts the still-forming bar in rates[0], so the
-        // band would stretch on a close that has not happened yet and the breakout level
-        // would move with the forming bar.
-        int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
-        if(copied < m_bbPeriod)
-            return false;
-
-        double sum = 0;
-        for(int i = 0; i < m_bbPeriod; i++)
-            sum += rates[i].close;
-        double mean = sum / m_bbPeriod;
-
-        double sumSqDiff = 0;
-        for(int i = 0; i < m_bbPeriod; i++)
-        {
-            double diff = rates[i].close - mean;
-            sumSqDiff += diff * diff;
-        }
-        double stdDev = MathSqrt(sumSqDiff / m_bbPeriod);
-
-        outUpper  = mean + m_bbDeviation * stdDev;
-        outMiddle = mean;
-        outLower  = mean - m_bbDeviation * stdDev;
-        return true;
-    }
-
-    // ATR fallback for when the indicator handle fails
-    bool CalculateFallbackATR(double &outATR)
-    {
-        MqlRates rates[];
-        ArraySetAsSeries(rates, true);
-        int needed = m_atrPeriod + 5;
-        // Shift 1 so the forming bar cannot inflate ATR: this feeds the stop distance, so
-        // an inflated reading widens the stop and the risk charged for it.
-        int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
-        if(copied < m_atrPeriod + 1)  // Need prev close for True Range
-            return false;
-
-        // Simple average true range over atrPeriod closed bars
-        double sumTR = 0;
-        for(int i = 0; i < m_atrPeriod; i++)
-        {
-            double highLow    = rates[i].high - rates[i].low;
-            double highPrevCl = MathAbs(rates[i].high - rates[i + 1].close);
-            double lowPrevCl  = MathAbs(rates[i].low  - rates[i + 1].close);
-            double tr = MathMax(highLow, MathMax(highPrevCl, lowPrevCl));
-            sumTR += tr;
-        }
-        outATR = sumTR / m_atrPeriod;
-        return true;
+        if(TimeCurrent() - m_lastDeferLog < 60)
+            return;
+        m_lastDeferLog = TimeCurrent();
+        PrintFormat("[VOLBREAK-DEFER] %s not ready at bar close - retrying next cycle | Symbol=%s TF=%s",
+                    what, m_symbol, EnumToString(m_timeframe));
     }
 
 public:
@@ -146,6 +101,7 @@ public:
         m_atrTargetMult(3.0),
         m_riskManager(NULL),
         m_lastSignalBar(0),
+        m_lastDeferLog(0),
         m_signalsGenerated(0),
         m_inSqueeze(false),
         m_kcEmaHandle(INVALID_HANDLE),
@@ -236,48 +192,26 @@ public:
             return RejectSignal("VOLBREAK_DISABLED_OR_UNINIT");
         
         double bbUpper[2], bbMiddle[2], bbLower[2];
-        bool bbFromFallback = false;
         if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
            !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
            !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower))    // Lower band
         {
-            double fbUpper, fbMiddle, fbLower;
-            if(CalculateFallbackBB(fbUpper, fbMiddle, fbLower))
-            {
-                bbUpper[0]  = fbUpper;
-                bbUpper[1]  = fbUpper;
-                bbMiddle[0] = fbMiddle;
-                bbMiddle[1] = fbMiddle;
-                bbLower[0]  = fbLower;
-                bbLower[1]  = fbLower;
-                bbFromFallback = true;
-                PrintFormat("[VOLBREAK-FALLBACK] BB calculated from raw rates | Upper=%.5f Middle=%.5f Lower=%.5f | Symbol=%s TF=%s",
-                           fbUpper, fbMiddle, fbLower, m_symbol, EnumToString(m_timeframe));
-            }
-            else
-            {
-                return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
-            }
+            // A bar rollover leaves every indicator one recalculation behind for a few hundred
+            // milliseconds, and all thirteen symbols ask at the same instant. Recomputing the
+            // bands from raw rates here is what turned a bar close into a 1.0-3.3 s scan (every
+            // slow [SCAN-COST] maxUs reading in the 2026-11-12 journal lands on one), and the ATR
+            // branch flat-filled all twelve slots, which pinned the expansion ratio at 1.0 and
+            // blinded the gate this row exists for. Wait for the engine: the next scan is
+            // milliseconds away and the cooldown latch is only set on a real evaluation.
+            NoticeDeferredRead("BB buffer");
+            return RejectSignal("VOLBREAK_DATA_NOT_READY");
         }
 
         double atrBuffer[12];  // Current + lookback for comparison
-        bool atrFromFallback = false;
         if(!SafeCopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer))
         {
-            double fbATR;
-            if(CalculateFallbackATR(fbATR))
-            {
-                // Flat fill: all 12 slots hold the same ATR, so the expansion ratio reads 1.0
-                for(int i = 0; i < 12; i++)
-                    atrBuffer[i] = fbATR;
-                atrFromFallback = true;
-                PrintFormat("[VOLBREAK-FALLBACK] ATR calculated from raw rates | ATR=%.5f | Symbol=%s TF=%s",
-                           fbATR, m_symbol, EnumToString(m_timeframe));
-            }
-            else
-            {
-                return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
-            }
+            NoticeDeferredRead("ATR buffer");
+            return RejectSignal("VOLBREAK_DATA_NOT_READY");
         }
 
         // Volume is confirmation-only: a copy failure leaves volRatio at its neutral 1.0
@@ -342,6 +276,14 @@ public:
             return RejectSignal("VOLBREAK_ADX_NOT_RISING");
         }
         
+        // Local pre-trade guard before the risk gate: a zero-distance ATR stop (flat ATR), a
+        // target that does not cover the stop, or a spread wider than half the stop is refused here.
+        double guardPoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        long guardSpreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double guardSpread = (guardPoint > 0) ? (double)guardSpreadPoints * guardPoint : 0.0;
+        if(!CSignalGuards::IsSignalTradable(signal.entryPrice, signal.stopLoss, signal.takeProfit, guardSpread))
+            return RejectSignal("VOLBREAK_NOT_TRADABLE");
+
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -447,9 +389,17 @@ private:
             return signal;
         }
 
-        // Retest entry is evaluated before fresh breakouts
-        ENUM_TRADE_SIGNAL retestDirection = (m_squeezeBar > 0 && price >= m_squeezeHighPrice) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-        if(BreakoutWithRetest(retestDirection))
+        // Retest entry is evaluated before fresh breakouts.
+        // The direction used to be inferred from where price sat relative to the squeeze high, which
+        // handed BreakoutWithRetest the SELL test whenever price was still inside the old range - so a
+        // valid long retest could never be seen. Ask for each direction and take the one that qualifies.
+        ENUM_TRADE_SIGNAL retestDirection = TRADE_SIGNAL_NONE;
+        if(BreakoutWithRetest(TRADE_SIGNAL_BUY))
+            retestDirection = TRADE_SIGNAL_BUY;
+        else if(BreakoutWithRetest(TRADE_SIGNAL_SELL))
+            retestDirection = TRADE_SIGNAL_SELL;
+
+        if(retestDirection != TRADE_SIGNAL_NONE)
         {
             signal.entryType = VB_ENTRY_RETEST;
             signal.direction = retestDirection;

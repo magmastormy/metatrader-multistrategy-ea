@@ -56,7 +56,7 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
     if(strategy == NULL || !m_src.IsManagerInitialized())
         return false;
 
-    // L1-010: the registry decides whether this strategy is active in the current
+    // the registry decides whether this strategy is active in the current
     // mode; the caller's 'enabled' argument is only advisory.
         CStrategyRegistry* strategyRegistry = m_src.GetStrategyRegistryConst();
         if(strategyRegistry != NULL)
@@ -89,14 +89,14 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
             return false;
         }
 
-    // L6-010: AI init after factory creation so adapters see symbol/timeframe/risk context
+    // AI init after factory creation so adapters see symbol/timeframe/risk context
     if(!strategy.InitializeAI(m_src.GetManagedSymbol(), resolvedTf, m_src.GetUnifiedRiskManagerConst()))
     {
         Print("[EnterpriseStrategyManager] WARNING: Strategy ", name, " AI initialization failed. Continuing with base initialization.");
         // Non-fatal: some adapters degrade to non-AI behaviour
     }
 
-    // L6-001: a strategy that did not take the risk manager injection would bypass risk gating
+    // a strategy that did not take the risk manager injection would bypass risk gating
         if(!strategy.ValidateRiskManagerInjection())
         {
             Print("[EnterpriseStrategyManager] CRITICAL: Strategy ", name, " failed risk manager injection validation. Strategy will bypass risk validation - rejecting registration.");
@@ -150,3 +150,4 @@ IStrategy* CStrategyRegistryState::GetStrategyByName(const string name) const
 }
 
 #endif // STRATEGY_REGISTRY_STATE_MQH
+

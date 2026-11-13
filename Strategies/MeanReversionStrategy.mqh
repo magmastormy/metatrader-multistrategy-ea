@@ -4,6 +4,7 @@
 #define MEAN_REVERSION_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 // Pre-trade gating: ValidateWithRiskManager() delegates to CUnifiedRiskManager. It returns true when
 // none was injected, but registration refuses such a strategy (StrategyRegistryState.mqh:122).
 #include "../Core/Risk/UnifiedRiskManager.mqh"
@@ -240,7 +241,9 @@ public:
         }
         
         // Band width filter: skip when bands are narrower than their recent average
-        if(!SufficientBandWidth())
+        // Read once: the same two 50-bar buffer copies were fetched again for the log line below.
+        bool bandWideEnough = SufficientBandWidth();
+        if(!bandWideEnough)
         {
             return RejectSignal("MEANREV_BAND_WIDTH_INSUFFICIENT");
         }
@@ -270,7 +273,19 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+        if(!CSignalGuards::IsSignalTradable(signal.entryPrice, signal.stopLoss, signal.takeProfit, spreadPrice))
+        {
+            SetDecisionReasonTag("MEANREV_NOT_TRADABLE");
+            return TRADE_SIGNAL_NONE;
+        }
+
         SetProposedStops(request.stopLossPips, request.takeProfitPips);
+        // Publish the real confidence before gating: it was written after the risk call, so the
+        // gate and its log saw whatever the out-parameter held on entry (0.0 on a fresh call).
+        confidence = signal.confidence;
         if(!ValidateWithRiskManager(request, "MEANREV", confidence))
             return TRADE_SIGNAL_NONE;
         
@@ -278,10 +293,9 @@ public:
         m_signalsGenerated++;
         RecordSignal();
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "MEANREV_SIGNAL_BUY" : "MEANREV_SIGNAL_SELL");
-        confidence = signal.confidence;
         
         // [CONSENSUS-DIAG] log required by AGENTS.md §6
-        LogConsensusDiag(signal.direction, StringFormat("Type: %s | Z: %.2f | Stoch: %s | BW: %s", signal.entryType == MR_ENTRY_DOUBLE_SIGNAL ? "DOUBLE" : signal.entryType == MR_ENTRY_BB_TOUCH ? "BB" : "RSI", signal.confidence, StochasticExtreme(signal.direction) ? "EXT" : "NORM", SufficientBandWidth() ? "OK" : "NARROW"), confidence);
+        LogConsensusDiag(signal.direction, StringFormat("Type: %s | Z: %.2f | Stoch: %s | BW: %s", signal.entryType == MR_ENTRY_DOUBLE_SIGNAL ? "DOUBLE" : signal.entryType == MR_ENTRY_BB_TOUCH ? "BB" : "RSI", signal.confidence, StochasticExtreme(signal.direction) ? "EXT" : "NORM", bandWideEnough ? "OK" : "NARROW"), confidence);
         
         PrintFormat("[MEANREV] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
                    m_symbol,
@@ -389,7 +403,16 @@ public:
                     double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
                     double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
                     double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 1.5;
-            
+
+                    long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+                    double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+                    if(!CSignalGuards::IsSignalTradable(signal.entryPrice, signal.stopLoss, signal.takeProfit, spreadPrice))
+                    {
+                        SetDecisionReasonTag("MEANREV_SYN_NOT_TRADABLE");
+                        return TRADE_SIGNAL_NONE;
+                    }
+
                     STradeValidationRequest request;
                     request.symbol = m_symbol;
                     request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -399,7 +422,7 @@ public:
                     request.confidence = signal.confidence;
                     request.strategy = GetName();
                     request.clusterCode = "";
-            
+
                     SValidationResult result;
                     ZeroMemory(result);
                     if(riskMgr.ValidateTradeRequest(request, "MEANREV_SYN", "", false).approved)

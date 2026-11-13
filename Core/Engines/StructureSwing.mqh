@@ -1,7 +1,7 @@
 // StructureSwing.mqh - Swing high/low detection
 // Extracted verbatim from StructureEngine.mqh (no behavior change)
 // Owns the swing sizing configuration (minSwingSize / useATR) and
-// the real-time "potential swing" tracking slots (L4-009 fix).
+// the real-time "potential swing" tracking slots.
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"
 #property strict
@@ -18,7 +18,7 @@ private:
     double m_minSwingSize;          // Minimum swing size in points
     bool   m_useATR;                // Use ATR for adaptive thresholds
 
-    // Potential swing tracking for real-time detection (L4-009 fix)
+    // Potential swing tracking for real-time detection
     double m_potentialSwingHighPrice;
     int    m_potentialSwingHighIndex;
     double m_potentialSwingLowPrice;
@@ -339,3 +339,4 @@ bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int i
 }
 
 #endif // STRUCTURE_SWING_MQH
+

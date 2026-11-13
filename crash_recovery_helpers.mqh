@@ -1,4 +1,4 @@
-// Crash Recovery State File Helpers (L2-003)
+// Crash Recovery State File Helpers
 // JSON with version, checksum, and atomic write
 // Simple xorshift checksum (64-bit)
 ulong ComputeStateChecksum(const string &jsonData)
@@ -13,7 +13,7 @@ ulong ComputeStateChecksum(const string &jsonData)
 }
 
 // Write crash recovery state as JSON with atomic write and checksum.
-// Batch 168: the state now carries the halt flags and the broker trading-day key.
+// The state now carries the halt flags and the broker trading-day key.
 // Previously only equity anchors were saved, so a restart cleared the daily-loss
 // halt and let the EA trade a second full daily budget after it had already spent
 // one; and nothing was written except on graceful deinit, so a real crash left
@@ -62,15 +62,41 @@ bool WriteCrashRecoveryState(const string &fileName,
 
     // FILE_REWRITE replaces the destination in one step, so the last good state
     // is never deleted ahead of a failed move.
-        if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
-        {
-            PrintFormat("[RECOVERY] ERROR: FileMove failed for %s -> %s (err=%d)", tempFile, fileName, GetLastError());
-            // flags=0 -> local MQL5/Files dir, matching the FileOpen(tempFile, ...)
-            // above. Default (FILE_COMMON) would target the shared dir and leak
-            // the local .tmp on move failure.
-            FileDelete(tempFile, 0);
-            return false;
-        }
+    // Batch 272: on the live terminal FILE_REWRITE itself failed with err=5020
+    // ("cannot rewrite") whenever the destination already existed, so every save after the
+    // first one in a session was lost and the on-disk state stayed at the first write. The
+    // retry below deletes the destination and moves plainly; the state being replaced is
+    // superseded by the .tmp already on disk, and if the retry also fails the .tmp is kept
+    // rather than deleted, because it is now the only copy of the newest state.
+    static bool s_rewriteUnsupported = false;   // learned once per terminal session
+    const bool dstExists = FileIsExist(fileName, 0);
+
+    if(!dstExists)
+    {
+        if(FileMove(tempFile, 0, fileName, 0))
+            return true;
+        PrintFormat("[RECOVERY] ERROR: FileMove failed for %s -> %s (err=%d) | %s kept",
+                    tempFile, fileName, GetLastError(), tempFile);
+        return false;
+    }
+
+    if(!s_rewriteUnsupported)
+    {
+        if(FileMove(tempFile, FILE_REWRITE, fileName, 0))
+            return true;
+
+        s_rewriteUnsupported = true;
+        PrintFormat("[RECOVERY] FILE_REWRITE is not supported on this terminal (err=%d) - "
+                    "using delete+move for the rest of this session", GetLastError());
+    }
+
+    FileDelete(fileName, 0);
+    if(!FileMove(tempFile, 0, fileName, 0))
+    {
+        PrintFormat("[RECOVERY] ERROR: FileMove failed for %s -> %s (err=%d) | %s kept",
+                    tempFile, fileName, GetLastError(), tempFile);
+        return false;
+    }
     return true;
 }
 
@@ -166,7 +192,7 @@ bool ReadCrashRecoveryState(const string &fileName,
     if(!ExtractDoubleFromJson(json, "dd_max", ddMax)) return false;
     if(!ExtractStringFromJson(json, "timestamp", timestamp)) return false;
 
-    // Batch 168 fields. version:1 files (written before this change) legitimately
+    // The new fields. version:1 files (written before this change) legitimately
     // lack them, so they default rather than reject - otherwise the first upgrade
     // restart would silently discard a live drawdown halt.
     haltFlags = 0;
@@ -182,3 +208,5 @@ bool ReadCrashRecoveryState(const string &fileName,
 
     return true;
 }
+
+

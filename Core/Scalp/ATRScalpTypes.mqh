@@ -17,7 +17,7 @@ struct SATRScalpingConfig
    int      emaFastPeriod;            // Fast EMA period (default 5)
    int      emaSlowPeriod;            // Slow EMA period (default 13)
    int      rsiPeriod;                // RSI period (default 7)
-   double   spreadMaxATRRatio;        // Max spread as fraction of ATR (default 0.50 â€” widened for synthetic indices)
+   double   spreadMaxATRRatio;        // Max spread as fraction of ATR (default 0.50 â€?widened for synthetic indices)
    double   slAtrMultiplier;          // SL = ATR * this (default 1.5)
    double   tpAtrMultiplier;          // TP = ATR * this (default 2.0)
    int      magicOffset;              // Engine band offset (MAGIC_ENGINE_ATR_SCALP)
@@ -64,3 +64,4 @@ struct SATRScalpSymbolState
 };
 
 #endif // CORE_SCALP_ATR_SCALP_TYPES_MQH
+

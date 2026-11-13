@@ -189,7 +189,7 @@ double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
     if(m_emaSystem == NULL) return 0;
     
     double ema21 = m_emaSystem.GetEMA21(0);
-    // Batch 156: unwarmed EMA feed returns 0 - a sell trail stop would collapse
+    // unwarmed EMA feed returns 0 - a sell trail stop would collapse
     // to ~buffer and TRAIL_HYBRID's MathMin could emit it as a real SL.
     if(ema21 <= 0) return 0;
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -208,7 +208,7 @@ double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
     if(m_emaSystem == NULL) return 0;
     
     double ema8 = m_emaSystem.GetEMA8(0);
-    if(ema8 <= 0) return 0;  // Batch 156: unwarmed feed guard - see GetEMA21TrailStop
+    if(ema8 <= 0) return 0;  // unwarmed feed guard - see GetEMA21TrailStop
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
 
@@ -223,7 +223,7 @@ double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
 double CTrendTrailingStop::GetATRTrailStop(bool isBuy, double highestOrLowest)
 {
     double atr = GetATR(14);
-    if(atr <= 0) return 0;  // Batch 156: unwarmed ATR - a zero-width trail emits invalid stops
+    if(atr <= 0) return 0;  // unwarmed ATR - a zero-width trail emits invalid stops
 
     if(isBuy)
         return highestOrLowest - (m_atrMultiplier * atr);
@@ -256,7 +256,7 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
         case TRAIL_HYBRID:
             {
                 // Use the better of EMA21 or ATR trailing.
-                // Batch 156: getters now return 0 while unwarmed. MathMax handles a
+                // getters now return 0 while unwarmed. MathMax handles a
                 // dead leg for buys, but MathMin for sells would select the 0 - so
                 // the sell side only combines two live stops.
                 double emaSL = GetEMA21TrailStop(tradeInfo.isBuy);
@@ -290,7 +290,7 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
 
 double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
 {
-    // Batch 157: sell positions close at ASK - tracking their extreme off BID
+    // sell positions close at ASK - tracking their extreme off BID
     // understates adverse excursion by the spread.
     double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
     
@@ -348,3 +348,5 @@ bool CTrendTrailingStop::ShouldExitEarly(const STradeTrailInfo &tradeInfo)
 }
 
 #endif // __TREND_TRAILING_STOP_MQH__
+
+

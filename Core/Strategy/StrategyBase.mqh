@@ -453,7 +453,7 @@ bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &reque
 {
     CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
     if(riskMgr == NULL)
-        return true; // No risk manager injected â€” allow trade (backward compat)
+        return true; // No risk manager injected â€?allow trade (backward compat)
 
     SValidationResult result;
     ZeroMemory(result);
@@ -659,7 +659,7 @@ bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
     if(htf == m_timeframe) return true; // Can't go higher, assume aligned
 
     CIndicatorManager* indMgr = CIndicatorManager::Instance();
-    if(indMgr == NULL) return true; // Batch 117: null guard
+    if(indMgr == NULL) return true; // null guard
     int emaHandle = indMgr.GetMAHandle(m_symbol, htf, 50, 0, MODE_EMA, PRICE_CLOSE);
     if(emaHandle == INVALID_HANDLE) return true; // Can't determine, assume aligned
 
@@ -693,3 +693,4 @@ ENUM_TIMEFRAMES CStrategyBase::GetNextHigherTF(ENUM_TIMEFRAMES tf)
 }
 
 #endif
+

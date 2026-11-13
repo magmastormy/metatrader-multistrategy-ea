@@ -12,7 +12,7 @@ struct SFullMarginConfig
    double   minProfitForStack;       // Min profit ratio to allow stacking (>0 means in profit)
    int      maxBreachesPerDay;       // Max DD breaches before session lockout (2)
    int      cooldownMinutes;         // Cooldown at conservative tier after breach (120)
-   bool     sessionLocked;           // True after 2nd breach in a day â€” full-margin disabled for session
+   bool     sessionLocked;           // True after 2nd breach in a day â€?full-margin disabled for session
    double   ddWarningPct;            // DD warning threshold (5%)
    double   ddCriticalPct;           // DD critical threshold (10%)
    double   maxSpreadATRRatio;       // Stricter spread gate (0.20 = 20% of ATR)
@@ -54,7 +54,7 @@ struct SFullMarginBreachState
    }
 };
 
-// CFullMarginMode â€” Full-margin aggressive mode controller
+// CFullMarginMode â€?Full-margin aggressive mode controller
 class CFullMarginMode
 {
 private:
@@ -79,7 +79,7 @@ private:
             m_breachState.cooldownUntil   = 0;
             m_breachState.sessionLocked   = false;
             m_breachState.sessionLockDate = 0;
-            Print("[FULL-MARGIN] Daily breach reset â€” new trading day");
+            Print("[FULL-MARGIN] Daily breach reset â€?new trading day");
          }
       }
    }
@@ -138,11 +138,11 @@ public:
       if(!m_initialized)
          return false;
 
-      // Session lockout â€” no stacking allowed
+      // Session lockout â€?no stacking allowed
       if(m_breachState.sessionLocked)
          return false;
 
-      // Cooldown active â€” no stacking
+      // Cooldown active â€?no stacking
       if(m_breachState.cooldownUntil > 0 && TimeCurrent() < m_breachState.cooldownUntil)
          return false;
 
@@ -176,7 +176,7 @@ public:
    }
 
 // Get stacked lot size: baseLot * scale^level
-// Batch 120: Added symbol parameter for multi-symbol support
+// Added symbol parameter for multi-symbol support
    double GetStackedLotSize(double baseLot, int stackLevel, const string symbol = "") const
    {
       if(stackLevel <= 0)
@@ -203,30 +203,30 @@ public:
 
       CheckDailyReset();
 
-      // Session lockout â€” full-margin disabled for rest of day
+      // Session lockout â€?full-margin disabled for rest of day
       if(m_breachState.sessionLocked)
       {
          static datetime s_lastLockLog = 0;
          datetime now = TimeCurrent();
          if(s_lastLockLog == 0 || (now - s_lastLockLog) >= 300)
          {
-            PrintFormat("[FULL-MARGIN] Session LOCKED â€” full-margin disabled for rest of day | breaches=%d",
+            PrintFormat("[FULL-MARGIN] Session LOCKED â€?full-margin disabled for rest of day | breaches=%d",
                         m_breachState.breachCount);
             s_lastLockLog = now;
          }
          return false;
       }
 
-      // Cooldown active â€” still at conservative tier
+      // Cooldown active â€?still at conservative tier
       if(m_breachState.cooldownUntil > 0 && TimeCurrent() < m_breachState.cooldownUntil)
       {
          return false;
       }
 
-      // Cooldown expired â€” clear it
+      // Cooldown expired â€?clear it
       if(m_breachState.cooldownUntil > 0 && TimeCurrent() >= m_breachState.cooldownUntil)
       {
-         PrintFormat("[FULL-MARGIN] Cooldown expired â€” resuming full-margin mode | was at conservative for %d min",
+         PrintFormat("[FULL-MARGIN] Cooldown expired â€?resuming full-margin mode | was at conservative for %d min",
                      m_config.cooldownMinutes);
          m_breachState.cooldownUntil = 0;
       }
@@ -237,7 +237,7 @@ public:
          m_breachState.breachCount++;
          m_breachState.lastBreachTime = TimeCurrent();
 
-         // Second breach within same day â†’ session lockout
+         // Second breach within same day â†?session lockout
          if(m_breachState.breachCount >= m_config.maxBreachesPerDay)
          {
             m_breachState.sessionLocked = true;
@@ -248,7 +248,7 @@ public:
             return false;
          }
 
-         // First breach â†’ downgrade to conservative for cooldown period
+         // First breach â†?downgrade to conservative for cooldown period
          m_breachState.cooldownUntil = TimeCurrent() + m_config.cooldownMinutes * 60;
          PrintFormat("[FULL-MARGIN] DD BREACH | DD=%.2f%% >= critical=%.2f%% | breach %d/%d | downgrading to CONSERVATIVE for %d min | cooldown until %s",
                      currentDrawdownPct, m_config.ddCriticalPct,
@@ -258,7 +258,7 @@ public:
          return false;
       }
 
-      // Warning DD â€” still allow but log
+      // Warning DD â€?still allow but log
       if(currentDrawdownPct >= m_config.ddWarningPct)
       {
          static datetime s_lastWarnLog = 0;
@@ -293,7 +293,7 @@ public:
       TimeToStruct(now, nowDt);
       TimeToStruct(m_breachState.sessionLockDate, lockDt);
       if(nowDt.year != lockDt.year || nowDt.mon != lockDt.mon || nowDt.day != lockDt.day)
-         return false; // New day â€” lock expired
+         return false; // New day â€?lock expired
       return true;
    }
 
@@ -376,3 +376,4 @@ public:
 };
 
 #endif // CORE_RISK_FULL_MARGIN_MODE_MQH
+

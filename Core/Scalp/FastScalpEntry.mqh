@@ -18,10 +18,10 @@
 #include "FastScalpRiskBudget.mqh"
 #include "FastScalpAsyncTracker.mqh"
 
-// Forward declaration for AI adapter (L10-018) â€” only ever NULL-checked here
+// Forward declaration for AI adapter (L10-018) â€?only ever NULL-checked here
 class CAIAdapter;
 
-// CFastScalpEntry â€” stateless scalp entry gating + execution
+// CFastScalpEntry â€?stateless scalp entry gating + execution
 class CFastScalpEntry
 {
 public:
@@ -101,7 +101,7 @@ public:
       double symbolMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
       if(lotSize < symbolMinLot)
       {
-         PrintFormat("[SCALP-LOT-MIN] %s | capped lot %.2f < min lot %.2f â€” skipping scalp signal",
+         PrintFormat("[SCALP-LOT-MIN] %s | capped lot %.2f < min lot %.2f â€?skipping scalp signal",
                      symbol, lotSize, symbolMinLot);
          return false;
       }
@@ -301,3 +301,4 @@ public:
 };
 
 #endif // CORE_SCALP_FAST_SCALP_ENTRY_MQH
+

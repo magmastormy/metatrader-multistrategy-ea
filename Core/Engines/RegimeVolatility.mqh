@@ -24,7 +24,7 @@ public:
                                    const int zScoreWindow,
                                    double &zScoreOut);
 
-    //--- Batch104-C2: domain-validated ADX read (0.0 when unavailable)
+    //--- domain-validated ADX read (0.0 when unavailable)
     static double ReadAdxValue(const int adxHandle,
                                const string symbol,
                                const ENUM_TIMEFRAMES timeframe);
@@ -130,7 +130,7 @@ double CRegimeVolatility::ReadAdxValue(const int adxHandle,
     if(adxHandle != INVALID_HANDLE && CopyBuffer(adxHandle, 0, 0, 1, adxBuffer) == 1)
     {
         adxValue = adxBuffer[0];
-        // Batch104-C2: ADX domain validation â€” corrupted multi-symbol indicator handles
+        // ADX domain validation â€?corrupted multi-symbol indicator handles
         // can return values like 115185.3 (valid ADX range is 0-100)
         if(adxValue < 0.0 || adxValue > 100.0 || !MathIsValidNumber(adxValue))
         {
@@ -144,3 +144,4 @@ double CRegimeVolatility::ReadAdxValue(const int adxHandle,
 }
 
 #endif // REGIME_VOLATILITY_MQH
+

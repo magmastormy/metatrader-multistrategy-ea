@@ -73,8 +73,8 @@ private:
     CEnhancedErrorHandler* m_errorHandler;
 
     uint m_slippage;                         // Maximum slippage (in points)
-    long m_magicNumber;                      // Magic number for trades (base) â€” Batch 125: changed from uint to long for 64-bit support
-    long m_magicRangeMax;                    // Max magic number for EA ownership range check â€” Batch 125: changed from uint to long
+    long m_magicNumber;                      // Magic number for trades (base) â€?changed from uint to long for 64-bit support
+    long m_magicRangeMax;                    // Max magic number for EA ownership range check â€?changed from uint to long
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
@@ -90,10 +90,10 @@ private:
     int m_dynamicSlippageAtrPeriod;          // ATR period for volatility calculation
     uint m_baseSlippage;                     // Base slippage before dynamic adjustment
 
-    // Execution quality metrics â€” state owned by CExecutionQualityTracker
+    // Execution quality metrics â€?state owned by CExecutionQualityTracker
     CExecutionQualityTracker m_execQuality;
 
-    // Trade tracking and statistics â€” state owned by CTradeStatsTracker
+    // Trade tracking and statistics â€?state owned by CTradeStatsTracker
     CTradeStatsTracker m_tradeStats;
 
     int m_totalTrades;
@@ -110,7 +110,7 @@ private:
     // Pending confirmation tracking for non-blocking execution (CTradeMgrConfirmationQueue)
     CTradeMgrConfirmationQueue m_confirmationQueue;
 
-    // Async trade execution tracking â€” state owned by CTradeMgrAsyncExecutor
+    // Async trade execution tracking â€?state owned by CTradeMgrAsyncExecutor
     CTradeMgrAsyncExecutor m_asyncExecutor;
 
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -135,7 +135,7 @@ private:
     PendingOrder m_pendingOrders[100];       // Track pending orders
     int m_pendingOrderCount;
 
-    // State tracking to prevent redundant modifications â€” owned by CPositionStateTracker
+    // State tracking to prevent redundant modifications â€?owned by CPositionStateTracker
     CPositionStateTracker m_positionStateTracker;
 
 
@@ -163,7 +163,7 @@ private:
 
             double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
 
-// Position state registry â€” thin forwarders onto CPositionStateTracker.
+// Position state registry â€?thin forwarders onto CPositionStateTracker.
     void UpdatePositionState(ulong ticket, double sl, double tp) { m_positionStateTracker.UpdatePositionState(ticket, sl, tp); }
 
     void CleanupPositionStates() { m_positionStateTracker.CleanupPositionStates(); }
@@ -1631,7 +1631,7 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
     
     m_tradeStats.RecordTrade(isWin, netProfit);
 
-    // Legacy backward-compatibility mirrors â€” intentionally retained here
+    // Legacy backward-compatibility mirrors â€?intentionally retained here
     m_totalTrades = m_tradeStats.TotalTrades();
     m_successfulTrades = m_tradeStats.SuccessfulTrades();
     m_failedTrades = m_tradeStats.FailedTrades();
@@ -1991,3 +1991,4 @@ void CTradeManager::CleanupPersistedAsyncTrades()
 }
 
 #endif // CORE_TRADE_MANAGER_MQH
+

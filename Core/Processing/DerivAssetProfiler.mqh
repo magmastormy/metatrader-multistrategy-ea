@@ -91,6 +91,26 @@ class CDerivAssetProfiler
 private:
    SDerivProfile  m_profiles[19];  // 18 families + unknown
    bool           m_logFamilyDetection;  // L7-013: Enable logging for family detection
+   // DetectFamily runs per scan per symbol, so an unrecognised name (a forex pair on a synthetic-heavy
+   // roster) printed the same UNKNOWN line every scan - 18,718 of 237,954 journal lines in the
+   // 2026-10-23 session. Report each symbol's UNKNOWN result once; the printable state never changes.
+   string         m_unknownReported[32];
+   int            m_unknownReportedCount;
+
+   // Records the symbol and answers "was this one already reported?" in one place, so the UNKNOWN print
+   // cannot fire twice for the same name.
+   bool IsUnknownAlreadyReported(const string symbol)
+   {
+      for(int i = 0; i < m_unknownReportedCount; i++)
+         if(m_unknownReported[i] == symbol)
+            return true;
+      if(m_unknownReportedCount < ArraySize(m_unknownReported))
+      {
+         m_unknownReported[m_unknownReportedCount] = symbol;
+         m_unknownReportedCount++;
+      }
+      return false;
+   }
 
    void InitializeProfiles()
    {
@@ -498,7 +518,7 @@ private:
    }
 
 public:
-   CDerivAssetProfiler() : m_logFamilyDetection(true)
+   CDerivAssetProfiler() : m_logFamilyDetection(true), m_unknownReportedCount(0)
    {
       InitializeProfiles();
    }
@@ -566,7 +586,7 @@ public:
          return DERIV_SPOT_VOLATILITY;
 
             ENUM_DERIV_FAMILY result = DERIV_UNKNOWN;
-            if(m_logFamilyDetection)
+            if(m_logFamilyDetection && !IsUnknownAlreadyReported(symbol))
             {
                PrintFormat("[DERIV-PROFILER] %s &#x2192; family=%s (priority=0 - UNKNOWN)", symbol, EnumToString(result));
             }
@@ -618,3 +638,4 @@ public:
 };
 
 #endif // CORE_PROCESSING_DERIV_ASSET_PROFILER_MQH
+

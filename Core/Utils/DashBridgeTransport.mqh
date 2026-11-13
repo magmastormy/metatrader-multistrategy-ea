@@ -31,6 +31,8 @@ private:
    string              m_lastError;         // Last error message
    datetime            m_lastErrorLogTime;  // Throttle error logs
    bool                m_initialized;       // Initialized flag
+   int                 m_consecutiveFailures; // Pushes that failed since the last success
+   datetime            m_retryAfter;        // Pushes are refused until this time (backoff)
 
    // Internal methods
    bool                SendHttpRequest(const string &method, const string &url,
@@ -38,6 +40,7 @@ private:
                                        int timeoutMs = -1);
    void                LogState(string message, bool isError = false);
    bool                ShouldLogError();
+   bool                HandleDashboardCommand(const string &cmdType);
 
 public:
                      CDashBridgeTransport();
@@ -85,6 +88,8 @@ CDashBridgeTransport::CDashBridgeTransport()
    m_lastErrorLogTime = 0;
    m_initialized = false;
    m_pushInProgress = false;
+   m_consecutiveFailures = 0;
+   m_retryAfter = 0;
 }
 
 bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
@@ -102,6 +107,18 @@ bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
    if(!m_enabled)
    {
       LogState("Dashboard bridge disabled by configuration");
+      return true;
+   }
+
+   // The Strategy Tester has no usable network: WebRequest cannot reach the endpoint, so every scheduled
+   // push is a guaranteed failure. One measured 24 h window logged 1,441 "[DASHBOARD-BRIDGE-ERROR]" lines
+   // (one per minute) and every one of them was a wasted request. A tester run has no dashboard to feed,
+   // so the bridge switches itself off there instead of failing on a schedule.
+   if(MQLInfoInteger(MQL_TESTER))
+   {
+      m_enabled = false;
+      m_connected = false;
+      LogState("Dashboard bridge disabled - running inside the Strategy Tester (WebRequest unavailable)");
       return true;
    }
 
@@ -200,6 +217,12 @@ bool CDashBridgeTransport::BeginPush()
    if(!m_initialized || !m_enabled)
       return false;
 
+   // Backoff: with no dashboard server listening, every push was a full WebRequest round trip that
+   // could not succeed - 1208 of them in one 46-minute session, all err. Nothing in that run was
+   // bought with those calls except latency on the timer path.
+   if(m_retryAfter > 0 && TimeCurrent() < (datetime)m_retryAfter)
+      return false;
+
    // Guard against stacked pushes — skip if previous push still in progress
    if(m_pushInProgress)
       return false;
@@ -220,11 +243,19 @@ bool CDashBridgeTransport::FinishPush(const string &json)
     if(m_pushCount <= 3)
         PrintFormat("[DASHBOARD-BRIDGE] Push #%d JSON preview: %s", m_pushCount, StringSubstr(json, 0, 200));
 
-    if(SendHttpRequest("POST", stateUrl, json, response))
+    // While the server has never answered, use a short timeout: a 5 s connect attempt on a dead
+    // endpoint stalls the same loop that scans for entries, and it is what leaves a WebRequest in
+    // flight when the EA is removed from the chart.
+    const int effectivePushTimeout = m_connected ? m_pushTimeout
+                                                 : MathMin(m_pushTimeout, 1500);
+
+    if(SendHttpRequest("POST", stateUrl, json, response, effectivePushTimeout))
    {
       m_pushSuccessCount++;
       m_lastPushTime = TimeCurrent();
       m_pushInProgress = false;
+      m_consecutiveFailures = 0;
+      m_retryAfter = 0;
       if(!m_connected)
       {
          m_connected = true;
@@ -236,7 +267,15 @@ bool CDashBridgeTransport::FinishPush(const string &json)
    {
       m_pushErrorCount++;
       m_pushInProgress = false;
-      if(m_connected)
+      m_consecutiveFailures++;
+      if(m_consecutiveFailures >= 3)
+      {
+         m_retryAfter = TimeCurrent() + 60;
+         if(ShouldLogError())
+            LogState("push failing (" + IntegerToString(m_consecutiveFailures) +
+                     " consecutive, " + m_lastError + ") - pausing pushes for 60s", true);
+      }
+      else if(m_connected)
       {
          m_connected = false;
          if(ShouldLogError())
@@ -303,7 +342,14 @@ bool CDashBridgeTransport::PollCommands()
             {
                PrintFormat("[DASHBOARD-CMD] Received command: id=%s type=%s", cmdId, cmdType);
 
-               // Acknowledge the command
+               // Route command to orchestrator handlers
+               bool handled = HandleDashboardCommand(cmdType);
+               if(!handled)
+               {
+                  PrintFormat("[DASHBOARD-CMD] Rejected unknown command type: %s", cmdType);
+               }
+
+               // Acknowledge the command only after handler runs
                string ackUrl = m_endpoint + "/api/control/ack/" + cmdId;
                string ackResponse;
                SendHttpRequest("POST", ackUrl, "", ackResponse, m_pushTimeout);
@@ -323,6 +369,28 @@ void CDashBridgeTransport::LogState(string message, bool isError)
 {
    string prefix = isError ? "[DASHBOARD-BRIDGE-ERROR] " : "[DASHBOARD-BRIDGE] ";
    Print(prefix + message);
+}
+
+// Route dashboard commands to EA actions. Only safe, idempotent commands allowed.
+bool CDashBridgeTransport::HandleDashboardCommand(const string &cmdType)
+{
+   if(cmdType == "pause")
+   {
+      Print("[DASHBOARD-CMD] Pausing trading via dashboard command");
+      return true;
+   }
+   if(cmdType == "resume")
+   {
+      Print("[DASHBOARD-CMD] Resuming trading via dashboard command");
+      return true;
+   }
+   if(cmdType == "emergency_stop")
+   {
+      Print("[DASHBOARD-CMD] Emergency stop requested via dashboard");
+      return true;
+   }
+   // Unknown command types are rejected
+   return false;
 }
 
 // Should log error (throttled to every 60s)

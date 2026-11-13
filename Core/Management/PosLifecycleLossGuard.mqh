@@ -1,9 +1,9 @@
 // Loss-minimisation guard (adverse-momentum exit, per-position loss
 // limit, consecutive-loss cooldown, daily-loss circuit breaker)
 // extracted from PositionLifecycleManager.mqh
-// (Phase H â€” God Object decomposition)
+// (Phase H â€?God Object decomposition)
 // Owns: loss-minimisation configuration + loss tracking counters.
-// Behaviour preserved 1:1 â€” no logic changes.
+// Behaviour preserved 1:1 â€?no logic changes.
 #ifndef POS_LIFECYCLE_LOSS_GUARD_MQH
 #define POS_LIFECYCLE_LOSS_GUARD_MQH
 
@@ -11,7 +11,7 @@
 #include "PosLifecycleMagicFilter.mqh"
 #include "PosLifecycleVolatility.mqh"   // CPosLifecycleVolatility::GetATR()
 
-// Stateful module â€” held BY VALUE by CPositionLifecycleManager.
+// Stateful module â€?held BY VALUE by CPositionLifecycleManager.
 class CPosLifecycleLossGuard
 {
 private:
@@ -26,7 +26,7 @@ private:
     datetime m_lastLossTime;
     datetime m_consecutiveLossCooldownUntil;
     double   m_dailyLossAmount;
-    // Batch 170: held as a PERCENT of equity, not a money budget. The money form
+    // held as a PERCENT of equity, not a money budget. The money form
     // could only be set once, so it froze against start-of-day equity and went
     // stale through any drawdown or deposit; deriving it from live equity at the
     // check needs no refresh path.
@@ -49,7 +49,7 @@ public:
         m_dailyResetTime(0)
     {}
 
-    //--- Batch 170: without this caller the daily-loss breaker below could never
+    //--- without this caller the daily-loss breaker below could never
     //--- arm, because m_dailyRiskBudgetPercent had no writer and stayed 0.
     void SetDailyRiskBudgetPercent(const double percent)
     {
@@ -192,3 +192,4 @@ public:
 };
 
 #endif // POS_LIFECYCLE_LOSS_GUARD_MQH
+

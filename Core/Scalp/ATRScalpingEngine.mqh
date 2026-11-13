@@ -166,7 +166,7 @@ public:
 
    void Deinit()
    {
-      // Batch 117: Handles are owned by CIndicatorManager â€?do NOT release them
+      // Handles are owned by CIndicatorManager â€?do NOT release them
       // Just invalidate our references to prevent stale handle usage
       m_signal.InvalidateHandles(m_symbolCount);
       m_symbolCount = 0;
@@ -261,3 +261,4 @@ public:
 };
 
 #endif // CORE_SCALP_ATR_SCALPING_ENGINE_MQH
+

@@ -7,6 +7,9 @@
 #define UICT_MARKET_STRUCTURE_ANALYZER_MQH
 
 #include "../../Core/Utils/Instruments.mqh"
+// CIndicatorManager owns the ATR handles the multiplex analysis asks for; this header must carry the
+// declaration rather than inherit it from the includer's include order.
+#include "../../IndicatorManager.mqh"
 
 enum ENUM_BMS_TYPE
 {

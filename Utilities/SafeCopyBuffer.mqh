@@ -21,3 +21,4 @@ bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double
 }
 
 #endif
+

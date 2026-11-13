@@ -221,6 +221,13 @@ public:
     // Access portfolio risk manager (for wiring correlation engine to PositionSizer)
     CPortfolioRiskManager* GetPortfolioRiskManager() { return &m_portfolioRiskManager; }
 
+    // Crisis limits and hardcoded thresholds (Item 19): bind operator inputs to CRiskMarginHealth members.
+    void ConfigureMarginHealth(double maxFreeMarginUsage, double minMarginLevel)
+    {
+        m_marginHealth.SetMaxFreeMarginUsage(maxFreeMarginUsage);
+        m_marginHealth.SetMinMarginLevel(minMarginLevel);
+    }
+
     // Trading-day roll hour (0 = server midnight). No caller sets this setter, so the day always rolls at midnight server time, not at the 17:00 forex rollover.
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
     
@@ -508,6 +515,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.correlationReduceThreshold = 0.4;
     m_config.correlationBlockThreshold = 0.7;
     m_config.maxPositionsSameBase = 3;
+    m_config.maxPositionsTotal = 15;
+    m_config.maxPositionsPerSymbol = 5;
     m_config.drawdownWarningPercent = 17.5;   // 70% of the 25% max
     m_config.drawdownCriticalPercent = 25.0;  // matches input InpMaxDrawdown
     m_config.dailyLossLimitPercent = 15.0;    // sized for small accounts, where one trade can be ~10%
@@ -573,6 +582,10 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
         m_config.maxDailyRiskPercent = 5.0;
     if(m_config.maxPortfolioRiskPercent <= 0.0)
         m_config.maxPortfolioRiskPercent = 15.0;
+    if(m_config.maxPositionsTotal <= 0)
+        m_config.maxPositionsTotal = 15;
+    if(m_config.maxPositionsPerSymbol <= 0)
+        m_config.maxPositionsPerSymbol = 5;
     if(m_config.correlationThreshold <= 0.0 || m_config.correlationThreshold > 1.0)
         m_config.correlationThreshold = 0.7;
     if(m_config.correlationReduceThreshold <= 0.0 || m_config.correlationReduceThreshold > 1.0)
@@ -648,7 +661,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     // Scale guard: active risk must land in [0.01, 20.0] %, i.e. inputs are 0-100 not 0-1.
     double activeRiskCheck = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     if(activeRiskCheck < 0.01 || activeRiskCheck > 20.0)
-        PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] — verify input scale is 0-100 not 0-1",
+        PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] �?verify input scale is 0-100 not 0-1",
                     activeRiskCheck);
 
     PrintFormat("[RISK-UNIFIED] Initialized | Base %.2f%% | Range %.2f-%.2f%% | Daily %.2f%% | Portfolio %.2f%%",
@@ -687,7 +700,7 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     CheckDrawdownCircuitBreaker();
     CheckDailyLossLimit();
 
-    // Margin ladder, cadence-throttled inside (MARGIN_HEALTH_POLL_MS). Until Batch 240 nothing called this at all,
+    // Margin ladder, cadence-throttled inside (MARGIN_HEALTH_POLL_MS). Until nothing called this at all,
     // so no [RISK-MARGIN] line had ever been printed and no margin breach could hold entries or request a flatten.
     MonitorMarginHealth();
 }
@@ -796,7 +809,7 @@ void CUnifiedRiskManager::SyncClusterPositionCounts()
                     m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
         if(m_clusterSyncCounts[c] > m_maxConcurrentPerCluster)
         {
-            PrintFormat("[RISK-CLUSTER-SYNC]   WARNING: cluster=%s has %d inherited positions exceeding cap %d — blocking new entries until positions close",
+            PrintFormat("[RISK-CLUSTER-SYNC]   WARNING: cluster=%s has %d inherited positions exceeding cap %d �?blocking new entries until positions close",
                         m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
         }
     }
@@ -1639,7 +1652,7 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     if(risk > 0.0)
         return risk;
 
-    // Fallback manual math when OrderCalcProfit fails. Missing tick data means we cannot size risk — refuse.
+    // Fallback manual math when OrderCalcProfit fails. Missing tick data means we cannot size risk �?refuse.
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize  = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     if(tickValue <= 0 || tickSize <= 0)
@@ -1844,4 +1857,6 @@ void CUnifiedRiskManager::ResetStats(void)
 }
 
 #endif // CORE_RISK_UNIFIED_RISK_MANAGER_MQH
+
+
 

@@ -33,9 +33,9 @@ public:
          priceSMA = midPrice; // fallback: no direction bias
 
       if(midPrice < priceSMA)
-         return 1;    // BUY grid â€” price below SMA, expect reversion up
+         return 1;    // BUY grid â€?price below SMA, expect reversion up
       else
-         return -1;   // SELL grid â€” price above SMA, expect reversion down
+         return -1;   // SELL grid â€?price above SMA, expect reversion down
    }
 
 // Check if all levels are in profit (caller closes the entire grid).
@@ -59,7 +59,7 @@ public:
          }
          else
          {
-            // Position no longer exists â€” mark as inactive
+            // Position no longer exists â€?mark as inactive
             state.levels[l].isActive = false;
             state.levels[l].ticket = 0;
          }
@@ -83,7 +83,7 @@ public:
             {
                if(!PositionSelectByTicket(state.levels[l].ticket))
                {
-                  // Position closed â€” mark inactive
+                  // Position closed â€?mark inactive
                   state.levels[l].isActive = false;
                   state.levels[l].ticket = 0;
                   continue;
@@ -114,3 +114,4 @@ public:
 };
 
 #endif // CORE_SCALP_GRID_RECOVERY_SEQUENCE_MQH
+

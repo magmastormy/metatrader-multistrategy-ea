@@ -14,6 +14,7 @@ string NNModelStorage_GetTempPath(const string symbol, const ENUM_TIMEFRAMES tim
 string NNModelStorage_GetArchivePath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int oldVersion);
 void NNModelStorage_EnsureFolders();
 bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetFile);
+bool NNModelStorage_FileChecksum(const string filePath, long &sizeOut, uchar &checksumOut);
 bool NNModelStorage_PromoteTempToPrimary(const string tempFile, const string primaryFile, const string backupFile);
 bool NNModelStorage_ArchiveOldCheckpoint(const string sourceFile, const string archivePath);
 
@@ -91,8 +92,6 @@ bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetF
     if(srcHandle == INVALID_HANDLE)
         return false;
 
-    long srcSize = (long)FileSize(srcHandle);
-
     int dstHandle = FileOpen(targetFile, FILE_WRITE | FILE_BIN | FILE_COMMON);
     if(dstHandle == INVALID_HANDLE)
     {
@@ -117,12 +116,45 @@ bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetF
         }
     }
 
-    long dstSize = (long)FileSize(dstHandle);
     FileClose(dstHandle);
     FileClose(srcHandle);
 
-    // Verify byte count matches after copy
-    return (dstSize == srcSize);
+    // Verify byte count and XOR checksum match after copy
+    long srcSize = 0;
+    uchar srcChecksum = 0;
+    long dstSize = 0;
+    uchar dstChecksum = 0;
+    if(!NNModelStorage_FileChecksum(sourceFile, srcSize, srcChecksum) ||
+       !NNModelStorage_FileChecksum(targetFile, dstSize, dstChecksum))
+        return false;
+
+    return (srcSize == dstSize) && (srcChecksum == dstChecksum);
+}
+
+bool NNModelStorage_FileChecksum(const string filePath, long &sizeOut, uchar &checksumOut)
+{
+    int handle = FileOpen(filePath, FILE_READ | FILE_BIN | FILE_COMMON);
+    if(handle == INVALID_HANDLE)
+        return false;
+
+    sizeOut = (long)FileSize(handle);
+    checksumOut = 0;
+
+    uchar buffer[];
+    ArrayResize(buffer, 4096);
+
+    while(!FileIsEnding(handle))
+    {
+        uint bytesRead = FileReadArray(handle, buffer, 0, 4096);
+        if(bytesRead <= 0)
+            break;
+
+        for(int i = 0; i < (int)bytesRead; i++)
+            checksumOut ^= buffer[i];
+    }
+
+    FileClose(handle);
+    return true;
 }
 
 bool NNModelStorage_PromoteTempToPrimary(const string tempFile,
@@ -142,10 +174,11 @@ bool NNModelStorage_PromoteTempToPrimary(const string tempFile,
     {
         if(FileIsExist(backupFile, FILE_COMMON))
         {
-            if(!NNModelStorage_CopyBinaryFile(backupFile, primaryFile))
-            {
+            bool restored = NNModelStorage_CopyBinaryFile(backupFile, primaryFile);
+            if(restored)
+                PrintFormat("[NN-STORAGE] Restored primary from backup for %s", primaryFile);
+            else
                 PrintFormat("[NN-STORAGE] ERROR: Restore from backup failed for %s", primaryFile);
-            }
         }
         return false;
     }
@@ -162,7 +195,8 @@ bool NNModelStorage_ArchiveOldCheckpoint(const string sourceFile, const string a
     if(!NNModelStorage_CopyBinaryFile(sourceFile, archivePath))
         return false;
 
-    FileDelete(sourceFile, FILE_COMMON);
+    if(!FileDelete(sourceFile, FILE_COMMON))
+        return false;
     return true;
 }
 

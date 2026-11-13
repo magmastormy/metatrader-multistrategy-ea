@@ -27,7 +27,7 @@ private:
     double            m_bandMultiplier3;
     
     datetime m_sessionStartDate;
-    datetime m_lastProcessedBarTime;  // Batch 117: prevent VWAP re-accumulation
+    datetime m_lastProcessedBarTime;  // prevent VWAP re-accumulation
     double   m_cumulativeTPV;  // cumulative (typical price * volume)
     double   m_cumulativePV;   // cumulative (price - vwap)^2 * volume
     double   m_cumulativeVol;
@@ -106,7 +106,7 @@ public:
             m_sessionStartDate = currentDay;
         }
         
-        // Batch 117: Skip if same bar â€” prevent VWAP re-accumulation
+        // Skip if same bar â€?prevent VWAP re-accumulation
         if(currentBarTime == m_lastProcessedBarTime)
         {
             m_lastResult.isValid = true;
@@ -218,3 +218,4 @@ public:
 };
 
 #endif // CORE_ENGINES_VWAP_ENGINE_MQH
+

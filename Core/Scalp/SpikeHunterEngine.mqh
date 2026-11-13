@@ -12,6 +12,7 @@
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeManager.mqh"
 #include <Trade\Trade.mqh>
 
 class CUnifiedRiskManager;
@@ -128,7 +129,7 @@ public:
                   m_totalDetections, m_executor.GetTotalTradesOpened(), m_totalTradesSkipped, m_alerts.GetAlertCount());
    }
 
-// Process a tick for a given symbol â€?call every tick
+// Process a tick for a given symbol ï¿½?call every tick
    void ProcessTick(const string symbol, double bid, double ask)
    {
       int idx = FindSymbolIndex(symbol);
@@ -152,14 +153,14 @@ public:
          return;
       }
 
-      // Spike detected â€?record detection time for long-term cooldown
+      // Spike detected ï¿½?record detection time for long-term cooldown
       m_detector.MarkSpikeDetected(idx);
       m_totalDetections++;
 
       int direction = DetermineSpikeDirection(idx);
       if(direction == 0)
       {
-         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined â€?skipping",
+         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined ï¿½?skipping",
                      symbol, m_detector.GetConfluenceCount(idx));
          m_totalTradesSkipped++;
          return;
@@ -174,7 +175,7 @@ public:
 
       if(!CanOpenSpikeTrade(idx))
       {
-         PrintFormat("[SPIKE-HUNT-SKIP] %s â€?cooldown or max positions reached", symbol);
+         PrintFormat("[SPIKE-HUNT-SKIP] %s ï¿½?cooldown or max positions reached", symbol);
          m_totalTradesSkipped++;
          return;
       }
@@ -222,3 +223,4 @@ public:
 };
 
 #endif // CORE_SCALP_SPIKE_HUNTER_ENGINE_MQH
+

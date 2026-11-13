@@ -37,7 +37,7 @@ enum ENUM_ERROR_SEVERITY
     ERROR_FATAL = 4          // Fatal error, emergency shutdown
 };
 
-// L5-006: Additional error codes for PositionSizer
+// Additional error codes for PositionSizer
 #define ERROR_INVALID_PARAM ERROR_RECOVERABLE
 #define ERROR_INVALID_INPUT ERROR_RECOVERABLE
 
@@ -141,3 +141,4 @@ struct SComponentHealth
 };
 
 #endif // CORE_ERROR_HANDLING_TYPES_MQH
+

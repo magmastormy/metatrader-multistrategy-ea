@@ -47,7 +47,7 @@ public:
       m_rsiHandles[idx]     = rsiHandle;
    }
 
-// Batch 117: Handles are owned by CIndicatorManager â€” do NOT release
+// Handles are owned by CIndicatorManager â€?do NOT release
 // them. Just invalidate our references to prevent stale handle usage
    void InvalidateHandles(int symbolCount)
    {
@@ -72,7 +72,7 @@ public:
             state.currentATR = atrBuf[0];
       }
 
-      // EMA Fast â€” need 2 bars for crossover
+      // EMA Fast â€?need 2 bars for crossover
       double emaFastBuf[];
       ArraySetAsSeries(emaFastBuf, true);
       bool fastOk = false;
@@ -85,7 +85,7 @@ public:
          }
       }
 
-      // EMA Slow â€” need 2 bars for crossover
+      // EMA Slow â€?need 2 bars for crossover
       double emaSlowBuf[];
       ArraySetAsSeries(emaSlowBuf, true);
       bool slowOk = false;
@@ -160,3 +160,4 @@ public:
 };
 
 #endif // CORE_SCALP_ATR_SCALP_SIGNAL_MQH
+

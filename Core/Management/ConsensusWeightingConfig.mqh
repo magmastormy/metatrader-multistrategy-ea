@@ -53,6 +53,14 @@ private:
 
 double CConsensusWeightingConfig::LoadAIBaseWeight(const int index)
 {
+    // Batch 272 fix. `m_aiBaseWeightTime` was never resized with `m_aiBaseWeights`, so the first
+    // AI row to reload its baseline indexed a zero-length array - the live journal died with
+    // "array out of range in 'ConsensusWeightingConfig.mqh' (69,27)" seconds after attach.
+    // Bounds are checked here rather than trusted: an index past the arrays means the caller's
+    // roster and this config disagree, and a wrong baseline beats terminating the program.
+    if(index < 0 || index >= ArraySize(m_aiBaseWeights) || index >= ArraySize(m_aiBaseWeightTime))
+        return (index >= 0 && index < ArraySize(m_aiBaseWeights)) ? m_aiBaseWeights[index] : 0.0;
+
     if(m_aiBaseWeights[index] >= 0.0)
         return m_aiBaseWeights[index];
 
@@ -91,6 +99,17 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         ArrayResize(m_aiBaseWeights, strategyCount);
         ArrayInitialize(m_aiBaseWeights, -1.0);
     }
+    // The decay timestamps live in their own array and were never sized with the baselines, so
+    // LoadAIBaseWeight() wrote through an empty array. Both arrays move together now; a timestamp
+    // of 0 means "no decay applied yet", so every row starts from the persisted GlobalVariable.
+    // (ArrayInitialize is not used here: it rejects string arrays and this array is datetime, kept
+    // as an explicit loop so the intent survives any later type change of the pair.)
+    if(ArraySize(m_aiBaseWeightTime) != strategyCount)
+    {
+        ArrayResize(m_aiBaseWeightTime, strategyCount);
+        for(int ti = 0; ti < strategyCount; ti++)
+            m_aiBaseWeightTime[ti] = 0;
+    }
 
     // AI rows: the target is always derived from the persisted baseline, so repeated updates cannot
     // compound. Insufficient evidence (below AI_WEIGHT_MIN_PREDICTIONS) yields a zero multiplier, which
@@ -111,6 +130,16 @@ void CConsensusWeightingConfig::UpdateStrategyWeights()
         double target = MathMax(0.0, MathMin(10.0, baseWeight * (1.0 + aiProfitability)));
         double current = m_src.GetStrategyWeight(i);
         double newWeight = MathMax(0.0, MathMin(10.0, current + AI_WEIGHT_SMOOTHING * (target - current)));
+
+        // A baseline of zero is the operator saying "this arm is not allocated", not "start it at some
+        // default and let it decay". Smoothing only approaches zero asymptotically, and a measured run
+        // left the three AI arms at weight 0.032 - greater than 0.0, so `ConsensusEngine`'s advisory gate
+        // (weight <= 0.0) let an untrained net (labels 0/30, accuracy 0.000) count as a real voter on every
+        // symbol, adding to vote counts and support while contributing no information. Base 0 must mean
+        // exactly 0.
+        if(baseWeight <= 0.0)
+            newWeight = 0.0;
+
         m_src.ApplyRawStrategyWeight(i, newWeight);
 
         PrintFormat("[AI-WEIGHT-ADJUST] %s | %s | AI profitability=%.3f | base=%.3f | target=%.3f | newWeight=%.3f",

@@ -13,6 +13,7 @@
 #include "../../AIModules/TransformerBrain.mqh"
 #include "../../AIModules/AIConfig.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
+#include "../AI/NNModelStorage.mqh"   // NNModelStorage_GetPrimaryPath - resolves the checkpoint this adapter loads
 
 class CTransformerAIStrategyAdapter : public IAIStrategy
 {

@@ -154,7 +154,7 @@ double CTrendEntryTypes::GetATR(int period)
     
     double atr[];
     ArraySetAsSeries(atr, true);
-    // Batch 158: closed-bar discipline â€” shift 1 (last completed bar),
+    // closed-bar discipline â€?shift 1 (last completed bar),
     // not shift 0 (forming bar). AS_SERIES on dynamic array: [0]=newest.
     if(CopyBuffer(handle, 0, 1, 1, atr) <= 0)
     {
@@ -307,7 +307,7 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
         return signal;
     
     // Check if close1 was at 21 EMA
-    // Batch 155: the raw distance-in-points test against 15 POINTS (=1.5 pips
+    // the raw distance-in-points test against 15 POINTS (=1.5 pips
     // on 5-digit FX, ~0.15 price units on synthetics priced in hundreds)
     // made this entry unreachable almost everywhere. Widen the tolerance to
     // a quarter ATR when that is larger - the standard "at the EMA" band -
@@ -486,3 +486,4 @@ STrendEntrySignal CTrendEntryTypes::GetBestEntry()
 }
 
 #endif // __TREND_ENTRY_TYPES_MQH__
+

@@ -55,7 +55,9 @@ public:
         if(!m_evaluator.Evaluate(features, labels, count))
             return false;
         
-        CTrainingMetrics &metrics = m_evaluator.GetMetrics();
+        // GetMetrics() returns by value, so this must be a value binding: MQL5 rejects a non-const
+        // reference bound to a temporary (error 229). The body only reads the metrics.
+        CTrainingMetrics metrics = m_evaluator.GetMetrics();
         
         int idx = m_resultCount;
         ArrayResize(m_results, m_resultCount + 1);

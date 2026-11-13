@@ -355,7 +355,7 @@ public:
         return m_lastSnapshot;
     }
 
-    // Batch 100: Apply Hurst exponent weight multipliers on top of regime multipliers
+    // Apply Hurst exponent weight multipliers on top of regime multipliers
     // This modifies the snapshot's weight multipliers in-place by multiplying
     // regime-based weights with Hurst-based persistence weights
     void ApplyHurstWeightModifiers(double hurstMeanRevMult,
@@ -379,3 +379,4 @@ public:
 };
 
 #endif // REGIME_ENGINE_MQH
+

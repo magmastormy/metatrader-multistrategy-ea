@@ -9,7 +9,7 @@
 
 // Only m_correlationThreshold governs a decision here: CRiskValidationPipeline enforces the reduce/block
 // tiers from its own config copy, so holding a second unread pair of them was a second definition of one
-// threshold (Batch 38's rule).
+// threshold (rule's rule).
 class CRiskTieredCorrelation
 {
 private:
@@ -168,3 +168,4 @@ public:
 };
 
 #endif // CORE_RISK_RISK_TIERED_CORRELATION_MQH
+

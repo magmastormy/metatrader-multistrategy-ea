@@ -11,9 +11,9 @@
 #define CORE_SCALP_GRID_RECOVERY_EXECUTION_MQH
 
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
 #include "../Trading/TradeMgrPreflight.mqh"
-#include <Trade\Trade.mqh>
 
 #include "GridRecoveryTypes.mqh"
 
@@ -25,8 +25,7 @@ class CGridRecoveryExecution
 {
 private:
    CUnifiedRiskManager*      m_riskManager;
-   CTradeManager*            m_tradeManager;    // L10-014: Use TradeManager for dynamic slippage
-   CTrade                    m_trade;           // Fallback only
+   CTradeManager*            m_tradeManager;    // Only trade execution path (sends and closes)
    CAIAdapter*               m_aiAdapter;       // L10-018: AI adapter for voting
 
 public:
@@ -107,47 +106,23 @@ public:
          return false;
       }
 
-      // L10-014: Use dynamic slippage from TradeManager if available, else fallback
-      uint slippage = 50; // fallback
-      if(m_tradeManager != NULL)
+      // TradeManager is the only send path: refuse to trade when it is not configured.
+      if(m_tradeManager == NULL)
       {
-         slippage = m_tradeManager.GetDynamicSlippage(symbol);
+         PrintFormat("[GRID-RECOVERY] TradeManager not configured - refusing to trade | symbol=%s L%d", symbol, level);
+         return false;
       }
 
-      m_trade.SetExpertMagicNumber(magic);
-      m_trade.SetDeviationInPoints(slippage);
-      // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
-      long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
-      ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
-                                         (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
-      m_trade.SetTypeFilling(scalpFill);
-
-      bool result = false;
       string comment = "GRID-RECOVERY|L:" + IntegerToString(level) + "|D:" + IntegerToString(direction);
 
-      if(direction == 1)
-         result = m_trade.Buy(lotSize, symbol, entryPrice, sl, tp, comment);
-      else
-         result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp, comment);
+      // Convert absolute stop levels to pip distances: TradeManager prices stops from pips
+      // and applies slippage from GetDynamicSlippage internally (no hardcoded fallback).
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double slPips = (point > 0.0) ? MathAbs(entryPrice - sl) / point : 0.0;
+      double tpPips = (point > 0.0) ? MathAbs(tp - entryPrice) / point : 0.0;
 
-      uint sendRetcode = m_trade.ResultRetcode();
-
-      // Batch 177: a DONE_PARTIAL retcode comes back through CTrade as result == false while a
-      // position exists. The engine would then treat the level as never opened and the grid could
-      // place another layer on top of the fill it already has.
-      if(!result)
-      {
-         ulong confirmTicket = 0;
-         double confirmVolume = 0.0;
-         if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
-                (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                lotSize, confirmTicket, confirmVolume, "GRID-RECOVERY"))
-         {
-            PrintFormat("[GRID-RECOVERY] FILL CONFIRMED BY POSITION | %s L%d | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | level tracked, not resent",
-                        symbol, level, confirmTicket, confirmVolume, lotSize, sendRetcode);
-            result = true;
-         }
-      }
+      bool result = m_tradeManager.OpenPosition(symbol, gridOrderType, lotSize, entryPrice,
+                                                slPips, tpPips, comment, (uint)magic);
 
       if(result)
       {
@@ -159,8 +134,8 @@ public:
          ticketOut = FindLevelPositionTicket(symbol, magic);
          if(ticketOut == 0)
          {
-            ticketOut = m_trade.ResultOrder();
-            PrintFormat("[GRID-RECOVERY] TICKET UNRESOLVED | %s L%d | no open position matched magic=%d yet, tracking order ticket %I64u - this level cannot be closed until it resolves",
+            ticketOut = m_tradeManager.GetLastTicket();
+            PrintFormat("[GRID-RECOVERY] TICKET UNRESOLVED | %s L%d | no open position matched magic=%d yet, tracking TradeManager ticket %I64u - this level cannot be closed until it resolves",
                         symbol, level, magic, ticketOut);
          }
 
@@ -170,7 +145,7 @@ public:
       }
       else
       {
-         uint retcode = m_trade.ResultRetcode();
+         uint retcode = m_tradeManager.GetLastRetcode();
          PrintFormat("[GRID-RECOVERY-FAILED] %s L%d %s lot=%.2f retcode=%u | price=%.5f SL=%.5f TP=%.5f magic=%d",
                      symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode, entryPrice, sl, tp, magic);
 
@@ -225,9 +200,15 @@ public:
 // Close a single grid level position; logs the retcode on failure
    bool ClosePositionTicket(const string symbol, int level, ulong ticket)
    {
-      if(!m_trade.PositionClose(ticket))
+      if(m_tradeManager == NULL)
       {
-         uint retcode = m_trade.ResultRetcode();
+         PrintFormat("[GRID-RECOVERY-CLOSE-FAILED] %s L%d ticket=%I64u | TradeManager not configured - refusing to close", symbol, level, ticket);
+         return false;
+      }
+
+      if(!m_tradeManager.ClosePosition(ticket, "GRID-RECOVERY close"))
+      {
+         uint retcode = m_tradeManager.GetLastRetcode();
          PrintFormat("[GRID-RECOVERY-CLOSE-FAILED] %s L%d ticket=%I64u retcode=%u",
                      symbol, level, ticket, retcode);
          return false;
@@ -237,3 +218,4 @@ public:
 };
 
 #endif // CORE_SCALP_GRID_RECOVERY_EXECUTION_MQH
+

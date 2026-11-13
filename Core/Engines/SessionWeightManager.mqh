@@ -15,7 +15,7 @@ class CSessionWeightManager
 private:
    bool m_initialized;
    bool m_syntheticMode;
-   int  m_dstOffsetHours;  // L7-022: DST offset in hours
+   int  m_dstOffsetHours;  // DST offset in hours
 
    double m_sessionATRHistory[5][24];
    int    m_atrHistoryCount;
@@ -29,7 +29,7 @@ SSessionWeights GetSessionWeightsForTime(datetime time) const
          int hour = dt.hour;
          int dayOfWeek = dt.day_of_week;
 
-         // Apply DST offset (L7-022)
+         // Apply DST offset
          hour = (hour + m_dstOffsetHours + 24) % 24;
 
          SSessionWeights sw;
@@ -40,7 +40,7 @@ SSessionWeights GetSessionWeightsForTime(datetime time) const
 
          if(dayOfWeek == 0 || dayOfWeek == 6)
          {
-            // Batch 118: Only apply weekend boost for synthetics (forex markets are closed)
+            // Only apply weekend boost for synthetics (forex markets are closed)
             if(m_syntheticMode)
             {
                sw.sizingMultiplier = 1.2;
@@ -112,7 +112,7 @@ public:
    bool Initialize(bool syntheticMode = true, int dstOffsetHours = 0)
       {
          m_syntheticMode = syntheticMode;
-         m_dstOffsetHours = dstOffsetHours;  // L7-022: DST offset
+         m_dstOffsetHours = dstOffsetHours;  // DST offset
          m_initialized = true;
          PrintFormat("[SESSION-WEIGHT-MGR] Initialized | mode=%s | DST offset=%d hours",
                      syntheticMode ? "SYNTHETIC" : "FOREX", dstOffsetHours);
@@ -285,3 +285,5 @@ public:
    };
 
 #endif // CORE_ENGINES_SESSION_WEIGHT_MANAGER_MQH
+
+

@@ -8,6 +8,10 @@
 #ifndef SESSION_GAP_DETECTOR_MQH
 #define SESSION_GAP_DETECTOR_MQH
 
+// CIndicatorManager owns the ATR handles this detector asks for, so the declaration has to be here
+// rather than inherited from whichever header the includer happened to pull in first.
+#include "../../IndicatorManager.mqh"
+
 enum ENUM_GAP_TYPE
 {
     GAP_NONE   = 0,

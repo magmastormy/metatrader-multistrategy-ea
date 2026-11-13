@@ -15,7 +15,7 @@ class CTradeRetcodeClassifier
 {
 public:
 // Retcodes worth retrying repeatedly (transient market conditions)
-// Batch 150: TIMEOUT/CONNECTION removed - order state is UNKNOWN
+// TIMEOUT/CONNECTION removed - order state is UNKNOWN
 // after these; resending can duplicate a filled order.
     static bool IsTransientTradeRetcode(const uint retcode)
     {
@@ -41,3 +41,4 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_RETCODE_CLASSIFIER_MQH
+

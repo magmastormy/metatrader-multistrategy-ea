@@ -11,6 +11,7 @@
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Core/Risk/VPINFilter.mqh"
 // Asset class detection drives the ADX thresholds
@@ -279,6 +280,15 @@ public:
             return RejectSignal("TREND_LOW_CONFIDENCE");
         string trendState = EnumToString(m_emaSystem.GetAlignment());
         SetDecisionReasonTag(bestEntry.direction == TRADE_SIGNAL_BUY ? "TREND_SIGNAL_BUY" : "TREND_SIGNAL_SELL");
+
+        // Local pre-trade guard: entry types that leave stopLoss/takeProfit unset used to reach the
+        // risk gate as 0-pip stops. Refusing them here also catches an inverted R:R and a spread
+        // wider than half the stop.
+        double guardPoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        long guardSpreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double guardSpread = (guardPoint > 0) ? (double)guardSpreadPoints * guardPoint : 0.0;
+        if(!CSignalGuards::IsSignalTradable(bestEntry.entryPrice, bestEntry.stopLoss, bestEntry.takeProfit, guardSpread))
+            return RejectSignal("TREND_NOT_TRADABLE");
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

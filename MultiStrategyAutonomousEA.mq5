@@ -12,6 +12,7 @@
 // Production logging & tracing
 #include "Core/Utils/StructuredLogger.mqh"
 #include "Core/Utils/CorrelationId.mqh"
+#include "Core/Config/SharedEAInputs.mqh"
 
 CStructuredLogger g_structLog;
 CCorrelationIdManager g_corrIdManager;
@@ -22,139 +23,29 @@ bool g_shuttingDown;
 // Forward declaration for GetDeInitReasonText
 string GetDeInitReasonText(int reasonCode);
 
-//--- Input Parameters (passed to orchestrator config). Grouped with 'input group' directives (collapsible in the MT5 inputs tab).
-input group "Identity & EA Mode";
-input long     InpMagicNumber = 123456;
-input int      InpConfigVersion = 109;  // L7-005: Config version for migration tracking
-input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
-input bool     InpStrictEAMode = false;
+//--- Input Parameters (mode-specific only; shared inputs are in Core/Config/SharedEAInputs.mqh)
 
 input group "Risk & Money Management";
-input double   InpLotSize = 0.1;
-input bool     InpUseEnhancedRisk = true;
-input double   InpMaxRiskPerTrade = 1.0;       // PHASE0 recalibration (was 5.0): 1% per-trade is pro norm; 5% was account-destroying
-input double   InpMaxDailyRisk = 4.0;         // PHASE0 recalibration (was 40.0): 4% daily loss cap; 40% = lose-more-than-human
-input double   InpMaxPortfolioRisk = 12.0;    // PHASE0 recalibration (was 60.0): 12% portfolio risk cap
-input double   InpMaxDrawdown = 15.0;
-input double   InpDailyLossLimitPercent = 4.0;  // PHASE0 recalibration (was 10.0): hard daily stop at 4%
-input bool     InpBasketEquityStopEnabled = true;       // Theme 3 (23662): halt entries on basket DD breach
-input double   InpBasketEquityStopDrawdownPct = 10.0;   // % drawdown from equity peak that triggers
-input bool     InpBasketEquityStopCloseOnBreach = false; // also magic-filtered close of EA basket
-input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE;
+input double   InpMaxRiskPerTrade = 1.0;
+input double   InpMaxDailyRisk = 4.0;
+input double   InpMaxPortfolioRisk = 12.0;
+input double   InpDailyLossLimitPercent = 4.0;
+input bool     InpBasketEquityStopEnabled = true;
+input double   InpBasketEquityStopDrawdownPct = 10.0;
+input bool     InpBasketEquityStopCloseOnBreach = false;
 input bool     InpAllowMinLotRoundUp = true;
-input double   InpMinLotRiskMultiplier = 3.0; // ceiling is MAX_MIN_LOT_RISK_MULTIPLIER (Enums.mqh); higher asks are clamped and print [RISK-ROUNDUP-CEILING]
-input double   InpKellyFraction = 0.25;
-input int      InpEquityCurveEmaPeriod = 20;
-input double   InpEquityCurveReductionFactor = 0.50;
-
-input group "Compounding Tiers";
-input bool     InpEnableCompoundingTiers = true;
-input int      InpCompoundingTierCheckIntervalSec = 60;
-
-input group "Portfolio & Position Limits";
-input int      InpMaxPositionsTotal = 15;
-input int      InpMaxPositionsTotalMin = 3;
-input int      InpMaxPositionsPerSymbol = 5;
-input int      InpMaxPositionsPerSymbolMin = 1;
-input int      InpMaxTradeSendsPerCycle = 3;
-input int      InpMinSecondsBetweenTrades = 10;
-input int      InpMaxPositionsSameBase = 3;
-
-input group "Symbol Universe & Liquidity";
-input string   InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
-input bool     InpAutoAddChartSymbol = true;       // L7-021: Auto-add chart symbol to universe if missing
-input long     InpSymbolMaxSpreadPoints = 1500;
-input long     InpSymbolMinDailyVolumeLots = 1000;
-input bool     InpSymbolEnableVolumeCheck = true;
+input double   InpMinLotRiskMultiplier = 3.0;
 
 input group "Strategies - Classic Set";
-input bool     InpEnableMomentum = true;
-input bool     InpEnableTrend = true;
-input bool     InpEnableSupportResistance = true;
-input bool     InpEnableCandlestick = true;
-input bool     InpCandlestickRequireTrend = false;
-input bool     InpEnableMeanReversion = true;
-input bool     InpEnableVolatilityBreakout = true;
-input bool     InpEnableFVGScalper = true;
-input bool     InpEnableTurtleSoup = true;
-input bool     InpEnableBreakerBlock = true;
-input bool     InpEnableNYOpenGap = true;
-input bool     InpEnableAsianRangeBreak = true;
-input bool     InpEnableStatisticalArbitrage = false;
 input bool     InpUseCuratedStrategySet = true;
-input bool     InpUseSymbolClassProfiles = false;
-
-// FINDING 0 (STRATEGY_AUDIT_2026-08-14): when true, the consensus execution path
-// uses each strategy's designed stop-loss / take-profit (in pips) instead of the
-// generic fallback. ENABLED for LIVE operation (shadow mode removed 2026-08-14).
-input bool     InpUseStrategyStops = true;
 
 input group "Strategies - Statistical & Adaptive";
 input bool     InpEnableKalmanMR = true;
-input double   InpKalmanLambda = 500.0;
 input bool     InpEnableChangepointDetect = true;
-input double   InpCPDHazardThreshold = 0.3;
 input bool     InpEnableFourStateRegime = true;
 input bool     InpEnableVolTargeting = true;
-input double   InpTargetVol = 0.15;
-input double   InpVolMinScale = 0.2;
-input double   InpVolMaxScale = 3.0;
 input bool     InpEnableLiquiditySweep = true;
 input bool     InpEnableRangeCompression = true;
-
-input group "Strategies - Microstructure Engines";
-input bool     InpEnableHurstEngine = true;
-input int      InpHurstLookback = 300;
-input bool     InpEnableOUProcess = true;
-input int      InpOULookback = 100;
-input bool     InpEnableOFIProxy = true;
-input int      InpOFISlowWindow = 100;
-input bool     InpEnableVPINFilter = true;
-input double   InpVPINExtremeThreshold = 0.7;
-input int      InpVPINNumBuckets = 50;
-input bool     InpMultiAssetProfilerEnabled = true;
-input bool     InpDerivProfilerEnabled = true;
-input bool     InpGridRecoveryEnabled = true;
-input bool     InpATRScalpingEnabled = true;
-
-input group "ADX Lot Tiering (CADXLotModifier)";
-input double   InpAdxMinLotMultiplier = 1.0;
-input bool     InpAdxTradeOnNoTrend = true;
-
-input group "Strategy Weights (Consensus)";
-input double   InpWeightMomentum = 1.0;
-input double   InpWeightTrend = 1.2;
-input double   InpWeightSupportResistance = 1.8;
-input double   InpWeightCandlestick = 0.8;
-input double   InpWeightMeanReversion = 1.8;
-input double   InpWeightVolatilityBreakout = 2.0;
-input double   InpWeightStatisticalArbitrage = 1.5;
-input double   InpWeightFVGScalper = 1.8;
-input double   InpWeightTurtleSoup = 1.6;
-input double   InpWeightBreakerBlock = 1.7;
-input double   InpWeightNYOpenGap = 1.3;
-input double   InpWeightAsianRangeBreak = 1.3;
-input double   InpWeightLiquiditySweep = 1.9;
-input double   InpWeightRangeCompression = 1.7;
-
-input group "Regime, Skew & Family Weighting";
-input bool     InpEnableSessionWeights = true;
-input int      InpSessionDSTOffsetHours = 0;  // L7-022: DST offset for session weights (-12 to +12)
-input bool     InpEnableSkewStepAnalyzer = true;
-input bool     InpEnableFamilyWeightMatrix = true;
-input int      InpSkewStepBufferSize = 200;
-input double   InpSkewStepCalmThreshold = 0.80;
-input double   InpSkewStepSmallThreshold = 0.2;
-input double   InpSkewStepLargeThreshold = 0.5;
-
-input group "Consensus & Quorum";
-input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
-input double   InpQuorumThreshold = 0.60;
-input int      InpMinLiveVoters = 2;
-input double   InpConsensusConflictDeadband = 0.35;
-input double   InpConsensusMinReadyWeightRatio = 0.40;
-input double   InpConsensusSupportFloorNewBar = 0.20;
-input double   InpConsensusSupportFloorIntrabar = 0.15;
 
 input group "AI/ML - Master Toggles";
 input bool     InpEnableAIMode = true;
@@ -164,212 +55,23 @@ input bool     InpEnableEnsemble = true;
 input bool     InpEnableOnnxAI = true;
 input bool     InpEnablePythonBridgeAI = true;
 input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OBSERVE;
-input bool     InpEnableExternalLLM = false;
-
-input group "AI/ML - Python Bridge";
-input string   InpPythonBridgeEndpoint = "http://127.0.0.1:8000";
-input int      InpPythonBridgeRequestTimeoutMs = 2000;
-input int      InpPythonBridgeHeartbeatTimeoutSec = 30;
-input int      InpPythonBridgeMaxReconnectAttempts = 5;
-input int      InpPythonBridgeReconnectBackoffMs = 2000;
-
-input group "AI/ML - External LLM";
-input string   InpExternalLLMEndpoint = "http://localhost:11434";
-
-input group "AI/ML - Tuning";
-input double   InpAIConfidenceThreshold = 0.70;
-input double   InpAIWeightMultiplier = 1.0;
-input double   InpAIDrawdownSizingLimit = 0.20;
-
-input group "AI/ML - Neural Network Training";
-input bool     InpEnableNNOnlineTraining = true;
-input bool     InpEnableNNWeightMutation = false;
-input bool     InpEnableNNPseudoLabeling = true;
-input int      InpNNPseudoLabelBarsAhead = 10;
-input int      InpNNSampleIntervalSeconds = 15;
-input int      InpNNCheckpointEveryLabeled = 3;
-input bool     InpEnableNNAttributionDiagnostics = true;   // Batch 238: the setter is wired now; true is what every build has printed
-input bool     InpRunNNAttributionSelfTest = false;        // Batch 238: callable now; runs the prediction-comment and map round trip at init
-
-input group "AI/ML - Authority & Live Gating";
-input bool     InpEnableLiveAuthorityGate = false;
-input bool     InpAllowHybridAIStandalone = true;
-input double   InpAIStandaloneMinConfidence = 0.65;
-input double   InpAIStandaloneRelaxedConfidence = 0.60;
-input int      InpHybridGateRelaxAfterCycles = 5;
-input int      InpAuthorityMinSamples = 12;
-input double   InpAuthorityMinExpectancyR = 0.03;
-input double   InpAuthorityMinProfitFactor = 1.10;
-input double   InpAuthorityMinCostScore = 0.50;
-input double   InpAuthorityMinReadinessScore = 0.52;
-input double   InpAuthorityMinContextScore = 0.48;
-input double   InpAIBootstrapRiskMultiplier = 0.50;
-input double   InpAIPromotedRiskMultiplier = 1.00;
-
-input group "Hybrid Cadence & Intrabar Scan";
-input bool     InpIntrabarDynamicQuorumEnabled = true;
-input int      InpMaxSignalEvaluationsPerCycle = 8;
-input int      InpReadinessReuseTtlSeconds = 60;
-
-input group "Intrabar Eligibility Policies";
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
-
-input group "Pipeline, Spread & Crisis Filters";
-input bool     InpUseSignalPipeline = true;
-input bool     InpPipelineEngineRegistry = false;  // binds the shared engines to the pipeline's five filters (tightens entries)
-input double   InpPipelineMinConfidence = 0.55;
-input double   InpPipelineIntrabarConfidenceCap = 0.05;
-input bool     InpPipelineEnableRegimeCostGate = true;
-input double   InpPipelineMaxSpreadToAtrRatio = 0.50;
-input int      InpPipelineSpreadShockCooldownSec = 90;
-input double   InpPipelineLateEntryZScoreLimit = 4.00;
-input double   InpAtrCrisisRatioThreshold = 5.0;
-input double   InpAtrCrisisRatioThresholdSynthetic = 15.0;
-input double   InpAtrCrisisRatioThresholdVolatility = 10.0;
-input double   InpAtrCrisisRatioThresholdDefault = 8.0;
-input double   InpHardSpreadCutoffPoints = 200.0;
-input int      InpDeadlockAttributionIntervalSec = 60;
-input int      InpHeartbeatInterval = 60;
 
 input group "Momentum Scalping";
 input bool     InpEnableMomentumScalping = true;
-input int      InpMomentumScalpCooldownSeconds = 20;
-input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5;
-input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5;
-
-input group "Signal Validator (Quality Gates)";
-input int      InpValidatorNewBarMinConfluence = 1;
-input double   InpValidatorNewBarMinQuality = 0.68;
-input double   InpValidatorNewBarMinConfidence = 0.55;
-input int      InpValidatorIntrabarMinConfluence = 1;
-input double   InpValidatorIntrabarMinQuality = 0.70;
-input double   InpValidatorIntrabarMinConfidence = 0.60;
-
-input group "Execution & Orders";
-input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
-input int      InpTradeSlippagePoints = 50;
-input double   InpMaxEntrySpreadPoints = 15000.0;
-input double   InpMaxEntryDriftPoints = 80.0;
-input int      InpProtectiveModifyCooldownSec = 5;
-
-input group "Signal-Reversal Exit";
-input bool     InpEnableSignalReversalExit = true;
-input double   InpSignalReversalMinConfidence = 0.58;
-input bool     InpSignalReversalProfitGuard = true;
-input double   InpSignalReversalMinLossR = 0.25;
-input double   InpSignalReversalMaxLossR = 0.82;
-input int      InpSignalReversalMinTimeSec = 45;
-
-input group "Position Lifecycle & Trailing";
-input bool     InpEnablePositionLifecycleManager = true;
-input double   InpLifecycleBreakevenBufferPoints = 50.0;
-input double   InpLifecycleTrailingDistancePoints = 150.0;
-input double   InpLifecycleTrailingStepPoints = 30.0;
-input bool     InpLifecycleUseATRTrailing = false;
-input double   InpLifecycleATRMultiplier = 1.5;
-input bool     InpEnableStructuralInvalidation = true;
-input bool     InpEnableMaxHoldTime = true;
-input int      InpMaxHoldHoursIntraday = 24;
-input int      InpMaxHoldHoursSwing = 120;
-input bool     InpMaxHoldOnlyIfLoss = true;
-
-input group "Loss Guard (exit path that ran unconfigurable until Batch 244)";
-input bool     InpLossGuardAdverseMomentumExit = false;          // off is what every build has done: the flag had no writer
-input double   InpLossGuardAdverseMomentumATR = 0.5;             // close when price moves this x ATR(14) against the entry
-input int      InpLossGuardConsecutiveLossLimit = 3;             // >0 also ARMS the whole guard: 0 and the flag off = path dormant
-input int      InpLossGuardConsecutiveLossCooldownSec = 1800;    // pause on the guard after that many guard-realized losses
-input double   InpLossGuardDailyLossCircuitBreakerPct = 50.0;    // of InpMaxDailyRisk, counted from guard closes only
-input double   InpLossGuardPositionLossLimitPct = 75.0;          // close at this fraction of the position's own SL distance
-
-input group "Emergency & Unprotected Remediation";
-input bool     InpEmergencyFlattenAllAccountPositions = false; // true = emergency flatten may close positions this EA did not open (manual trades / other EAs). Off by default (Batch 168).
-input int      InpUnprotectedRemediationIntervalSec = 15;
-input int      InpUnprotectedMaxRestoreAttempts = 3;
-
-input group "Synthetic Spike";
-input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
-input int      InpSyntheticSpikePauseSeconds = 30;
-input int      InpSpikeConfirmWindows = 2;
-
-input group "Scalp Engine";
-input bool     InpEnableScalpEngine = true;
-input bool     InpScalpAsyncMode = false;
-input uint     InpScalpMaxLatencyMs = 500;
-input bool     InpAllowSyntheticOffHours = true;
-
-input group "Dynamic Slippage";
-input bool     InpEnableDynamicSlippage = true;
-input double   InpDynamicSlippageAtrPercent = 0.20;
-input int      InpDynamicSlippageMinPoints = 10;
-input int      InpDynamicSlippageMaxMultiplier = 10;
-input int      InpDynamicSlippageAtrPeriod = 14;
 
 input group "Spike Hunter";
 input bool     InpSpikeHunterEnabled = true;
-input double   InpSpikeHunterVelocityMult = 1.8;
-input int      InpSpikeHunterMinConsecTicks = 8;
-input int      InpSpikeHunterConsecWindowMs = 60000;
-input double   InpSpikeHunterATRCompression = 0.80;
-input double   InpSpikeHunterSLAtrMult = 1.5;
-input double   InpSpikeHunterTPAtrMult = 3.0;
-input int      InpSpikeHunterMaxPositions = 3;
-input int      InpSpikeHunterCooldownMs = 60000;
-input int      InpSpikeHunterLongTermCooldownMs = 60000;
-input bool     InpSpikeHunterPushAlerts = true;
-input int      InpSpikeHunterAlertThrottle = 120;
-input int      InpSpikeHunterMinConfluence = 2;
 
-input group "Visualization";
-input bool     InpEnableVisualAnalysis = true;
-input int      InpMaxVisualObjects = 500;
 
-input group "Dashboard";
-input bool     InpDashboardEnabled = true;
-input string   InpDashboardEndpoint = "http://127.0.0.1:8765";
-input int      InpDashboardPushIntervalSec = 5;
-input bool     InpDashboardControlEnabled = false;
-
-input group "Signal Filters";
-input double   InpMinTrendStrength = 50.0;
-input double   InpMaxVolatility = 3.0;
-input bool     InpEnableStructureFilter = true;
-input bool     InpEnableLiquidityFilter = true;
-input int      InpDormancyStrikeBars = 3;
-input int      InpDormancyCooldownMinutes = 30;
-
-input group "Cluster Risk Governance";
-input bool     InpEnableClusterRiskGovernance = true;
-input bool     InpEnableClusterMutex = true;
-input int      InpRiskMaxConcurrentPerCluster = 3;
-input double   InpRiskMaxClusterExposurePct = 5.0;
-
-input group "Profit Targets & Daily Halt";
-input double   InpDailyProfitTargetPercent = 2.0;
-input double   InpProfitTrailFactor = 0.7;
-input int      InpDailyHaltCooldownMinutes = 30;
-
-input group "Logging";
-input int      InpLogLevel = 1;
-input int      InpLogVerbosity = 3;  // 0=SILENT, 1=ERRORS_ONLY, 2=WARNING, 3=NORMAL, 4=VERBOSE, 5=DEBUG
-input bool     InpLogDerivFamilyDetection = true;  // L7-013: Enable logging for Deriv family detection
+// Build orchestrator config from inputs
 
 // EAOrchestrator instance - the composition root
 CEAOrchestrator* g_orchestrator = NULL;
-
-// Build orchestrator config from inputs
 SOrchestratorConfig BuildOrchestratorConfig()
 {
     SOrchestratorConfig config;
-    
+    PopulateSharedOrchestratorConfig(config);
+
     // General
         config.magicNumber = InpMagicNumber;
         config.configVersion = InpConfigVersion;  // L7-005: Config version for migration tracking
@@ -441,6 +143,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.consensusSupportFloorNewBar = InpConsensusSupportFloorNewBar;
     config.consensusSupportFloorIntrabar = InpConsensusSupportFloorIntrabar;
         config.quorumProfile = InpQuorumProfile;
+    config.singleVoterFloor = InpSingleVoterFloor;
+    config.symbolLossStreakLimit = InpSymbolLossStreakLimit;
+    config.symbolLossStreakCooldownMin = InpSymbolLossStreakCooldownMin;
+    config.symbolStreakRiskScale = InpSymbolStreakRiskScale;
+    config.symbolStreakRiskMinCount = InpSymbolStreakRiskMinCount;
     
         // Strategy weights
     config.weightMomentum = InpWeightMomentum;
@@ -1356,3 +1063,4 @@ string GetDeInitReasonText(int reasonCode)
 
 // Helper functions (kept for compatibility)
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
+

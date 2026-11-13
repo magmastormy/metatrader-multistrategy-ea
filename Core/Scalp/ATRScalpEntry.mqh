@@ -55,7 +55,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[ATR-SCALP] ATR is zero for %s �?cannot calculate SL/TP", symbol);
+         PrintFormat("[ATR-SCALP] ATR is zero for %s ->cannot calculate SL/TP", symbol);
          return false;
       }
 
@@ -183,7 +183,7 @@ public:
       trade.SetExpertMagicNumber(magic);
       const long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
       trade.SetDeviationInPoints((uint)MathMax(10, MathMin(100, spreadPoints * 2)));
-      // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
+      // honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
       long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
       ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
                                          (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
@@ -201,7 +201,7 @@ public:
 
       uint retcode = trade.ResultRetcode();
 
-      // Batch 177: this engine sends on its own CTrade, so it never reaches the
+      // this engine sends on its own CTrade, so it never reaches the
       // confirmation queue CTradeManager runs sends through. A DONE_PARTIAL retcode
       // arrives here as result == false while a position exists, and the caller would
       // re-fire the same scalp on the next scan - duplicating exposure the engine
@@ -239,3 +239,5 @@ public:
 };
 
 #endif // CORE_SCALP_ATR_SCALP_ENTRY_MQH
+
+

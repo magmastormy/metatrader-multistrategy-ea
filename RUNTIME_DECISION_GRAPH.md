@@ -930,8 +930,8 @@ back regardless.
 
 | Quantity | Input (default) | CONSERVATIVE | BALANCED (default preset) | AGGRESSIVE | What binds at the decision |
 |---|---|---|---|---|---|
-| `minQuorum` | `InpMinLiveVoters` (2) | 2 | 1 | 1 | `max(stored, MIN_CONSENSUS_VOTERS=2)` -> **2 for every preset** |
-| `intrabarMinQuorum` | `InpMinLiveVoters` (2) - the profile does not own this field | 2 | 2 | 2 | same floor -> 2 |
+| `minQuorum` | `InpMinLiveVoters` (2) | 2 | 1 | 1 | `max(stored, MIN_CONSENSUS_VOTERS=1)` -> **the input decides, not the preset** (Batch 283: `MIN_CONSENSUS_VOTERS` is 1 in `ConsensusEngine.mqh:25`; the "2" earlier docs quote was the input default, not a hard floor) |
+| `intrabarMinQuorum` | `InpMinLiveVoters` (2) - the profile does not own this field | 2 | 2 | 2 | same floor -> **the input, measured as the only voter constraint in the 7-day window** (1753 of 1902 rejects under `=2`, 0 under `=1`; `InpQuorumProfile` alone cannot move it) |
 | `quorumThreshold` | `InpQuorumThreshold` (0.60) | 0.60 | 0.50 | 0.45 | clamped into [0.30, 0.80] after the quality adjustment |
 | `supportFloorNewBar` / `supportFloorIntrabar` | `InpConsensusSupportFloor*` (0.20 / 0.15) | 0.35 / 0.30 | 0.25 / 0.20 | 0.15 / 0.10 | compared directly; a floor <= 0.50 refuses nothing because the winner's share of integer votes exceeds 0.50 by construction (Batch 222), and every preset sits under it |
 | `intrabarDynamicQuorum` | `InpIntrabarDynamicQuorumEnabled` (true) | ON | ON | OFF | gates the +0.10 sparse-voter quality penalty |

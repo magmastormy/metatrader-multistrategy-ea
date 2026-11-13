@@ -2,11 +2,12 @@
 // Trades the gap-fill tendency at 13:30-14:00 UTC
 // (= 09:30-10:00 NY local during US daylight time; shift +1h for
 // US standard time). Window is evaluated in GMT, NOT broker time.
-// Batch 103: Session-specific strategy for forex/metals/indices
+// Session-specific strategy for forex/metals/indices
 #ifndef NY_OPEN_GAP_STRATEGY_MQH
 #define NY_OPEN_GAP_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Core/Utils/Instruments.mqh"
@@ -15,23 +16,48 @@
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
 // CNYOpenGapStrategy trades the NDOG fade with FVG confluence during NY open.
-// Day of month of the nth Sunday (nth >= 1) in a given month.
-int NYOpenNthSundayDay(const int year, const int month, const int nth)
+// US DST: second Sunday of March (2:00 AM local) to first Sunday of November (2:00 AM local).
+// `when` is a GMT datetime (UTC seconds). The transition hour is honoured by comparing against
+// the exact UTC timestamps of the 2:00 AM local transitions, so a bar exactly on the transition
+// date is classified by its time of day, not just its date.
+bool NYOpenIsUSDaylightTime(const datetime when)
 {
-    MqlDateTime d;
-    d.year = year; d.mon = month; d.day = 1; d.hour = 0; d.min = 0; d.sec = 0;
-    TimeToStruct(StructToTime(d), d);
-    int firstSunday = 1 + (7 - d.day_of_week) % 7;
-    return firstSunday + 7 * (nth - 1);
-}
+    MqlDateTime dt;
+    TimeToStruct(when, dt);
+    int year = dt.year;
 
-// US DST: second Sunday of March to first Sunday of November (date-level, transition hour ignored).
-bool NYOpenIsUSDaylightTime(const MqlDateTime &dt)
-{
-    if(dt.mon < 3 || dt.mon > 11) return false;
-    if(dt.mon > 3 && dt.mon < 11) return true;
-    if(dt.mon == 3) return dt.day >= NYOpenNthSundayDay(dt.year, 3, 2);
-    return dt.day < NYOpenNthSundayDay(dt.year, 11, 1);
+    // DST start: second Sunday of March at 2:00 AM local time.
+    MqlDateTime marchStart;
+    marchStart.year = year; marchStart.mon = 3; marchStart.day = 1;
+    marchStart.hour = 2; marchStart.min = 0; marchStart.sec = 0;
+    datetime marchStartTime = StructToTime(marchStart);
+    MqlDateTime marchProbe;
+    TimeToStruct(marchStartTime, marchProbe);
+    int marchDow = marchProbe.day_of_week;
+    int firstSundayMarch = (marchDow == 0) ? 1 : (8 - marchDow);
+    int secondSundayMarch = firstSundayMarch + 7;
+
+    MqlDateTime dstStartStruct;
+    dstStartStruct.year = year; dstStartStruct.mon = 3; dstStartStruct.day = secondSundayMarch;
+    dstStartStruct.hour = 2; dstStartStruct.min = 0; dstStartStruct.sec = 0;
+    datetime dstStart = StructToTime(dstStartStruct);
+
+    // DST end: first Sunday of November at 2:00 AM local time.
+    MqlDateTime novemberStart;
+    novemberStart.year = year; novemberStart.mon = 11; novemberStart.day = 1;
+    novemberStart.hour = 2; novemberStart.min = 0; novemberStart.sec = 0;
+    datetime novemberStartTime = StructToTime(novemberStart);
+    MqlDateTime novemberProbe;
+    TimeToStruct(novemberStartTime, novemberProbe);
+    int novemberDow = novemberProbe.day_of_week;
+    int firstSundayNovember = (novemberDow == 0) ? 1 : (8 - novemberDow);
+
+    MqlDateTime dstEndStruct;
+    dstEndStruct.year = year; dstEndStruct.mon = 11; dstEndStruct.day = firstSundayNovember;
+    dstEndStruct.hour = 2; dstEndStruct.min = 0; dstEndStruct.sec = 0;
+    datetime dstEnd = StructToTime(dstEndStruct);
+
+    return (when >= dstStart && when < dstEnd);
 }
 
 // Targets gap-fill tendency at the 09:30 New York open (13:30 UTC in US DST, 14:30 UTC otherwise).
@@ -105,7 +131,7 @@ public:
         }
 
         // --- Synthetic symbol filter: NY Open Gap only works on forex/metals/indices ---
-        // Batch 155: umbrella check - the old 4-family test let DEX and the
+        // umbrella check - the old 4-family test let DEX and the
         // other Deriv families through into NY-open logic that is meaningless
         // on 24/7 synthetics (including weekend "gaps").
         if(IsSyntheticIndexSymbolName(m_symbol))
@@ -116,10 +142,12 @@ public:
 
         // --- Time filter: 30 minutes after the 09:30 New York open, in UTC ---
         // Evaluated in GMT: TimeCurrent() is broker-local and would shift the window on non-UTC brokers.
-        MqlDateTime dt;
-        TimeGMT(dt);
-        int windowStartMin = NYOpenIsUSDaylightTime(dt) ? (13 * 60 + 30) : (14 * 60 + 30);
-        int nowMin = dt.hour * 60 + dt.min;
+        const datetime gmtNow = TimeGMT();
+        MqlDateTime nowDt;
+        TimeGMT(nowDt);
+        const bool dstNow = NYOpenIsUSDaylightTime(gmtNow);
+        int windowStartMin = dstNow ? (13 * 60 + 30) : (14 * 60 + 30);
+        int nowMin = nowDt.hour * 60 + nowDt.min;
         bool inWindow = (nowMin >= windowStartMin && nowMin <= windowStartMin + 30);
         if(!inWindow)
         {
@@ -135,12 +163,16 @@ public:
         }
 
         // --- Detect gap: open of the NY-open M30 bar vs close of the M30 bar ending at the prior NY close ---
-        // Both bars are located by GMT time converted to broker time, so the gap spans the real overnight
-        // session break (16:00 ET to 09:30 ET) on DST-aware boundaries and skips weekends.
-        const datetime gmtNow = TimeGMT();
+        // Both bars are located by GMT time converted to broker time. The broker offset is computed per
+        // candidate from the bar's own GMT time (DST-aware) instead of being reused from TimeCurrent(),
+        // so DST transition weekends and seasonal broker offsets cannot shift the session boundary by an hour.
         const datetime gmtDay = gmtNow - (gmtNow % 86400);
-        const int brokerOffset = (int)MathRound((double)(TimeCurrent() - gmtNow) / 1800.0) * 1800;
-        const datetime nyOpenServer = gmtDay + windowStartMin * 60 + brokerOffset;
+        const int brokerOffsetNow = (int)MathRound((double)(TimeCurrent() - gmtNow) / 1800.0) * 1800;
+        const int standardOffset  = brokerOffsetNow - (dstNow ? 3600 : 0);
+
+        const datetime nyOpenGmt = gmtDay + windowStartMin * 60;
+        const int brokerOffsetOpen = standardOffset + (NYOpenIsUSDaylightTime(nyOpenGmt) ? 3600 : 0);
+        const datetime nyOpenServer = nyOpenGmt + brokerOffsetOpen;
 
         datetime priorNyCloseGmt = 0;
         for(int back = 1; back <= 4 && priorNyCloseGmt == 0; back++)
@@ -157,7 +189,8 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        const datetime nyPriorCloseBarOpen = priorNyCloseGmt - 1800 + brokerOffset;
+        const int brokerOffsetClose = standardOffset + (NYOpenIsUSDaylightTime(priorNyCloseGmt) ? 3600 : 0);
+        const datetime nyPriorCloseBarOpen = priorNyCloseGmt - 1800 + brokerOffsetClose;
         const int openShift  = iBarShift(m_symbol, PERIOD_M30, nyOpenServer, false);
         const int closeShift = iBarShift(m_symbol, PERIOD_M30, nyPriorCloseBarOpen, false);
         if(openShift < 0 || closeShift < 0 ||
@@ -204,7 +237,7 @@ public:
 
         // --- Determine gap direction ---
         bool gapUp = (todayOpen > prevDayClose);
-        // Fade the gap: gap UP â†’ SELL, gap DOWN â†’ BUY
+        // Fade the gap: gap UP â†?SELL, gap DOWN â†?BUY
         bool bullish = !gapUp;
 
         // --- Check FVG confluence in gap-fill direction ---
@@ -277,6 +310,15 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+        if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+        {
+            SetDecisionReasonTag("NYGAP_NOT_TRADABLE");
+            return TRADE_SIGNAL_NONE;
+        }
+
         SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "NYGAP", confidence))
             return TRADE_SIGNAL_NONE;
@@ -303,3 +345,4 @@ public:
 };
 
 #endif
+

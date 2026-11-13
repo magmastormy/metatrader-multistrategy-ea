@@ -56,8 +56,8 @@ public:
     {
         m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
 
-        // Batch 120: Only update if buffer index hasn't been advanced yet
-        // (RecordClosedTrade writes first, then advances index â€” avoid double-write)
+        // Only update if buffer index hasn't been advanced yet
+        // (RecordClosedTrade writes first, then advances index â€?avoid double-write)
         // This prevents polluting the next slot with a duplicate value
         if(bufferIndex < MAX_TRADES)
             m_equityCurve[bufferIndex] = m_currentEquity;
@@ -88,3 +88,4 @@ public:
 };
 
 #endif // CORE_PERF_ANALYTICS_EQUITY_MQH
+

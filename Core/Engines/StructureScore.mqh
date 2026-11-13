@@ -37,7 +37,7 @@ double CStructureScore::CalculateSwingStrength(const MqlRates &rates[], int inde
     if(rates[index].tick_volume > 0)
     {
         double avgVolume = 0;
-        int validBars = 0;  // Batch 117: count actual valid bars
+        int validBars = 0;  // count actual valid bars
         for(int i = index - 5; i <= index + 5; i++)
         {
             if(i >= 0 && i < ArraySize(rates))
@@ -167,3 +167,4 @@ void CStructureScore::UpdateBiasAndStrength(MarketStructureState &state,
 }
 
 #endif // STRUCTURE_SCORE_MQH
+

@@ -1,8 +1,8 @@
-// Scheduled exit rules â€” partial profit taking (partial close) and
-// maximum position hold time â€” extracted from
-// PositionLifecycleManager.mqh (Phase H â€” God Object decomposition)
+// Scheduled exit rules â€?partial profit taking (partial close) and
+// maximum position hold time â€?extracted from
+// PositionLifecycleManager.mqh (Phase H â€?God Object decomposition)
 // Owns: partial-profit config + max-hold-time config.
-// Behaviour preserved 1:1 â€” no logic changes.
+// Behaviour preserved 1:1 â€?no logic changes.
 #ifndef POS_LIFECYCLE_EXIT_MQH
 #define POS_LIFECYCLE_EXIT_MQH
 
@@ -10,7 +10,7 @@
 #include "PosLifecycleMagicFilter.mqh"
 #include "PosLifecycleVolatility.mqh"   // CPosLifecycleVolatility::GetATR()
 
-// Stateful module â€” held BY VALUE by CPositionLifecycleManager.
+// Stateful module â€?held BY VALUE by CPositionLifecycleManager.
 class CPosLifecycleExit
 {
 private:
@@ -19,11 +19,11 @@ private:
     double m_partialProfitPercent;
 
     bool   m_maxHoldTimeEnabled;
-    int    m_maxHoldHoursIntraday;   // Max hold time for intraday (H1 and lower) â€” default 24h
-    int    m_maxHoldHoursSwing;      // Max hold time for swing (H4 and higher) â€” default 120h (5 days)
+    int    m_maxHoldHoursIntraday;   // Max hold time for intraday (H1 and lower) â€?default 24h
+    int    m_maxHoldHoursSwing;      // Max hold time for swing (H4 and higher) â€?default 120h (5 days)
     bool   m_maxHoldOnlyIfLoss;      // Only close if position is in loss (default true)
 
-    // Batch 150: tickets that already took their partial close. Without this marker
+    // tickets that already took their partial close. Without this marker
     // the partial-profit rule closed m_partialProfitPercent of remaining volume
     // every tick until the position was gone.
     ulong  m_partialDoneTickets[];
@@ -181,3 +181,4 @@ public:
 };
 
 #endif // POS_LIFECYCLE_EXIT_MQH
+

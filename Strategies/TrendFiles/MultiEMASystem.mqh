@@ -167,7 +167,7 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
 
 void CMultiEMASystem::Deinit()
 {
-    // Handles owned by CIndicatorManager â€” do NOT release individually.
+    // Handles owned by CIndicatorManager â€?do NOT release individually.
     // CIndicatorManager::DestroyInstance() handles cleanup on EA deinit.
     m_ema8Handle = INVALID_HANDLE;
     m_ema21Handle = INVALID_HANDLE;
@@ -179,7 +179,7 @@ void CMultiEMASystem::Deinit()
 
 bool CMultiEMASystem::UpdateEMAValues()
 {
-    // Batch 155: static member arrays cannot carry the AS_SERIES flag, so the
+    // static member arrays cannot carry the AS_SERIES flag, so the
     // old plain CopyBuffer calls filled them OLDEST-first - every "[0] =
     // current" read in this class was actually the value from NINE bars ago,
     // and crosses/slope/alignment all ran on badly stale data. Reverse-map
@@ -240,7 +240,7 @@ void CMultiEMASystem::CalculateTrendState()
         m_currentTrend.slope = 0;
     
     // Momentum (8 EMA direction)
-    // Batch 155: guarded - the array is zero-initialized during indicator
+    // guarded - the array is zero-initialized during indicator
     // warmup and a 0 denominator produced inf/NaN in a downstream-read field.
     if(m_ema8[1] != 0.0)
         m_currentTrend.momentum = (m_ema8[0] - m_ema8[1]) / m_ema8[1];
@@ -415,3 +415,4 @@ double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
 }
 
 #endif // __TREND_MULTI_EMA_SYSTEM_MQH__
+

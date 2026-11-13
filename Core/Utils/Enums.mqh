@@ -54,18 +54,18 @@ enum ENUM_STRATEGY_TYPE
 {
     STRATEGY_MOMENTUM = 1,
     STRATEGY_TREND = 2,
-    // STRATEGY_FIBONACCI = 3 — REMOVED: merged into Support/Resistance as confluence module
-    // STRATEGY_ELLIOTT_WAVE = 4 — REMOVED: subjective pattern recognition, unsuitable for automation
+    // STRATEGY_FIBONACCI = 3 �?REMOVED: merged into Support/Resistance as confluence module
+    // STRATEGY_ELLIOTT_WAVE = 4 �?REMOVED: subjective pattern recognition, unsuitable for automation
     STRATEGY_SUPPORT_RESISTANCE = 5,
     STRATEGY_CANDLESTICK = 7,
-    STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy (NEW: Batch 93)
-    STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy (NEW: Batch 93 - Week 3)
-    STRATEGY_STATISTICAL_ARBITRAGE = 10, // Statistical Arbitrage strategy (NEW: Batch 93 - Week 4 - ADVANCED)
-    STRATEGY_FVG_SCALPER = 11,      // FVG Scalper strategy (NEW: Batch 103)
-    STRATEGY_TURTLE_SOUP = 12,      // Turtle Soup strategy (NEW: Batch 103)
-    STRATEGY_BREAKER_BLOCK = 13,    // Breaker Block strategy (NEW: Batch 103)
-    STRATEGY_NY_OPEN_GAP = 14,      // NY Open Gap strategy (NEW: Batch 103)
-    STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
+    STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy
+    STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy
+    STRATEGY_STATISTICAL_ARBITRAGE = 10, // Statistical Arbitrage strategy
+    STRATEGY_FVG_SCALPER = 11,      // FVG Scalper strategy
+    STRATEGY_TURTLE_SOUP = 12,      // Turtle Soup strategy
+    STRATEGY_BREAKER_BLOCK = 13,    // Breaker Block strategy
+    STRATEGY_NY_OPEN_GAP = 14,      // NY Open Gap strategy
+    STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy
     STRATEGY_LIQUIDITY_SWEEP = 18,
     STRATEGY_RANGE_COMPRESSION = 19,  // Range Compression Breakout strategy
     STRATEGY_EXIT_OPTIMIZER = 20,
@@ -75,13 +75,16 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_ONNX = 102            // ONNX AI strategy type
 };
 
-// Strategy Array Index Enumeration (L7-004)
+// Strategy Array Index Enumeration
 // Maps array indices 0-20 to strategies - single source of truth
 enum ENUM_STRATEGY_INDEX
 {
     SI_MOMENTUM = 0,
     SI_TREND = 1,
+    SI_DAILY_LEVEL_BREAKOUT = 2,
+    SI_DAILY_LEVEL_FADE = 3,
     SI_SUPPORT_RESISTANCE = 4,
+    SI_EMA_RIBBON = 5,
     SI_CANDLESTICK = 6,
     SI_MEAN_REVERSION = 7,
     SI_VOLATILITY_BREAKOUT = 8,
@@ -93,7 +96,16 @@ enum ENUM_STRATEGY_INDEX
     SI_ASIAN_RANGE_BREAK = 14,
     SI_LIQUIDITY_SWEEP = 17,
     SI_RANGE_COMPRESSION = 18,
-    SI_MAX = 20
+    SI_DONCHIAN_BREAKOUT = 15,
+    SI_RSI2_PULLBACK = 16,
+    SI_GAP_CONTINUATION = 19,
+    SI_OPENING_RANGE_BREAKOUT = 20,
+    SI_ICT_SESSION_GAP = 21,
+    SI_ICT_STRUCTURE_SHIFT = 22,
+    // Capacity, not a slot: STRATEGY_COUNT reserves 32 flag-vector entries so a new row can take a
+    // free constant without touching array sizing. Empty slots are never enumerated - the flag builder
+    // loops catalog rows, not the enum - so headroom costs nothing at runtime.
+    SI_MAX = 32
 };
 
 // EA Operating Mode Enumeration
@@ -122,7 +134,7 @@ enum ENUM_ERROR_LEVEL
     ERROR_LEVEL_CRITICAL = 3
 };
 
-// Log Level Enumeration (L2-028: Gate verbose PrintFormat)
+// Log Level Enumeration
 enum ENUM_LOG_LEVEL
 {
     LOG_LEVEL_NONE = 0,
@@ -274,7 +286,7 @@ double ClampRiskPercentGlobal(double riskPercent)
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
-// Drawdown state — single source of truth for all drawdown queries
+// Drawdown state �?single source of truth for all drawdown queries
 // (Phase 2.1: Defined here to break circular include dependency)
 struct SDrawdownState
 {
@@ -286,7 +298,7 @@ struct SDrawdownState
 };
 
 // Position Sizing Enumeration
-// L5-006: Unified enum matching CPositionSizer usage
+// Unified enum matching CPositionSizer usage
 enum ENUM_POSITION_SIZING_MODE
 {
     POSITION_SIZING_FIXED_LOT = 0,         // Fixed lot size
@@ -709,7 +721,7 @@ string EscapeJsonString(const string &str)
 // Global log level variable (set from InpLogLevel input during EA initialization)
 int g_logLevel = LOG_LEVEL_ERROR;
 
-// Conditional Logging Macro (L2-028: Gate verbose PrintFormat)
+// Conditional Logging Macro
 // Uses existing g_logLevel (int 0-4) mapped to ENUM_LOG_VERBOSITY
 // MQL5 doesn't support { } blocks in macro definitions, so we use simple statements
 // Users must wrap LOG_IF calls in { } if used in if-else contexts
@@ -731,3 +743,8 @@ int g_logLevel = LOG_LEVEL_ERROR;
 // Wrap in { } if used in if-else context: if(cond) { LOG_IF1(...); } else { ... }
 
 #endif // CORE_ENUMS_MQH
+
+
+
+
+

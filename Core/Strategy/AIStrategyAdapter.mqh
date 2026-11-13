@@ -6,6 +6,9 @@
  #include "../../Interfaces/IAIStrategy.mqh"
  #include "../../AIModules/NeuralNetworkStrategy.mqh"
  #include "../Utils/SubsystemLogger.mqh"
+ // CUnifiedRiskManager is the type the adapter casts the engine's void* risk-manager slot to (~:151),
+ // so its definition has to be visible here rather than inherited from the includer.
+ #include "../Risk/UnifiedRiskManager.mqh"
  
  class CAIStrategyAdapter : public IAIStrategy
  {

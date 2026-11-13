@@ -239,7 +239,7 @@ public:
         double netProfit = m_totalProfit - m_totalLoss;
         if(maxDrawdown > 0)
         {
-            // Batch 119: Convert drawdown from percent to dollars for unit consistency
+            // Convert drawdown from percent to dollars for unit consistency
             double maxDrawdownDollars = (peakEquity > 0) ? (maxDrawdown / 100.0) * peakEquity : maxDrawdown;
             m_recoveryFactor = (maxDrawdownDollars > 0) ? netProfit / maxDrawdownDollars : 0.0;
         }
@@ -349,3 +349,4 @@ public:
 };
 
 #endif // CORE_PERF_ANALYTICS_TRADESTATS_MQH
+

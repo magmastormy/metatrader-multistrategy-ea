@@ -30,7 +30,7 @@ public:
                                                              const double bbLowerValue,
                                                              const SRegimeConfig &config);
 
-    //--- Multi-dimensional classification (Batch 93 - Week 5)
+    //--- Multi-dimensional classification
     static ENUM_DETAILED_REGIME CalculateDetailedRegime(double adxValue,
                                                         double zScore,
                                                         double bbWidthAtrRatio,
@@ -43,7 +43,7 @@ public:
                                                    double &breakoutMult,
                                                    double &ictMult);
 
-    //--- Batch 100: Hurst persistence overlay applied onto a snapshot
+    //--- Hurst persistence overlay applied onto a snapshot
     static void ApplyHurstWeightModifiers(SRegimeSnapshot &snapshot,
                                           double hurstMeanRevMult,
                                           double hurstMomentumMult,
@@ -219,7 +219,7 @@ void CRegimeComposite::CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME r
     }
 }
 
-// Batch 100: Apply Hurst exponent weight multipliers on top of
+// Apply Hurst exponent weight multipliers on top of
 // regime multipliers, in-place on the supplied snapshot.
 void CRegimeComposite::ApplyHurstWeightModifiers(SRegimeSnapshot &snapshot,
                                                  double hurstMeanRevMult,
@@ -227,7 +227,7 @@ void CRegimeComposite::ApplyHurstWeightModifiers(SRegimeSnapshot &snapshot,
                                                  double hurstTrendMult,
                                                  double hurstBreakoutMult)
 {
-    // Validate Hurst inputs â€” corrupted indicator handles can produce inf/NaN
+    // Validate Hurst inputs â€?corrupted indicator handles can produce inf/NaN
     if(!MathIsValidNumber(hurstMeanRevMult) || hurstMeanRevMult < 0.01 || hurstMeanRevMult > 10.0)
         hurstMeanRevMult = 1.0;
     if(!MathIsValidNumber(hurstMomentumMult) || hurstMomentumMult < 0.01 || hurstMomentumMult > 10.0)
@@ -251,3 +251,4 @@ void CRegimeComposite::ApplyHurstWeightModifiers(SRegimeSnapshot &snapshot,
 }
 
 #endif // REGIME_COMPOSITE_MQH
+

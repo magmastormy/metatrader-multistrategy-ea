@@ -4,6 +4,7 @@
 
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
 enum ENUM_LIQUIDITY_LEVEL_TYPE
@@ -234,6 +235,18 @@ public:
             IndicatorRelease(m_atrHandle);
     }
 
+    // The catalog creator builds this class with no arguments and the manager only ever calls Init();
+    // a separate Initialize() overload therefore never ran for the voting instance, its ATR handle
+    // stayed INVALID and ExecuteSignal() returned an empty struct on every scan. Init is the entry
+    // point the registration path uses, so the handle has to be created here.
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
+                      void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
+    {
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
+            return false;
+        return Initialize(symbol, timeframe, GetUnifiedRiskManager());
+    }
+
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                     CUnifiedRiskManager* riskManager = NULL)
     {
@@ -451,7 +464,9 @@ public:
     }
 
     // Consensus vote entry point: CStrategyBase::GetSignal(double&) forwards to this ExecuteSignal override.
-    // SL/TP are stashed for the execution path (used only when InpUseStrategyStops is on); this class places no orders and gates no risk.
+    // SL/TP are stashed for the execution path (used only when InpUseStrategyStops is on); this class places no orders.
+    // It was the one voter with no local pre-trade gate at all, so a sweep whose stop sat on the entry
+    // point or whose 2R target could not cover the spread still cast a full-weight vote.
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence)
     {
         SLiquiditySweepSignal sig = GetSignal();
@@ -460,6 +475,16 @@ public:
         if(sig.direction != TRADE_SIGNAL_NONE && sig.entryPrice > 0)
         {
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+            double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+
+            if(!CSignalGuards::IsSignalTradable(sig.entryPrice, sig.stopLoss, sig.takeProfit, spreadPrice))
+            {
+                LogRejectEvent("LIQ_SWEEP_NOT_TRADABLE");
+                confidence = 0.0;
+                return TRADE_SIGNAL_NONE;
+            }
+
             if(point > 0)
                 SetProposedStops(MathAbs(sig.entryPrice - sig.stopLoss) / point,
                                  MathAbs(sig.takeProfit - sig.entryPrice) / point);

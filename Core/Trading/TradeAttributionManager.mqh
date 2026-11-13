@@ -126,7 +126,7 @@ public:
     void   NNDiagPrintSummary(const string context = "");
 
     //--- Round-trips the prediction id through the trade comment and the position map; called at init when
-    //--- InpRunNNAttributionSelfTest is on. Batch 203 made both halves load-bearing, so a mismatch here is
+    //--- InpRunNNAttributionSelfTest is on. made both halves load-bearing, so a mismatch here is
     //--- a live net-learning break, not a test-only failure.
     bool   RunNNAttributionSelfTest();
 
@@ -662,7 +662,44 @@ void CTradeAttributionManager::RecordPositionAttribution(
     const string strategyRole,
     const string &contributors[])
 {
-    // Logging only: nothing is stored, and the sole side effect is the entry-map counter below.
+    // Resolve the fill's position id and STORE the attribution. The function used to be logging only
+    // ("Logging only: nothing is stored"), so the close path in CStrategyMgrTradeFeedback popped an id
+    // that had never been written: one measured 24 h window closed 46 positions and left only 2
+    // strategy rows with a trade count, which is why strategy_scoreboard.csv stayed at trades=0 and why
+    // no weight, health score or park decision could ever be earned from a real outcome. The whole
+    // learning loop was starved by this single missing write.
+    ulong positionId = 0;
+    if(dealTicket > 0 && HistoryDealSelect(dealTicket))
+        positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+
+    if(positionId > 0)
+    {
+        // Bounded store: a position that never closes must not grow the map forever.
+        if(ArraySize(m_attributionPositionIds) >= 512)
+        {
+            int dropCount = ArraySize(m_attributionPositionIds);
+            for(int i = 0; i < dropCount - 1; i++)
+            {
+                m_attributionPositionIds[i] = m_attributionPositionIds[i + 1];
+                m_attributionContributorCsv[i] = m_attributionContributorCsv[i + 1];
+            }
+            ArrayResize(m_attributionPositionIds, dropCount - 1);
+            ArrayResize(m_attributionContributorCsv, dropCount - 1);
+        }
+        UpsertPositionAttribution(positionId, contributors);
+        if(m_enableNNDiagnostics)
+            PrintFormat("[TRADE-ATTRIBUTION] stored position=%I64u | contributors=%s",
+                        positionId, JoinContributors(contributors));
+    }
+    else if(m_enableNNDiagnostics)
+    {
+        // No position id means the fill cannot ever be scored. Say so instead of silently dropping it.
+        PrintFormat("[TRADE-ATTRIBUTION] WARN deal=%I64u not in history yet - contributor names not stored",
+                    dealTicket);
+    }
+
+    IncrementNNDiagEntryMapCount();
+
     if(m_enableNNDiagnostics)
     {
         PrintFormat("[TRADE-ATTRIBUTION] deal=%I64u | %s | %s | vol=%.2f | price=%.5f | SL=%.1f | TP=%.1f | cluster=%s | role=%s",
@@ -678,8 +715,6 @@ void CTradeAttributionManager::RecordPositionAttribution(
             PrintFormat("[TRADE-ATTRIBUTION] Contributors: %s", contribStr);
         }
     }
-    
-    IncrementNNDiagEntryMapCount();
 }
 
 void CTradeAttributionManager::ResetNNDiagnostics()
@@ -706,3 +741,4 @@ void CTradeAttributionManager::ClearAll()
 }
 
 #endif // __TRADE_ATTRIBUTION_MANAGER_MQH__
+

@@ -2,6 +2,12 @@
 #ifndef COMMON_TYPES_MQH
 #define COMMON_TYPES_MQH
 
+// This file declares structs whose fields use enums, so it must carry the enum definitions itself.
+// Until the header sweep in test_headers.ps1, it worked only because its single includer happened to
+// pull Enums.mqh in first - a header that compiles only in one include order is not a header, it is a
+// fragment.
+#include "Enums.mqh"
+
 // Forward declarations for all common classes
 class CEnhancedErrorHandler;
 class CUtilities;

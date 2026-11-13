@@ -70,6 +70,10 @@ private:
 
     double m_assetClassCorrThreshold; // Same asset class (default 0.85)
     double m_crossAssetCorrThreshold; // Different asset classes (default 0.7)
+    datetime m_lastCorrUnknownLog;    // Throttle for [CORR-UNKNOWN] lines (one per symbol per 300s)
+
+    // Crisis limits and hardcoded thresholds (Item 19): operator inputs replace class-member literals.
+    double m_stopFallbackPoints;      // Fallback stop distance in points when ATR is unavailable
 
 public:
     CPortfolioRiskManager();
@@ -101,13 +105,23 @@ public:
     void   SetAssetClassCorrThreshold(double threshold) { m_assetClassCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
     void   SetCrossAssetCorrThreshold(double threshold) { m_crossAssetCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
 
+    // Crisis limits and hardcoded thresholds (Item 19): operator inputs bound at EA init.
+    void   SetCVaRConfidence(double value)     { m_cvarConfidence = MathMax(0.50, MathMin(0.999, value)); }
+    void   SetCVaRMaxRisk(double value)        { m_cvarMaxRisk    = MathMax(0.0, value); }
+    void   SetMaxEquityCurveHistory(int value) { m_maxEquityCurveHistory = MathMax(10, value); }
+    void   SetStopFallbackPoints(double value) { m_stopFallbackPoints = MathMax(0.0, value); }
+
+    // Item 15: public so CRiskValidationPipeline::ValidateExposure can count EA-owned positions
+    // on a symbol for the per-symbol exposure cap. Uses IsMagicOwned() (MagicRange.mqh) so
+    // positions from other EAs or manual trades are not counted.
+    int    GetPositionsOnSymbol(const string symbol);
+
 private:
     double GetPositionRisk(ulong ticket);
     void   UpdateCurrentRisk();
     double GetRiskDenominator() const;
     double CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints = 0.0);
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
-    int    GetPositionsOnSymbol(const string symbol);
     void   RecordBlockReason(const string reason);
 
     int    FindSymbolInCache(string symbol);
@@ -139,7 +153,9 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_lastEquitySampleTime(0),
     m_useEquityCurveForCVaR(true),
     m_assetClassCorrThreshold(0.85),
-    m_crossAssetCorrThreshold(0.7)
+    m_crossAssetCorrThreshold(0.7),
+    m_lastCorrUnknownLog(0),
+    m_stopFallbackPoints(100.0)
 {
     m_riskCache.totalRiskPct = 0.0;
     m_riskCache.lastFullRefresh = 0;
@@ -274,18 +290,37 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
         double maxAbsCorrelation = 0.0;
         string mostCorrelatedSymbol = "";
         double effectiveThreshold = m_maxCorrelation; // Default; refined per-pair below
+        int unmeasuredPairs = 0;
+        string firstUnmeasured = "";
 
         for(int i = 0; i < PositionsTotal(); i++)
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0 || !PositionSelectByTicket(ticket))
                 continue;
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
+                continue;
 
             string existingSymbol = PositionGetString(POSITION_SYMBOL);
             if(existingSymbol == symbol)
                 continue;
 
-            double correlation = MathAbs(CalculateSymbolCorrelation(symbol, existingSymbol));
+            // A pair with short H1 history is UNMEASURED, not correlated at 1.00. Conflating the two
+            // banned every symbol on a book that held one: on 2026-11-12 a tester run printed
+            // "Correlation 1.00 > Max 0.85 (Boom 1000 Index vs Step Index)" - and the same line for
+            // Crash, Jump 25/75 and both Volatility indices - because the matrix held the unknown
+            // sentinel for pairs the tester could not price. The capital constraint that does not
+            // need a price series is the portfolio risk cap, enforced above by IsTradeAllowed.
+            double measured = 0.0;
+            if(!m_correlationEngine.TryGetCorrelation(symbol, existingSymbol, measured))
+            {
+                unmeasuredPairs++;
+                if(firstUnmeasured == "")
+                    firstUnmeasured = existingSymbol;
+                continue;
+            }
+
+            double correlation = MathAbs(measured);
 
             // Asset-class-aware threshold: same-class pairs get a higher limit
             double pairThreshold = GetEffectiveCorrelationThreshold(symbol, existingSymbol);
@@ -296,6 +331,14 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
                 mostCorrelatedSymbol = existingSymbol;
                 effectiveThreshold = pairThreshold;
             }
+        }
+
+        if(unmeasuredPairs > 0 && (m_lastCorrUnknownLog == 0 ||
+                                   (TimeCurrent() - m_lastCorrUnknownLog) >= 300))
+        {
+            m_lastCorrUnknownLog = TimeCurrent();
+            PrintFormat("[CORR-UNKNOWN] %s | %d pair(s) unmeasured (H1 history shorter than lookback) | first=%s | correlation not applied; portfolio risk cap, per-symbol and daily caps still bind",
+                        symbol, unmeasuredPairs, firstUnmeasured);
         }
 
         if(effectiveThreshold != m_maxCorrelation)
@@ -351,17 +394,17 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
-        if(PositionSelectByTicket(ticket))
+        if(!PositionSelectByTicket(ticket)) continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
+
+        double positionRisk = GetPositionRisk(ticket);
+        if(positionRisk < 0.0)
         {
-            double positionRisk = GetPositionRisk(ticket);
-            if(positionRisk < 0.0)
-            {
-                m_missingStopDetected = true;
-                m_missingStopCount++;
-                continue;
-            }
-            totalRiskDollar += positionRisk;
+            m_missingStopDetected = true;
+            m_missingStopCount++;
+            continue;
         }
+        totalRiskDollar += positionRisk;
     }
     
     m_currentTotalRisk = (totalRiskDollar / riskDenominator) * 100.0;
@@ -449,7 +492,7 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
     if(effectiveStopPoints <= 0.0)
     {
         int stopLevelPoints = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
-        effectiveStopPoints = MathMax(100.0, (double)stopLevelPoints * 2.0);
+        effectiveStopPoints = MathMax(m_stopFallbackPoints, (double)stopLevelPoints * 2.0);
     }
 
     double stopLossPriceDistance = effectiveStopPoints * point;
@@ -513,6 +556,7 @@ void CPortfolioRiskManager::RefreshRiskCache()
     {
         ulong ticket = PositionGetTicket(i);
         if(!PositionSelectByTicket(ticket)) continue;
+        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
 
         string symbol = PositionGetString(POSITION_SYMBOL);
         double riskDollar = GetPositionRisk(ticket);
@@ -702,12 +746,23 @@ double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 // proposedRiskPct is a FRACTION (callers pass riskPercent/100), same scale as m_cvarMaxRisk (0.10 = 10%)
 bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 {
-    // No tail estimate below 20 equity-curve samples: refuse rather than trade unmeasured tail risk.
+    // No tail estimate exists yet: the equity window fills at one sample per minute, so the first
+    // twenty minutes after every attach had no measurable tail - and this returned "veto" for all of
+    // them. A live session shows what that cost: 52 real candidates denied between 23:02 and 23:16,
+    // and the first ALLOWED line at 23:22. A measurement that has not started is not evidence of tail
+    // risk, so during warm-up the trade is permitted and the gap is reported instead of silently
+    // closing the book. Once twenty samples exist the limit is enforced exactly as before.
     if(m_equityCurveReturnCount < 20)
     {
-        PrintFormat("[CVAR-CHECK] insufficient equity history (%d/20) - proposed=%.2f%% DENIED",
-                    m_equityCurveReturnCount, proposedRiskPct * 100.0);
-        return true;
+        static datetime s_lastWarmupLog = 0;
+        datetime nowWarmup = TimeCurrent();
+        if(nowWarmup - s_lastWarmupLog >= 60)
+        {
+            PrintFormat("[CVAR-CHECK] warming up (%d/20 min samples) - proposed=%.2f%% PERMITTED, tail unmeasured",
+                        m_equityCurveReturnCount, proposedRiskPct * 100.0);
+            s_lastWarmupLog = nowWarmup;
+        }
+        return false;
     }
 
     double cvar = CalculateCVaR(m_cvarConfidence);

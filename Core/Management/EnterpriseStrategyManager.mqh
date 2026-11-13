@@ -84,6 +84,14 @@ private:
     CStrategyMgrInfrastructure m_infra;
     CStrategyMgrTradeFeedback  m_tradeFeedback;      // magic ownership window + trade feedback
 
+    //--- Per-symbol loss-streak breaker state. Symbol-level, not strategy-level: the measured window lost 244
+    //--- of its 299 dollars inside losing runs of 2+ closes on a single instrument, while the 200+ closes of
+    //--- the two big strategy families were noise. One manager instance per symbol owns exactly this.
+    int      m_symbolLossStreak;
+    datetime m_symbolStreakBlockedUntil;
+    int      m_symbolStreakLimit;
+    int      m_symbolStreakCooldownSec;
+
     // Inputs a strategy's Init reads for itself, so they have to be applied before RegisterStrategy calls
     // Init; the dependency pass that runs after registration is too late for these. Defaults are the
     // values the strategy classes carry today, so an unset manager behaves as it did.
@@ -284,6 +292,57 @@ public:
     double GetSupportFloorNewBar() const             { return m_quorumConfig.GetSupportFloorNewBar(); }
     double GetSupportFloorIntrabar() const           { return m_quorumConfig.GetSupportFloorIntrabar(); }
 
+    //--- Per-symbol loss-streak breaker (Batch 286). The policy is pushed once by the orchestrator, the streak is
+    //--- fed by the close path (StrategyMgrTradeFeedback) and read by the per-symbol entry gate. Limit <= 0 means
+    //--- the feature is off and none of these touch the decision path.
+    void SetSymbolLossStreakPolicy(const int limit, const int cooldownSec)
+    {
+        m_symbolStreakLimit = limit;
+        m_symbolStreakCooldownSec = (cooldownSec > 0) ? cooldownSec : 0;
+    }
+    int GetSymbolLossStreakCooldownSec() const { return m_symbolStreakCooldownSec; }
+    int GetSymbolLossStreak() const            { return m_symbolLossStreak; }
+
+    //--- True while the symbol is stood down after too many consecutive losing closes.
+    bool IsSymbolStreakBlocked()
+    {
+        if(m_symbolStreakLimit <= 0)      return false;
+        if(m_symbolStreakBlockedUntil <= 0) return false;
+        if(TimeCurrent() < m_symbolStreakBlockedUntil) return true;
+
+        // Cooldown served: release, and restart the count so the next loss is strike one, not a fresh block.
+        m_symbolStreakBlockedUntil = 0;
+        m_symbolLossStreak = 0;
+        return false;
+    }
+
+    //--- Returns true when this very close is the one that triggers a block, so the caller can print the trigger.
+    //--- The streak is counted whether or not a block policy is configured, because Batch 287 reads the same
+    //--- counter to size the next entry down instead of refusing it (InpSymbolLossStreakLimit = 0 keeps the brake
+    //--- off while the count still exists).
+    bool RecordSymbolClose(const double netProfit)
+    {
+        if(netProfit > 0.0)
+        {
+            m_symbolLossStreak = 0;
+            return false;
+        }
+        m_symbolLossStreak++;
+        if(m_symbolStreakLimit <= 0) return false;
+        if(m_symbolLossStreak < m_symbolStreakLimit) return false;
+        m_symbolStreakBlockedUntil = TimeCurrent() + (datetime)m_symbolStreakCooldownSec;
+        return true;
+    }
+
+    //--- Risk scale for the next entry on this symbol: `factor` once the losing run reaches `minStreak`, else 1.0.
+    //--- Sizing down in place is the alternative to holding the row: a held entry hands its slot and its risk
+    //--- budget to the next symbol, which measurably moved the book to worse hands (Batch 286).
+    double GetSymbolStreakRiskScale(const int minStreak, const double factor) const
+    {
+        if(minStreak <= 0 || factor <= 0.0 || factor >= 1.0) return 1.0;
+        return (m_symbolLossStreak >= minStreak) ? factor : 1.0;
+    }
+
     double GetParticipationFormulaBase() const       { return m_quorumConfig.GetParticipationFormulaBase(); }
     double GetParticipationFormulaCoeff() const      { return m_quorumConfig.GetParticipationFormulaCoeff(); }
     double GetParticipationFormulaMin() const        { return m_quorumConfig.GetParticipationFormulaMin(); }
@@ -307,6 +366,11 @@ public:
                              bool liveVotingEnabled = false);
     
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
+
+    // Single-voter confidence floor, forwarded to the consensus core. The orchestrator sets it once at
+    // init from its own config so the value is settable without editing a #define and rebuilding.
+    void   SetSingleVoterFloor(const double floor) { m_consensusEngine.SetSingleVoterFloor(floor); }
+    double GetSingleVoterFloor() const             { return m_consensusEngine.GetSingleVoterFloor(); }
 
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
@@ -443,6 +507,12 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager()
     m_consensusEngine.SetSource(GetPointer(this));
 
     m_tradeFeedback.SetSource(GetPointer(this));
+
+    //--- The streak breaker ships off; the orchestrator pushes the policy from the inputs at init.
+    m_symbolLossStreak = 0;
+    m_symbolStreakBlockedUntil = 0;
+    m_symbolStreakLimit = 0;
+    m_symbolStreakCooldownSec = 0;
 }
 
 CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
@@ -910,7 +980,7 @@ ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
     return m_signalContext.GetCurrentMarketRegime();
 }
 
-//--- Before Batch 201 nothing wrote m_currentMarketRegime, so every reader acted on
+//--- Before, nothing wrote m_currentMarketRegime, so every reader acted on
 //--- MARKET_REGIME_UNKNOWN, which is why AI regime adaptation looked configured and did nothing.
 //--- Same source as the consensus regime gate, so a vote and an adaptation cannot disagree about
 //--- the market.
@@ -1028,3 +1098,4 @@ void CEnterpriseStrategyManager::SetValidatorConfig(double intrabarMinQuality,
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH
+

@@ -20,7 +20,7 @@ class CIntrabarPolicy
 private:
     CEnterpriseStrategyManager* m_src;
 
-    //--- L6-007: per-strategy-index intrabar policy configuration.
+    //--- per-strategy-index intrabar policy configuration.
     //--- Moved verbatim from CEnterpriseStrategyManager::m_intrabarPolicyConfig,
     //--- including its "all slots default to OFF" initialisation (which used to
     //--- live in the manager's constructor).
@@ -78,7 +78,7 @@ ENUM_INTRABAR_POLICY CIntrabarPolicy::GetIntrabarPolicyHelper(int idx)
     if(idx >= 0 && idx < 32 && m_policyConfig[idx] != INTRABAR_POLICY_OFF)
         return m_policyConfig[idx];
     // Default policies per strategy (matching original hardcoded values).
-    // Batch 147: the always-LIVE fallback is fixed to the semantic slots
+    // the always-LIVE fallback is fixed to the semantic slots
     // 7 (Mean Reversion) / 8 (Volatility Breakout) - the StrategyConfigBuilder
     // rows those two strategies actually own. The legacy 9/10 literals were removed.
     if(idx == 7 || idx == 8) return INTRABAR_POLICY_LIVE;
@@ -86,3 +86,4 @@ ENUM_INTRABAR_POLICY CIntrabarPolicy::GetIntrabarPolicyHelper(int idx)
 }
 
 #endif // INTRABAR_POLICY_MQH
+

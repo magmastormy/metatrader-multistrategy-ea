@@ -19,7 +19,7 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../../IndicatorManager.mqh"
 
-// CDiagMgrHeartbeat — stateless heartbeat emitters and math
+// CDiagMgrHeartbeat �?stateless heartbeat emitters and math
 class CDiagMgrHeartbeat
 {
 public:
@@ -61,7 +61,7 @@ public:
     }
 
 // Compounding tier / session weight / skew step / family weight
-// heartbeat diagnostics (L5-013 / L9-001 / L9-002 / L9-003 / L9-004)
+// heartbeat diagnostics
     static void EmitModuleHeartbeats(CCompoundingTierManager* compoundingTierManager,
                                      CSessionWeightManager* sessionWeightManager,
                                      CSkewStepAnalyzer* skewStepAnalyzer,
@@ -76,7 +76,7 @@ public:
             PrintFormat(FMT_COMPOUNDING_TIER_HEARTBEAT, diag);
         }
 
-        //--- Session weight heartbeat diagnostics (L9-001)
+        //--- Session weight heartbeat diagnostics
         if(sessionWeightManager != NULL && sessionWeightManager.IsInitialized())
         {
             string swHb = sessionWeightManager.GetHeartbeatString();
@@ -85,7 +85,7 @@ public:
             PrintFormat(FMT_SESSION_WEIGHT_HEARTBEAT, swHb);
         }
 
-        //--- Skew step heartbeat diagnostics (L9-002)
+        //--- Skew step heartbeat diagnostics
         if(skewStepAnalyzer != NULL && skewStepAnalyzer.IsInitialized())
         {
             string ssHb = skewStepAnalyzer.GetHeartbeatString();
@@ -94,7 +94,7 @@ public:
             PrintFormat(FMT_SKEW_STEP_HEARTBEAT, ssHb);
         }
 
-        //--- Family weight matrix heartbeat diagnostics (L9-004)
+        //--- Family weight matrix heartbeat diagnostics
         if(familyWeightMatrix != NULL && familyWeightMatrix.IsInitialized())
         {
             string fwHb = familyWeightMatrix.GetHeartbeatString();
@@ -226,8 +226,12 @@ public:
     {
         CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
         if(indicatorManager != NULL)
-            indicatorManager.ReleaseUnused(300);
+            // Idle window must exceed one evaluation cycle, otherwise a handle read once per closed
+            // bar is released and recreated every bar (measured: 9,933 creations over 457 distinct
+            // handles in a 7-hour tester window). See the same change in EAOrchestrator.
+            indicatorManager.ReleaseUnused(14400);
     }
 };
 
 #endif // DIAG_MGR_HEARTBEAT_MQH
+

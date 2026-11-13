@@ -83,6 +83,15 @@ struct SOrchestratorConfig
     double  volMaxScale;
     bool    enableLiquiditySweep;
     bool    enableRangeCompression;
+    bool    enableDonchianBreakout;
+    bool    enableRSI2Pullback;
+    bool    enableDailyLevelBreakout;
+    bool    enableDailyLevelFade;
+    bool    enableEMARibbon;
+    bool    enableGapContinuation;
+    bool    enableOpeningRangeBreakout;
+    bool    enableICTSessionGap;
+    bool    enableICTStructureShift;
 
     // EA operating mode
     ENUM_EA_MODE eaMode;
@@ -97,6 +106,11 @@ struct SOrchestratorConfig
     double  consensusSupportFloorNewBar;
     double  consensusSupportFloorIntrabar;
     CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE quorumProfile;
+    double  singleVoterFloor;              // lone-voter confidence floor, the gate every measured reject hit
+    int     symbolLossStreakLimit;         // consecutive losing closes on one symbol before it is stood down; 0 = off
+    int     symbolLossStreakCooldownMin;    // how long the symbol stays stood down
+    double  symbolStreakRiskScale;         // risk multiplier for a symbol in a losing run; 1.0 = off
+    int     symbolStreakRiskMinCount;      // consecutive losing closes that trigger the smaller stake
 
     // Strategy weights
     double  weightMomentum;
@@ -113,6 +127,15 @@ struct SOrchestratorConfig
     double  weightAsianRangeBreak;
     double  weightLiquiditySweep;
     double  weightRangeCompression;
+    double  weightDonchianBreakout;
+    double  weightRSI2Pullback;
+    double  weightDailyLevelBreakout;
+    double  weightDailyLevelFade;
+    double  weightEMARibbon;
+    double  weightGapContinuation;
+    double  weightOpeningRangeBreakout;
+    double  weightICTSessionGap;
+    double  weightICTStructureShift;
 
     // AI Engine settings
     bool    enableAIMode;
@@ -241,6 +264,18 @@ struct SOrchestratorConfig
     double  lossGuardDailyLossCircuitBreakerPercent;
     double  lossGuardPositionLossLimitPercent;
 
+    // Crisis limits and hardcoded thresholds (Item 19): class-member defaults replaced by operator inputs.
+    double  positionSizerMaxLotSize;
+    int     positionSizerVolatilityLookback;
+    int     positionSizerEquityCurveLookback;
+    double  riskMarginHealthMaxFreeMarginUsage;
+    double  riskMarginHealthMinMarginLevel;
+    double  portfolioRiskCvarConfidence;
+    double  portfolioRiskCvarMaxRisk;
+    int     portfolioRiskMaxEquityCurveHistory;
+    double  riskValidationMinAccountBalance;
+    double  portfolioRiskStopFallbackPoints;
+
     bool    emergencyFlattenAllAccountPositions;
     int     unprotectedRemediationIntervalSec;
     int     unprotectedMaxRestoreAttempts;
@@ -293,6 +328,10 @@ struct SOrchestratorConfig
 
     // Enterprise mode
     bool    useSignalPipeline;
+    // Prefer the strategy's own designed SL/TP over the ATR fallback when building a candidate.
+    // Carried here because the headers that need it (EAOrchestrator, CandidateBuilder) cannot read a
+    // program `input` - an input exists only in the .mq5 translation unit.
+    bool    useStrategyStops;
     bool    allowSyntheticOffHours;
     double  minTrendStrength;
     double  maxVolatility;
@@ -397,6 +436,15 @@ struct SOrchestratorConfig
         volMaxScale = 3.0;
         enableLiquiditySweep = true;
         enableRangeCompression = true;
+        enableDonchianBreakout = true;
+        enableRSI2Pullback = true;
+        enableDailyLevelBreakout = true;
+        enableDailyLevelFade = true;
+        enableEMARibbon = true;
+        enableGapContinuation = true;
+        enableOpeningRangeBreakout = true;
+        enableICTSessionGap = true;
+        enableICTStructureShift = true;
 
         eaMode = EA_MODE_HYBRID;
         enableVisualAnalysis = true;
@@ -409,6 +457,11 @@ struct SOrchestratorConfig
         consensusSupportFloorNewBar = 0.20;
         consensusSupportFloorIntrabar = 0.15;
         quorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
+        singleVoterFloor = 0.70;
+        symbolLossStreakLimit = 0;          // off by default: the breaker is an A/B input, not a shipped rule
+        symbolLossStreakCooldownMin = 60;
+        symbolStreakRiskScale = 1.0;        // off: the sizing rule ships disabled like the brake
+        symbolStreakRiskMinCount = 2;
 
         weightMomentum = 1.0;
         weightTrend = 1.2;
@@ -424,6 +477,15 @@ struct SOrchestratorConfig
         weightAsianRangeBreak = 1.3;
         weightLiquiditySweep = 1.9;
         weightRangeCompression = 1.7;
+        weightDonchianBreakout = 1.6;
+        weightRSI2Pullback = 1.5;
+        weightDailyLevelBreakout = 1.7;
+        weightDailyLevelFade = 1.5;
+        weightEMARibbon = 1.6;
+        weightGapContinuation = 1.5;
+        weightOpeningRangeBreakout = 1.7;
+        weightICTSessionGap = 1.5;
+        weightICTStructureShift = 1.6;
 
         enableAIMode = false;
         enableNeuralNetwork = false;
@@ -541,6 +603,18 @@ struct SOrchestratorConfig
         lossGuardDailyLossCircuitBreakerPercent = 50.0;
         lossGuardPositionLossLimitPercent = 75.0;
 
+        // Crisis limits and hardcoded thresholds (Item 19): defaults match the literals they replace.
+        positionSizerMaxLotSize = 100.0;
+        positionSizerVolatilityLookback = 252;
+        positionSizerEquityCurveLookback = 100;
+        riskMarginHealthMaxFreeMarginUsage = 0.8;
+        riskMarginHealthMinMarginLevel = 200.0;
+        portfolioRiskCvarConfidence = 0.95;
+        portfolioRiskCvarMaxRisk = 0.10;
+        portfolioRiskMaxEquityCurveHistory = 500;
+        riskValidationMinAccountBalance = 100.0;
+        portfolioRiskStopFallbackPoints = 100.0;
+
         // Opt-in only: true flattens EVERY position on the account, manual trades and other EAs'
         // included. Default is EA-scoped; set true only on a single-strategy account you control.
         emergencyFlattenAllAccountPositions = false;
@@ -591,6 +665,7 @@ struct SOrchestratorConfig
         vpinNumBuckets = 50;
 
         useSignalPipeline = true;
+        useStrategyStops = true;
         allowSyntheticOffHours = true;
         minTrendStrength = 50.0;
         maxVolatility = 3.0;
@@ -615,7 +690,7 @@ struct SOrchestratorConfig
 
         logLevel = 1;
                 logVerbosity = VERBOSITY_NORMAL;
-                logDerivFamilyDetection = true;  // L7-013
+                logDerivFamilyDetection = true;
 
         equityCurveEmaPeriod = 20;
         equityCurveReductionFactor = 0.50;
@@ -643,3 +718,4 @@ struct SOrchestratorConfig
 };
 
 #endif // ORCHESTRATOR_CONFIG_MQH
+

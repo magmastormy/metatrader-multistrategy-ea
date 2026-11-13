@@ -1,20 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import pickle
-from pathlib import Path
-
-import numpy as np
-from scipy.stats import spearmanr
 
 from data_pipeline import build_scaled_dataset_splits
-
-FAMILY_PREFIXES = [
-    "crashboom", "volatility", "step", "jump", "dex",
-    "multistep", "exponential", "hybrid", "rangebreak",
-    "skewstep", "volswitch", "driftswitch", "trek",
-    "tactical", "derived", "stablespread", "pairsarbitrage", "spotvolatility",
-]
+from train_common import FAMILY_PREFIXES, adjust_seq_len_for_family, compute_test_ic, load_split, save_pickle
 
 
 def main() -> None:
@@ -29,8 +18,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Jump (3) and DEX (4) use longer sequences
-    if args.family_id in (3, 4) and args.seq_len == 60:
-        args.seq_len = 120
+    args.seq_len = adjust_seq_len_for_family(args.family_id, args.seq_len)
 
     try:
         import xgboost as xgb
@@ -90,11 +78,10 @@ def main() -> None:
     )
 
     pkl_output = args.output or f"{prefix}_xgboost.pkl"
-    with open(pkl_output, "wb") as handle:
-        pickle.dump(model, handle)
+    save_pickle(model, pkl_output)
 
     preds = model.predict_proba(X_te)
-    test_ic, _ = spearmanr(preds[:, 2] - preds[:, 0], test[3])
+    test_ic = compute_test_ic(preds, y_te)
     print(
         f"trained=deriv_xgboost family={prefix}({args.family_id}) "
         f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "

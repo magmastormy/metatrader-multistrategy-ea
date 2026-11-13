@@ -8,6 +8,7 @@
 #include "../../IndicatorManager.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Orchestration/OrchestratorFwd.mqh"
+#include "../../AIModules/AIConfig.mqh"   // AI_FEATURE_VECTOR_SIZE / ONNX_SEQ_LEN - single source of truth
 
 #define TRANSFORMER_D_MODEL_DEFAULT         64
 #define TRANSFORMER_NUM_HEADS_DEFAULT        4
@@ -18,7 +19,11 @@
 #define TRANSFORMER_SHORT_SEQ_LEN_DEFAULT   10
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
-#define FEATURE_VECTOR_SIZE               70
+// The literal used to be written here and in AIModules/AIConfig.mqh; AIConfig derives it from
+// AI_FEATURE_VECTOR_SIZE, so this is now an alias rather than a second copy of 70.
+#ifndef FEATURE_VECTOR_SIZE
+#define FEATURE_VECTOR_SIZE  AI_FEATURE_VECTOR_SIZE
+#endif
 #define TEMPORAL_BLEND_CURRENT            0.85
 #define TEMPORAL_BLEND_LAG                0.15
 #define DMODE_BASE_FEATURE_RATIO_WARNING   6

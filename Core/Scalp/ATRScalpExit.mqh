@@ -189,3 +189,4 @@ public:
 };
 
 #endif // CORE_SCALP_ATR_SCALP_EXIT_MQH
+

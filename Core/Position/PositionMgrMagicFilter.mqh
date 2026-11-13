@@ -1,6 +1,6 @@
 // Extracted from PositionManager.mqh (Phase I decomposition)
 // STATELESS helper: decides whether a broker position magic number
-// belongs to this EA instance. Batch 168 replaced the old
+// belongs to this EA instance. The old
 // `magicNumber + 10000 // Approximate range` guess with the
 // CMagicRange authority so this and every other ownership test in
 // the EA agree on one window.
@@ -26,3 +26,4 @@ public:
 };
 
 #endif // CORE_POSITION_POSITION_MGR_MAGIC_FILTER_MQH
+

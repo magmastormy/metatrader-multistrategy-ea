@@ -14,6 +14,7 @@
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Core/Risk/VPINFilter.mqh"
 #include "../Core/Utils/SubsystemLogger.mqh"
+#include "../Core/Utils/SignalGuards.mqh"
 
 #include "SupportResistanceFiles/SupportResistanceDetector.mqh"
 #include "SupportResistanceFiles/TrendlineDetector.mqh"
@@ -48,7 +49,7 @@ private:
 
     ENUM_SR_STRATEGY_MODE       m_mode;
     int                         m_lastBarProcessed;
-    int                         m_drawBarCounter;  // Batch 103: Throttle drawing
+    int                         m_drawBarCounter;  // Throttle drawing
     bool                        m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
     
     int                         m_signalsGenerated;
@@ -497,10 +498,18 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         double brokerMinLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
         if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
         request.lotSize = brokerMinLot;
-        PrintFormat("[S/R-LOT-DEFERRED] Lot validation deferred to risk manager | placeholder=%.3f (broker min)",
-                    brokerMinLot);
-        request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-        request.takeProfitPips = (bestResult.takeProfit1 > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+
+        // Pre-trade guard: levels whose stop/target are unset or inverted, or a spread wider than
+        // half the stop, are refused here. The per-signal "[S/R-LOT-DEFERRED]" print that used to
+        // sit here fired once per scan per symbol (611 lines in one session) and said nothing a
+        // reader of this code needed.
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
+        double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
+        if(!CSignalGuards::IsSignalTradable(bestResult.entryPrice, bestResult.stopLoss, bestResult.takeProfit1, spreadPrice))
+            return RejectSignal("SR_NOT_TRADABLE");
+        request.stopLossPips = (point > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / point : 0;
+        request.takeProfitPips = (point > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / point : 0;
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";
@@ -605,5 +614,6 @@ double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, 
 }
 
 #endif // __STRATEGY_SUPPORT_RESISTANCE_MQH__
+
 
 

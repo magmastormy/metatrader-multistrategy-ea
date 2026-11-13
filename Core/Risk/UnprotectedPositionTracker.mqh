@@ -1,5 +1,5 @@
 // Tracks and remediates positions without stop-loss protection
-// 3-attempt escalation: standard SL â†’ broker-min SL â†’ forced close
+// 3-attempt escalation: standard SL â†?broker-min SL â†?forced close
 #ifndef CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
 #define CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
 
@@ -46,7 +46,7 @@ public:
     }
 
 // Initialize with external dependencies
-// Batch 168: the magic window is no longer passed in here. The
+// the magic window is no longer passed in here. The
 // previous call site handed the symbol-array length to the
 // maxMagicNumber parameter, producing the empty range
 // [123456, 13] - so IsEAOwnedMagic was false for every position
@@ -70,7 +70,7 @@ public:
     }
 
 // Check if a magic number falls within this EA's ownership range
-// Batch 168: resolves through CMagicRange, the single authority.
+// resolves through CMagicRange, the single authority.
     bool IsEAOwnedMagic(long magic) const
     {
         return IsMagicOwned(magic);
@@ -172,7 +172,7 @@ public:
         return MathMax(fallbackByStops, fallbackByPrice);
     }
 
-// Main remediation sweep â€” 3-attempt escalation protocol
+// Main remediation sweep â€?3-attempt escalation protocol
 // Escalation-1: Standard SL at fallback distance
 // Escalation-2: Broker minimum distance SL
 // Escalation-3: Forced close (position must not exist without SL)
@@ -324,7 +324,7 @@ public:
                 continue;
             }
 
-            // --- Attempt 3: Close the position â€” no position should exist without SL ---
+            // --- Attempt 3: Close the position â€?no position should exist without SL ---
             int attempts = GetAttempts(ticket) + 1;
             SetAttempts(ticket, attempts);
             restoreFailedCount++;
@@ -376,3 +376,4 @@ public:
 };
 
 #endif // CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
+

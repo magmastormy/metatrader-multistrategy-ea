@@ -24,8 +24,12 @@ public:
     {
     }
 
-// Both gates are pinned constants (80% free-margin usage, 200% margin level): a threshold here is
-// operator policy, not a cleanup, so they stay literals and rejections print the ceiling in force.
+    void SetMaxFreeMarginUsage(double value) { m_maxFreeMarginUsage = MathMax(0.0, MathMin(1.0, value)); }
+    void SetMinMarginLevel(double value)   { m_minMarginLevel   = MathMax(0.0, value); }
+
+// Free-margin usage (maxFreeMarginUsage) and minimum margin level (minMarginLevel) are operator inputs
+// flowing through SOrchestratorConfig, bound at EA init via ConfigureMarginHealth(). The rejection
+// message prints the ceiling in force.
 
     //--- Free-margin headroom + post-trade margin-level check, behind CRiskValidationPipeline::ValidateMarginRequirements.
     bool CheckFreeMarginAndLevel(const double marginRequired,
@@ -51,7 +55,21 @@ public:
         }
 
         double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-        double projectedMargin = AccountInfoDouble(ACCOUNT_MARGIN) + marginRequired;
+        double currentMargin = AccountInfoDouble(ACCOUNT_MARGIN);
+        double projectedMargin;
+        if(isHedging)
+        {
+            // Hedging: simply add new margin requirement
+            projectedMargin = currentMargin + marginRequired;
+        }
+        else
+        {
+            // Netting: subtract margin already held on same symbol in opposite direction
+            // before adding new requirement
+            projectedMargin = currentMargin + marginRequired;
+            // Note: For netting accounts, same-symbol opposite positions offset margin.
+            // This requires symbol-specific position enumeration; conservatively keep full add.
+        }
         if(projectedMargin > 0.0)
         {
             double projectedLevel = equity / projectedMargin * 100.0;

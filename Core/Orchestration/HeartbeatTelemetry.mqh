@@ -27,6 +27,14 @@ private:
 
     ulong m_syntheticSpikeEvents;
 
+    // Scan-cost accumulator. The orchestrator already measures each cycle's wall time in microseconds
+    // (`GenerateAndProcessSignals_Total_us`) and writes it as one journal line per cycle; that is
+    // 15,876 lines per session for a number nobody aggregates. Accumulating here and printing one
+    // summary per heartbeat makes "is the scan fast?" a reading instead of a search.
+    ulong m_scanUsTotal;
+    ulong m_scanUsMax;
+    ulong m_scanCostSamples;
+
 public:
     CHeartbeatTelemetry()
     {
@@ -44,6 +52,9 @@ public:
         m_signalsValidated     = 0;
         m_signalsSent          = 0;
         m_syntheticSpikeEvents = 0;
+        m_scanUsTotal          = 0;
+        m_scanUsMax            = 0;
+        m_scanCostSamples      = 0;
     }
 
     void IncScansAttempted()        { m_scansAttempted++; }
@@ -53,6 +64,19 @@ public:
     void IncSignalsValidated()      { m_signalsValidated++; }
     void IncSignalsSent()           { m_signalsSent++; }
     void IncSyntheticSpikeEvents(const ulong count = 1) { m_syntheticSpikeEvents += count; }
+
+    void IncScanCost(const ulong elapsedUs)
+    {
+        m_scanUsTotal += elapsedUs;
+        if(elapsedUs > m_scanUsMax)
+            m_scanUsMax = elapsedUs;
+        m_scanCostSamples++;
+    }
+
+    ulong GetScanCostSamples() const { return m_scanCostSamples; }
+    ulong GetScanCostMaxUs()   const { return m_scanUsMax; }
+    ulong GetScanCostAvgUs()   const { return (m_scanCostSamples > 0) ? (m_scanUsTotal / m_scanCostSamples) : 0; }
+    void  ResetScanCost()            { m_scanUsTotal = 0; m_scanUsMax = 0; m_scanCostSamples = 0; }
 
 // UpdateCounters takes 7 positional arguments: the order below must match the
 // manager's parameter list exactly. NULL diag is tolerated (no-op). tradingPaused comes

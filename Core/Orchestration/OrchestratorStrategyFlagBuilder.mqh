@@ -12,7 +12,7 @@
 
 // Mirrored from EAOrchestrator.mqh; #ifndef-guarded so the value stays single-sourced.
 #ifndef STRATEGY_COUNT
-#define STRATEGY_COUNT 21
+#define STRATEGY_COUNT 32
 #endif
 
 class COrchestratorStrategyFlagBuilder
@@ -39,6 +39,15 @@ public:
             case SI_ASIAN_RANGE_BREAK:      return config.enableAsianRangeBreak;
             case SI_LIQUIDITY_SWEEP:        return config.enableLiquiditySweep;
             case SI_RANGE_COMPRESSION:      return config.enableRangeCompression;
+            case SI_DONCHIAN_BREAKOUT:      return config.enableDonchianBreakout;
+            case SI_RSI2_PULLBACK:          return config.enableRSI2Pullback;
+            case SI_DAILY_LEVEL_BREAKOUT:   return config.enableDailyLevelBreakout;
+            case SI_DAILY_LEVEL_FADE:       return config.enableDailyLevelFade;
+            case SI_EMA_RIBBON:             return config.enableEMARibbon;
+            case SI_GAP_CONTINUATION:       return config.enableGapContinuation;
+            case SI_OPENING_RANGE_BREAKOUT: return config.enableOpeningRangeBreakout;
+            case SI_ICT_SESSION_GAP:        return config.enableICTSessionGap;
+            case SI_ICT_STRUCTURE_SHIFT:    return config.enableICTStructureShift;
         }
         hasInput = false;
         return false;
@@ -106,10 +115,10 @@ public:
                         symbolFlags[SI_MOMENTUM] = false;
                     }
 
-                    PrintFormat("[DERIV-PROFILER] %s → family=%s | enableTrend=%s | enableMomentum=%s",
-                    symbol, EnumToString(profile.family),
-                    profile.enableTrendStrategies ? "true" : "false",
-                    profile.enableMomentumStrategies ? "true" : "false");
+                    // No print here: this builder runs once per scan per symbol, and the family/flags it
+                    // reports are static for the symbol. The same information is printed once at init
+                    // ([DERIV-PROFILER] family=... -> ... enabled) and per symbol by [WIRE-STATUS];
+                    // repeating it every scan was pure journal I/O, not telemetry.
                 }
                 else
                 {
