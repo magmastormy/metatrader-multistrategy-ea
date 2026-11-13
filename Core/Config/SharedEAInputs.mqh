@@ -334,6 +334,12 @@ input group "Scalp Engine";
 input bool     InpEnableScalpEngine = true;
 input bool     InpScalpAsyncMode = false;
 input uint     InpScalpMaxLatencyMs = 500;
+// Comma-separated symbols the fast-scalp engine may trade; "" = every symbol in the universe.
+// Measured (Batch 290): with the Batch 289 per-symbol stop and every symbol allowed, the window
+// 2026.09.01-09.08 returned -258.77 (-2.588%) on 2,265 fills, against +98.29 (+0.983%) on 849 fills
+// when only Step Index and XAUUSD could pass the old 60/90-point cost gate. The stop geometry is
+// arithmetic; symbol coverage is the variable that changed the book.
+input string   InpScalpSymbolsCsv = "";
 
 input group "Dynamic Slippage";
 input bool     InpEnableDynamicSlippage = true;
@@ -619,6 +625,7 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.enableScalpEngine = InpEnableScalpEngine;
     config.scalpAsyncMode = InpScalpAsyncMode;
     config.scalpMaxLatencyMs = InpScalpMaxLatencyMs;
+    config.scalpSymbolsCsv = InpScalpSymbolsCsv;
 
     config.enableDynamicSlippage = InpEnableDynamicSlippage;
     config.dynamicSlippageAtrPercent = InpDynamicSlippageAtrPercent;

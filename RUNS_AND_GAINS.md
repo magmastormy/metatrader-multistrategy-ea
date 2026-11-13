@@ -332,9 +332,81 @@ XAUUSD 10. Eight consensus decisions, none sent.
 tester, so Batches 282–288 measured a book whose M15 ATR(14) could be a daily ATR on any symbol whose number was
 reused. Those results are still exact measurements of that build. They are not a baseline for this one.
 
-**Status: not compiled, not run.** No MetaEditor or terminal was available when this was written. The next entry in
-this file must be the six cold windows re-run on the compiled build, both voter arms, before any of the changes
-above is called a gain.
+**Status: compiled and run — see Batch 290 for the first cold window on this build.** `sync_and_compile.ps1 -All`
+returned `OVERALL SUCCESS — 0 errors, 0 total warnings` on all eight programs, and the resulting
+`MultiStrategyAutonomousEA.ex5` (1,755,140 B, 13 Nov 15:04:51) has now been measured once.
+
+## Batch 290 — the repaired build trades three times as much, and without the scalper the same window makes +3.8%
+
+**Asked:** run a cold window on the Batch 289 build, then isolate what made it worse.
+
+**Arm 1 — the batch's own build, cold:** `Tools\backtest_voters1.ini`, `Volatility 75 Index` M15, `Model=1`, deposit
+10,000, `2026.09.01`→`09.08`, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, all four state files cleared before launch,
+no other terminal or tester process alive. Tester: `successfully finished` in `0:41:23.353`.
+
+| quantity | Batch 288 build (same window, same inputs) | Batch 289 build | change |
+|---|---|---|---|
+| equity, first → last of 10,080 heartbeats | 10,000.00 → **10,098.29** | 10,000.00 → **9,741.23** | **−3.57 pp** |
+| window P&L | **+98.29 (+0.983%)** | **−258.77 (−2.588%)** | the window now loses |
+| fills in window | 849 | **2,265** | **+167%** |
+| min / max equity | 9,795.25 / 10,138.24 | **9,560.27 / 10,000.00** | −4.40% peak-to-trough, never above the deposit |
+| fills by symbol | XAUUSD 618, Step 129, Vol 25 95, Crash 65, Jump 75 48 … | **Jump 809, Volatility 729, Step 417, XAUUSD 133, USDJPY 77, Crash 61, GBPUSD 23, EURUSD 13, AUDUSD 3** | the book moved off XAUUSD and onto Jump / Volatility |
+| `[SCALP-SIGNAL-REJECT]` lines | 32,216 | **58,935** | the scalp path is both busier and still refusing most candidates |
+| `[CORR-UNKNOWN]` / `[PORTFOLIO-RISK]` / `[VOL-SIZE]` | n/a | **0 / 0 / 0** | the correlation and portfolio fixes are silent, i.e. not blocking anything any more |
+
+**Scoreboard at shutdown (300 rows, 87 with trades):** `Jump 75 Index` **189 trades / 55 wins**, `Crash 1000` 153 / 53,
+`Volatility 25` 94 / 41, `Jump 25` 63 / 38, `Step` 52 / 16, `Volatility 75` 21 / 5. Win rates sit at **29–45%**, which
+is what a scalp book with 0.6R / 0.1R / 0.6R exits looks like from the outside: many small stops and few large
+winners. `Crash 1000 Support/Resistance`, `Turtle Soup`, `Donchian Breakout` and `ICT Structure Shift` were parked
+by the EA's own health rule mid-run (health 0.35–0.38).
+
+**Why this is not "more fills = worse" (again).** The Batch 288 build could not trade most of these symbols: the
+scalp stop/target were 60/90 raw points on every instrument, so the cost gate refused all but Step Index and XAUUSD
+(`spread=1431.0 … tp=90.0 breakevenWR=0.941`). The Batch 289 stop is `max(1.5×ATR(14,M1), 4×spread, 1.5×stop
+level)`, which is defensible arithmetic and deliberately lets the other ten symbols through. It does exactly that —
+and the ten symbols lose money at their real expectancy. The old build's +0.983% was partly bought by refusing to
+trade.
+
+**Arm 2 — the single-variable test, and the answer.** `Tools\backtest_b290_noscalp.ini`: same window, same build,
+same inputs, one line different — `InpEnableScalpEngine=0`. No recompile was needed, so nothing but the engine differs.
+
+| arm | equity (10,000 start) | P&L | fills | min / max | wall clock |
+|---|---|---|---|---|---|
+| scalp ON (arm 1) | → 9,741.23 | **−258.77 (−2.588%)** | 2,265 | 9,560.27 / 10,000.00 | 41:23 |
+| scalp OFF (arm 2) | → **10,381.07** | **+381.07 (+3.811%)** | **270** | 9,891.96 / 10,381.42 | 1:13:52 |
+
+**+6.40 pp between two arms of one build on one window.** Arm 2's fills were `Jump 116, Crash 62, Volatility 53,
+Step 19, GBPUSD 7, EURUSD 7, USDJPY 2, XAUUSD 2, AUDUSD 2` — the consensus book plus a handful of discretionary
+entries, and it made money while taking **one eighth** of arm 1's fills. `[AUTHORITY-REJECT]` 3,334 and
+`[SCALP-SIGNAL-REJECT]` 2,600 are what still binds with the engine off.
+
+**What this means, stated plainly.** The Batch 289 stop formula is not the defect — it is correct arithmetic that
+stopped hiding the scalp engine behind a broken cost gate. What it exposed is that the fast-scalp engine, once it can
+trade all twelve symbols, loses money at its real expectancy while the consensus book pays. The profitable
+configuration measured here is **consensus alone**: +3.811% against −2.588% on identical inputs. That is one window,
+not a distribution, so it is not shipped as a default yet — but it is the first arm in this file that is both
+materially positive and repeatable-by-construction (deterministic tester, one changed input).
+
+**Code added (compiled, not yet measured):** symbol coverage is now an explicit variable, not a side effect of the
+stop formula — `InpScalpSymbolsCsv` (default `""` = every symbol) wired through `SOrchestratorConfig.scalpSymbolsCsv`
+and gated in `ProcessScalpFastPath` by `IsScalpSymbolAllowed()` (exact, trimmed, comma-separated match on the broker's
+own name). `Tools\backtest_b290_scalp2.ini` (`InpScalpSymbolsCsv=XAUUSD,Step Index`) is the staged arm that separates
+"which symbols" from "which geometry". `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` → **0 errors,
+0 warnings** on both root EAs (`MultiStrategyAutonomousEA.ex5` 1,756,100 B, 18:09:39).
+
+**Hazards found in this batch (both cost real time):**
+1. `ShutdownTerminal=1` did **not** close `terminal64` after `last test passed`; the process sat alive for 45 minutes
+   and silently blocked the next `Start-Process` (a second terminal instance does not attach to `/config`). The launch
+   must be preceded by a check that no `terminal64` / `metatester64` exists, and a leftover `terminal64` must be
+   stopped before relaunching.
+2. Close records exist, but they cover only a minority of the fills. `[EnterpriseManager] Trade Closed … Net Profit:`
+   is still printed (`StrategyMgrTradeFeedback.mqh:167`) and 260 of them were found in the run, but the run took
+   **2,265 fills** — the fast-scalp exits close positions through their own path (`Core\Scalp\FastScalpExit.mqh`
+   prints entry/exit events, never realised P&L), and those closes emit no `Trade Closed` line at all. The 260 records
+   that do exist sum to **+11.03 gross** against an account delta of **−258.77**, so roughly **270 USD of the loss is
+   inside closes that wrote nothing to the journal**. That is why per-symbol attribution in this entry is counts and
+   win rates only, not dollars: the losing trades are precisely the invisible ones. Restoring a realised-P&L line on
+   the scalp exit path is now a measurement prerequisite, not a nicety.
 
 ## Where the record stands
 
@@ -346,7 +418,8 @@ above is called a gain.
 | committee arm (`=2`) | 4 windows | mean **−1.31%**, 4 losses of 4 | **worse, consistently** |
 | per-symbol loss brake (hold entry) | 1 window | **−4.75 pp** | **rejected** |
 | per-symbol streak sizing (half stake) | 2 windows | **+1.40 pp**, then **−5.68 pp** | **rejected** |
-| Batch 289 handle guard, per-symbol scalp stops, correlation / portfolio / equity-curve fixes | 0 windows | none - uncompiled | **unmeasured** |
+| Batch 289 handle guard / correlation / portfolio / equity-curve fixes | 1 window | **−3.57 pp** vs the Batch 288 build, at **+167% fills** | **measured, not a gain on its own** |
+| fast-scalp engine ON vs OFF, same build and window | 2 arms, 1 window | **−2.588% on 2,265 fills** vs **+3.811% on 270 fills** | **+6.40 pp; not yet shipped as the default** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 
@@ -355,12 +428,16 @@ Three things are now true with numbers behind them, and they are what the next g
 2. **Any rule that removes or reduces exposure hands the money to the next slot.** Both per-symbol rules moved
    fills *up* (849→1216 and 442→449) while moving the equity *down*. Risk in this EA is conserved by the budget
    machinery, so "less of this trade" always becomes "a different trade".
-3. **Losing runs are followed by the biggest winners.** `−18, −19, −56, −32, +97 … +149` on V75. Anything that
-   treats a streak as decay is fighting the distribution that actually pays this book.
+3. **The fast-scalp engine is negative-expectancy once it can trade every symbol.** Fixing its stop arithmetic
+   (Batch 289) did not fix the engine: it turned a gate failure into 2,265 visible fills and −2.588%, and switching
+   the engine off returned +3.811% on the same build. Losing runs are still followed by the biggest winners —
+   `−18, −19, −56, −32, +97 … +149` on V75 — so anything that treats a streak as decay is fighting the distribution
+   that pays this book, and anything that adds fills is not automatically adding money.
 
 **What is still not measured anywhere in this file:** MT5's own profit factor, max drawdown and Sharpe
 (`backtest_report.htm` is never written by this terminal), any walk-forward segment outside 2026-09/10 on one
 instrument, and any live attach. So "profitable system" is still a claim about a mean of **+0.46% per 7 days** with
-**0.92 pp** of noise — not yet an established edge.
+**0.92 pp** of noise on the consensus arm — plus one **+3.811%** window for the scalp-off arm, which is a single
+observation and needs its neighbours before it becomes a default.
 
 

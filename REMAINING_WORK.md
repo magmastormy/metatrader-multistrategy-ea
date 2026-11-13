@@ -342,3 +342,16 @@ The run-by-run record now lives in `RUNS_AND_GAINS.md`; this list stays as the o
 - **Reproducibility is fixed (Batch 282):** `Core/Utils/EAClock.mqh` gives `EAClockMs()`, simulated time under `MQL_TESTER` and `GetTickCount()` live. Two cold runs are bit-identical now; before the fix the same build and window differed by 10 pp.
 - **Still open here:** items 15, 43, 19, 20, 8, 41, 47; `backtest_report.htm` is never produced by this terminal, so there is no MT5 profit factor / max drawdown / Sharpe and every figure is rebuilt from `[COMPOUNDING-TIER-HEARTBEAT]` equity samples.
 - **Not yet done:** the EA now trades a Deriv-Demo chart (V75 M15, shipped defaults) - behaviour under real tick timing has never been observed, and the six-window +0.46% mean is break-even inside noise, not a proven profit.
+---
+
+## Status update - Batch 290 (2026-11-13)
+
+The run-by-run record lives in `RUNS_AND_GAINS.md`; this list stays the open-item backlog.
+
+- **The Batch 289 build was measured, and the repairs alone were not a gain.** Cold, same window and inputs as the Batch 288 baseline (2026.09.01-> 9.08, V75 M15, Model=1, deposit 10,000, InpQuorumProfile=1, InpMinLiveVoters=1): **-258.77 (-2.588%) on 2,265 fills**, against **+98.29 (+0.983%) on 849 fills** for the previous build. -3.57 pp and +167% fills, far outside the 0.92 pp cross-window noise.
+- **The single-variable A/B names the engine that loses.** Same build, same window, one input changed (InpEnableScalpEngine=0, no recompile): **+381.07 (+3.811%) on 270 fills**, min 9,891.96, max 10,381.42. A **+6.40 pp** swing. The fast-scalp engine is negative-expectancy once its cost gate stops refusing ten of the twelve symbols; the consensus book alone pays on this build.
+- **Not shipped yet, deliberately.** InpEnableScalpEngine stays at its factory default of `true` until the scalp-off arm reproduces on the neighbouring windows (Batch 288 set the precedent: ship only what has a multi-window distribution).
+- **New code, compiled and unmeasured:** InpScalpSymbolsCsv (`""` = every symbol) -> SOrchestratorConfig.scalpSymbolsCsv -> IsScalpSymbolAllowed() in ProcessScalpFastPath. Tools\backtest_b290_scalp2.ini (XAUUSD,Step Index) is the staged arm that separates "which symbols" from "which geometry". sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900 -> 0 errors, 0 warnings on both root EAs.
+- **New measurement prerequisite (do this before the next attribution run):** print realised P&L on the fast-scalp exit path. `Core\Scalp\FastScalpExit.mqh` closes positions without a `Trade Closed ... Net Profit` record: 260 close records against 2,265 fills, and the 260 recorded closes sum to +11.03 against a -258.77 account delta, so about 270 USD of the loss is invisible.
+- **Operational hazard:** `ShutdownTerminal=1` does not terminate `terminal64`; a leftover terminal silently swallows the next `Start-Process ... /config:` launch. Check `Get-Process terminal64,metatester64` before every launch.
+- **Still open here:** items 15, 43, 19, 20, 8, 41, 47 unchanged; `backtest_report.htm` still never produced, so still no MT5 profit factor / drawdown / Sharpe.

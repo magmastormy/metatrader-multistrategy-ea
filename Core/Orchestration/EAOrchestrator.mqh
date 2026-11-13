@@ -3481,6 +3481,32 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
     m_attributionManager.AccumulatePendingCloseProfit(positionId, netProfit);
 }
 
+// Scalp symbol allowlist: "" means every symbol. Entries are the broker's own names, comma-separated,
+// trimmed; a name that does not match exactly does not grant the symbol (no substring matching, so
+// "Volatility 75 Index" does not also enable "Volatility 75 Index 2").
+bool IsScalpSymbolAllowed(const string symbol)
+{
+    string csv = m_config.scalpSymbolsCsv;
+    if(csv == "")
+        return true;
+
+    int len = StringLen(csv);
+    int start = 0;
+    for(int i = 0; i <= len; i++)
+    {
+        if(i == len || StringGetCharacter(csv, i) == 44)   // 44 = ','
+        {
+            string item = StringSubstr(csv, start, i - start);
+            StringTrimLeft(item);
+            StringTrimRight(item);
+            if(item != "" && item == symbol)
+                return true;
+            start = i + 1;
+        }
+    }
+    return false;
+}
+
 void ProcessScalpFastPath()
 {
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
@@ -3505,6 +3531,12 @@ void ProcessScalpFastPath()
         {
             string symbol = m_enterpriseManagerSymbols[si];
             if(symbol == "")
+            continue;
+
+            // Symbol allowlist for the scalp engine (Batch 290). Empty CSV = every symbol, i.e. the old
+            // behaviour. The list exists because symbol coverage, not stop arithmetic, is what moved the
+            // measured book: with every symbol allowed the engine traded 2,265 fills for -2.588%.
+            if(!IsScalpSymbolAllowed(symbol))
             continue;
 
             ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;

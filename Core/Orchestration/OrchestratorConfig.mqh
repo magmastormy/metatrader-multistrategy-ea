@@ -286,6 +286,7 @@ struct SOrchestratorConfig
     bool    enableScalpEngine;
     bool    scalpAsyncMode;
     uint    scalpMaxLatencyMs;
+    string  scalpSymbolsCsv;          // "" = every symbol; otherwise comma-separated names the scalp may trade
 
     bool    enableDynamicSlippage;
     double  dynamicSlippageAtrPercent;
@@ -626,6 +627,7 @@ struct SOrchestratorConfig
         enableScalpEngine = true;
         scalpAsyncMode = false;
         scalpMaxLatencyMs = 500;
+        scalpSymbolsCsv = "";
 
         enableDynamicSlippage = true;
         dynamicSlippageAtrPercent = 0.20;
