@@ -457,6 +457,59 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 292 — the sixth window lost, the loss named the symbol, and the trim that fixes it is too good to ship yet
+
+Batch 291 shipped the scalper off on five windows (mean +1.917%, t 3.30). The next window did not confirm it.
+
+**Window 6, factory default, post-logging build** (`Tools\backtest_b291_default_w6.ini`, `2026.10.06` → `10.13`,
+`.set` parked, `InpEnableScalpEngine` omitted, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, cold):
+
+| P&L | fills | min / max | time |
+|---|---|---|---|
+| **−269.61 (−2.696%)** | 307 | 9,713.44 / 10,131.30 | 0:27:53 |
+
+Six-window distribution of the shipped default: **+3.811 / +0.635 / +1.489 / +2.640 / +1.009 / −2.696** →
+**mean +1.148%, sample sd 2.213 pp, t 1.27, 5 wins of 6.** One loss halved the t-statistic. Status: positive, not proven.
+
+**Where the −269.61 came from** (181 closes, gross −162.00):
+
+| symbol | net | closes |
+|---|---|---|
+| `Volatility 75 Index` | **−116.53** | **5** |
+| `Volatility 25 Index` | −52.93 | 27 |
+| `Crash 1000 Index` | −36.64 | 33 |
+| `Jump 25 Index` | −5.04 | 33 |
+| `Jump 75 Index` | +14.33 | 65 |
+| `Step Index` | +20.72 | 10 |
+| `EURUSD` | +12.83 | 6 |
+
+Worst drawdown −188.22, inside the first three hours. Five closes of V75 decided a week — Batch 285's shape again.
+
+**The arm it motivated, no code change (`InpSymbolsToTrade` already existed):** identical windows with the two
+Volatility indices removed from the universe.
+
+| window | full universe | trimmed | delta | what carried the trimmed arm |
+|---|---|---|---|---|
+| 10.06 → 10.13 | −2.696% (307 fills) | **−0.599%** (307) | **+2.10 pp** | nothing large; Crash mild |
+| 09.15 → 09.22 | +1.489% (261) | **+7.459%** (263, min 9,782.29) | **+5.97 pp** | `Crash 1000` **+719.52 / 87 closes** = 96% of it |
+| 09.22 → 09.29 | +2.640% (260) | **+18.176%** (282) | **+15.54 pp** | `Crash 1000` **+1,848.83 / 85 closes** |
+
+Trimmed arm: **mean +8.345%, sd 9.50 pp, t 1.52, 3 of 3 up.**
+
+**Not shipped, and the reason is the older record, not the new one.** Batch 285 measured the opposite sign —
+`Crash 1000` −123.06 on 68 closes and `Volatility 75` **+261.22 on 11 closes** in the one-voter arm; in the
+committee arm the two swap sides. So "drop the Volatility indices" today is a bet on which index trends in one
+2026-09/10 slice, not an edge. It needs five or six paired windows before it can join `InpMinLiveVoters` as a
+shipped default.
+
+**Method hazard this batch exposed.** The journal rotates, and the last 10,080-heartbeat slice can start inside the
+*previous* run: the aborted window-3 launch (device dropped at 43%) left four heartbeats at 9,948.23 at the head of
+the next slice, so "last minus first" read +1,880.39 instead of **+1,817.63**, and window 3 as +8.018% instead of
+**+7.459%**. The correct base is the sample whose balance is exactly 10,000.00 within the first ten samples.
+
+**Operational:** the aborted run left no process and a frozen log; killing leftovers and relaunching cold reproduced
+the window in 0:40:41. Two stale processes silently swallowed one launch — the `Get-Process` pre-check stays mandatory.
+
 ## Where the record stands
 
 | rule tested | windows | effect measured | verdict |
@@ -470,6 +523,8 @@ which decides whether the engine is wrong or merely wrong on eleven of thirteen 
 | Batch 289 handle guard / correlation / portfolio / equity-curve fixes | 1 window | **−3.57 pp** vs the Batch 288 build, at **+167% fills** | **measured, not a gain on its own** |
 | fast-scalp engine ON vs OFF, same build and window | 2 arms, 1 window | **−2.588% on 2,265 fills** vs **+3.811% on 270 fills** | **+6.40 pp, one window** |
 | fast-scalp engine OFF, five consecutive windows | **5 windows** | mean **+1.917%**, sd **1.30 pp**, t **3.30**, **5/5 positive**, 260–279 fills each | **shipped as the factory default** |
+| fast-scalp engine OFF, sixth window | 1 window | **−2.696%**, 307 fills; `Volatility 75` −116.53 on 5 closes | **the distribution is now mean +1.148%, sd 2.213 pp, t 1.27, 5/6** |
+| universe trimmed (both Volatility indices removed) | 3 paired windows | **+2.10 / +5.97 / +15.54 pp**; trimmed mean **+8.345%**, sd 9.50 pp, but `Crash 1000` alone produced more than the delta in two of three | **measured, NOT shipped — sign contradicts Batch 285** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 

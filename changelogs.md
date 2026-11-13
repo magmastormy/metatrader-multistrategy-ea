@@ -8,6 +8,36 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-13
 
+### Batch 292: the sixth window lost, and the loss names the symbol — but trimming the universe is not yet a ship
+
+Batch 291 shipped the scalper off on a five-window distribution (mean +1.917%, t 3.30). Its first job was to confirm that on the post-logging build. It did not confirm: the next window lost, and the loss was concentrated enough to name the instrument.
+
+**Window 6, factory default, post-logging build:** `Tools\backtest_b291_default_w6.ini` (`2026.10.06`->`10.13`), `.set` parked, `InpEnableScalpEngine` omitted, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, cold, tester `successfully finished` in 0:27:53. Equity 10,000.00 -> **9,730.39**, **-269.61 (-2.696%)**, **307 fills**, min 9,713.44, max 10,131.30, `[SCALP-SIGNAL-REJECT]` **0** (default in force).
+
+**Six-window distribution for the shipped default:** +3.811 / +0.635 / +1.489 / +2.640 / +1.009 / **-2.696** -> mean **+1.148%**, sample sd **2.213 pp**, **t 1.27**, **5 wins of 6**. One loss halved the t-statistic (3.30 -> 1.27). The honest status of the default is "positive, not proven".
+
+**The loss, attributed at the exact-symbol level:** 181 `[EnterpriseManager] Trade Closed` records, gross **-162.00** - `Volatility 75 Index` **-116.53 on 5 closes** (about -23 each), `Volatility 25 Index` **-52.93 on 27**, `Crash 1000` -36.64 on 33, `Jump 25` -5.04 on 33, against `Jump 75` +14.33 on 65, `Step` +20.72 on 10, `EURUSD` +12.83 on 6. Worst drawdown **-188.22**, reached early (heartbeat sample 143 of 10,080). This is Batch 285's shape repeated: five closes of one volatility index carry a week.
+
+**The arm it motivated (no code change - `InpSymbolsToTrade` already existed).** The same windows with the two Volatility indices removed from the universe (`Boom 1000, Crash 1000, Jump 25, Jump 75, Step, EURUSD, GBPUSD, USDJPY, AUDUSD, XAUUSD, BTCUSD`), everything else identical:
+
+| window | full universe | trimmed universe | delta | dominant contributor in the trimmed arm |
+|---|---|---|---|---|
+| 10.06 -> 10.13 | **-269.61 (-2.696%)**, 307 fills | **-59.87 (-0.599%)**, 307 fills | **+2.10 pp** | `Crash 1000` -? (small), `Vol 75` still 3 fills via the chart symbol |
+| 09.15 -> 09.22 | **+148.92 (+1.489%)**, 261 fills | **+745.87 (+7.459%)**, 301 receipt-lines / 263 fills, min 9,782.29 | **+5.97 pp** | `Crash 1000` **+719.52 on 87 closes** = 96% of the gain |
+| 09.22 -> 09.29 | **+264.00 (+2.640%)**, 260 fills | **+1,817.63 (+18.176%)**, 328 receipt-lines / 282 fills | **+15.54 pp** | `Crash 1000` **+1,848.83 on 85 closes** |
+
+Trimmed-arm statistics on those three windows: mean **+8.345%**, sample sd **9.50 pp**, t **1.52**. Every window improved (3 of 3), but the improvement is one instrument: in two windows `Crash 1000` alone produced more than the entire account delta, and the third window is where it went mildly negative.
+
+**Verdict: measured, not shipped.** Three paired windows with a consistent sign is real evidence, but it contradicts the older record - Batch 285 measured `Crash 1000` as the **loser** (-123.06 on 68 closes) and `Volatility 75` as the **winner** (+261.22 on 11 closes) in the one-voter arm, and in the committee arm the two swapped sides entirely. So "drop the Volatility indices" is currently a bet on which index trends during 2026-09/10, not a demonstrated edge. `InpSymbolsToTrade` stays at its factory list until the trimmed arm has five or six paired windows, the standard this repository already applies to `InpMinLiveVoters`.
+
+**A measurement hazard found and fixed in the method:** the tester journal rotates and the last 10,080-heartbeat slice can begin inside the *previous* run. The aborted window-3 launch (killed when the desktop connection dropped at 43%) left four heartbeats at 9,948.23 at the head of the next slice, so a naive "last sample minus first sample" read 1,817.63 as 1,880.39 and window 3 as +8.018% instead of **+7.459%**. The reliable base is the sample whose balance is exactly the deposit (10,000.00), searched within the first ten samples; window 3's true run is index 4 onwards: min 9,782.29, max 10,769.54.
+
+**Operational notes:** the aborted run was caused by the device dropping offline mid-test - `terminal64` was gone, the log frozen at `processing 43 %` for 30 minutes with no process alive; killing leftovers (`Stop-Process -Name terminal64,metatester64`) and relaunching cold reproduced the window in 0:40:41. Two leftover processes (11060, 22900) were alive at one launch and silently swallowed it; the `Get-Process` pre-check from Batch 290 remains mandatory.
+
+**No code changed in this batch**, so no recompile; the binary is the Batch 291 build (`MultiStrategyAutonomousEA` 65,590 ms, `OVERALL SUCCESS`, 0 errors / 0 total warnings). New inis: `Tools\backtest_b291_default_w6.ini`, `Tools\backtest_b291_novol_w6.ini`, `_novol_w4.ini`, `_novol_w3.ini`. Archived scoreboards: `scoreboard_b291_default_20261006-20261013.csv`, `scoreboard_b291_novol_20261006-20261013.csv`, `scoreboard_b291_novol_20260922-20260929.csv`.
+
+**Not done:** the trimmed arm has 3 paired windows, not the 5-6 it needs; `[ENGINE-CLOSE]` still never observed (scalper off); `Tools\backtest_b290_scalp2.ini` still unrun; `backtest_report.htm` still unwritten so still no MT5 profit factor / drawdown / Sharpe.
+
 ### Batch 291: five cold windows with the scalper off — 5 of 5 positive, mean +1.917%, t 3.3 — shipped as the factory default
 
 A single A/B on one window is an observation. This batch turned Batch 290's +3.811% into a distribution on the same binary (no recompile for the first four windows: `MultiStrategyAutonomousEA.ex5` 1,756,100 B, 13 Nov 18:09:39), then shipped what the distribution supports.
