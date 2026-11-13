@@ -94,7 +94,7 @@ CCorrelationEngine::CCorrelationEngine() :
     m_initialized(false),
     m_symbolsChanged(false)
 {
-    ArrayInitialize(m_matrix, 1.0);
+    ArrayInitialize(m_matrix, CORR_ENGINE_UNKNOWN);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 }
@@ -124,7 +124,7 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
     m_pinnedSymbolA = "";
     m_pinnedSymbolB = "";
 
-    ArrayInitialize(m_matrix, 1.0);
+    ArrayInitialize(m_matrix, CORR_ENGINE_UNKNOWN);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 
@@ -161,6 +161,12 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
 
     m_symbols[m_symbolCount] = symbol;
     m_symbolCount++;
+    // A new row has no measurement yet. Without this flag the next query read the slot's initial
+    // value between refreshes, and that initial value was 1.0: the 2026-11-13 demo journal printed
+    // "Correlation 1.00 > Max 0.70 (AUDUSD vs Step Index)" and the same for XAUUSD, a currency pair
+    // and a metal "perfectly correlated" with a synthetic index, which banned both symbols for as
+    // long as one Step Index position was open. The slot now starts UNKNOWN and is computed on demand.
+    m_symbolsChanged = true;
     return m_symbolCount - 1;
 }
 
@@ -424,7 +430,7 @@ int CCorrelationEngine::CountCorrelatedPositions(const string symbol, double thr
 void CCorrelationEngine::Reset()
 {
     m_symbolCount = 0;
-    ArrayInitialize(m_matrix, 1.0);
+    ArrayInitialize(m_matrix, CORR_ENGINE_UNKNOWN);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
     m_lastRefreshTime = 0;
@@ -433,7 +439,7 @@ void CCorrelationEngine::Reset()
 CCorrelationEngine::~CCorrelationEngine()
 {
     m_symbolCount = 0;
-    ArrayInitialize(m_matrix, 1.0);
+    ArrayInitialize(m_matrix, CORR_ENGINE_UNKNOWN);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 }

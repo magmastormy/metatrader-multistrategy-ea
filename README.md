@@ -56,6 +56,10 @@ Settings are exposed as EA inputs in these groups:
 
 The input dialog is the authoritative list of parameters and their current defaults.
 
+## Current state (Batch 289, 2026-11-13)
+
+Uncompiled and unmeasured. A demo journal showed the EA trading two symbols out of thirteen; the causes found were a shared ATR handle being replaced by a daily one (which vetoed every consensus entry), a scalper whose stop and target were the same raw point count on every symbol, an unmeasured correlation reported as 1.00, and a portfolio check that priced a lot on the wrong stop. All four are changed in code; see `changelogs.md` Batch 289 and `RUNS_AND_GAINS.md`. Compile with `sync_and_compile.ps1 -All` and re-run the cold windows before relying on it.
+
 ## Strategy Roster
 
 ### Indicator-based strategies

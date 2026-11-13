@@ -75,7 +75,15 @@ public:
       }
 
       bool wasBelow = m_isEquityBelowEma;
-      m_isEquityBelowEma = (equityValue < m_currentEma);
+      // Dead band: the cut arms only once equity is 0.25% under its EMA and clears when it is back at
+      // the EMA. A bare `equity < ema` on floating equity sampled every cycle is a coin toss: the
+      // 2026-11-13 demo journal flipped 191 times in 24 minutes on moves of 10-30 cents against a
+      // 14,027 balance ("Equity=14027.02 below EMA=14027.11, position size reduced to 50%"), so half
+      // of all lots were halved by spread noise.
+      if(wasBelow)
+         m_isEquityBelowEma = (equityValue < m_currentEma);
+      else
+         m_isEquityBelowEma = (equityValue < m_currentEma * (1.0 - 0.0025));
 
       if(m_isEquityBelowEma && !wasBelow)
       {

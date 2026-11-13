@@ -83,6 +83,10 @@ public:
 
    // Check if a symbol is available and has data
    bool              IsSymbolAvailable(string symbol, ENUM_TIMEFRAMES tf);
+
+   // True when this handle number is in the shared table. Static so the release guard at the
+   // bottom of this file can ask without creating the singleton.
+   static bool       Owns(const int handle);
 };
 
 // Initialize static instance pointer
@@ -787,6 +791,41 @@ CIndicatorManager::~CIndicatorManager()
    // AUDIT FIX: Removed 'delete m_instance' â€?destructor must not delete itself (double-free / UB)
    m_instance = NULL;
 }
+
+bool CIndicatorManager::Owns(const int handle)
+{
+   if(m_instance == NULL || handle == INVALID_HANDLE)
+      return false;
+   for(int i = 0; i < ArraySize(m_instance.m_handles); i++)
+   {
+      if(m_instance.m_handles[i].handle == handle)
+         return true;
+   }
+   return false;
+}
+
+// Release guard. A handle number in the shared table belongs to every consumer that asked the manager
+// for that symbol/timeframe/period, and the terminal hands the SAME number to a direct iATR()/iMA()
+// call with identical parameters. So a class that creates its own handle and later calls
+// IndicatorRelease() on it can destroy the shared one; the terminal then reuses the number for the
+// next indicator created, and the manager's row keeps answering with it. Measured on the 2026-11-13
+// demo journal: "Created ATR handle=201 for Step Index PERIOD_M15 period=14" was followed 37 s later
+// by "Created ATR handle=201 for Step Index PERIOD_D1 period=14" (26 handle numbers were issued twice
+// in 24 minutes), after which every reader of M15 ATR(14) received the DAILY ATR - the post-consensus
+// crisis gate printed ATR14/ATR50 = 8.2-14.2 on every symbol and vetoed every consensus entry.
+// The guard refuses to release a number the manager tracks; the manager frees them all at deinit.
+bool IndicatorManagerGuardedRelease(const int handle)
+{
+   if(handle == INVALID_HANDLE)
+      return false;
+   if(CIndicatorManager::Owns(handle))
+      return true;
+   return IndicatorRelease(handle);
+}
+
+// Everything compiled after this line (the whole EA: both root programs include this file first)
+// releases through the guard. The manager's own releases above this line are the real call.
+#define IndicatorRelease IndicatorManagerGuardedRelease
 
 #endif // __INDICATOR_MANAGER_MQH__
 

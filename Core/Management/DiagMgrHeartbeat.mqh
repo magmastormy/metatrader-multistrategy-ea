@@ -224,12 +224,11 @@ public:
 
     static void ReleaseUnusedIndicators()
     {
-        CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
-        if(indicatorManager != NULL)
-            // Idle window must exceed one evaluation cycle, otherwise a handle read once per closed
-            // bar is released and recreated every bar (measured: 9,933 creations over 457 distinct
-            // handles in a 7-hour tester window). See the same change in EAOrchestrator.
-            indicatorManager.ReleaseUnused(14400);
+        // Deliberately empty. Most consumers fetch a handle once in Init and keep the number in a
+        // member; an idle sweep that releases "unused" rows frees handles those members still read,
+        // and the terminal reuses the number for a different indicator. The table is bounded by
+        // symbols x timeframes x parameters (about 400 rows on the 13-symbol roster) and is freed
+        // by CIndicatorManager::DestroyInstance() at deinit.
     }
 };
 

@@ -304,8 +304,12 @@ double VolReg_RiskScale(const string symbol)
    const double p = VolReg_Probability(symbol);
    if(p < 0.0)
       return -1.0;
-   if(p <= VOLREG_COMPRESSION_VETO)
-      return 0.0;
+   // The model shrinks risk; it does not veto. The extreme band used to return 0.0, which the entry
+   // path reads as "do not enter": on the 2026-11-13 demo journal it held both Volatility 75 Index
+   // consensus decisions of the session (p=0.007 and p=0.017, conf 0.85 each) on a model that has
+   // never been scored against live fills, and Volatility 75 Index is the instrument RUNS_AND_GAINS
+   // measured as deciding a week's result. Until a walk-forward run prices the veto, extreme and
+   // confident compression both trade at half risk.
    if(p <= VOLREG_COMPRESSION_MAX)
       return 0.5;
    return 1.0;

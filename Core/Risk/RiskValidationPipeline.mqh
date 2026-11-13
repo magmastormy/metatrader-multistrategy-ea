@@ -1004,7 +1004,11 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
         return false;
     }
     
-    if(!m_portfolioRiskManager.IsTradeAllowed(request.symbol, request.lotSize))
+    // The request's own stop goes with it. Without the third argument the manager re-priced the same
+    // lot at 1.5 x ATR(14) of the chart timeframe - a different stop from the one the lot was sized
+    // on - so a lot sized for 1% on the strategy's stop was re-read as 14-15% and refused
+    // ("New Total 14.26% > Max 12.00%" with 0.09% of real exposure open, 2026-11-13 demo journal).
+    if(!m_portfolioRiskManager.IsTradeAllowed(request.symbol, request.lotSize, MathMax(0.0, request.stopLossPips)))
     {
         string portfolioReason = "";  // no block-reason accessor on the manager yet, so the generic message stands
         message = (portfolioReason != "") ? portfolioReason : "Trade blocked by portfolio risk manager";

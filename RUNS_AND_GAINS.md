@@ -311,6 +311,31 @@ for `processing N %` and `last test passed` (42–43 min per 7-day window under 
 `Tools\run_summary.ps1` cannot split two adjacent runs that meet at midnight (09.21 23:59 → 09.22 00:00 is monotonic),
 which made a two-run journal read as one 21,596-sample run; the reliable read is "the last 10,080 heartbeats are the
 last run", with fills counted from `[EXECUTION-RECEIPT]` between them.
+## Batch 289 — the instrument itself was bent, and this entry has no numbers yet
+
+**Asked:** why does a live demo session open trades on one or two symbols and ignore the rest?
+
+**Read, not run:** one 24-minute demo journal (2026-11-13, 13 symbols). 14 fills, all fast-scalp, Step Index 4 and
+XAUUSD 10. Eight consensus decisions, none sent.
+
+| what the journal shows | cause | change |
+|---|---|---|
+| `ATR ratio crisis gate: 9.825 > 2.500 (ATR14 61.18 / ATR50 6.23)` on every consensus entry | handle 201 = Step Index M15 ATR(14), then 37 s later handle 201 = Step Index **D1** ATR(14): a released-and-reused handle number, 26 of them in the session | release guard in `IndicatorManager.mqh`; idle sweeps removed |
+| `Correlation 1.00 > Max 0.70 (AUDUSD vs Step Index)` | unmeasured matrix slot initialised to 1.0 | slots start unknown, computed on demand |
+| `New Total 14.26% > Max 12.00%` at 0.09% open exposure | portfolio check re-priced the lot on a different stop | the request's stop is passed |
+| `spread=1431.0 ... tp=90.0 breakevenWR=0.941` | scalp stop/target were 60/90 raw points on every symbol | stop from M1 ATR and spread per symbol |
+| ten XAUUSD SELLs in 152 s | one crossover re-fired every 5 s | one scalp per symbol, 180 s rest |
+| 191 equity-curve flips, lots halved on 10-cent moves | no dead band | 0.25% dead band |
+| both Volatility 75 decisions held at `p(expansion)=0.007` | unscored model with a veto | shrink-only |
+
+**What this does to the record above.** The handle defect is not specific to the demo: the same code ran in the
+tester, so Batches 282–288 measured a book whose M15 ATR(14) could be a daily ATR on any symbol whose number was
+reused. Those results are still exact measurements of that build. They are not a baseline for this one.
+
+**Status: not compiled, not run.** No MetaEditor or terminal was available when this was written. The next entry in
+this file must be the six cold windows re-run on the compiled build, both voter arms, before any of the changes
+above is called a gain.
+
 ## Where the record stands
 
 | rule tested | windows | effect measured | verdict |
@@ -321,6 +346,7 @@ last run", with fills counted from `[EXECUTION-RECEIPT]` between them.
 | committee arm (`=2`) | 4 windows | mean **−1.31%**, 4 losses of 4 | **worse, consistently** |
 | per-symbol loss brake (hold entry) | 1 window | **−4.75 pp** | **rejected** |
 | per-symbol streak sizing (half stake) | 2 windows | **+1.40 pp**, then **−5.68 pp** | **rejected** |
+| Batch 289 handle guard, per-symbol scalp stops, correlation / portfolio / equity-curve fixes | 0 windows | none - uncompiled | **unmeasured** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 

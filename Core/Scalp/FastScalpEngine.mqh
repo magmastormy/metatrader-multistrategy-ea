@@ -40,6 +40,11 @@ class CAIAdapter;
 #include "FastScalpExit.mqh"
 #include "FastScalpEntry.mqh"
 
+// Seconds one symbol waits before it may be scalped again. The EMA 5/13 state on M1 stays crossed for
+// minutes, so without this the same crossover re-fired every engine cooldown (5 s): the 2026-11-13
+// demo journal shows ten XAUUSD SELLs between 14:21:00 and 14:23:32 off two crossovers.
+#define SCALP_SYMBOL_REENTRY_SECONDS 180
+
 class CFastScalpEngine
 {
 private:
@@ -57,6 +62,89 @@ private:
 
    string                    m_refusalLogSymbols[];   // per-symbol refusal-log throttle
    datetime                  m_refusalLogTimes[];
+
+   string                    m_entrySymbols[];        // per-symbol time of the last scalp entry
+   datetime                  m_entryTimes[];
+   SScalpConfig              m_entryConfig;           // geometry ShouldEnterScalp priced the candidate on
+   string                    m_entryConfigSymbol;     // symbol that geometry belongs to
+
+   datetime LastEntryTime(const string symbol)
+   {
+      for(int i = 0; i < ArraySize(m_entrySymbols); i++)
+         if(m_entrySymbols[i] == symbol)
+            return m_entryTimes[i];
+      return 0;
+   }
+
+   void StampEntry(const string symbol)
+   {
+      datetime now = TimeCurrent();
+      for(int i = 0; i < ArraySize(m_entrySymbols); i++)
+      {
+         if(m_entrySymbols[i] == symbol)
+         {
+            m_entryTimes[i] = now;
+            return;
+         }
+      }
+      int n = ArraySize(m_entrySymbols);
+      if(ArrayResize(m_entrySymbols, n + 1) != n + 1 || ArrayResize(m_entryTimes, n + 1) != n + 1)
+         return;
+      m_entrySymbols[n] = symbol;
+      m_entryTimes[n] = now;
+   }
+
+// Open positions on `symbol` whose comment starts with "SCALP" (same ownership test as CountScalpPositions).
+   int CountScalpPositionsOnSymbol(const string symbol)
+   {
+      int count = 0;
+      int total = PositionsTotal();
+      for(int i = 0; i < total; i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0 || !PositionSelectByTicket(ticket))
+            continue;
+         if(PositionGetString(POSITION_SYMBOL) != symbol)
+            continue;
+         if(StringFind(PositionGetString(POSITION_COMMENT), "SCALP") == 0)
+            count++;
+      }
+      return count;
+   }
+
+// Per-symbol stop and target, in points. The configured scalpSLPips/scalpTPPips (60/90) were applied
+// as raw points to every symbol, and a point is not a unit of risk: 60 points is 6.0 on Step Index,
+// 0.60 on XAUUSD (inside three spreads) and 4% of one spread on Volatility 75 Index. That is why the
+// cost gate refused every symbol but two ("spread=1431.0 ... tp=90.0 breakevenWR=0.941") and why the
+// engine only ever traded Step Index and XAUUSD. The stop is now the largest of 1.5 x ATR(14, M1),
+// 4 x spread and 1.5 x the broker stop level; the target keeps the configured TP:SL ratio; the
+// breakeven and trailing distances are fractions of that stop instead of 10/5/15 raw points.
+// Returns false when the symbol has no ATR or point yet - the caller refuses the entry.
+   bool BuildSymbolConfig(const string symbol, const double atr, SScalpConfig &cfg)
+   {
+      cfg = m_config;
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      if(point <= 0.0 || atr <= 0.0)
+         return false;
+
+      double spreadPts = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+      double stopLevelPts = (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double rr = (m_config.scalpSLPips > 0) ? ((double)m_config.scalpTPPips / (double)m_config.scalpSLPips) : 1.5;
+      if(rr < 1.0)
+         rr = 1.0;
+
+      double slPts = MathMax(1.5 * atr / point, MathMax(4.0 * spreadPts, 1.5 * stopLevelPts));
+      slPts = MathCeil(slPts);
+      if(slPts < 1.0 || slPts > 2000000000.0 / (rr + 1.0))
+         return false;
+
+      cfg.scalpSLPips            = (int)slPts;
+      cfg.scalpTPPips            = (int)MathCeil(slPts * rr);
+      cfg.breakevenProfitPoints  = (int)MathMax(1.0, MathRound(0.60 * slPts));
+      cfg.breakevenBufferPoints  = (int)MathMax(1.0, MathRound(0.10 * slPts));
+      cfg.trailingDistancePoints = (int)MathMax(1.0, MathRound(0.60 * slPts));
+      return true;
+   }
 
 // True once per `seconds` per symbol. A single static slot would let the first symbol refused in the
 // window mute the other twelve and print a cooldown that belongs to whoever spoke first.
@@ -136,7 +224,8 @@ public:
       m_aiAdapter(NULL),            // L10-018: AI adapter
       m_lastScalpTime(0),
       m_magicNumber(123456),
-      m_initialized(false)
+      m_initialized(false),
+      m_entryConfigSymbol("")
    {
    }
 
@@ -266,6 +355,13 @@ public:
          return false;
       }
 
+      // One scalp per symbol at a time, and a symbol rests after an entry. Both are entry holds only.
+      datetime lastSymbolEntry = LastEntryTime(symbol);
+      if(lastSymbolEntry > 0 && (TimeCurrent() - lastSymbolEntry) < SCALP_SYMBOL_REENTRY_SECONDS)
+         return false;
+      if(CountScalpPositionsOnSymbol(symbol) > 0)
+         return false;
+
       string gateReject = "";
       signal = EvaluateScalpSignal(symbol, gateReject);
       if(signal == TRADE_SIGNAL_NONE)
@@ -279,9 +375,20 @@ public:
       double atr = GetATRCached(symbol);
       confidence = CFastScalpSizing::CalculateConfidence(symbol, atr, momentumBurst);
 
+      // Stop/target for THIS symbol; everything below (sizing, cost, risk gate, send) prices on it.
+      SScalpConfig cfg;
+      if(!BuildSymbolConfig(symbol, atr, cfg))
+      {
+         if(RefusalLogDue(symbol, 60))
+            PrintFormat("[SCALP-SIGNAL-REJECT] %s | gate=no_atr_or_point", symbol);
+         return false;
+      }
+      m_entryConfig = cfg;
+      m_entryConfigSymbol = symbol;
+
       // Lot from CPositionSizer::CalculatePositionSize when it is initialised; otherwise the sizer is
       // bypassed and the lot falls back to SYMBOL_VOLUME_MIN.
-      lotSize = CFastScalpSizing::ResolveBaseLotSize(symbol, m_config, confidence, m_positionSizer);
+      lotSize = CFastScalpSizing::ResolveBaseLotSize(symbol, cfg, confidence, m_positionSizer);
 
       if(lotSize <= 0.0)
       {
@@ -293,13 +400,13 @@ public:
 
       // Cost gate: spread + estimated round-trip commission (points) rejects when breakeven WR > 70% or cost >
       // 25% of TP; synthetics get 85% / 60%. Commission comes from the TICK_VALUE_PROFIT/_LOSS asymmetry.
-      if(!IsScalpCostViable(symbol, (double)m_config.scalpSLPips, (double)m_config.scalpTPPips))
+      if(!IsScalpCostViable(symbol, (double)cfg.scalpSLPips, (double)cfg.scalpTPPips))
          return false;
 
       // The scalp path's only pre-trade gate; Execute validates the same lot it would have a second
       // time, and each approval reserves a virtual position until its TTL prunes it.
       if(!CFastScalpEntry::ValidateRiskAndAdjust(symbol, signal, confidence, lotSize,
-                                                 m_config, m_riskManager))
+                                                 cfg, m_riskManager))
          return false;
 
       return CFastScalpEntry::FinalizeLotSize(symbol, lotSize);
@@ -308,11 +415,23 @@ public:
    bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
                            double lotSize, double confidence)
    {
-      return CFastScalpEntry::Execute(symbol, signal, lotSize, confidence,
-                                      m_config, m_magicNumber,
-                                      m_tradeManager, m_riskManager, m_aiAdapter,
-                                      m_asyncTracker, m_posTracker, m_riskBudget,
-                                      m_lastScalpTime);
+      // The geometry the risk gate approved. A caller that skipped ShouldEnterScalp for this symbol
+      // has no priced geometry, and a scalp must not ship on the engine-wide raw-point default.
+      if(m_entryConfigSymbol != symbol || m_entryConfig.scalpSLPips <= 0)
+      {
+         PrintFormat("[SCALP-REJECTED] %s | reason=no priced stop for this symbol (ShouldEnterScalp did not approve it)", symbol);
+         return false;
+      }
+
+      bool sent = CFastScalpEntry::Execute(symbol, signal, lotSize, confidence,
+                                           m_entryConfig, m_magicNumber,
+                                           m_tradeManager, m_riskManager, m_aiAdapter,
+                                           m_asyncTracker, m_posTracker, m_riskBudget,
+                                           m_lastScalpTime);
+      if(sent)
+         StampEntry(symbol);
+      m_entryConfigSymbol = "";
+      return sent;
    }
 
 // No caller in this repo: the tick driver only sends market orders, so the BUY_LIMIT/SELL_LIMIT book
