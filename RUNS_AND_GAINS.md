@@ -457,6 +457,45 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 295 — the daily risk ceiling is protective, not a throttle: widening it costs 5.26 pp a window
+
+Batch 294 tested the per-trade risk dial and found it re-selects the book rather than scaling it. The one arm it
+left unrun was the ceiling itself: same 1% per-trade ask, but a wider daily budget, so more positions can be open
+at once instead of bigger ones. Five paired windows answered it.
+
+**Run:** `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=8.0`, `InpMaxPortfolioRisk=24.0`, everything else identical to
+the shipped configuration — eleven-symbol trimmed universe, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off,
+`Model=1`, deposit 10,000, all four state files cleared before each launch, same Batch 293 binary.
+
+| window | factory 1% / 4% daily / 12% portfolio | 1% / **8% daily** / 24% portfolio | delta |
+|---|---|---|---|
+| 09.01 → 09.08 | +5.945% | **+6.126%** (429 receipts, min 9,775.60) | **+0.18 pp** |
+| 09.08 → 09.15 | +7.689% | **−5.519%** (455, min 9,279.79) | **−13.21 pp** |
+| 09.15 → 09.22 | +7.459% | **+2.315%** (328, min 9,984.79) | **−5.14 pp** |
+| 09.22 → 09.29 | +18.176% | **+8.279%** (349, min 9,885.45) | **−9.90 pp** |
+| 10.06 → 10.13 | −0.599% | **+5.061%** (468, min 9,744.04) | **+5.66 pp** |
+
+**Wide-ceiling arm: mean +3.340%, sd 5.36 pp, worst −5.519%, 4 wins of 5.**
+**Paired deltas: mean −5.26 pp, sd 7.32 pp, t −1.61, 4 of 5 negative.**
+
+**What it bought and what it cost.** The arm trades visibly more — 328–468 receipts against 282–307 — and it repairs
+the one losing window (`10.06` −0.599% becomes **+5.061%**). It pays for that by diluting the two biggest windows:
+`09.22` falls from +18.176% to +8.279% and `09.08` turns from +7.689% into **−5.519%**, the widest loss in the whole
+record for a shipped configuration. Mean drops 5.26 pp per window while worst case gets 4.9 pp deeper.
+
+**The finding that matters beyond this arm.** The +18.176% window is partly an artifact of the 4% ceiling: the cap
+holds concurrency at about four positions, and on that window four concurrent `Crash 1000` trades happened to be the
+right four. Widen the budget and the same signal set spreads into `Jump 75` (183 of 468 receipts on `10.06`, 162 of
+455 on `09.08`), which is the row that loses. So the cap is not throttling profit — it is enforcing concentration
+in the instrument that pays, and the record's best window is the cap working, not the strategy working harder.
+
+**Conclusion: rejected, no input changed.** `InpMaxDailyRisk = 4.0` and `InpMaxPortfolioRisk = 12.0` stay. The
+binding constraint on this EA's throughput is deliberate, and every measured attempt to relax it — per-trade risk in
+Batch 294, the daily ceiling here — has cost money in mean terms.
+
+**Not done:** five windows, all 2026-09/10, one instrument; no arm yet tests the ceiling at 6% (a smaller step than
+4→8); nothing live.
+
 ## Batch 294 — the system is "slow" because it trades minimum size, and the risk dial is a selector, not a multiplier
 
 **Asked:** the user's framing is that other bots "fish money fast" while this EA is slow and ineffective, and the
@@ -615,6 +654,7 @@ the window in 0:40:41. Two stale processes silently swallowed one launch — the
 | fast-scalp engine OFF, sixth window | 1 window | **−2.696%**, 307 fills; `Volatility 75` −116.53 on 5 closes | **the distribution is now mean +1.148%, sd 2.213 pp, t 1.27, 5/6** |
 | universe trimmed (both Volatility indices removed) | 5 paired windows | **+2.13 / +7.05 / +5.97 / +15.54 / +2.10 pp**, 5/5 positive, paired t **2.72**; arm mean **+7.734%**, sd 6.74 pp, worst **−0.599%** | **SHIPPED as the factory universe** |
 | risk dial 1× / 2× / 4× per trade | 2 windows × 3 arms | mean **+8.79% / −2.42% / +4.86%**; daily-cap rejects 2,884 → 27,471 → 17,631; fills flip Crash-led to Jump-led | **1× stands — the dial selects the book, it does not scale it** |
+| daily risk ceiling 4% → 8% (1% per trade held) | **5 paired windows** | arm mean **+3.340%**, worst **−5.519%**, 4/5; paired **−5.26 pp**, sd 7.32, t −1.61, 4/5 negative; receipts 328–468 vs 282–307 | **rejected — the cap enforces concentration, it is not a throttle** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 

@@ -8,6 +8,28 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-14
 
+### Batch 295: MEASURED, REJECTED - the daily risk ceiling is protective, and widening it costs 5.26 pp per window
+
+The last unrun lever from Batch 294 was the ceiling itself: keep the 1% per-trade ask, widen the daily budget, and more positions can be open at once instead of bigger ones. Five paired windows, `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=8.0`, `InpMaxPortfolioRisk=24.0`, everything else identical to the shipped configuration, same Batch 293 binary, all four state files cleared per launch:
+
+| window | factory 1% / 4% daily / 12% portfolio | 1% / 8% daily / 24% portfolio | delta |
+|---|---|---|---|
+| 09.01 -> 09.08 | +5.945% | **+6.126%** (429 receipts) | **+0.18 pp** |
+| 09.08 -> 09.15 | +7.689% | **-5.519%** (455) | **-13.21 pp** |
+| 09.15 -> 09.22 | +7.459% | **+2.315%** (328) | **-5.14 pp** |
+| 09.22 -> 09.29 | +18.176% | **+8.279%** (349) | **-9.90 pp** |
+| 10.06 -> 10.13 | -0.599% | **+5.061%** (468) | **+5.66 pp** |
+
+Wide-ceiling arm: mean **+3.340%**, sd 5.36 pp, worst **-5.519%**, 4 of 5 up. Paired deltas: mean **-5.26 pp**, sd 7.32 pp, **t -1.61**, 4 of 5 negative.
+
+It trades more (328-468 receipts vs 282-307) and it repairs the losing window, but it dilutes the two best ones: `09.22` falls from +18.176% to +8.279%, and `09.08` turns from +7.689% into -5.519%, the deepest loss in the record for a shipped configuration.
+
+Finding beyond this arm: the +18.176% window is partly an artifact of the 4% ceiling holding concurrency near four positions, where four concurrent `Crash 1000` trades happened to be the right four. Widen the budget and the same signals spread into `Jump 75` (183 of 468 receipts on 10.06, 162 of 455 on 09.08), the row that loses. The cap enforces concentration in the instrument that pays; it is not throttling profit.
+
+No input changed. `InpMaxDailyRisk=4.0` and `InpMaxPortfolioRisk=12.0` stay.
+
+New artefacts: `Tools\backtest_b295_daily8_w1..w6.ini` (five windows used), archived scoreboards `scoreboard_b295_daily8_w1/w2/w3/w4/w6.csv`. Not done: 4% -> 6% as a smaller step, any window outside 2026-09/10, and no live attach.
+
 ### Batch 294: MEASURED, NOT SHIPPED - the risk dial selects the trade set instead of scaling it
 
 The user's standing question is why the system is slow relative to bots that "fish money fast", and the implicit proposal is more risk per trade. This batch answers it with measurement, and answers it no.
