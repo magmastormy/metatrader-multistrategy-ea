@@ -68,7 +68,21 @@ input int      InpMinSecondsBetweenTrades = 10;
 input int      InpMaxPositionsSameBase = 3;
 
 input group "Symbol Universe & Liquidity";
-input string   InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
+// Batch 292: the two Volatility indices are removed from the factory universe.
+// Measured on five paired cold 7-day windows (Volatility 75 Index M15, Model=1, deposit 10,000,
+// InpQuorumProfile=1, InpMinLiveVoters=1, scalp engine off, every run cold):
+//   09.01-09.08  +5.945% vs +3.811%   +2.13 pp
+//   09.08-09.15  +7.689% vs +0.635%   +7.05 pp
+//   09.15-09.22  +7.459% vs +1.489%   +5.97 pp
+//   09.22-09.29 +18.176% vs +2.640%  +15.54 pp
+//   10.06-10.13  -0.599% vs -2.696%   +2.10 pp
+// trimmed mean +7.734%, sd 6.74 pp, t 2.57, worst window -0.599%
+// paired deltas mean +6.56 pp, sd 5.39 pp, t 2.72, 5 of 5 positive
+// The full-universe arm's losses were five closes of Volatility 75 Index (-116.53 in the 10.06 window);
+// the gain is dominated by Crash 1000 (up to +1,848.83 on 85 closes in one week), which is why the arm's
+// sd is larger than the full universe's while its worst window is smaller. Restore the two indices by
+// naming them here or in InpSymbolsToTrade; note InpAutoAddChartSymbol re-injects the chart symbol.
+input string   InpSymbolsToTrade = "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
 input bool     InpAutoAddChartSymbol = true;       // L7-021: Auto-add chart symbol to universe if missing
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;

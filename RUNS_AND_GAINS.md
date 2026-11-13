@@ -457,6 +457,44 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 293 — the trim cleared its bar, so it is the factory universe now
+
+Batch 292 stopped at three paired windows. Two more finished the set, and the arm now meets the same standard
+`InpMinLiveVoters` met before it shipped.
+
+| window | full universe | trimmed (no V25 / V75) | delta |
+|---|---|---|---|
+| 09.01 → 09.08 | +3.811% (270 fills) | **+5.945%** (306 receipts) | **+2.13 pp** |
+| 09.08 → 09.15 | +0.635% (273) | **+7.689%** (271) | **+7.05 pp** |
+| 09.15 → 09.22 | +1.489% (261) | **+7.459%** (263, min 9,782.29) | **+5.97 pp** |
+| 09.22 → 09.29 | +2.640% (260) | **+18.176%** (282) | **+15.54 pp** |
+| 10.06 → 10.13 | −2.696% (307) | **−0.599%** (307) | **+2.10 pp** |
+
+**Trimmed arm: mean +7.734%, sd 6.74 pp, t 2.57, worst window −0.599%.**
+**Paired deltas: mean +6.558 pp, sd 5.39 pp, t 2.72, 5 of 5 positive** — same binary, same windows, so build and
+window effects cancel.
+
+**Shipped** (`Core\Config\SharedEAInputs.mqh`): the factory `InpSymbolsToTrade` drops both Volatility indices, eleven
+symbols left, with this table written above the input.
+
+**Default verified by omitting the input, not assumed:** `Tools\backtest_b292_defaultcheck.ini` omits
+`InpSymbolsToTrade` and the tester `.set` was parked first → **+1,817.57 (+18.176%)**, min 10,000.00, 314 receipts,
+`[SCALP-SIGNAL-REJECT]` 0. The trim arm returned 11,817.63 in the same window: six cents apart, so the default lands.
+
+**What it actually is:** `Crash 1000` decides the week every time (+763.58 / +499.05 / +719.52 / +1,848.83 / +1,756.56),
+with `Step` and `Jump 25` helping. The Volatility indices were the only consistently losing rows, and five closes of
+`Volatility 75` (−116.53) carried the only losing full-universe window. The trim removes the instrument the book
+cannot trade; it does not add a signal.
+
+**Why Batch 285's opposite sign did not veto it:** that measurement ran on a build carrying the Batch 289
+indicator-handle defect (M15 ATR(14) answered by a D1 handle), which AGENTS.md already excludes as a baseline.
+
+**Known deviation:** `InpAutoAddChartSymbol = true` still re-injects the chart symbol, so a trimmed run takes 2-4
+`Volatility 75` closes. The universe input is a priority list plus the chart symbol, not an absolute exclusion.
+
+**Not done:** all five windows are 2026-09/10; no window shows `Crash 1000` trending against the book, so the trim's
+downside is only observed as −0.599%. A per-symbol risk cap remains the untested lever.
+
 ## Batch 292 — the sixth window lost, the loss named the symbol, and the trim that fixes it is too good to ship yet
 
 Batch 291 shipped the scalper off on five windows (mean +1.917%, t 3.30). The next window did not confirm it.
@@ -524,7 +562,7 @@ the window in 0:40:41. Two stale processes silently swallowed one launch — the
 | fast-scalp engine ON vs OFF, same build and window | 2 arms, 1 window | **−2.588% on 2,265 fills** vs **+3.811% on 270 fills** | **+6.40 pp, one window** |
 | fast-scalp engine OFF, five consecutive windows | **5 windows** | mean **+1.917%**, sd **1.30 pp**, t **3.30**, **5/5 positive**, 260–279 fills each | **shipped as the factory default** |
 | fast-scalp engine OFF, sixth window | 1 window | **−2.696%**, 307 fills; `Volatility 75` −116.53 on 5 closes | **the distribution is now mean +1.148%, sd 2.213 pp, t 1.27, 5/6** |
-| universe trimmed (both Volatility indices removed) | 3 paired windows | **+2.10 / +5.97 / +15.54 pp**; trimmed mean **+8.345%**, sd 9.50 pp, but `Crash 1000` alone produced more than the delta in two of three | **measured, NOT shipped — sign contradicts Batch 285** |
+| universe trimmed (both Volatility indices removed) | 5 paired windows | **+2.13 / +7.05 / +5.97 / +15.54 / +2.10 pp**, 5/5 positive, paired t **2.72**; arm mean **+7.734%**, sd 6.74 pp, worst **−0.599%** | **SHIPPED as the factory universe** |
 
 Three things are now true with numbers behind them, and they are what the next gain has to respect:
 

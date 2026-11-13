@@ -8,6 +8,38 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-13
 
+### Batch 293: SHIPPED - the two Volatility indices are out of the factory universe, on five paired windows
+
+Batch 292 produced three paired windows for a universe trim and refused to ship it on three. Two more windows finished the set, and the arm now clears the same bar this repository used for `InpMinLiveVoters`.
+
+**The full five-window table** (all cold, `Volatility 75 Index` M15, `Model=1`, deposit 10,000, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off; the full-universe column is Batch 291's own record for the same windows):
+
+| window | full universe | trimmed (no V25/V75) | delta |
+|---|---|---|---|
+| 09.01 -> 09.08 | +381.07 (+3.811%), 270 fills | **+594.45 (+5.945%)**, 306 receipts | **+2.13 pp** |
+| 09.08 -> 09.15 | +63.45 (+0.635%), 273 | **+768.93 (+7.689%)**, 271 | **+7.05 pp** |
+| 09.15 -> 09.22 | +148.92 (+1.489%), 261 | **+745.87 (+7.459%)**, 263 (min 9,782.29) | **+5.97 pp** |
+| 09.22 -> 09.29 | +264.00 (+2.640%), 260 | **+1,817.63 (+18.176%)**, 282 | **+15.54 pp** |
+| 10.06 -> 10.13 | -269.61 (-2.696%), 307 | **-59.87 (-0.599%)**, 307 | **+2.10 pp** |
+
+Trimmed arm: mean **+7.734%**, sample sd **6.74 pp**, **t 2.57**, worst window **-0.599%**. Paired deltas: mean **+6.558 pp**, sd **5.39 pp**, **t 2.72**, **5 of 5 positive** - a paired design on the same windows and the same binary, so build and window effects cancel. Against the full universe's own six-window distribution (mean +1.148%, sd 2.213 pp, worst -2.696%), the trim returns about twice the mean at double the deviation while cutting the worst week by 2.1 pp.
+
+**Why the Batch 285 counter-evidence does not veto this:** Batch 285 measured `Crash 1000` -123.06 / `Volatility 75` +261.22 in the one-voter arm, and that measurement was taken on a build carrying the Batch 289 indicator-handle defect (M15 ATR(14) served by a D1 handle, `ATR ratio crisis gate: 9.825 > 2.500` on every consensus entry). AGENTS.md already records that Batches 282-288 are not a baseline. The five windows here are on the repaired build.
+
+**What the gain is, stated plainly:** it is still `Crash 1000` deciding the week - +763.58 on 89 closes (09.01), +499.05 on 79 (09.08), +719.52 on 87 (09.15), +1,848.83 on 85 (09.22), +1,756.56 on 84 (11.817 replay). `Step Index` (+136.16, +161.48, +164.83) and `Jump 25` help. The two Volatility indices were the only consistently loss-making rows in the full-universe arm, and five closes of `Volatility 75` (-116.53) carried the only losing full-universe window. So this is "stop buying the instrument the book cannot trade", not a new signal.
+
+**The change** (`Core\Config\SharedEAInputs.mqh:70-84`): `input string InpSymbolsToTrade` drops `Volatility 25 Index` and `Volatility 75 Index`, leaving eleven symbols, with the five-window table written above it in the source. Restoring them is an input edit, not a code change.
+
+**Default verified, not assumed** - the Batch 288 lesson applied: `Tools\backtest_b292_defaultcheck.ini` omits `InpSymbolsToTrade` entirely and the tester `.set` was parked as `MultiStrategyAutonomousEA.set.parked_b292` before the run. Result: 10,000.00 -> **11,817.57**, **+1,817.57 (+18.176%)**, min 10,000.00 / max 11,822.65, 314 receipts, `[SCALP-SIGNAL-REJECT]` **0** (scalper-off default also in force). That is the trim arm's 11,817.63 to within six cents, so the compiled default is exactly the measured arm and no `.set` inheritance is in play. MT5 recreated the `.set` afterwards, as always.
+
+**Known deviation, documented not fixed:** `InpAutoAddChartSymbol = true` re-injects the chart symbol, so a trimmed run still takes 2-4 `Volatility 75` closes (the chart is V75 by harness convention). The universe input is therefore "priority list plus chart symbol", not an absolute exclusion. If absolute exclusion is wanted, that input has to be turned off - not changed here, because every measured window above ran with it on.
+
+**Verification:** `sync_files.ps1` then `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> **`OVERALL SUCCESS` - 0 errors, 0 total warnings** on all eight programs (`MultiStrategyAutonomousEA.mq5` 108,509 ms, `MultiStrategyTestingEA.mq5` 101,634 ms, `TrainingDataExporter.mq5` 35,780 ms). New inis: `Tools\backtest_b291_novol_w1.ini`, `_novol_w2.ini`, `Tools\backtest_b292_defaultcheck.ini`. Archived scoreboards: `scoreboard_b291_novol_20260901-20260908.csv`, `_20260908-20260915.csv`, `scoreboard_b292_default_20260901-20260908.csv`.
+
+**Hazard re-confirmed twice:** the tester log path is date-stamped, so a run started after local midnight writes `20261114.log`; a poller watching `20261113.log` reports a healthy process as frozen (this cost one batch script). And 2-4 leftover `terminal64`/`metatester64` processes silently swallow a `/config:` launch - the `Get-Process` pre-check stays mandatory.
+
+**Not done:** five windows is one regime (2026-09/10); no window exists where `Crash 1000` trends against the book, so the trim's downside is only observed as -0.599%. A per-symbol risk cap is the untested lever that would make this independent of which index trends.
+
 ### Batch 292: the sixth window lost, and the loss names the symbol — but trimming the universe is not yet a ship
 
 Batch 291 shipped the scalper off on a five-window distribution (mean +1.917%, t 3.30). Its first job was to confirm that on the post-logging build. It did not confirm: the next window lost, and the loss was concentrated enough to name the instrument.
