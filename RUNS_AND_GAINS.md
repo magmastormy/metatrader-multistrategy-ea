@@ -457,6 +457,61 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 296 — the edge is real but regime-bound: two August windows, −3.583% and +7.177%, both decided by `Crash 1000`
+
+Every window in the record so far is an adjacent 7-day slice of 2026-09/10 on one chart. That is out-of-window but
+not out-of-regime, so the open question was whether the shipped configuration still pays somewhere else. Two August
+windows answer it: one pays, one loses, and in both cases the outcome is one instrument.
+
+**Run:** the shipped configuration, unchanged — `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`,
+`InpMaxPortfolioRisk=12.0`, eleven-symbol trimmed universe, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off,
+`Model=1`, deposit 10,000, all four state files cleared before each launch, Batch 293 binary, no recompile.
+
+| window | equity | delta | receipts | min | max |
+|---|---|---|---|---|---|
+| 08.01 → 08.08 | 10,000.00 → **9,641.67** | **−358.33 (−3.583%)** | 381 | 9,597.41 | 10,000.00 |
+| 08.08 → 08.15 | 10,000.00 → **10,717.72** | **+717.72 (+7.177%)** | 336 | 9,997.05 | 10,924.92 |
+
+**The losing window never rises above its own start.** `max` is exactly 10,000.00, so this is a monotone decline across
+seven simulated days, not a bad week inside an otherwise good curve.
+
+**Attribution (`08.01`, 268 closes, gross −357.33):** `Crash 1000` **+54.39 / 92**, AUDUSD +5.67 / 7, GBPUSD −0.24 / 1,
+EURUSD −1.61 / 6, XAUUSD −22.05 / 6, `Volatility 75` −26.93 / 2, `Jump 75` −34.13 / 93, `Jump 25` −59.35 / 39,
+USDJPY **−106.01 / 2**, `Step` **−167.07 / 20**.
+**Attribution (`08.08`, 249 closes, gross +717.72):** `Crash 1000` **+850.02 / 88**, `Volatility 75` +127.35 / 5,
+AUDUSD −0.60 / 1, GBPUSD −1.86 / 6, XAUUSD −13.96 / 6, `Jump 75` −28.85 / 74, EURUSD −38.27 / 9, USDJPY −44.52 / 1,
+`Jump 25` −58.61 / 38, `Step` −72.98 / 21.
+
+**What the pair proves, in two directions.**
+
+1. **The edge is not a September artifact.** A window entirely outside the 09/10 slice still returns **+7.177%**, and it
+   does it through the same mechanism as every paying window in the record: `Crash 1000` contributed **+850.02**, which
+   is 118% of the net — every other row together was slightly negative. So the shipped configuration is not fitted to
+   a particular month.
+2. **But it is a one-instrument bet.** The same configuration on the adjacent August week returns **−3.583%**, and there
+   `Crash 1000` contributed only **+54.39** on 92 closes. Nothing else covered it: `Step` −167.07, USDJPY −106.01,
+   `Jump 25` −59.35, `Jump 75` −34.13, XAUUSD −22.05. Those four rows are negative in **both** August windows and
+   `Jump 75`/`Step` are also the rows that lose in the September windows. Profitability here is not eleven strategies
+   cooperating; it is one synthetic index paying more than the other ten rows give back, and it pays or it doesn't.
+
+That is also the cleanest explanation of why Batches 294 and 295 both failed: raising per-trade risk or widening the
+daily ceiling does not make `Crash 1000` bigger, it spreads capital across the rows that lose. Any future lever has to
+increase concentration in the payer or remove the rows that bleed — not raise the budget.
+
+**Seven-window record with the August pair folded in:** `+5.945 / +7.689 / +7.459 / +18.176 / −0.599 / −3.583 / +7.177 %`
+→ mean **+6.038%**, sd **6.96 pp**, **t 2.30**, **6 of 7 positive**, worst **−3.583%**. The August pair alone: mean
++1.797%, sd 7.61 pp.
+
+**Side observation, not an input change:** `reason=daily_risk_would_exceed` fires **13,806** (`08.01`) and **13,936**
+(`08.08`) times per window on the identical 1%/4%/12% stack, against roughly 2,884 per window in September. Same caps,
+same instrument list, many more candidates refused — August was a busier signal month, and the ceiling was doing real
+work in it.
+
+**Conclusion: no input changed.** The factory configuration survives an out-of-regime window in one direction and
+fails it in the other, which is the honest state of the record: a positive mean, t 2.30, and a variance that is
+one instrument's variance rather than a portfolio's. Next lever queued: remove the rows that are negative in every
+measured window (USDJPY, XAUUSD, EURUSD, `Jump 25`) and test that on four paired windows.
+
 ## Batch 295 — the daily risk ceiling is protective, not a throttle: widening it costs 5.26 pp a window
 
 Batch 294 tested the per-trade risk dial and found it re-selects the book rather than scaling it. The one arm it

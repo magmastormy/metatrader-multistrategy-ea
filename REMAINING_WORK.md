@@ -401,3 +401,33 @@ The run-by-run record lives in `RUNS_AND_GAINS.md`; this list stays the open-ite
 - **No input changed:** `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0` stand, now with both Batch 294 and Batch 295 behind them.
 - **Open, next in line:** a 4% -> 6% daily step (the 4 -> 8 jump may be too coarse to reveal a real optimum); a per-symbol cap that binds on the lot rather than the entry (Batch 286/287 proof still points there); `InpAutoAddChartSymbol=false` paired run; `[ENGINE-CLOSE]` never fired; `Tools\backtest_b290_scalp2.ini` unrun; `backtest_report.htm` never written so still no MT5 profit factor / drawdown / Sharpe; no live attach; items 15/43/19/20/8/41/47 unchanged.
 - **Boundary on all of this:** every window in the record is 2026-09/10 on one instrument, under one harness, with no live attach. The advertised mean is +7.734% per 7 days for the shipped universe, t 2.57, worst -0.599% - out-of-window but not out-of-regime.
+
+## Status update - Batch 296 (2026-11-14)
+
+Survival outside the 2026-09/10 slice was the highest-value untested question, and it now has two answers.
+
+Factory configuration (1% / 4% / 12%, eleven symbols, scalper off), cold, Batch 293 binary:
+
+- `2026.08.01` -> `08.08`: 10,000.00 -> **9,641.67**, **-3.583%**, 381 receipts, min 9,597.41, max 10,000.00.
+- `2026.08.08` -> `08.15`: 10,000.00 -> **10,717.72**, **+7.177%**, 336 receipts, min 9,997.05, max 10,924.92.
+
+The losing window never rises above its own start. Attribution says why: `08.08` is `Crash 1000` **+850.02 / 88**
+(every other row together slightly negative), and `08.01` is `Crash 1000` **+54.39 / 92** with `Step` -167.07,
+USDJPY -106.01, `Jump 25` -59.35, `Jump 75` -34.13, XAUUSD -22.05 covering the rest.
+
+Seven-window record: mean **+6.038%**, sd **6.96 pp**, **t 2.30**, 6 of 7 positive, worst -3.583%.
+
+Open items this batch moved:
+
+- [x] Does the shipped default survive outside 2026-09/10? Yes in one week, no in the next - the edge is a single-
+      instrument edge, not a portfolio edge.
+- [ ] Drop the rows that are negative in every measured window (USDJPY, XAUUSD, EURUSD, `Jump 25`) and measure on
+      four paired windows. This is the queued next lever; Batch 293 already showed a trim can pay when the evidence
+      is paired.
+- [ ] `InpMaxDailyRisk` 4% -> 6% step (the 4 -> 8 jump may be too coarse to see an optimum).
+- [ ] Per-symbol risk cap that binds on lot size rather than on entry - 286/287 proved entry gates only
+      redistribute risk.
+- [ ] `InpAutoAddChartSymbol = true` re-injects the chart symbol, so a trimmed run still takes 2-6 `Volatility 75`
+      closes (5 in `08.08`, 2 in `08.01`); never tested with it off.
+- [ ] Still no live attach; `[ENGINE-CLOSE]` still never observed; `backtest_report.htm` still never written, so no
+      MT5 profit factor / drawdown / Sharpe anywhere in the repository.

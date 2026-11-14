@@ -8,6 +8,39 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-14
 
+### Batch 296: MEASURED, NO SHIP - the shipped default pays outside 2026-09/10 in one August week and loses in the next, and both outcomes are `Crash 1000`
+
+Every prior window sat inside a contiguous 2026-09/10 slice, so regime sensitivity was untested. Two August windows,
+factory configuration unchanged (`InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0`,
+eleven-symbol universe, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off, `Model=1`, deposit 10,000, four state
+files cleared, Batch 293 binary):
+
+- `2026.08.01` -> `08.08`: 10,000.00 -> **9,641.67**, **-358.33 (-3.583%)**, 381 receipts, min 9,597.41, **max 10,000.00**.
+- `2026.08.08` -> `08.15`: 10,000.00 -> **10,717.72**, **+717.72 (+7.177%)**, 336 receipts, min 9,997.05, max 10,924.92.
+
+Attribution (`08.01`, 268 closes, gross -357.33): `Crash 1000` **+54.39 / 92**, AUDUSD +5.67, GBPUSD -0.24, EURUSD
+-1.61, XAUUSD -22.05, `Volatility 75` -26.93, `Jump 75` -34.13 / 93, `Jump 25` -59.35, USDJPY **-106.01**, `Step`
+**-167.07**. Attribution (`08.08`, 249 closes, +717.72): `Crash 1000` **+850.02 / 88**, `Volatility 75` +127.35,
+AUDUSD -0.60, GBPUSD -1.86, XAUUSD -13.96, `Jump 75` -28.85, EURUSD -38.27, USDJPY -44.52, `Jump 25` -58.61, `Step`
+-72.98.
+
+**Reading:** (1) the edge is not a September artifact - a window entirely outside the 09/10 slice still makes +7.177%
+by the same mechanism, `Crash 1000` alone exceeding the net; (2) it is a single-instrument edge - the adjacent week
+loses 3.583% because `Crash 1000` paid only +54.39 while `Step`, USDJPY, `Jump 25`, `Jump 75` and XAUUSD all bled, and
+those are the same rows that bleed in the September windows. This is also why Batches 294 and 295 failed: a larger
+budget does not enlarge the payer, it spreads capital over the rows that lose.
+
+**Seven-window record:** `+5.945 / +7.689 / +7.459 / +18.176 / -0.599 / -3.583 / +7.177 %` -> mean **+6.038%**, sd
+**6.96 pp**, **t 2.30**, **6 of 7 positive**, worst **-3.583%**.
+
+Side observation: with identical caps, `reason=daily_risk_would_exceed` fires **13,806** and **13,936** times per
+August window against roughly 2,884 in September - a busier month, and the ceiling was binding hard.
+
+No input changed. New inis `Tools\backtest_b296_aug_w1.ini`, `backtest_b296_aug_w2.ini`; scoreboards archived as
+`scoreboard_b296_aug_w1/w2.csv`; journals snapshotted as `journal_b296_aug_w1.log` / `_aug_w2.log`. Next queued
+lever: drop the rows that are negative in every measured window (USDJPY, XAUUSD, EURUSD, `Jump 25`) and measure on
+four paired windows.
+
 ### Batch 295: MEASURED, REJECTED - the daily risk ceiling is protective, and widening it costs 5.26 pp per window
 
 The last unrun lever from Batch 294 was the ceiling itself: keep the 1% per-trade ask, widen the daily budget, and more positions can be open at once instead of bigger ones. Five paired windows, `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=8.0`, `InpMaxPortfolioRisk=24.0`, everything else identical to the shipped configuration, same Batch 293 binary, all four state files cleared per launch:
