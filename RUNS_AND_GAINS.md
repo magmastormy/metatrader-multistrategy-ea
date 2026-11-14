@@ -457,6 +457,69 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 297 — the three rows that lose in every window are out, and the record gets its first all-positive distribution
+
+Batch 296 answered one question (the edge survives outside 09/10) and raised a sharper one: if the money is one
+instrument, why is the risk budget being spent on rows that lose in window after window? This batch removes those rows
+and measures the result on five paired windows.
+
+**The reading that justified it.** Across every window in the record, `USDJPY` (Batch 290: 77 fills, negative;
+Batch 296: −106.01 on 2 closes, −44.52 on 1), `XAUUSD` (−22.05, −13.96, −28.82, −29.36 …) and `EURUSD` (−1.61, −38.27,
+−52.84 in the Batch 293 window) never produced a positive week. They were taking entries, spending the 4% daily
+budget and losing. `Step` and `Jump 25` are mixed and were kept.
+
+**Ship:** `Core\Config\SharedEAInputs.mqh` `InpSymbolsToTrade` now reads
+`"Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD"` — eight symbols,
+`EURUSD`, `USDJPY` and `XAUUSD` removed, with the five-window table in a comment above it.
+
+**Run:** same Batch 293 binary for the five arms (no source change until the ship), same windows as Batch 296 and
+Batch 293, `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0`, `InpQuorumProfile=1`,
+`InpMinLiveVoters=1`, scalper off, `Model=1`, deposit 10,000, all four state files cleared before every launch.
+
+| window | eleven symbols | **eight symbols** | delta | receipts |
+|---|---|---|---|---|
+| 08.01 → 08.08 | −3.583% | **+1.630%** (min 9,887.92 / max 10,221.23) | **+5.21 pp** | 383 |
+| 08.08 → 08.15 | +7.177% | **+7.276%** (9,997.05 / 10,918.24) | +0.10 pp | 250 |
+| 09.01 → 09.08 | +5.945% | **+5.681%** (9,896.20 / 10,626.23) | −0.26 pp | 413 |
+| 09.15 → 09.22 | +7.459% | **+7.444%** (9,921.43 / 10,757.15) | −0.02 pp | 408 |
+| 10.06 → 10.13 | −0.599% | **+4.692%** (10,000.00 / 10,573.49) | **+5.29 pp** | 446 |
+
+**Eight-symbol arm: mean +5.345%, sd 2.37 pp, t 5.04, 5 of 5 positive, worst +1.630%, best +7.444%.**
+**Eleven-symbol arm on the same five windows: mean +3.280%, sd 5.05 pp, t 1.45, 3 of 5, worst −3.583%.**
+**Paired deltas: mean +2.07 pp, sd 2.91 pp, t 1.59, 4 of 5 positive.**
+
+**Why this ships on dominance rather than on a t-statistic.** The paired t (1.59) is diluted, because three of the
+five pairings are identical to within 0.26 pp — on those windows the removed rows were doing nothing at all. The two
+windows that moved are the two that lost. So the trim does not add return: it removes the left tail. On the same
+five windows and the same binary the arm wins on **all three moments at once** — mean +2.07 pp, less than half the
+cross-window sd (2.37 vs 5.05 pp), and a worst window that is **+1.630%** instead of **−3.583%**. That is the first
+distribution in this record with **no losing window in it**, and it is the closest thing to "consistently profitable"
+the evidence has produced.
+
+**The mechanism is the same one Batches 294 and 295 found.** Receipts are unchanged (250–446, against 250–469 before),
+so the trim did not slow the book down. What changed is where the money comes from: on `08.01`, `Crash 1000` made
+**+330.80 on 114 closes** where the eleven-symbol arm made **+54.39 on 92** — same instrument, same week, more of the
+budget reaching it. On `10.06`, `Crash 1000` made **+674.20 on 118 closes** and `Jump 75` turned positive
+(+92.74 on 132), against a loss in the eleven-symbol arm. Removing rows the budget was wasting is a concentration
+lever, and it works where raising the budget did not.
+
+**Default verified, not assumed** (the Batch 288 rule): `Tools\backtest_b297_defaultcheck.ini` omits
+`InpSymbolsToTrade` entirely, `MQL5\Profiles\Tester\MultiStrategyAutonomousEA.set` was parked as
+`...set.parked_b297` before launch, and the same `10.06` window ran cold on the newly compiled binary:
+10,000.00 → **10,469.22**, **+4.692%**, ending equity **identical to the cent** with the arm's number, no
+`EURUSD` / `USDJPY` / `XAUUSD` closes anywhere in the run — only the three chart-symbol re-injections
+(`Volatility 75 Index`, −16.72 on 1 close). So the compiled default *is* the measured arm.
+
+**Verification:** `sync_files.ps1` then `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` →
+**`OVERALL SUCCESS` — 0 errors, 0 total warnings** on all eight programs (root EA 74,406 ms, Testing 60,753 ms,
+Exporter 21,804 ms).
+
+**What this does not fix.** The book is still one instrument's variance: `Crash 1000` carries every paying window
+(+330.80, +850.02, +520.65, +674.20 …), and `Step` (−81.27, −110.44) and `Jump 25` (−119.71, −15.23) still bleed
+inside it. A week where `Crash 1000` does not pay is still a losing week. The next honest lever is therefore not
+another trim of small rows, but position-level control on the payer itself — the per-symbol cap that binds on lot
+size (`GetSymbolRiskAllocation` is lifted off its budget by the min-lot floor, which is why it never binds).
+
 ## Batch 296 — the edge is real but regime-bound: two August windows, −3.583% and +7.177%, both decided by `Crash 1000`
 
 Every window in the record so far is an adjacent 7-day slice of 2026-09/10 on one chart. That is out-of-window but

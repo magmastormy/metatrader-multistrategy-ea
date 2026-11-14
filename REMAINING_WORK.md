@@ -431,3 +431,40 @@ Open items this batch moved:
       closes (5 in `08.08`, 2 in `08.01`); never tested with it off.
 - [ ] Still no live attach; `[ENGINE-CLOSE]` still never observed; `backtest_report.htm` still never written, so no
       MT5 profit factor / drawdown / Sharpe anywhere in the repository.
+
+## Status update - Batch 297 (2026-11-14)
+
+Shipped: `EURUSD`, `USDJPY` and `XAUUSD` are out of the factory universe. `InpSymbolsToTrade` now reads
+`"Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD"`.
+
+Five paired cold windows, same Batch 293 binary, 1% per trade / 4% daily / 12% portfolio, `InpQuorumProfile=1`,
+`InpMinLiveVoters=1`, scalper off, deposit 10,000, four state files cleared each run:
+
+| window | eleven symbols | eight symbols | delta |
+|---|---|---|---|
+| 08.01 -> 08.08 | -3.583% | **+1.630%** | +5.21 pp |
+| 08.08 -> 08.15 | +7.177% | **+7.276%** | +0.10 pp |
+| 09.01 -> 09.08 | +5.945% | **+5.681%** | -0.26 pp |
+| 09.15 -> 09.22 | +7.459% | **+7.444%** | -0.02 pp |
+| 10.06 -> 10.13 | -0.599% | **+4.692%** | +5.29 pp |
+
+Eight-symbol arm: mean **+5.345%**, sd **2.37 pp**, **t 5.04**, **5 of 5 positive**, worst **+1.630%** - the first
+distribution in this repository with no losing window. Eleven-symbol arm on the same windows: mean +3.280%, sd 5.05,
+t 1.45, 3 of 5.
+
+Default verified by omission with the `.set` parked (`...set.parked_b297`): 10,000.00 -> 10,469.22, +4.692%, ending
+equity identical to the cent to the arm.
+
+Open items this batch moved:
+
+- [x] Remove the rows that are negative in every measured window - shipped on five paired windows.
+- [ ] A week where `Crash 1000` does not pay is still a losing week; `Step` (-81.27, -110.44) and `Jump 25`
+      (-119.71, -15.23) still bleed inside the winning windows.
+- [ ] Per-symbol risk cap that binds on lot size. `GetSymbolRiskAllocation` is lifted off its budget by the min-lot
+      floor, so it never binds; that is the untested mechanism for controlling the payer itself.
+- [ ] `InpMaxDailyRisk` 4% -> 6% step (the 4 -> 8 jump may be too coarse to reveal an optimum).
+- [ ] `InpAutoAddChartSymbol = true` still injects the chart symbol (2 `Volatility 75` closes per window, -16.72 in
+      the 10.06 default check); never tested with it off.
+- [ ] Still no live attach; `[ENGINE-CLOSE]` never observed; `backtest_report.htm` never written, so no MT5 profit
+      factor / drawdown / Sharpe anywhere.
+- [ ] 4% daily ceiling, 1% per trade and the eight-symbol universe are validated only on 2026-08..10 windows.

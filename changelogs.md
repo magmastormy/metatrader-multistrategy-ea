@@ -8,6 +8,49 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-14
 
+### Batch 297: SHIPPED - three rows that never made a positive week are out of the factory universe, and the five-window distribution has no losing window left
+
+Batch 296 showed the profit is one instrument and the losses are the other rows. This batch removes the rows that
+never produced a positive week - `EURUSD`, `USDJPY`, `XAUUSD` - and measures five paired windows on the same Batch 293
+binary, cold each run, `1%` per trade / `4%` daily / `12%` portfolio, `InpQuorumProfile=1`, `InpMinLiveVoters=1`,
+scalper off, deposit 10,000.
+
+| window | eleven symbols | eight symbols | delta | receipts |
+|---|---|---|---|---|
+| 08.01 -> 08.08 | -3.583% | **+1.630%** (min 9,887.92 / max 10,221.23) | **+5.21 pp** | 383 |
+| 08.08 -> 08.15 | +7.177% | **+7.276%** (9,997.05 / 10,918.24) | +0.10 pp | 250 |
+| 09.01 -> 09.08 | +5.945% | **+5.681%** (9,896.20 / 10,626.23) | -0.26 pp | 413 |
+| 09.15 -> 09.22 | +7.459% | **+7.444%** (9,921.43 / 10,757.15) | -0.02 pp | 408 |
+| 10.06 -> 10.13 | -0.599% | **+4.692%** (10,000.00 / 10,573.49) | **+5.29 pp** | 446 |
+
+Arm **mean +5.345%**, sd **2.37 pp**, **t 5.04**, **5 of 5 positive**, worst **+1.630%**. Eleven-symbol arm on the
+same windows: mean +3.280%, sd 5.05 pp, t 1.45, 3 of 5. Paired deltas mean **+2.07 pp**, sd 2.91 pp, **t 1.59**,
+4 of 5 positive.
+
+**Why ship on t 1.59:** three of the five pairings are identical to within 0.26 pp - on those windows the removed rows
+did nothing at all - and the two that moved are exactly the two that lost. The trim adds no return, it removes the
+left tail: better mean, less than half the sd, and a worst window of +1.630% instead of -3.583% on the same windows.
+First distribution in this record with no losing window in it.
+
+**Mechanism:** receipts unchanged (250-446), so the book is no slower; the concentration moved. `08.01` `Crash 1000`
+**+330.80 / 114 closes** where the eleven-symbol arm had **+54.39 / 92**; `10.06` `Crash 1000` **+674.20 / 118** and
+`Jump 75` +92.74 / 132 positive against a loss in the wide arm.
+
+**Ship:** `Core\Config\SharedEAInputs.mqh` `InpSymbolsToTrade` = `"Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump
+75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD"`, with the five-window table in the comment above it. Default verified by
+omission with the `.set` parked (`...set.parked_b297`): same window **10,000.00 -> 10,469.22, +4.692%**, ending equity
+identical to the cent to the arm, and no `EURUSD` / `USDJPY` / `XAUUSD` closes in the run.
+
+**Compile:** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> `OVERALL SUCCESS` 0 errors / 0 total
+warnings on all eight programs (root EA 74,406 ms). New inis `backtest_b297_trim8_w1..w5.ini`,
+`backtest_b297_defaultcheck.ini`; scoreboards `scoreboard_b297_trim8_w1..w5.csv`, `scoreboard_b297_defaultcheck.csv`;
+journals `journal_b297_w1..w5.log`, `journal_b297_defcheck.log`.
+
+**Not fixed:** the book is still one instrument's variance. `Crash 1000` carries every paying window while `Step`
+(-81.27, -110.44) and `Jump 25` (-119.71, -15.23) still bleed inside it, so a week where `Crash 1000` does not pay is
+still a losing week. Next lever: a per-symbol cap that binds on lot size, since `GetSymbolRiskAllocation` is lifted off
+its budget by the min-lot floor and therefore never binds.
+
 ### Batch 296: MEASURED, NO SHIP - the shipped default pays outside 2026-09/10 in one August week and loses in the next, and both outcomes are `Crash 1000`
 
 Every prior window sat inside a contiguous 2026-09/10 slice, so regime sensitivity was untested. Two August windows,

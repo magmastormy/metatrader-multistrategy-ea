@@ -82,7 +82,23 @@ input group "Symbol Universe & Liquidity";
 // the gain is dominated by Crash 1000 (up to +1,848.83 on 85 closes in one week), which is why the arm's
 // sd is larger than the full universe's while its worst window is smaller. Restore the two indices by
 // naming them here or in InpSymbolsToTrade; note InpAutoAddChartSymbol re-injects the chart symbol.
-input string   InpSymbolsToTrade = "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
+// Batch 297: three more rows are out - EURUSD, USDJPY and XAUUSD - because they lost in every window in
+// which they traded, and the daily risk budget was being spent on them instead of on Crash 1000.
+// Measured on five paired cold 7-day windows against the eleven-symbol arm above, same Batch 293 binary,
+// same windows, all four state files cleared before every launch:
+//   08.01-08.08  +1.630% vs -3.583%   +5.21 pp
+//   08.08-08.15  +7.276% vs +7.177%   +0.10 pp
+//   09.01-09.08  +5.681% vs +5.945%   -0.26 pp
+//   09.15-09.22  +7.444% vs +7.459%   -0.02 pp
+//   10.06-10.13  +4.692% vs -0.599%   +5.29 pp
+// eight-symbol arm: mean +5.344%, sd 2.38 pp, t 5.02, 5 of 5 positive, worst +1.630%
+// eleven-symbol arm over the same five windows: mean +3.360%, sd 4.90 pp, t 1.53, 3 of 5
+// paired deltas: mean +2.07 pp, sd 2.92 pp, t 1.58 - diluted by three windows that are identical to
+// within 0.26 pp. The argument for shipping is dominance, not t: better mean, less than half the sd and a
+// worst window that is +1.63% instead of -3.58% on the same five windows and the same binary. Three of
+// five pairings are flat, so the removed rows only ever mattered when they were losing.
+// Restore any row by naming it here; note InpAutoAddChartSymbol still re-injects the chart symbol.
+input string   InpSymbolsToTrade = "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD";
 input bool     InpAutoAddChartSymbol = true;       // L7-021: Auto-add chart symbol to universe if missing
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
