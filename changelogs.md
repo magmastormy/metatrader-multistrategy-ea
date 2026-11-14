@@ -8,6 +8,52 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 
 ## [Unreleased] - 2026-11-14
 
+### Batch 298: MEASURED, NOT SHIPPED - removing the last two loss-making rows makes the distribution worse, not better
+
+Batch 297 trimmed the universe to eight symbols and got the first all-positive five-window distribution. The next
+obvious trim was the two rows that still lose inside winning windows, `Step` and `Jump 25`. Five paired cold windows
+say no: the trim costs mean and adds variance.
+
+Per-symbol nets across the shipped eight-symbol windows (`attr2.py`, gross per close, one file per window):
+`Step` **−81.27 / −51.70 / −28.32 / +78.07 / −68.20** (4 of 5 negative, −151.42 total) and `Jump 25`
+**−119.71 / −95.20 / +32.67 / −55.81 / +6.45** (4 of 5 negative, −231.60 total) — together −383.02 USD, 0.77% of the
+deposit per window.
+
+**Arm:** `Tools\backtest_b298_six_w1..w5.ini`,
+`InpSymbolsToTrade=Boom 1000 Index,Crash 1000 Index,Jump 75 Index,GBPUSD,AUDUSD,BTCUSD`; same Batch 293 binary (no
+source change), `1%` / `4%` / `12%`, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off, `Model=1`, deposit
+10,000, cold each run.
+
+| window | eight symbols | six symbols | delta | receipts |
+|---|---|---|---|---|
+| 08.01 -> 08.08 | +1.630% | **+1.803%** (min 9,995.98 / max 10,230.13) | +0.17 pp | 247 |
+| 08.08 -> 08.15 | +7.276% | **+9.609%** (9,988.92 / 11,171.36) | **+2.33 pp** | 413 |
+| 09.01 -> 09.08 | +5.681% | **+2.616%** (9,827.24 / 10,437.90) | **-3.07 pp** | 440 |
+| 09.15 -> 09.22 | +7.444% | **+6.293%** (9,896.22 / 10,647.03) | -1.15 pp | 411 |
+| 10.06 -> 10.13 | +4.692% | **+3.377%** (9,924.53 / 10,343.31) | -1.32 pp | 438 |
+
+Six-symbol arm: mean **+4.740%**, sd **3.21 pp**, t **3.31**, 5/5 positive, worst **+1.803%**, best **+9.609%**.
+Eight-symbol arm on the same windows: mean **+5.345%**, sd **2.37 pp**, t **5.04**, worst **+1.630%**, best +7.444%.
+Paired: mean **-0.605 pp**, sd **2.01 pp**, t **0.67**, 2/5 positive. **Rejected, no input changed:**
+`InpSymbolsToTrade` keeps its eight symbols.
+
+**Mechanism.** The risk budget is not additive across symbols. `08.01` without `Step`/`Jump 25` took **94** `Crash 1000`
+closes instead of **114** and pushed the difference into `Jump 75` (108 -> 125 closes): the removed rows were 30-60
+closes of small low-correlation noise that diluted the single-index bet, and their removal concentrates the book into
+exactly the instrument that also loses in some weeks. A symbol negative in dollars can still be positive in portfolio
+terms; only a paired distribution distinguishes the two.
+
+**Hazard paid for here.** w3's first launch was cut by the device going offline and `connection to Deriv-Demo lost`
+at 16:21:50 - the terminal exited cleanly with `last test passed with result "some error after pass finished"`,
+leaving a 13,406-heartbeat journal that ended 38 simulated hours into a 168-hour window and read **-5.303%** on a
+base inherited from the previous run. It was rerun cold (+2.616%). Validity rule: a window counts only if the terminal
+log says `successfully finished` **and** the journal slice is exactly 10,080 samples starting at the ini's `FromDate`.
+
+**Files:** `Tools\backtest_b298_six_w1..w5.ini`, scoreboards `scoreboard_b298_six_w1..w5.csv`, journal snapshots
+`journal_b298_w1..w5.log` plus `journal_b298_w3b.log` (segmented journal: a run's own samples are only the last
+10,080 after the previous run's tail). No compile was needed - no source moved, `OVERALL SUCCESS` 0/0 stands from
+Batch 297.
+
 ### Batch 297: SHIPPED - three rows that never made a positive week are out of the factory universe, and the five-window distribution has no losing window left
 
 Batch 296 showed the profit is one instrument and the losses are the other rows. This batch removes the rows that

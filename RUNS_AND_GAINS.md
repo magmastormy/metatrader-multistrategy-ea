@@ -457,6 +457,63 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 298 — the last two bleeders inside the winning windows: measured, and they are not bleeders
+
+Batch 297 removed the three rows that never paid and the distribution turned all-positive. The obvious next move is to
+finish the job: `Step` and `Jump 25` still lose inside windows that make money, so remove them too and see whether the
+record gets better. It does not. This batch is the cleanest negative result in the file, and it is useful precisely
+because it was predictable.
+
+**The reading that justified the arm.** In the eight-symbol windows (from the Batch 297 journals, per-symbol net after
+commission, `attr2.py`):
+
+| window | `Crash 1000` | `Jump 75` | `Step` | `Jump 25` |
+|---|---|---|---|---|
+| 08.01 → 08.08 | +330.80 / 114 closes | −72.66 / 108 | −81.27 / 15 | −119.71 / 47 |
+| 08.08 → 08.15 | +813.19 / 104 | +18.64 / 75 | −51.70 / 19 | −95.20 / 45 |
+| 09.01 → 09.08 | +520.65 / 118 | −0.13 / 110 | −28.32 / 15 | +32.67 / 49 |
+| 09.15 → 09.22 | +688.92 / 104 | −48.16 / 107 | +78.07 / 14 | −55.81 / 59 |
+| 10.06 → 10.13 | +674.20 / 118 | +92.74 / 132 | −68.20 / 16 | +6.45 / 60 |
+| **sum** | **+2,706.76** | **−43.71** | **−151.42** | **−231.60** |
+
+Across the five windows `Step` loses 4 of 5 and `Jump 25` loses 4 of 5 — together **−383.02 USD**, which is about
+0.77% of the deposit per window spent on 150 closes. Every argument says removing them should lift the mean.
+
+**Run.** `Tools\backtest_b298_six_w1..w5.ini`, `InpSymbolsToTrade=Boom 1000 Index,Crash 1000 Index,Jump 75 Index,`
+`GBPUSD,AUDUSD,BTCUSD` (six symbols), everything else identical to the shipped arm: same Batch 293 binary (no source
+change), `1%` per trade / `4%` daily / `12%` portfolio, `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off,
+`Model=1`, deposit 10,000, all four state files cleared before every launch, scoreboard archived per window.
+
+| window | eight symbols (shipped) | **six symbols** | delta | ending equity | min / max | receipts |
+|---|---|---|---|---|---|---|
+| 08.01 → 08.08 | +1.630% | **+1.803%** | +0.17 pp | 10,180.32 | 9,995.98 / 10,230.13 | 247 |
+| 08.08 → 08.15 | +7.276% | **+9.609%** | **+2.33 pp** | 10,960.92 | 9,988.92 / 11,171.36 | 413 |
+| 09.01 → 09.08 | +5.681% | **+2.616%** | **−3.07 pp** | 10,261.59 | 9,827.24 / 10,437.90 | 440 |
+| 09.15 → 09.22 | +7.444% | **+6.293%** | −1.15 pp | 10,629.33 | 9,896.22 / 10,647.03 | 411 |
+| 10.06 → 10.13 | +4.692% | **+3.377%** | −1.32 pp | 10,337.66 | 9,924.53 / 10,343.31 | 438 |
+
+**Arm statistics.** Six symbols: mean **+4.740%**, sd **3.21 pp**, t **3.31**, 5 of 5 positive, worst **+1.803%**,
+best **+9.609%**. Eight symbols on the same windows: mean **+5.345%**, sd **2.37 pp**, t **5.04**, worst **+1.630%**,
+best **+7.444%**. Paired deltas: mean **−0.605 pp**, sd **2.01 pp**, t **0.67**, **2 of 5 positive**.
+
+**Conclusion — rejected, nothing shipped, the eight-symbol universe stands.** Removing two rows that lose 383 USD
+across the set *lowered* the mean by 0.61 pp and *raised* the standard deviation by 0.84 pp (2.37 → 3.21), which is the
+opposite of what the per-symbol sums predict. The mechanism is the one Batch 297 already described, running in reverse:
+the budget is not additive. With `Step` and `Jump 25` present, `08.01` took 114 `Crash 1000` closes; without them it
+took **94** and moved the difference into `Jump 75` (108 → 125). The two "bleeders" were 30–60 closes of small,
+low-correlation noise that kept the book from over-concentrating in the same synthetic index, and the windows where
+`Crash 1000` has a bad week (09.01: +2.616% vs +5.681%) are exactly the ones where that ballast was doing work.
+A row can be negative in dollars and still positive in portfolio terms; the only measurement that can tell the
+difference is a paired distribution, which is why this arm was run instead of argued.
+
+**Hazard paid for in this batch — a partial run that looks like a finished one.** w3's first launch was interrupted by
+the device dropping offline and the broker link failing at 16:21:50; the terminal logged
+`last test passed with result "some error after pass finished"` and exited cleanly. The snapshot held 13,406
+heartbeats ending `2026.09.02 13:56` — 38 simulated hours of a 168-hour window — and a naive "last 10,080 heartbeats"
+read returned **−5.303%** on a base inherited from the previous run. The window was rerun cold and gave +2.616%.
+Rule added: a window is valid only when the terminal log says `successfully finished` **and** the journal slice holds
+exactly 10,080 samples that begin at the ini's `FromDate`.
+
 ## Batch 297 — the three rows that lose in every window are out, and the record gets its first all-positive distribution
 
 Batch 296 answered one question (the edge survives outside 09/10) and raised a sharper one: if the money is one

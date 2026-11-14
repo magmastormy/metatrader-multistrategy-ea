@@ -468,3 +468,30 @@ Open items this batch moved:
 - [ ] Still no live attach; `[ENGINE-CLOSE]` never observed; `backtest_report.htm` never written, so no MT5 profit
       factor / drawdown / Sharpe anywhere.
 - [ ] 4% daily ceiling, 1% per trade and the eight-symbol universe are validated only on 2026-08..10 windows.
+
+## Status update - Batch 298 (2026-11-14)
+
+The follow-up trim was run and rejected. Removing `Step Index` and `Jump 25 Index` from the eight-symbol universe
+(`InpSymbolsToTrade=Boom 1000 Index,Crash 1000 Index,Jump 75 Index,GBPUSD,AUDUSD,BTCUSD`) across the same five cold
+windows lowers the mean and raises the variance: six-symbol mean **+4.740%**, sd **3.21 pp**, t **3.31** against
+eight-symbol mean **+5.345%**, sd **2.37 pp**, t **5.04**; paired **-0.605 pp**, sd 2.01 pp, t 0.67, 2 of 5 positive.
+The two rows do lose 383 USD across those windows (Step -151.42, Jump 25 -231.60 over 150 closes) yet removing them
+concentrates the book further into `Crash 1000` (`08.01`: 114 closes -> 94, displacement into `Jump 75` 108 -> 125).
+Conclusion: portfolio-level contribution is not the sum of per-symbol nets; the eight-symbol universe stands and no
+input changed.
+
+- [x] Finish the trim: the last two negative rows measured against the eight-symbol baseline (Batch 298, rejected).
+- [ ] Next lever: per-symbol risk cap that binds on **lot size**, not at the entry gate. `GetSymbolRiskAllocation`
+      (`Core\Risk\UnifiedRiskManager.mqh:1359`) = `maxDailyRiskPercent / activeSymbolCount * perfWeight` and is then
+      lifted by the min-lot floor, so it never binds. This is the only remaining way to stop `Crash 1000` from taking
+      every paying window while `Step`/`Jump 25` bleed inside it - and Batch 298 shows the alternative (deleting the
+      small rows) is worse, so the cap must bind on size, not on admission.
+- [ ] `InpAutoAddChartSymbol=false` paired window: chart-symbol re-injection still adds 2-18 `Volatility 75` closes per
+      window and has never been measured off.
+- [ ] Daily ceiling 4% -> 6% (the 4 -> 8 step in Batch 295 was too coarse and lost 5.26 pp paired).
+- [ ] Validity rule added this batch: a window counts only when the terminal log says `successfully finished` and the
+      journal slice is exactly 10,080 samples starting at the ini `FromDate`. A network-cut run left 13,406 heartbeats
+      and read -5.303% on an inherited base; the rerun gave +2.616%.
+- [ ] Still never run: `Tools\backtest_b290_scalp2.ini`, `Tools\backtest_hal_w3/w4.ini`; `[ENGINE-CLOSE]` has never
+      printed in a run; `backtest_report.htm` is never written, so the repository still has no MT5 profit factor,
+      max drawdown or Sharpe; no live attach.
