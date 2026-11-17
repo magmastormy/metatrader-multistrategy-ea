@@ -42,6 +42,7 @@ struct SUnifiedRiskConfig
     double dailyLossLimitPercent;
     double minLotRiskMultiplier;        // Max risk multiplier when rounding up to broker min lot (e.g., 2.0 = 2x)
     bool allowMinLotRoundUp;            // InpAllowMinLotRoundUp: when false a sub-minimum lot is refused, never widened
+    bool scaleLotToSymbolBudget;        // Opt-in: shrink a lot to its remaining symbol budget before refusing it
     int adaptationMinTrades;
     bool enableAdaptiveSizing;
     bool enableAuditLogging;
@@ -273,6 +274,12 @@ public:
     // fast scalp). Validates per-symbol count, total EA-owned position count and total risk percent
     // against configured caps before any risk is reserved.
     bool ValidateExposure(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
+    bool ApplySymbolBudgetLotCap(const STradeValidationRequest &request,
+                                 SValidationResult &result,
+                                 const double ownReservedRiskPercent,
+                                 const string phaseTag,
+                                 const string corrId,
+                                 string &message);
     bool ValidateClusterGovernance(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     bool ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk);
     bool ValidateMarginRequirements(const STradeValidationRequest &request, string &message);
@@ -591,6 +598,30 @@ public:
         }
     }
 
+    // The historic symbol-budget path was binary: a candidate over its allocation was discarded even when
+    // a smaller broker-valid lot would fit. This optional path makes the existing allocation bind on size.
+    // It runs after the broker-minimum policy so it never launders an under-minimum request into a full lot.
+    if(!ApplySymbolBudgetLotCap(request, result,
+                                virtualReserved ? provisionalRiskPct : 0.0,
+                                phaseTag, corrId, validationMessage))
+    {
+        result.approved = false;
+        result.severity = ERROR_LEVEL_WARNING;
+        result.message = "Symbol budget lot cap failed: " + validationMessage;
+        PrintFormat("[RISK-GATE-REJECT] %s | reason=symbol_budget_lot_cap | %s | phase=%s",
+                    request.symbol, validationMessage, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "SYMBOL_BUDGET_LOT_CAP",
+            validationMessage, result.riskPercent, result.adjustedLotSize, corrId);
+        CJsonLogger::ClearCorrelationId();
+        if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
+        return result;
+    }
+    tradeRisk = result.riskPercent;
+    // Remaining gates read the reservation. Replace its provisional request with the capped value before
+    // they do, otherwise a scaled order would still consume the original candidate's virtual risk.
+    if(virtualReserved && result.riskPercent > 0.0 && result.adjustedLotSize > 0.0)
+        m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.adjustedLotSize, result.riskPercent);
+
     if(result.riskPercent > 0.0 && !m_host.IsSymbolBudgetAvailable(request.symbol, result.riskPercent))
     {
         double allocation = m_host.GetSymbolRiskAllocation(request.symbol);
@@ -865,6 +896,114 @@ public:
 
     CJsonLogger::ClearCorrelationId();
     return result;
+}
+
+// Scale an over-budget candidate to the largest volume that the symbol's remaining allocation can fund.
+// This deliberately keeps the admission decision separate from the lot decision: a cap below the broker
+// minimum still refuses the trade rather than re-expanding it through the min-lot policy.
+bool CRiskValidationPipeline::ApplySymbolBudgetLotCap(const STradeValidationRequest &request,
+                                                       SValidationResult &result,
+                                                       const double ownReservedRiskPercent,
+                                                       const string phaseTag,
+                                                       const string corrId,
+                                                       string &message)
+{
+    if(!IsWired())
+    {
+        message = "Risk validation pipeline is not wired";
+        return false;
+    }
+    SyncConfig();
+
+    if(!m_config.scaleLotToSymbolBudget || result.riskPercent <= 0.0 || result.adjustedLotSize <= 0.0)
+        return true;
+
+    const double allocation = m_host.GetSymbolRiskAllocation(request.symbol);
+    const double openUsed = m_host.GetSymbolUsedRisk(request.symbol);
+    const double allReserved = m_virtualPositionBook.GetReservedRiskPercentForSymbol(request.symbol);
+    const double otherReserved = MathMax(0.0, allReserved - MathMax(0.0, ownReservedRiskPercent));
+    const double remainingRisk = allocation - openUsed - otherReserved;
+    const double epsilon = 0.000001;
+
+    if(result.riskPercent <= remainingRisk + epsilon)
+        return true;
+
+    if(remainingRisk <= epsilon)
+    {
+        message = StringFormat("%s has no remaining symbol budget: allocation=%.3f%% used=%.3f%% reserved=%.3f%%",
+                               request.symbol, allocation, openUsed, otherReserved);
+        PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | scale=true | allocation=%.3f%% used=%.3f%% reserved=%.3f%% remaining=%.3f%%",
+                    request.symbol, allocation, openUsed, otherReserved, remainingRisk);
+        return false;
+    }
+
+    double minLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MIN);
+    if(minLot <= 0.0) minLot = 0.01;
+    double step = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_STEP);
+    if(step <= 0.0) step = minLot;
+
+    const double originalLot = result.adjustedLotSize;
+    const double originalRisk = result.riskPercent;
+    const double rawCappedLot = originalLot * (remainingRisk / originalRisk);
+    long wholeSteps = (long)MathFloor(rawCappedLot / step + 1e-9);
+    double cappedLot = NormalizeDouble(wholeSteps * step, 8);
+
+    if(cappedLot < minLot - epsilon)
+    {
+        message = StringFormat("%s remaining budget %.3f%% can fund only %.4f lots, below broker minimum %.4f",
+                               request.symbol, remainingRisk, cappedLot, minLot);
+        PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | scale=true | lot=%.4f -> %.4f below min=%.4f | remaining=%.3f%% | phase=%s",
+                    request.symbol, originalLot, cappedLot, minLot, remainingRisk, phaseTag);
+        return false;
+    }
+
+    const double riskDenominator = CRiskMath::GetRiskDenominator();
+    if(riskDenominator <= 0.0)
+    {
+        message = "Risk denominator is unavailable while applying symbol budget lot cap";
+        return false;
+    }
+
+    double cappedMoneyRisk = m_host.CalculateTradeRisk(request.symbol, cappedLot, request.stopLossPips);
+    double cappedRisk = (cappedMoneyRisk > 0.0) ? (cappedMoneyRisk / riskDenominator) * 100.0 : 0.0;
+
+    // Risk is linear in volume for the supported contract specification, but calculate it again after
+    // rounding and step down once if floating-point dust leaves it over the budget.
+    if(cappedRisk > remainingRisk + epsilon)
+    {
+        wholeSteps--;
+        cappedLot = NormalizeDouble(wholeSteps * step, 8);
+        if(cappedLot < minLot - epsilon)
+        {
+            message = StringFormat("%s remaining budget %.3f%% cannot fund its broker minimum %.4f lots",
+                                   request.symbol, remainingRisk, minLot);
+            PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | scale=true | rounded cap fell below min=%.4f | remaining=%.3f%% | phase=%s",
+                        request.symbol, minLot, remainingRisk, phaseTag);
+            return false;
+        }
+        cappedMoneyRisk = m_host.CalculateTradeRisk(request.symbol, cappedLot, request.stopLossPips);
+        cappedRisk = (cappedMoneyRisk > 0.0) ? (cappedMoneyRisk / riskDenominator) * 100.0 : 0.0;
+    }
+
+    if(cappedRisk <= 0.0 || cappedRisk > remainingRisk + epsilon)
+    {
+        message = StringFormat("%s could not normalize a lot inside %.3f%% remaining symbol budget",
+                               request.symbol, remainingRisk);
+        return false;
+    }
+
+    result.adjustedLotSize = cappedLot;
+    result.riskPercent = cappedRisk;
+    result.requiresAdjustment = true;
+    message = "";
+    PrintFormat("[RISK-SYMBOL-BUDGET] SCALED | %s | lot=%.4f->%.4f | risk=%.3f%%->%.3f%% | allocation=%.3f%% used=%.3f%% reserved=%.3f%% | phase=%s",
+                request.symbol, originalLot, cappedLot, originalRisk, cappedRisk,
+                allocation, openUsed, otherReserved, phaseTag);
+    CJsonLogger::LogRiskEvent("RiskGateReduce", request.symbol, "SYMBOL_BUDGET_LOT_SCALED",
+        StringFormat("Lot %.4f->%.4f; risk %.3f%%->%.3f%% inside %.3f%% remaining budget",
+            originalLot, cappedLot, originalRisk, cappedRisk, remainingRisk),
+        originalRisk, cappedRisk, corrId);
+    return true;
 }
 
 bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequest &request, string &message)

@@ -46,6 +46,10 @@ struct SOrchestratorConfig
         bool    enableFamilyWeightMatrix;
         bool    allowMinLotRoundUp;
         double  minLotRiskMultiplier;
+        // When a candidate exceeds its remaining per-symbol budget, scale its lot down to the
+        // largest broker-legal size inside that budget instead of immediately refusing it.
+        // Kept off until paired cold-window evidence supports enabling it by default.
+        bool    scaleLotToSymbolBudget;
     string  symbolsToTrade;
     int     minSecondsBetweenTrades;
     int     maxPositionsTotal;
@@ -401,6 +405,7 @@ struct SOrchestratorConfig
                 enableFamilyWeightMatrix = true;
                 allowMinLotRoundUp = false;
                 minLotRiskMultiplier = 1.0;
+                scaleLotToSymbolBudget = false;
         symbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
         minSecondsBetweenTrades = 10;
         maxPositionsTotal = 15;

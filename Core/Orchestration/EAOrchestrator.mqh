@@ -828,6 +828,7 @@ bool InitializeSubsystems()
     unifiedRiskConfig.auditLogFile            = "risk_audit_" + _Symbol + ".log";
     unifiedRiskConfig.minLotRiskMultiplier    = m_config.EffectiveMinLotRiskMultiplier();
     unifiedRiskConfig.allowMinLotRoundUp      = m_config.allowMinLotRoundUp;
+    unifiedRiskConfig.scaleLotToSymbolBudget  = m_config.scaleLotToSymbolBudget;
     unifiedRiskConfig.dailyLossLimitPercent   = m_config.dailyLossLimitPercent;
     unifiedRiskConfig.minAccountBalance       = m_config.riskValidationMinAccountBalance;
 
@@ -3001,6 +3002,7 @@ void UpdateRiskParametersFromInputs(double maxRiskPerTrade, double maxDailyRisk,
 double maxPortfolioRisk, double maxDrawdown,
 double dailyLossLimitPercent,
 bool allowMinLotRoundUp, double minLotRiskMultiplier,
+bool scaleLotToSymbolBudget,
 bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 {
     // Same order as initialization: the operator's per-trade risk becomes the base, then the tier may scale it down.
@@ -3008,6 +3010,7 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     m_config.maxRiskPerTrade = maxRiskPerTrade;
     m_config.allowMinLotRoundUp = allowMinLotRoundUp;
     m_config.minLotRiskMultiplier = minLotRiskMultiplier;
+    m_config.scaleLotToSymbolBudget = scaleLotToSymbolBudget;
     // Each parameter this method applies is written to m_config as well: a reader of the config would
     // otherwise keep the previous values while the gate and the sizer moved.
     m_config.maxDailyRisk = maxDailyRisk;
@@ -3028,12 +3031,14 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     m_positionSizer.SetAllowMinLotRoundUp(allowMinLotRoundUp);
     m_positionSizer.SetMinLotRiskMultiplier(m_config.EffectiveMinLotRiskMultiplier());
     m_unifiedRiskManager.SetMinLotRoundupPolicy(allowMinLotRoundUp, minLotRiskMultiplier);
+    m_unifiedRiskManager.SetScaleLotToSymbolBudget(scaleLotToSymbolBudget);
 
     m_compoundingTierManager.SetAutoSwitch(enableCompoundingTiers);
 
-    PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s roundupCap=%.1f enforced compounding=%s tier=%d",
+    PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s roundupCap=%.1f enforced symbolLotCap=%s compounding=%s tier=%d",
         maxRiskPerTrade, maxDailyRisk, maxPortfolioRisk, maxDrawdown, dailyLossLimitPercent,
         allowMinLotRoundUp ? "true" : "false", m_config.EffectiveMinLotRiskMultiplier(),
+        scaleLotToSymbolBudget ? "true" : "false",
         enableCompoundingTiers ? "true" : "false", (int)riskTier);
     }
 
@@ -3051,10 +3056,11 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         double dailyLoss = CLiveConfigReloader::GetDouble(json, "risk.dailyLossLimitPercent", m_config.dailyLossLimitPercent);
         bool roundUp = CLiveConfigReloader::GetBool(json, "risk.allowMinLotRoundUp", m_config.allowMinLotRoundUp);
         double roundupCap = CLiveConfigReloader::GetDouble(json, "risk.minLotRiskMultiplier", m_config.minLotRiskMultiplier);
+        bool symbolLotCap = CLiveConfigReloader::GetBool(json, "risk.scaleLotToSymbolBudget", m_config.scaleLotToSymbolBudget);
         bool compounding = CLiveConfigReloader::GetBool(json, "risk.enableCompoundingTiers", m_config.enableCompoundingTiers);
         ENUM_RISK_TIER tier = (ENUM_RISK_TIER)CLiveConfigReloader::GetInt(json, "risk.riskTier", (int)m_config.riskTier);
 
-        PrintFormat("[LIVE-CONFIG-RISK] perTrade=%.2f->%.2f | daily=%.1f->%.1f | portfolio=%.1f->%.1f | maxDD=%.1f->%.1f | dailyLoss=%.1f->%.1f | roundUp=%s->%s | cap=%.1f->%.1f | compounding=%s->%s | tier=%d->%d",
+        PrintFormat("[LIVE-CONFIG-RISK] perTrade=%.2f->%.2f | daily=%.1f->%.1f | portfolio=%.1f->%.1f | maxDD=%.1f->%.1f | dailyLoss=%.1f->%.1f | roundUp=%s->%s | cap=%.1f->%.1f | symbolLotCap=%s->%s | compounding=%s->%s | tier=%d->%d",
                     m_config.maxRiskPerTrade, riskPerTrade,
                     m_config.maxDailyRisk, dailyRisk,
                     m_config.maxPortfolioRisk, portfolioRisk,
@@ -3062,6 +3068,7 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
                     m_config.dailyLossLimitPercent, dailyLoss,
                     m_config.allowMinLotRoundUp ? "yes" : "no", roundUp ? "yes" : "no",
                     m_config.minLotRiskMultiplier, roundupCap,
+                    m_config.scaleLotToSymbolBudget ? "yes" : "no", symbolLotCap ? "yes" : "no",
                     m_config.enableCompoundingTiers ? "yes" : "no", compounding ? "yes" : "no",
                     (int)m_config.riskTier, (int)tier);
 
@@ -3069,7 +3076,7 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         Print("[LIVE-CONFIG] weights/thresholds/symbols/ai/engines | applied=no(report-only sections, no consumer reads them)");
 
         UpdateRiskParametersFromInputs(riskPerTrade, dailyRisk, portfolioRisk, maxDD, dailyLoss,
-                                      roundUp, roundupCap, compounding, tier);
+                                      roundUp, roundupCap, symbolLotCap, compounding, tier);
 
         // Edge-triggered so a file left at true cannot re-arm trading while the operator edits something else.
         bool resetAsk = CLiveConfigReloader::GetBool(json, "risk.resetCircuitBreaker", false);

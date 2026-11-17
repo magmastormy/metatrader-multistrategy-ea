@@ -37,6 +37,7 @@ input double   InpBasketEquityStopDrawdownPct = 10.0;
 input bool     InpBasketEquityStopCloseOnBreach = false;
 input bool     InpAllowMinLotRoundUp = true;
 input double   InpMinLotRiskMultiplier = 3.0;
+input bool     InpScaleLotToSymbolBudget = false; // experimental: cap by resizing, not by dropping the candidate
 
 input group "Strategies - Classic Set";
 input bool     InpUseCuratedStrategySet = true;
@@ -92,6 +93,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableFamilyWeightMatrix = InpEnableFamilyWeightMatrix;
         config.allowMinLotRoundUp = InpAllowMinLotRoundUp;
         config.minLotRiskMultiplier = InpMinLotRiskMultiplier;
+        config.scaleLotToSymbolBudget = InpScaleLotToSymbolBudget;
     config.symbolsToTrade = InpSymbolsToTrade;
     config.minSecondsBetweenTrades = InpMinSecondsBetweenTrades;
     config.maxPositionsTotal = InpMaxPositionsTotal;
@@ -1039,6 +1041,7 @@ void OnChartEvent(const int id,
                 InpMaxRiskPerTrade, InpMaxDailyRisk, InpMaxPortfolioRisk,
                 InpMaxDrawdown, InpDailyLossLimitPercent,
                 InpAllowMinLotRoundUp, InpMinLotRiskMultiplier,
+                InpScaleLotToSymbolBudget,
                 InpEnableCompoundingTiers, InpRiskTier
             );
         }

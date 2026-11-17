@@ -351,6 +351,7 @@ input double   InpMaxPortfolioRisk = 60.0;
 input double   InpDailyLossLimitPercent = 10.0;
 input bool     InpAllowMinLotRoundUp = false;
 input double   InpMinLotRiskMultiplier = 1.0;
+input bool     InpScaleLotToSymbolBudget = false;
 
 input group "=== STRATEGY ENABLE / DISABLE ==="
 input bool     InpUseCuratedStrategySet = false;
@@ -406,6 +407,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.enableFamilyWeightMatrix = InpEnableFamilyWeightMatrix;
     config.allowMinLotRoundUp = InpAllowMinLotRoundUp;
     config.minLotRiskMultiplier = InpMinLotRiskMultiplier;
+    config.scaleLotToSymbolBudget = InpScaleLotToSymbolBudget;
     config.symbolsToTrade = InpSymbolsToTrade;
     config.minSecondsBetweenTrades = InpMinSecondsBetweenTrades;
     config.maxPositionsTotal = InpMaxPositionsTotal;
@@ -980,6 +982,7 @@ void OnChartEvent(const int id,
                 InpMaxRiskPerTrade, InpMaxDailyRisk, InpMaxPortfolioRisk,
                 InpMaxDrawdown, InpDailyLossLimitPercent,
                 InpAllowMinLotRoundUp, InpMinLotRiskMultiplier,
+                InpScaleLotToSymbolBudget,
                 InpEnableCompoundingTiers, InpRiskTier
             );
         }

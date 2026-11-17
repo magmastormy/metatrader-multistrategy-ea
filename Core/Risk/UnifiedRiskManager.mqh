@@ -281,6 +281,13 @@ public:
         m_config.minLotRiskMultiplier = MathMin(MathMax(1.0, multiplier), MAX_MIN_LOT_RISK_MULTIPLIER);
     }
 
+    // This is deliberately independent of the min-lot round-up policy: it only turns a
+    // per-symbol budget refusal into a smaller, already broker-legal order.
+    void SetScaleLotToSymbolBudget(const bool enabled)
+    {
+        m_config.scaleLotToSymbolBudget = enabled;
+    }
+
     virtual SDrawdownState GetDrawdownState();
     
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
@@ -522,6 +529,7 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.dailyLossLimitPercent = 15.0;    // sized for small accounts, where one trade can be ~10%
     m_config.minLotRiskMultiplier = MAX_MIN_LOT_RISK_MULTIPLIER;  // ceiling is the ceiling; see Initialize's clamp
     m_config.allowMinLotRoundUp = true;
+    m_config.scaleLotToSymbolBudget = false;
     m_config.adaptationMinTrades = 20;
     m_config.enableAdaptiveSizing = true;
     m_config.enableAuditLogging = true;

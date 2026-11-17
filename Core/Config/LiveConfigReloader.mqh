@@ -671,6 +671,7 @@ bool ValidateLiveConfigDocument(const string json, string &reason)
        && JsonCheckNumericBound(json, "risk.minLotRiskMultiplier", 1.0, 10.0, reason)
        && JsonCheckNumericBound(json, "risk.riskTier", 0.0, 8.0, reason)
        && JsonCheckBoolLiteral(json, "risk.allowMinLotRoundUp", reason)
+       && JsonCheckBoolLiteral(json, "risk.scaleLotToSymbolBudget", reason)
        && JsonCheckBoolLiteral(json, "risk.enableCompoundingTiers", reason)
        && JsonCheckBoolLiteral(json, "risk.resetCircuitBreaker", reason);
 }
