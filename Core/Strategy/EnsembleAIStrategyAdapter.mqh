@@ -474,12 +474,12 @@ public:
     
     virtual bool IsTraining(void) const override
     {
-        return m_ensemble.IsLearningEnabled();
+        return false;
     }
     
     virtual int GetTrainingSteps(void) const override
     {
-        return m_ensemble.GetUpdateCount();
+        return 0;
     }
     
     virtual double GetTemperature(void) const override
@@ -489,7 +489,8 @@ public:
     
     virtual void SetTemperature(const double temperature) override
     {
-        if(temperature < 0) {}
+        if(temperature != 1.0)
+            Print("[ENSEMBLE-AI] Temperature adjustment is unsupported; using 1.0");
     }
     
     virtual int GetCurrentRegime(void) const override
@@ -518,8 +519,8 @@ public:
 
     virtual void EnableOnlineTraining(const bool enable) override
     {
-        // CEnsembleMetaLearner has no SetLearningEnabled method; learning is always enabled by default.
-        // m_ensemble.SetLearningEnabled(enable);
+        if(enable)
+            Print("[ENSEMBLE-AI] Online training is unsupported; adapter is inference-only");
     }
 
     virtual bool TrainStep(void) override
@@ -531,7 +532,7 @@ public:
 
     virtual string GetTrainingState(void) const override
     {
-        return m_ensemble.IsLearningEnabled() ? "TRAINING" : "IDLE";
+        return "INFERENCE_ONLY";
     }
 
     virtual void OnRegimeChange(const int newRegime) override

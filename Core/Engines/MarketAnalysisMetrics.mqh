@@ -172,8 +172,8 @@ double CMarketAnalysisMetrics::CalculateTrendStrength()
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
 
-    if(CopyHigh(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceActionBars, high) >= priceActionBars &&
-       CopyLow(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceActionBars, low) >= priceActionBars) {
+    if(CopyHigh(m_indicators.Symbol(), m_indicators.Timeframe(), 1, priceActionBars, high) >= priceActionBars &&
+       CopyLow(m_indicators.Symbol(), m_indicators.Timeframe(), 1, priceActionBars, low) >= priceActionBars) {
 
         bool higherHighs = high[0] > high[2] && high[2] > high[4];
         bool higherLows = low[0] > low[2] && low[2] > low[4];
@@ -292,8 +292,8 @@ double CMarketAnalysisMetrics::CalculateVolatility()
     ArraySetAsSeries(low, true);
     int priceRangeBars = 10;
 
-    if(CopyHigh(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceRangeBars, high) >= priceRangeBars &&
-       CopyLow(m_indicators.Symbol(), m_indicators.Timeframe(), 0, priceRangeBars, low) >= priceRangeBars) {
+    if(CopyHigh(m_indicators.Symbol(), m_indicators.Timeframe(), 1, priceRangeBars, high) >= priceRangeBars &&
+       CopyLow(m_indicators.Symbol(), m_indicators.Timeframe(), 1, priceRangeBars, low) >= priceRangeBars) {
 
         // Calculate max range over last 10 bars
         double maxHigh = high[ArrayMaximum(high, 0, priceRangeBars)];

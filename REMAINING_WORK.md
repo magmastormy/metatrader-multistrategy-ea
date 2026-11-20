@@ -1,46 +1,41 @@
 # Remaining Work
 
-Status key: **Open** = not started or only partly addressed. **Verify** = code was changed but not compiled or checked against broker/runtime behavior. Nothing in this list has been compiled in MetaTrader 5 yet.
+Status key: **Open** = not started or only partly addressed. **Verify** = code was changed but broker/runtime evidence is incomplete. The findings below are a historical audit register, not a verified snapshot of the current tree. The clean eight-target compile cited in Batch 298 is historical; this dirty working tree has not been compiled, and no current-tree paired cold-window backtest is available.
 
 ---
 
 ## Data and model validity
 
-### 1. H11: notebook split still leaks labels
-- **What:** The notebook's base train/validation/test split is a plain ratio split with no purge. Labels look `vertical_bars` bars ahead, so samples near each boundary use prices that belong to the next split.
-- **Where:** The base data split in `Multi_Mt5_Colab_Notebook.ipynb`. Its CPCV helper was fixed, but this split was not.
-- **Files:** `Python/Multi_Mt5_Colab_Notebook.ipynb`
-- **Fix idea:** Split by time index, then drop any training sample whose label end index is at or after the first validation or test index. Reuse the label-end logic from `data_pipeline.py`. Do not hand-edit the JSON. Use a script or `nbformat`, then check that the JSON loads.
+### 1. Notebook split label leakage — SOURCE FIXED; REGRESSION TESTS PASSED (2026-11-20)
+- **Resolution:** The notebook carries actual barrier-resolution indices into sequence preparation and purges train/validation/test samples whose label interval crosses a split boundary.
+- **Verification:** `test_notebook_data_alignment.test_ratio_split_purges_actual_label_end_across_boundaries` passes. The notebook functions are tested on synthetic fixtures; no real-data training run is claimed.
 
-### 2. CPCV purge uses an approximate horizon
-- **What:** `label_horizon_ns()` estimates the horizon as median bar spacing times `vertical_bars`. It is wrong when timestamps have session gaps, weekends, or irregular spacing.
-- **Where:** `label_horizon_ns`, `purge_embargo`, `cpcv_folds`, and `run_cpcv` in `validate_model.py`.
-- **Files:** `Python/validate_model.py`, `Python/data_pipeline.py`, `Python/train_model.py`, `Python/write_colab.py`
-- **Fix idea:** Have the pipeline return a `label_end_ts` array (timestamp of the bar at `index + vertical_bars`, or the actual barrier-hit bar). Pass it into CPCV and purge where `label_end_ts >= test_start` and `sample_ts <= test_end`. Remove the median-spacing heuristic.
+### 2. CPCV approximate-horizon purge — SOURCE FIXED; REGRESSION TESTS PASSED (2026-11-20)
+- **Resolution:** The pipeline and validator pass actual label-end timestamps into CPCV; overlap purging uses each event's real start/end interval, not median bar spacing.
+- **Verification:** `test_validate_model_cpcv` and `test_data_pipeline_integrity` pass irregular-interval, timestamp-order, and label-end checks. No historical performance claim is implied.
 
-### 3. Standalone CPCV in `mql5_v2.py` is unreviewed
-- **What:** The stop-first labels and bar-horizon purge were added here, but this file's own CPCV implementation has not been checked for purge correctness.
-- **Where:** The CPCV section of `mql5_v2.py`.
-- **Files:** `Python/mql5_v2.py`
-- **Fix idea:** Either delete the duplicate CPCV and import the one in `validate_model.py`, or apply the same label-end purge.
+### 3. Standalone CPCV in mql5_v2.py — SOURCE REVIEWED; REGRESSION TESTS PASSED (2026-11-20)
+- **Resolution:** The standalone helper groups equal timestamps together and purges training samples by actual interval overlap with test events.
+- **Verification:** `test_mql5_v2_data_alignment.test_cpcv_groups_equal_timestamps_and_purges_overlap` passes. The duplicate implementation remains separate to keep the Colab script self-contained.
 
-### 4. Triple-barrier edge cases and index alignment
-- **What:** Labels near the end of the data may lack a full horizon. Prepared sequences must map to label indices exactly.
-- **Where:** Label generation and sequence preparation in `data_pipeline.py`.
-- **Files:** `Python/data_pipeline.py`
-- **Fix idea:** Drop samples with fewer than `vertical_bars` future bars. Add an assertion that `len(X) == len(y) == len(label_index)`. Confirm the stop-first tie-break is used in every label path.
+### 4. Triple-barrier edge cases and index alignment — SOURCE FIXED; REGRESSION TESTS PASSED (2026-11-20)
+- **Resolution:** Incomplete end-of-series horizons are excluded, actual barrier-hit ends are retained, stop-first ties are deterministic, and sequence features/labels/returns/timestamps are aligned by event index.
+- **Verification:** `test_data_pipeline_integrity`, `test_notebook_data_alignment`, and `test_mql5_v2_data_alignment` pass their synthetic edge cases. Real-market data execution remains unverified.
 
-### 5. ONNX feature and scaler parity
-- **What:** Features and scalers used at training time must match what the EA computes at inference. This was in the original audit and has not been re-checked.
-- **Where:** Feature generation in Python and the MQL5 feature builder that feeds the ONNX model.
-- **Files:** `Python/data_pipeline.py`, `Python/train_model.py`, the MQL5 feature code under `AIModules/`
-- **Fix idea:** Export the scaler parameters with the model. Load them in MQL5 instead of duplicating constants. Add a parity check script that compares Python and MQL5 feature vectors on a sample bar.
+### 5. ONNX feature and scaler parity — PARTIALLY RESOLVED; FEATURE PARITY OPEN (2026-11-20)
+- **Resolution:** Standard and robust-scaler trainers now emit the same feature-count-prefixed binary format as the MQL loader. The runtime rejects missing, malformed, non-finite, or wrong-width scaler data instead of applying a partial scaler or passing raw features. Duplicate scaler loading and an unused hot-reload path were removed; model and scaler artifacts must be deployed together and reinitialized.
+- **Remaining:** Exact feature semantics are not aligned or terminal-verified. Python's base pipeline defines 57 features while the MQL ONNX builder expects 70; the current cross-check compares only shared columns. Do not treat this as production parity until all positions are mapped and a terminal-exported vector matches Python on representative bars.
+- **Verification:** `test_scaler_binary_contract` validates both Python serialization paths and source-level fail-closed checks. MetaEditor and terminal inference checks remain unavailable.
 
-### 6. Walk-forward realism
-- **What:** Walk-forward windows must not reuse future data for normalization or hyperparameter choice.
-- **Where:** Normalization fit and split logic in `train_model.py` and `validate_model.py`.
-- **Files:** `Python/train_model.py`, `Python/validate_model.py`
-- **Fix idea:** Fit scalers on the training fold only. Confirm each walk-forward step retrains from scratch on past data only.
+### 6. Walk-forward and holdout realism — PARTIALLY RESOLVED (2026-11-20)
+- **Fixed:** standard and standalone neural trainers select and gate on validation plus development-only CPCV; CPCV folds use raw training rows only. The selected checkpoint's holdout score is report-only. The standalone LightGBM baseline now reports validation IC, not test IC.
+- **Fixed:** Multi_Mt5_Colab_Notebook candidates and LightGBM use validation only, and its CPCV inputs are raw training rows only. The generated Colab tree reports use validation; stacker cells no longer read test rows or publish test metrics.
+- **Fixed:** the Kaggle notebook no longer evaluates or stores test classification metrics during selection/export. Its gate remains fail-closed because fold-local CPCV retraining is unavailable; Sharpe annualization uses train+validation timestamps. The final zero-cost forward-return test proxy is report-only after artifact export and is not executable-performance evidence.
+- **Removed:** Python/train_all_models.ipynb was a clean, unreferenced, out-of-sync duplicate whose helper signatures and CPCV call no longer matched the current code. Python/write_colab.py is the source for Python/train_all_models_colab.ipynb.
+- **Regression coverage:** test_train_model_selection and test_cpcv_raw_scaling_flow cover validation-only gates, candidate holdout isolation, and train-only CPCV for the supported paths.
+- **Regression coverage:** `test_train_model_selection` and `test_cpcv_raw_scaling_flow` cover validation-only gates, candidate holdout isolation, train-only CPCV, and the Kaggle notebook boundary.
+- **Still open:** no real-data walk-forward run or broker/terminal-backed performance evidence has been produced. A report-only holdout can still be manually misused to tune later runs; source checks cannot establish whether that happened.
+- **Files:** Python/train_model.py, Python/mql5_v2.py, Python/write_colab.py, Python/Multi_Mt5_Colab_Notebook.ipynb, Python/train_all_models_colab.ipynb, Python/EA_Model_Training_Kaggle.ipynb, Python/validate_model.py
 
 ---
 
@@ -62,69 +57,57 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 
 ## Execution and broker
 
-### 9. Standard async partial fills and no-history path
-- **What:** After timeout, if history never shows the order, the tracker logs for manual review and then drops tracking. A later fill can escape reconciliation.
-- **Where:** Timeout reconciliation in `TradeMgrAsyncExecutor.mqh` (`ASYNC_RECONCILE_MAX_ATTEMPTS`, `CancelOrderRemainder`, `RemovePendingAt`).
-- **Files:** `Core/Trading/TradeMgrAsyncExecutor.mqh`, `Core/Trading/TradeMgrPreflight.mqh`, `Core/Trading/TradeTypes.mqh`
-- **Fix idea:** Move unresolved orders into a quarantine list that is rechecked on the timer. Do not remove them until the broker shows a final state. Sum fill volume from `HistoryDealGetDouble(DEAL_VOLUME)` filtered by `DEAL_ORDER`, and compute average price from the deals rather than the request price.
+### 9. Standard async partial fills and no-history path — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **What:** Timeout reconciliation now retains unresolved orders in quarantine, rechecks broker history, and records lifecycle changes in the append-only async journal. Cancellation and fill reconciliation require matching order ticket, symbol, and magic. Shutdown no longer truncates the journal.
+- **Where:** `Core/Trading/TradeMgrAsyncExecutor.mqh` and its `CTradeManager` forwarding path.
+- **Evidence boundary:** Source paths were corrected; MetaEditor compilation and broker-backed partial-fill, late-fill, cancellation, and restart tests remain outstanding.
 
-### 10. Fast-scalp risk budget can be orphaned
-- **What:** On timeout, the pending record is removed while the budget stays reserved. A late fill after removal is not registered by `OnDealConfirmed()`.
-- **Where:** `FastScalpAsyncTracker` timeout and `OnDealConfirmed()`.
-- **Files:** `Core/Scalp/FastScalpAsyncTracker.mqh`
-- **Fix idea:** Keep a separate reserved-budget ledger keyed by order ticket. `OnDealConfirmed()` looks up the ledger first, registers the position, and releases budget only on a final zero-fill outcome.
+### 10. Fast-scalp risk reservation recovery — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **What:** Async admission now requires a positive reserved-risk percentage and writes a `PREPARED` event before `OrderSendAsync`. The journal persists exact risk, ticket, fills, magic, and lifecycle state; replay consolidates by request ID, scopes to the EA magic range, and never resends. `FastScalpEngine` restores matching requests before risk-budget rebuild; missing tickets or incomplete replay saturate the budget closed. Legacy rows estimate risk from entry/stop data or fail closed.
+- **Where:** `Core/Trading/TradeMgrAsyncExecutor.mqh`, `Core/Trading/TradeManager.mqh`, `Core/Trading/TradeTypes.mqh`, `Core/Scalp/FastScalpAsyncTracker.mqh`, and `Core/Scalp/FastScalpEngine.mqh`.
+- **Evidence boundary:** Source correction is in place. MetaEditor compilation and terminal restart/late-fill verification are still required before operational closure.
 
-### 11. Spike Hunter may bypass the shared risk path
-- **What:** The live raw `CTrade` branch can run when `m_tradeManager` is null, which skips the unified risk gate.
-- **Where:** The send path and the initialization in `SpikeHunterExecutor.mqh`.
-- **Files:** `Core/Scalp/SpikeHunterExecutor.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
-- **Fix idea:** Remove the raw `CTrade` send. Route all orders through `TradeManager` and `RiskValidationPipeline`. If the manager is null, refuse to trade and log an error.
+### 11. Spike Hunter may bypass the shared risk path — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** SpikeHunterExecutor refuses entry unless the initialized UnifiedRiskManager and TradeManager are present. Its only send path validates through unified risk and executes through TradeManager; no raw CTrade send remains. The orchestrator does not currently dispatch Spike Hunter, so it is dormant as well as fail-closed.
+- **Verification boundary:** MetaEditor compilation and broker-backed execution remain outstanding.
 
-### 12. ATR scalp partial close latch is not tied to broker outcome
-- **What:** The latch is set when `CTrade` returns true. That only means the request was accepted, not that volume was closed.
-- **Where:** Partial-close block in `ATRScalpExit.mqh`.
-- **Files:** `Core/Scalp/ATRScalpExit.mqh`
-- **Fix idea:** Check `ResultRetcode()` against `TRADE_RETCODE_DONE` (and `TRADE_RETCODE_DONE_PARTIAL`). After the send, read `PositionGetDouble(POSITION_VOLUME)` and set the latch only when the reduced volume matches the request. Clear the latch if the position is gone.
+### 12. ATR scalp partial close latch is not tied to broker outcome — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** The latch is written before sending to prevent duplicate requests, retained only after the broker-visible position volume decreases, and removed when no reduction is observed. The code checks fill retcodes and logs a retcode/volume mismatch instead of treating request acceptance as proof of fill.
+- **Verification boundary:** The live broker partial-fill and restart cases remain untested.
 
-### 13. Margin projection on hedging and netting accounts
-- **What:** The projected margin check adds `marginRequired` to current margin. Hedging and netting accounts can differ.
-- **Where:** `projectedMargin` in `RiskMarginHealth.mqh`.
-- **Files:** `Core/Risk/RiskMarginHealth.mqh`
-- **Fix idea:** For netting accounts, subtract margin already held on the same symbol in the opposite direction before adding. Confirm `OrderCalcMargin` is used for `marginRequired`. Add a unit-style check in the code path comment-free by keeping the logic in one helper.
+### 13. Margin projection on hedging and netting accounts — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** Manual current-margin addition and account-mode-specific volume approximations are removed. The risk pipeline submits the candidate market request to OrderCheck and gates on broker-projected post-trade free margin and margin level, including netting offsets. It rejects missing or invalid quotes, unsupported fill policies, malformed requests, and failed checks.
+- **Verification boundary:** MetaEditor compilation plus hedging/netting terminal checks remain outstanding.
 
-### 14. Python bridge blocks the tick path on cache miss
-- **What:** `WebRequest` runs synchronously when the cache expires (new bar or 10 seconds).
-- **Where:** `PythonBridgeAIStrategyAdapter.mqh` predict path.
-- **Files:** `Core/Strategy/PythonBridgeAIStrategyAdapter.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
-- **Fix idea:** Refresh predictions from `OnTimer()` and have the tick path only read the cache. On a cold cache, return no signal. Add a request timeout and a staleness limit.
+### 14. Python bridge blocks the terminal event loop — OPEN
+- **What:** Cache freshness, failure backoff, and timer-only prediction calls reduce request frequency, but `WebRequest` is still synchronous inside `OnTimer()` and can block the EA event loop for its configured timeout. A same-EA asynchronous socket rewrite has not been proven nonblocking for DNS, TLS, send, and receive.
+- **Where:** `Core/Utils/PyBridgeTransport.mqh` and `Core/Strategy/PythonBridgeAIStrategyAdapter.mqh`.
+- **Fix direction:** Move network I/O behind a separate worker EA/process with explicit IPC, health, request IDs, and stale-response handling; this needs a deployment design and terminal-backed tests. Do not call this resolved until the EA event loop stays responsive under delayed/unavailable bridge tests.
 
 ---
 
 ## Risk and exposure
 
-### 15. Exposure caps must cover every entry path
-- **What:** Portfolio, per-symbol, and total caps must apply to every entry route, including scalp and spike paths. The cold-start bypass is removed, but cap coverage has not been confirmed across all routes.
-- **Where:** `RiskValidationPipeline.mqh` and `PortfolioRiskManager.mqh`.
-- **Files:** `Core/Risk/RiskValidationPipeline.mqh`, `Core/Risk/PortfolioRiskManager.mqh`, `Core/Scalp/ATRScalpEntry.mqh`, `Core/Scalp/SpikeHunterExecutor.mqh`, `Core/Scalp/FastScalpAsyncTracker.mqh`
-- **Fix idea:** Create one `ValidateExposure()` call used by every entry. It checks per-symbol count, total count, and total risk percent against configured limits.
+### 15. Exposure caps cover every reachable entry path — RESOLVED (2026-11-19)
+- **Resolution:** `ValidateExposure()` runs inside the unified risk pipeline. Per-symbol and total count caps now include open EA-owned positions plus other in-flight risk reservations, excluding the candidate's own provisional reservation; total-risk checks already use the same exclusion.
+- **Entry-path audit:** Main candidates and the fast-scalp market route are the currently dispatched entry paths. ATR, grid, and spike modules contain unified-risk gates but have no orchestrator `ProcessTick` dispatch and are dormant. The raw fast-scalp pending sender had no repo call site and is removed. The async tracker's raw `OrderSend` only cancels an existing order.
+- **Dormant lifecycle path:** Pyramiding defaults disabled and `ConfigurePyramiding()` has no repo caller. Its current zero-stop add is rejected by `CTradeManager`; do not enable it without a nonzero-stop unified-risk gate.
+- **Files:** `Core/Risk/VirtualPosition.mqh`, `Core/Risk/RiskValidationPipeline.mqh`, `Core/Scalp/FastScalpEngine.mqh`, `Core/Scalp/FastScalpTypes.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
 
-### 16. Opposing strategy votes need arbitration and tests
-- **What:** When strategies vote in opposite directions, the arbitration result is not fully covered.
-- **Where:** Vote aggregation in `EAOrchestrator.mqh` and the consensus code.
-- **Files:** `Core/Orchestration/EAOrchestrator.mqh`, `Core/Management/ConsensusWeightingConfig.mqh`
-- **Fix idea:** Define one rule: a tie or conflict means no trade. Add a log line that records both sides and their weights.
+### 16. Opposing strategy votes need arbitration and tests — PARTIALLY RESOLVED; REGRESSION TESTS OPEN (2026-11-20)
+- **Source behavior:** Equal aggregate scores return no trade and log both sides' votes, weights, and scores. A configured conflict deadband rejects larger dissent but intentionally permits dissent below the effective threshold; it is not a strict no-conflict rule.
+- **Remaining:** Add executable regression coverage for ties, below-deadband dissent, and vetoed conflicts, then verify in MetaEditor/terminal.
+- **Where:** Vote aggregation in EAOrchestrator.mqh and the consensus code.
+- **Files:** Core/Orchestration/EAOrchestrator.mqh, Core/Management/ConsensusEngine.mqh, Core/Management/ConsensusWeightingConfig.mqh
 
-### 17. Local stop, RR, and spread guards per strategy
-- **What:** Strategies should reject trades with an invalid stop, poor reward-to-risk, or wide spread before reaching the risk gate. This has not been audited for every strategy.
-- **Where:** Each strategy's signal function under `Strategies/`.
-- **Files:** Every file in `Strategies/` that emits a signal, starting with `FVGScalperStrategy.mqh`, `BreakerBlockStrategy.mqh`, `RangeCompressionBreakout.mqh`, `MeanReversionStrategy.mqh`, `NYOpenGapStrategy.mqh`
-- **Fix idea:** Add a shared helper `IsSignalTradable(entry, stop, target, spread)` in `Core/` and call it from each strategy.
+### 17. Local stop, RR, and spread guards per strategy — SOURCE AUDIT PASSED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** The 23 current CStrategyBase-derived strategy files were source-scanned. All signal-producing strategies use CSignalGuards; Statistical Arbitrage is the sole exception and returns TRADE_SIGNAL_NONE after detecting a pair signal because its second leg is not executed. Support/resistance sub-strategies are gated by their parent strategy before emission.
+- **Verification boundary:** This is source-reference evidence, not a compiled or broker-backed test.
+- **Where:** Strategy signal functions under Strategies/; shared guard in Core/Utils/SignalGuards.mqh.
 
-### 18. NY open gap DST and session boundaries
-- **What:** The GMT-to-broker offset is taken from the current time and reused for historical bars. DST transition weekends and seasonal broker offsets can shift the session boundary by an hour.
-- **Where:** `NYOpenGapStrategy.mqh`, the offset calculation and the prior-close lookup.
-- **Files:** `Strategies/NYOpenGapStrategy.mqh`
-- **Fix idea:** Compute the US DST state for each candidate date (second Sunday of March to first Sunday of November, 2:00 local), and compute the broker offset per candidate using the bar's own time rather than `TimeCurrent()`.
+### 18. NY open gap DST and session boundaries — PARTIALLY RESOLVED; BROKER OFFSET VERIFICATION OPEN (2026-11-20)
+- **Resolution:** US DST transition instants are represented in UTC (07:00 UTC on the second Sunday in March; 06:00 UTC on the first Sunday in November), and the helper evaluates each target GMT instant. Historical M30 bars require exact broker-time matches, so an offset mismatch abstains instead of selecting a nearby bar.
+- **Remaining:** Broker standard offset is inferred from the current server/GMT offset. Brokers with independent DST schedules can cause a safe false abstention around offset-change periods; resolving that needs explicit broker offset policy or terminal history evidence.
 
 ### 19. Crisis limits and hardcoded thresholds
 - **What:** The ATR crisis ratio thresholds are already EA inputs (`InpAtrCrisisRatioThreshold*`), so they are done. Remaining fixed literals still need to be found and moved to inputs.
@@ -136,11 +119,10 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 
 ## Configuration
 
-### 20. Live config parser needs compile and edge-case checks
-- **What:** `ValidateLiveConfigDocument` and its helpers are declared after use. `JsonExtractValue()` is still a simple parser, so duplicate keys, nested keys, and some value forms are not handled.
-- **Where:** `LiveConfigReloader.mqh`.
-- **Files:** `Core/Config/LiveConfigReloader.mqh`, `Core/Orchestration/EAOrchestrator.mqh` (`ApplyLiveConfigOverrides`)
-- **Fix idea:** Move helper declarations above the class, or make them class methods. Reject duplicate keys. Use a single tokenizer for the whole file. Test with MetaEditor compile, not behavior tests, unless the user says otherwise.
+### 20. Live config parser — SOURCE FIXED; COMPILE/EDGE-CASE VERIFICATION OPEN (2026-11-20)
+- **Resolution:** Parser prototypes precede their use; the whole document is tokenized and recursively grammar-checked, duplicate keys at any nesting depth and trailing data are rejected, and supported risk values receive type/range checks.
+- **Verification boundary:** MetaEditor compile and executable malformed-document cases remain outstanding.
+- **Where:** Core/Config/LiveConfigReloader.mqh; supported risk application remains in Core/Orchestration/EAOrchestrator.mqh.
 
 ---
 
@@ -210,23 +192,25 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 - **Files:** `Core/Engines/AIEngine.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
 - **Fix idea:** Make the endpoint explicit with no default. Treat any LLM output as advisory, clamp it to the same bounds as item 8, and log the query without the full prompt.
 
-### 31. Grid recovery bypasses TradeManager and uses a hardcoded slippage
-- **What:** `GridRecoveryExecution` sends orders through its own `CTrade` and falls back to a fixed 50-point deviation when `m_tradeManager` is NULL. Position closes also use the raw `CTrade` with no retry or reconciliation.
-- **Where:** `GridRecoveryExecution.mqh` lines 111-131 (send) and 227-231 (close).
-- **Files:** `Core/Scalp/GridRecoveryExecution.mqh`, `Core/Orchestration/EAOrchestrator.mqh`
-- **Fix idea:** Route sends and closes through `CTradeManager` as the only path. Refuse to trade when it is NULL, and take slippage from `GetDynamicSlippage`.
+### 31. Grid recovery execution and close ownership - SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** Entry refuses to proceed without initialized risk and trade managers, validates through unified risk, sends via `CTradeManager::OpenPosition`, and reconciles the reservation with the execution receipt. An unresolved position ticket is never replaced with an order ticket; the grid retains ownership and blocks additional levels until it resolves.
+- **Resolution:** `CTradeManager::ClosePosition` applies per-symbol dynamic deviation and returns success only after the position ticket is absent. `CloseAllGrids` retains failed, partial, or unresolved levels and aggregate risk rather than clearing state.
+- **Regression coverage:** `test_grid_recovery_uses_shared_execution_for_entry_and_close`, `test_close_requires_position_reconciliation_before_release`, and `test_grid_close_failure_retains_ownership_and_blocks_new_levels` cover these contracts.
+- **Runtime status:** The grid engine has no `ProcessTick` caller in the orchestrator and is currently dormant; source changes do not imply live behavior.
+- **Verification boundary:** MetaEditor compilation and broker-backed fill/partial-close/restart checks remain outstanding.
+- **Files:** `Core/Scalp/GridRecoveryExecution.mqh`, `Core/Trading/TradeManager.mqh`
 
-### 32. Market structure breaks read the forming bar
-- **What:** Consolidation breakout checks use `iHigh` and `iLow` at shift 0, which is the forming bar. Other break classification in the same file was moved to shift 1 for this reason, so this check flips tick by tick.
-- **Where:** `MarketStructureAnalyzer.mqh` lines 333-348.
+### 32. Market structure ISP breakout was comparing its bar to a range containing itself - SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** ISP requires 22 available bars, builds the consolidation range from completed shifts 2-21, then compares the last completed bar at shift 1 against that prior range. Missing or invalid bars fail closed. This fixes both forming-bar instability and the prior self-inclusion that made a breakout comparison impossible.
+- **Regression coverage:** `test_isp_compares_last_closed_bar_with_prior_consolidation` checks the exclusion and closed-bar shifts.
+- **Verification boundary:** MetaEditor compile and market-data signal verification remain outstanding.
 - **Files:** `Strategies/UnifiedICTFiles/MarketStructureAnalyzer.mqh`
-- **Fix idea:** Use shift 1 for `currentHigh` and `currentLow`, matching the comment at line 428.
 
-### 33. Support and resistance touch counts include the forming bar
-- **What:** `touches` is counted over 100 bars from shift 0, so the count changes with every tick.
-- **Where:** `SupportResistanceDetector.mqh` lines 474-492.
+### 33. Support and resistance touch counts include the forming bar - SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** `UpdateTouches` copies 100 rates from shift 1, so only closed-bar highs and lows contribute to touch counts.
+- **Regression coverage:** `test_support_resistance_touch_count_excludes_forming_bar` checks the rates start shift.
+- **Verification boundary:** MetaEditor compile and strategy runtime checks remain outstanding. Recomputing only on a new bar is an optional performance optimization, not required for closed-bar count stability.
 - **Files:** `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh`
-- **Fix idea:** Start the copy at shift 1. Recompute touches only on a new bar.
 
 ### 34. Model file copy and promotion are not verified
 - **What:** `NNModelStorage_CopyBinaryFile` does not compare byte counts or hashes after copying. `PromoteTempToPrimary` truncates the primary before writing, and the restore after a failed copy ignores its return value. `ArchiveOldCheckpoint` deletes the source without checking the result.
@@ -246,11 +230,12 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 - **Files:** All `Python/train_*.py` scripts
 - **Fix idea:** Make one parameterized trainer that takes asset class and model type. Keep the split and labeling in one place.
 
-### 37. Mojibake in source comments and log strings
-- **What:** Em dashes and arrows were saved in a different encoding and now appear as `�?`. This is visible in one log string.
-- **Where:** `ATRScalpEntry.mqh` line 58; `SpikeHunterExecutor.mqh` lines 51 and 116; `VolatilityEngine.mqh` lines 490, 588 and 611.
-- **Files:** Those four files
-- **Fix idea:** Replace the characters with ASCII (`-` and `->`) and save the files as UTF-8.
+### 37. Malformed UTF-8 in support/resistance comments — FIXED (2026-11-20)
+- **Finding corrected:** The original audit named `ATRScalpEntry.mqh`, `SpikeHunterExecutor.mqh` and `VolatilityEngine.mqh`, but their committed and working-tree versions are valid UTF-8 and contain no replacement or malformed-byte markers. Those paths were false positives and were not changed for encoding.
+- **Root cause:** `SupportResistanceDetector.mqh` contained three truncated UTF-8 byte sequences in comments (two em-dash sequences and one approximation sign), making strict UTF-8 decoding fail.
+- **Resolution:** Replaced only those comment bytes with ASCII `-` and `~`; strict UTF-8 decoding now passes. The closed-bar regression test reads this header with strict UTF-8, so recurrence fails the test.
+- **Verification boundary:** Source encoding and regression contract verified; MetaEditor compilation remains outstanding.
+- **Files:** `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh`, `Python/test_closed_bar_signal_contracts.py`
 
 ### 38. Comment references to batch and issue IDs
 - **What:** Comments such as `Batch 156`, `Batch104-C1`, `L10-014` and `L7-015` reference past work and will rot as the code changes.
@@ -262,17 +247,14 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 
 ## Additional findings (third pass)
 
-### 39. Dashboard server is exposed on all interfaces without auth
-- **What:** `SERVER_HOST` is `0.0.0.0`, and `POST /state`, `POST /api/control/command`, and `POST /api/control/ack/{id}` have no authentication. Anyone on the same network can push fake state into the dashboard or queue commands.
-- **Where:** `config.py` line 4; `dashboard_server.py` lines 89-116 and 183-200.
-- **Files:** `Dashboard/server/config.py`, `Dashboard/server/dashboard_server.py`, `Core/Utils/DashBridgeTransport.mqh`
-- **Fix idea:** Default the host to `127.0.0.1`. Require a shared token from the environment in an `X-Api-Key` header on all write routes, and send it from `CDashBridgeTransport`. Keep `allow_credentials` off unless it is needed.
+### 39. Open: Dashboard trusts localhost but has no API token
+- **Current state (2026-11-19):** Dashboard binds to `127.0.0.1`. Credentialed CORS is off; `/state` writes and WebSocket connections reject non-allowlisted browser origins. The command endpoints and queue have been removed.
+- **Remaining risk:** Local processes can still push forged state or read the WebSocket because the API has no authentication. Keep the service loopback-only; add authentication before any remote/network exposure.
+- **Files:** `Dashboard/server/config.py`, `Dashboard/server/dashboard_server.py`
 
-### 40. Dashboard commands are acknowledged but never executed
-- **What:** `CDashBridgeTransport` polls `/api/control/commands`, logs `[DASHBOARD-CMD]`, and POSTs an ack for every command. There is no handler, so a command is reported as handled when nothing happened. The ack also happens before any validation.
-- **Where:** `DashBridgeTransport.mqh` lines 263-310.
-- **Files:** `Core/Utils/DashBridgeTransport.mqh`, `Dashboard/server/dashboard_server.py`
-- **Fix idea:** Either delete the command channel, or add a whitelist of command types (for example pause, resume) that route into existing orchestrator methods. Ack only after the handler returns a result, and send that result with the ack. Reject unknown types with an error ack.
+### 40. RESOLVED: The inert Dashboard command channel was removed
+- **Resolution (2026-11-19):** Removed the fake emergency-stop/mode/parameter controls, WebSocket/REST command queue, EA polling/acknowledgement path, and the unused control input. The Dashboard now explicitly reports telemetry-only status; operators must act in MetaTrader.
+- **Files:** `Dashboard/client/src/Dashboard.tsx`, `Dashboard/server/dashboard_server.py`, `Dashboard/server/state_manager.py`, `Core/Utils/DashBridgeTransport.mqh`, `Core/Utils/DashboardBridge.mqh`, `Core/Orchestration/EAOrchestrator.mqh`, `Core/Config/SharedEAInputs.mqh`
 
 ### 41. ZMQ heartbeat branch is unreachable and the server can shut itself down while idle
 - **What:** The EA's heartbeat is an HTTP `GET /heartbeat` (`PyBridgeHealth.mqh` line 127). The ZMQ `type == "heartbeat"` branch comes after the `features` check, so a heartbeat without `features` is rejected. `_run_zmq` also calls `shutdown()` when no request has arrived for `heartbeat_timeout` seconds, and with `--disable-http` nothing refreshes the timestamp during quiet periods.
@@ -280,47 +262,36 @@ Status key: **Open** = not started or only partly addressed. **Verify** = code w
 - **Files:** `Python/zmq_server.py`, and the ZMQ client if one exists in MQL5 (no ZMQ client was found in this repo)
 - **Fix idea:** Move the heartbeat check above the `features` check. Have the heartbeat be a real client message, or drop the idle shutdown and rely on the HTTP heartbeat. Confirm which transport the EA uses before changing the timeout.
 
-### 42. Blocking Sleep calls remain on indicator and cache paths
-- **What:** `TrendADX.mqh` sleeps 50 ms on a retry, `MarketAnalysisIndicators.mqh` sleeps 50 ms per retry, and `MarketAnalysisMetrics.mqh` sleeps 10 ms. `ScalpSignalCache.mqh` sleeps 1500 ms and 1000 ms per symbol during load. `SafeCopyBuffer.mqh` already removed its Sleep for the same reason, so the policy is inconsistent.
-- **Where:** `TrendADX.mqh` line 265; `MarketAnalysisIndicators.mqh` lines 377-378; `MarketAnalysisMetrics.mqh` line 105; `ScalpSignalCache.mqh` lines 161 and 189.
+### 42. RESOLVED: Indicator and cache retry paths no longer sleep
+- **Resolution (2026-11-19 source check):** None of the four named paths contains `Sleep()`; indicator reads return not-ready for a later call, and the cache load is non-blocking.
 - **Files:** `Core/Engines/TrendADX.mqh`, `Core/Engines/MarketAnalysisIndicators.mqh`, `Core/Engines/MarketAnalysisMetrics.mqh`, `Core/Scalp/ScalpSignalCache.mqh`
-- **Fix idea:** Remove Sleep from any path that can run from `OnTick`. Return "not ready" and retry on the next tick. Move the `ScalpSignalCache` waits into `OnInit` with a bounded total budget, or check whether it is reached only on init.
 
-### 43. ATR scalp entry sends orders through a raw CTrade
-- **What:** `ATRScalpEntry.mqh` opens positions with `trade.Buy`/`trade.Sell`, so it does not use the central send path. It is not covered by the spike or grid items.
-- **Where:** `ATRScalpEntry.mqh` lines 195-200.
-- **Files:** `Core/Scalp/ATRScalpEntry.mqh`, `Core/Trading/TradeManager.mqh`
-- **Fix idea:** Route the entry through `CTradeManager` and `RiskValidationPipeline`, the same as item 11, and remove the raw `trade` object from this path.
+### 43. RESOLVED: ATR scalp entry used a raw CTrade
+- **Resolution (2026-11-19):** ATR entries now require an initialized CUnifiedRiskManager and a configured CTradeManager, validate the normalized stop distance, reserve risk before execution, and send through the shared execution receipt path. A definite send failure releases its reservation; the engine's CTrade remains only for position exits.
+- **Files:** Core/Scalp/ATRScalpEntry.mqh, Core/Scalp/ATRScalpingEngine.mqh, Core/Orchestration/EAOrchestrator.mqh
 
 ---
 
 ## Additional findings (fourth pass)
 
-### 44. Missing tick data returns zero risk or zero size instead of refusing
-- **What:** `CUnifiedRiskManager` falls back to 0.0 risk when `SYMBOL_TRADE_TICK_VALUE` or `SYMBOL_TRADE_TICK_SIZE` is missing, and its own comment says this "charges no risk". `PositionSizer` returns 0.0 for the same missing values. A zero-risk trade passes the risk gate, and a zero size may be handled differently by each caller.
-- **Where:** `UnifiedRiskManager.mqh` lines 1642-1646; `PositionSizer.mqh` lines 688-696.
-- **Files:** `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/PositionSizer.mqh`, and the callers of both
-- **Fix idea:** Return a sentinel (for example a negative value or a bool with an error code) and make the risk gate reject the trade. Log the symbol and the missing field. Cache the last valid tick data per symbol for short gaps rather than using zero.
+### 44. RESOLVED IN SOURCE; BROKER VERIFICATION PENDING: Missing risk data now vetoes entries
+- **Resolution (2026-11-19):** `CPositionSizer` returns no size for missing tick metadata; the shared risk validator rejects non-positive candidate risk; `CPortfolioRiskManager::CalculatePotentialTradeRisk` now returns an invalid sentinel for missing tick/denominator/stop data, and `IsTradeAllowed` rejects it. Unpriceable or unprotected open positions now consume more than the configured portfolio cap in both portfolio and symbol-budget accounting.
+- **Verification limit:** Compile/static verification cannot prove broker-specific tick-value behavior; keep live exposure checks disabled until representative tester/runtime logs confirm them.
+- **Files:** `Core/Risk/PortfolioRiskManager.mqh`, `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/PositionSizer.mqh`, `Core/Risk/RiskValidationPipeline.mqh`
 
-### 45. mql5_v2.py installs dependencies through an unquoted shell string
-- **What:** The `pip install` strings contain `torch>=2.1.0` and similar specs and run with `shell=True`. The shell treats `>` as an output redirect, so the version constraints are dropped and files named like `=2.1.0` are created in the working directory. The install also runs as an import-time side effect of the script.
-- **Where:** `mql5_v2.py` lines 27-29.
-- **Files:** `Python/mql5_v2.py`, and any generated copy in `Python/write_colab.py`
-- **Fix idea:** Move the requirements to a pinned `requirements.txt` or a list passed to `subprocess.check_call([sys.executable, "-m", "pip", "install", ...])` without `shell=True`. Keep installs out of module import and check that the requirements file loads.
+### 45. Dependency installation shell parsing — SOURCE FIXED; TEST PASSED (2026-11-20)
+- **Resolution:** Python/mql5_v2.py passes version specifiers as subprocess argument-list items and only installs when explicitly run as a script with MQL5_V2_INSTALL_DEPENDENCIES=1; importing the module no longer installs packages.
+- **Verification:** python -m unittest Python.test_mql5_v2_setup_safety passed (1 test). This checks the installer call stays inside the explicit opt-in function/main guard and uses an argument list.
+- **Scope note:** Python/write_colab.py generates a separate Colab notebook setup cell; it does not copy this script's import-time installer.
 
-### 46. Position-count caps may count positions this EA does not own
-- **What:** `PositionSizer` counts every open position on the account, and the comment says this is intentional. Other loops that count `PositionsTotal()` do not show a magic-number filter in the lines reviewed. Manual or other-EA positions could consume the EA's caps, or the cap could be enforced on the wrong set.
-- **Where:** `PositionSizer.mqh` lines 780-782; the count loops in `PortfolioRiskManager.mqh` (around 277, 350, 468, 510) and `RiskValidationPipeline.mqh` (around 1020). `RiskCircuitBreaker.mqh` line 390 already filters by magic.
-- **Files:** `Core/Risk/PositionSizer.mqh`, `Core/Risk/PortfolioRiskManager.mqh`, `Core/Risk/RiskValidationPipeline.mqh`, `Core/Risk/CorrelationEngine.mqh`
-- **Fix idea:** Decide one ownership rule. Use `IsMagicOwned()` for EA caps, and keep a separate account-wide check only where it is intended. Document the rule in one helper.
+### 46. Position-count caps may count positions this EA does not own — SOURCE FIXED; TERMINAL VERIFICATION OPEN (2026-11-20)
+- **Resolution:** PositionSizer and per-symbol, total, and family caps use the configured IsMagicOwned rule. The cold-start symbol-budget bypass now counts the same EA-owned set instead of raw PositionsTotal. Correlation analytics may still inspect account-wide positions; those are not EA position-count caps.
+- **Verification boundary:** Manual/other-EA position scenarios remain untested in the terminal.
 
-### 47. Retraining request file is truncated before it is rewritten
-- **What:** The request log is opened with `FILE_WRITE`, which truncates it, and then the kept rows are written back. A crash or write failure between those steps loses the pending retraining requests.
-- **Where:** `AIPerformanceFeedback.mqh` lines 829-830 (rewrite) and 774-776 (append).
-- **Files:** `Core/AI/AIPerformanceFeedback.mqh`
-- **Fix idea:** Write the trimmed rows to a temp file and replace the original, the same approach as `crash_recovery_helpers.mqh`. Check the `FileMove` result and keep the original on failure.
-
----
+### 47. Retraining request persistence — SOURCE FIXED; RESTART/CONSUMER VERIFICATION OPEN (2026-11-20)
+- **Resolution:** Failed reads preserve the canonical file; a staged snapshot is validated and recovered before another append; failed promotions preserve both files; cooldown and attempt count advance only after promotion succeeds.
+- **Remaining:** The cooldown is in-memory and is not restored from the request log on restart. The CSV has no in-repo reader or trainer invocation, so persisted requests do not prove a retraining run.
+- **Files:** Core/AI/AIPerformanceFeedback.mqh
 
 ## Suggested order
 1. Items 1 to 6 and 24 to 27 (model validity; these affect every reported metric).
@@ -348,7 +319,7 @@ The run-by-run record now lives in `RUNS_AND_GAINS.md`; this list stays as the o
 
 The run-by-run record lives in `RUNS_AND_GAINS.md`; this list stays the open-item backlog.
 
-- **The Batch 289 build was measured, and the repairs alone were not a gain.** Cold, same window and inputs as the Batch 288 baseline (2026.09.01-> 9.08, V75 M15, Model=1, deposit 10,000, InpQuorumProfile=1, InpMinLiveVoters=1): **-258.77 (-2.588%) on 2,265 fills**, against **+98.29 (+0.983%) on 849 fills** for the previous build. -3.57 pp and +167% fills, far outside the 0.92 pp cross-window noise.
+- **The Batch 289 build was measured, and the repairs alone were not a gain.** Cold, same window and inputs as the Batch 288 baseline (2026.09.01->09.08, V75 M15, Model=1, deposit 10,000, InpQuorumProfile=1, InpMinLiveVoters=1): **-258.77 (-2.588%) on 2,265 fills**, against **+98.29 (+0.983%) on 849 fills** for the previous build. -3.57 pp and +167% fills, far outside the 0.92 pp cross-window noise.
 - **The single-variable A/B names the engine that loses.** Same build, same window, one input changed (InpEnableScalpEngine=0, no recompile): **+381.07 (+3.811%) on 270 fills**, min 9,891.96, max 10,381.42. A **+6.40 pp** swing. The fast-scalp engine is negative-expectancy once its cost gate stops refusing ten of the twelve symbols; the consensus book alone pays on this build.
 - **Not shipped yet, deliberately.** InpEnableScalpEngine stays at its factory default of `true` until the scalp-off arm reproduces on the neighbouring windows (Batch 288 set the precedent: ship only what has a multi-window distribution).
 - **New code, compiled and unmeasured:** InpScalpSymbolsCsv (`""` = every symbol) -> SOrchestratorConfig.scalpSymbolsCsv -> IsScalpSymbolAllowed() in ProcessScalpFastPath. Tools\backtest_b290_scalp2.ini (XAUUSD,Step Index) is the staged arm that separates "which symbols" from "which geometry". sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900 -> 0 errors, 0 warnings on both root EAs.
@@ -380,7 +351,7 @@ The run-by-run record lives in `RUNS_AND_GAINS.md`; this list stays the open-ite
 
 - **SHIPPED:** `InpSymbolsToTrade` factory default no longer contains `Volatility 25 Index` / `Volatility 75 Index`. Five paired cold windows, paired deltas **+2.13 / +7.05 / +5.97 / +15.54 / +2.10 pp** (mean +6.558 pp, sd 5.39, t 2.72, 5/5), trimmed arm mean **+7.734%**, sd 6.74 pp, worst **-0.599%**. Verified by omitting the input with `.set` parked: **+18.176%** vs the arm's +18.176% (six cents), 314 receipts, `[SCALP-SIGNAL-REJECT]` 0.
 - **Open, highest value:** a per-symbol risk cap enforced at sizing. Every winning window above is `Crash 1000` (+763.58 / +499.05 / +719.52 / +1,848.83 / +1,756.56); no window yet shows it trending against the book, so the trim's true downside is unmeasured. Batch 286/287 proved entry-gate blocks only reallocate risk, so the cap must bind on the lot, not on the entry.
-- **Known deviation:** `InpAutoAddChartSymbol = true` re-injects the chart symbol, so even a trimmed universe takes 2-4 `Volatility 75` closes. Turn that input off only with a paired run - every measured window had it on.
+- **Historical deviation (Batch 293):** the then-current `InpAutoAddChartSymbol` setting re-injected the chart symbol and produced 2-4 `Volatility 75` closes. The input and reinjection path have since been removed; this source change still needs a cold run with a chart symbol excluded from `InpSymbolsToTrade`.
 - **Measurement:** the tester/terminal logs are date-stamped; a run started after midnight writes a new file, so any poller must re-resolve the path. Delta base is the heartbeat whose balance is exactly 10,000.00 within the first ten samples.
 - **Still open:** `[ENGINE-CLOSE]` never fired (scalper off); `Tools\backtest_b290_scalp2.ini` unrun; `backtest_report.htm` never written so still no MT5 profit factor / drawdown / Sharpe; no live attach; items 15/43/19/20/8/41/47 unchanged.
 
@@ -399,7 +370,7 @@ The run-by-run record lives in `RUNS_AND_GAINS.md`; this list stays the open-ite
 - **What it bought / cost:** receipts 328-468 vs 282-307, and the losing window repairs (-0.599 -> +5.061), but the two best windows dilute: `09.22` 18.176 -> 8.279 and `09.08` 7.689 -> -5.519 (deepest loss in the record for a shipped configuration).
 - **Structural finding to carry forward:** the +18.176% window is partly an artifact of the 4% ceiling holding concurrency near four positions where four concurrent `Crash 1000` trades were the right four. Widening the budget spreads the same signals into `Jump 75` (183 of 468 receipts on 10.06, 162 of 455 on 09.08). The cap is protective; not a throttle.
 - **No input changed:** `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0` stand, now with both Batch 294 and Batch 295 behind them.
-- **Open, next in line:** a 4% -> 6% daily step (the 4 -> 8 jump may be too coarse to reveal a real optimum); a per-symbol cap that binds on the lot rather than the entry (Batch 286/287 proof still points there); `InpAutoAddChartSymbol=false` paired run; `[ENGINE-CLOSE]` never fired; `Tools\backtest_b290_scalp2.ini` unrun; `backtest_report.htm` never written so still no MT5 profit factor / drawdown / Sharpe; no live attach; items 15/43/19/20/8/41/47 unchanged.
+- **Open, next in line:** a 4% -> 6% daily step (the 4 -> 8 jump may be too coarse to reveal a real optimum); a per-symbol cap that binds on the lot rather than the entry (Batch 286/287 proof still points there); chart-symbol exclusion verification on the new source; `[ENGINE-CLOSE]` never fired; `Tools\backtest_b290_scalp2.ini` unrun; `backtest_report.htm` never written so still no MT5 profit factor / drawdown / Sharpe; no live attach; items 15/43/19/20/8/41/47 unchanged.
 - **Boundary on all of this:** every window in the record is 2026-09/10 on one instrument, under one harness, with no live attach. The advertised mean is +7.734% per 7 days for the shipped universe, t 2.57, worst -0.599% - out-of-window but not out-of-regime.
 
 ## Status update - Batch 296 (2026-11-14)
@@ -427,8 +398,7 @@ Open items this batch moved:
 - [ ] `InpMaxDailyRisk` 4% -> 6% step (the 4 -> 8 jump may be too coarse to see an optimum).
 - [ ] Per-symbol risk cap that binds on lot size rather than on entry - 286/287 proved entry gates only
       redistribute risk.
-- [ ] `InpAutoAddChartSymbol = true` re-injects the chart symbol, so a trimmed run still takes 2-6 `Volatility 75`
-      closes (5 in `08.08`, 2 in `08.01`); never tested with it off.
+- [ ] Cold-run verification that a chart symbol excluded from `InpSymbolsToTrade` produces no trades on the new source; all cited `Volatility 75` closes predate removal of chart-symbol reinjection.
 - [ ] Still no live attach; `[ENGINE-CLOSE]` still never observed; `backtest_report.htm` still never written, so no
       MT5 profit factor / drawdown / Sharpe anywhere in the repository.
 
@@ -463,8 +433,7 @@ Open items this batch moved:
 - [ ] Per-symbol risk cap that binds on lot size. `GetSymbolRiskAllocation` is lifted off its budget by the min-lot
       floor, so it never binds; that is the untested mechanism for controlling the payer itself.
 - [ ] `InpMaxDailyRisk` 4% -> 6% step (the 4 -> 8 jump may be too coarse to reveal an optimum).
-- [ ] `InpAutoAddChartSymbol = true` still injects the chart symbol (2 `Volatility 75` closes per window, -16.72 in
-      the 10.06 default check); never tested with it off.
+- [ ] Cold-run verification of chart-symbol exclusion on the new source; the cited 10.06 `Volatility 75` closes came from the pre-fix binary.
 - [ ] Still no live attach; `[ENGINE-CLOSE]` never observed; `backtest_report.htm` never written, so no MT5 profit
       factor / drawdown / Sharpe anywhere.
 - [ ] 4% daily ceiling, 1% per trade and the eight-symbol universe are validated only on 2026-08..10 windows.
@@ -486,8 +455,7 @@ input changed.
       lifted by the min-lot floor, so it never binds. This is the only remaining way to stop `Crash 1000` from taking
       every paying window while `Step`/`Jump 25` bleed inside it - and Batch 298 shows the alternative (deleting the
       small rows) is worse, so the cap must bind on size, not on admission.
-- [ ] `InpAutoAddChartSymbol=false` paired window: chart-symbol re-injection still adds 2-18 `Volatility 75` closes per
-      window and has never been measured off.
+- [ ] Cold-run verification that excluded chart symbols cannot trade on the new source; the old `InpAutoAddChartSymbol=false` experiment is obsolete because the input no longer exists.
 - [ ] Daily ceiling 4% -> 6% (the 4 -> 8 step in Batch 295 was too coarse and lost 5.26 pp paired).
 - [ ] Validity rule added this batch: a window counts only when the terminal log says `successfully finished` and the
       journal slice is exactly 10,080 samples starting at the ini `FromDate`. A network-cut run left 13,406 heartbeats
@@ -495,3 +463,23 @@ input changed.
 - [ ] Still never run: `Tools\backtest_b290_scalp2.ini`, `Tools\backtest_hal_w3/w4.ini`; `[ENGINE-CLOSE]` has never
       printed in a run; `backtest_report.htm` is never written, so the repository still has no MT5 profit factor,
       max drawdown or Sharpe; no live attach.
+
+## Source follow-up - 2026-11-20
+
+This section supersedes historical source-status wording above; it does not imply a successful MQL compile or broker test.
+
+- **Fast-scalp async validation:** Fixed `OnAsyncOrderSent()` to validate its actual `sl`/`tp` parameters rather than undeclared names. This was a source-level compile blocker. MetaEditor verification remains outstanding.
+- **Item 9:** The standard async executor now keeps unresolved requests quarantined and reconciles fill volume from broker deal history. Source path inspected; terminal/broker late-fill scenarios remain untested.
+- **Item 10:** Fast-scalp admission now rebuilds exposure from current positions and active orders matching its magic, pricing downside to each live stop with OrderCalcProfit. Unresolved order reservations are added only when the broker book does not already represent that order or its live position; closes and zero-fill outcomes leave the budget through broker-state reconciliation rather than a guessed tier subtraction. Normal broker-visible exposure therefore reconstructs after restart. The brokerless timeout ledger and untracked-send fail-closed sentinel are still in-memory; MetaEditor and restart/late-fill runtime checks remain outstanding.
+- **Items 11, 12 and 31:** Source now requires/injects `CTradeManager` for Spike Hunter and Grid Recovery execution; the ATR partial-close latch checks resulting broker volume. These are source fixes only. Grid Recovery and Spike Hunter remain dormant in the orchestrator.
+- **Item 14:** Python prediction no longer performs a separate /health request before /predict; successful responses update bridge health, and cache freshness plus attempt backoff use monotonic GetTickCount(). Failed refreshes are throttled too, and stale/cold cache still fails closed. Refresh remains a synchronous WebRequest inside OnTimer() (configured default timeout 2 seconds), so terminal event-loop stalls are reduced but not resolved; this item stays open pending a genuinely nonblocking transport and runtime proof.
+- **Item 15:** Exposure-cap exclusion of the candidate's own reservation is present for the reachable main and fast-scalp routes. The ATR/grid/spike gates are not evidence of active dispatch. Lifecycle pyramiding stays disabled.
+- **Attribution:** Multi-contributor trades remain explicitly non-causal and excluded from strategy-dollar conclusions. Runtime attribution persistence/recovery and single-contributor attribution completeness are not proven by this source review.
+- **Verification boundary:** Source reference checks and `git diff --check` are run for this follow-up. MetaEditor is unavailable, and the repository's header-test/sync scripts write outside this workspace; neither is run. No broker runtime, restart-recovery, responsiveness, or performance claim is made.
+
+## Build follow-up - 2026-11-21
+
+- **Sync source:** `sync_and_compile.ps1` now anchors `ProjectRoot` to `$PSScriptRoot`, so it syncs and compiles the active Tempo checkout instead of the clean `D:\TraeProjects\...` main checkout.
+- **Compile fixes:** Replaced the C++-style pointer call in `FastScalpEngine.mqh` with MQL5 dot-call syntax and restored the missing `CDashBridgeTransport::LogState` implementation left declared and called after the transport split.
+- **Verification:** Full sync plus `-All -KeepLog -MaxCompileWaitSec 900` completed; all eight root programs report 0 errors and 0 warnings. Edited headers match the MT5 mirror by SHA-256.
+- **Still open:** No live/demo attach, broker runtime, or backtest was performed; compile success is not trading-performance evidence.

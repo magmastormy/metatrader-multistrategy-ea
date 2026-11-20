@@ -2,7 +2,7 @@
 // Copyright 2025, Aggressive Trading Systems
 // https://www.aggressivetrading.com
 // Encapsulates trade-comment building, prediction/position mapping, AI pending-request tracking and NN diagnostics; all state is in-memory arrays that do not survive a restart.
-// Closed-deal attribution feeds strategy performance (CStrategyMgrTradeFeedback: UpdatePerformance + health monitor) and NN online training, so it is not cosmetic-only.
+// Closed-deal attribution supports exact-singleton strategy feedback; shared outcomes are not apportioned, and full position results also feed the NN label queue.
 #property copyright "Copyright 2025, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -550,8 +550,34 @@ void CTradeAttributionManager::SplitContributors(const string csv, string &contr
 void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId, const string &contributors[])
 {
     int index = FindAttributionIndexByPositionId(positionId);
-    string csv = JoinContributors(contributors);
-    
+    string combined[];
+    if(index >= 0)
+        SplitContributors(m_attributionContributorCsv[index], combined);
+
+    for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
+    {
+        string contributor = contributors[contributorIdx];
+        if(contributor == "")
+            continue;
+
+        bool alreadyPresent = false;
+        for(int existingIdx = 0; existingIdx < ArraySize(combined); existingIdx++)
+        {
+            if(combined[existingIdx] == contributor)
+            {
+                alreadyPresent = true;
+                break;
+            }
+        }
+        if(!alreadyPresent)
+        {
+            int newSize = ArraySize(combined) + 1;
+            ArrayResize(combined, newSize);
+            combined[newSize - 1] = contributor;
+        }
+    }
+
+    string csv = JoinContributors(combined);
     if(index >= 0)
     {
         m_attributionContributorCsv[index] = csv;
@@ -565,7 +591,6 @@ void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId,
         m_attributionContributorCsv[newSize - 1] = csv;
     }
 }
-
 bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, string &contributors[])
 {
     int index = FindAttributionIndexByPositionId(positionId);
@@ -675,7 +700,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
     if(positionId > 0)
     {
         // Bounded store: a position that never closes must not grow the map forever.
-        if(ArraySize(m_attributionPositionIds) >= 512)
+        if(ArraySize(m_attributionPositionIds) >= 512 && FindAttributionIndexByPositionId(positionId) < 0)
         {
             int dropCount = ArraySize(m_attributionPositionIds);
             for(int i = 0; i < dropCount - 1; i++)
@@ -689,7 +714,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
         UpsertPositionAttribution(positionId, contributors);
         if(m_enableNNDiagnostics)
             PrintFormat("[TRADE-ATTRIBUTION] stored position=%I64u | contributors=%s",
-                        positionId, JoinContributors(contributors));
+                        positionId, m_attributionContributorCsv[FindAttributionIndexByPositionId(positionId)]);
     }
     else if(m_enableNNDiagnostics)
     {

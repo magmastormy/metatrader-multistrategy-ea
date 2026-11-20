@@ -384,12 +384,12 @@ public:
             if(StringLen(milestoneMsg) > 0)
             {
                 SCompoundingTierConfig newTier = GetCurrentTier();
-                PrintFormat("[COMPOUNDING-TIER-MILESTONE] %s | New tier: %s | Risk=%.1f%% | MaxDD=%.1f%% | MaxPos=%d",
+                PrintFormat("[COMPOUNDING-TIER-MILESTONE] %s | New tier: %s | requestedTierRisk=%.1f%% | MaxDD=%.1f%% | MaxPos=%d",
                             milestoneMsg, GetTierName(m_currentTierIndex),
                             newTier.riskPerTradeOverride, newTier.drawdownCriticalOverride,
                             newTier.maxConcurrentOverride);
                 Alert(milestoneMsg + " | Tier: " + GetTierName(m_currentTierIndex) +
-                      " | Risk: " + DoubleToString(newTier.riskPerTradeOverride, 1) + "%");
+                      " | requested tier risk: " + DoubleToString(newTier.riskPerTradeOverride, 1) + "%");
             }
 
             int newTierIndex = FindTierIndex(equity);
@@ -438,9 +438,11 @@ public:
                 Save(); // a transition is the one moment the watermark must survive a restart
 
                 string direction = isUpgrade ? "UPGRADE" : "DOWNGRADE";
+                double effectiveRisk = riskMgr.GetActiveRiskPerTradePercent();
                 Alert("COMPOUNDING TIER ", direction, ": Account $", DoubleToString(equity, 2),
                       " | New tier: ", GetTierName(m_currentTierIndex),
-                      " | Risk: ", DoubleToString(m_tiers[m_currentTierIndex].riskPerTradeOverride, 1), "%");
+                      " | tier risk request: ", DoubleToString(m_tiers[m_currentTierIndex].riskPerTradeOverride, 1), "%",
+                      " | effective per-trade risk: ", DoubleToString(effectiveRisk, 2), "%");
 
                 m_previousEquity = equity;
                 return true;
@@ -470,15 +472,17 @@ public:
                 tier.maxRiskPerTradeOverride  // pass explicit override
             );
 
-            PrintFormat("[COMPOUNDING-TIER] Applied to RiskManager | risk=%.1f%% | maxRisk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%% | maxPos=%d | dailyLoss=%.1f%%",
+            SUnifiedRiskConfig appliedRisk;
+            riskManager.CopyRiskConfig(appliedRisk);
+            PrintFormat("[COMPOUNDING-TIER] RiskManager | requested risk=%.1f%% maxRisk=%.1f%% daily=%.1f%% portfolio=%.1f%% | effective risk=%.2f%% maxRisk=%.2f%% daily=%.2f%% portfolio=%.2f%%",
                         tier.riskPerTradeOverride,
                         tier.maxRiskPerTradeOverride,
                         tier.maxDailyRiskOverride,
                         tier.maxPortfolioRiskOverride,
-                        tier.drawdownWarnOverride,
-                        tier.drawdownCriticalOverride,
-                        tier.maxConcurrentOverride,
-                        tier.dailyLossLimitOverride);
+                        appliedRisk.baseRiskPerTradePercent,
+                        appliedRisk.maxRiskPerTradePercent,
+                        appliedRisk.maxDailyRiskPercent,
+                        appliedRisk.maxPortfolioRiskPercent);
     }
 
 // CPositionSizer::SetParameters does no clamping, so the tier value is clamped here to the risk the
@@ -494,17 +498,20 @@ public:
         double tierRisk = tier.riskPerTradeOverride;
 
         double approvedRisk = riskManager.GetActiveRiskPerTradePercent();
-        bool clampedToEnvelope = (approvedRisk > 0.0 && tierRisk > approvedRisk);
-        if(clampedToEnvelope)
-            tierRisk = approvedRisk;
+        if(approvedRisk <= 0.0)
+        {
+            Print("[COMPOUNDING-TIER] PositionSizer update refused | approved risk ceiling is not positive");
+            return;
+        }
+        double requestedRisk = tierRisk;
+        tierRisk = MathMin(tierRisk, approvedRisk);
 
         SPositionSizingParams params = posSizer.GetParameters();
         params.riskPercent = tierRisk;
         posSizer.SetParameters(params);
 
-        PrintFormat("[COMPOUNDING-TIER] Applied to PositionSizer | riskPercent=%.1f%% (tier %.1f%%%s)",
-                    tierRisk, tier.riskPerTradeOverride,
-                    clampedToEnvelope ? " | clamped to approved envelope" : "");
+        PrintFormat("[COMPOUNDING-TIER] PositionSizer | requestedRisk=%.2f%% | effectiveRisk=%.2f%% | operatorRiskCeiling=%.2f%%",
+                    requestedRisk, tierRisk, approvedRisk);
     }
 
     SCompoundingTierConfig GetCurrentTier() const

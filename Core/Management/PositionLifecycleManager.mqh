@@ -436,12 +436,6 @@ public:
                                               m_atrMultiplier);
         }
 
-        // Safe mode partial profit taking for swing positions
-        if(m_riskTierManager.GetCurrentTier() == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
-        {
-            m_safeMode.ManageSafeModePositions(m_tradeManager);
-        }
-
         m_lastManageTimeMs = nowMs;
     }
 

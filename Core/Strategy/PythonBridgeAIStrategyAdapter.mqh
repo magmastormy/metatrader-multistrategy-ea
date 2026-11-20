@@ -21,7 +21,9 @@ private:
     double            m_weight;
     datetime          m_lastSignalTime;
     datetime          m_cacheBarTime;
-    datetime          m_cacheRefreshTime;
+    uint              m_cacheRefreshTick;
+    uint              m_lastRefreshAttemptTick;
+    bool              m_hasRefreshAttempt;
     bool              m_hasCachedSignal;
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double            m_cachedConfidence;
@@ -117,7 +119,9 @@ public:
         m_weight = 1.5;
         m_lastSignalTime = 0;
         m_cacheBarTime = 0;
-        m_cacheRefreshTime = 0;
+        m_cacheRefreshTick = 0;
+        m_lastRefreshAttemptTick = 0;
+        m_hasRefreshAttempt = false;
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
@@ -161,7 +165,9 @@ public:
         m_symbol = symbol;
         m_timeframe = timeframe;
         m_cacheBarTime = 0;
-        m_cacheRefreshTime = 0;
+        m_cacheRefreshTick = 0;
+        m_lastRefreshAttemptTick = 0;
+        m_hasRefreshAttempt = false;
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
@@ -233,17 +239,17 @@ public:
         }
 
         datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
-        datetime cacheNow = TimeCurrent();
+        uint cacheNow = GetTickCount();
         if(m_hasCachedSignal && currentBarTime > 0 && currentBarTime == m_cacheBarTime &&
-           m_cacheRefreshTime > 0 && (cacheNow - m_cacheRefreshTime) < 10)
+           m_cacheRefreshTick > 0 && (cacheNow - m_cacheRefreshTick) < 10000)
         {
             confidence = m_cachedConfidence;
             LogVoteHeartbeat();
             return m_cachedSignal;
         }
 
-        // Cache miss: do not block on the synchronous WebRequest/Predict call. The timer
-        // refreshes the prediction (OnTimer) so the next tick can read cached data.
+        // The tick path only serves a fresh timer cache; it never performs WebRequest.
+        // The timer refresh is synchronous and may block until the configured request timeout.
         m_lastDecisionReasonTag = "PYTHON_CACHE_MISS";
         PrintFormat("[PYTHON-BRIDGE] %s | cache miss | returning NONE | next refresh on timer", m_symbol);
         LogVoteHeartbeat();
@@ -339,15 +345,18 @@ public:
 
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
     virtual void OnTick(void) override {}
+    virtual bool RequiresTimerCallback(void) const override { return true; }
     virtual void OnTimer(void) override
     {
         if(!m_enabled || m_pythonBridge == NULL || !m_pythonBridge.IsInitialized() || m_featurePipeline == NULL)
             return;
 
-        datetime now = TimeCurrent();
-        // Refresh the prediction at most once every 10 seconds so the tick path never blocks on WebRequest.
-        if(m_cacheRefreshTime > 0 && (now - m_cacheRefreshTime) < 10)
+        uint nowTick = GetTickCount();
+        // Back off from every attempt, including failures. WebRequest remains synchronous here.
+        if(m_hasRefreshAttempt && (nowTick - m_lastRefreshAttemptTick) < 10000)
             return;
+        m_lastRefreshAttemptTick = nowTick;
+        m_hasRefreshAttempt = true;
 
         datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
 
@@ -400,7 +409,7 @@ public:
         m_cachedSignal = signal;
         m_cachedConfidence = confidence;
         m_cacheBarTime = currentBarTime;
-        m_cacheRefreshTime = now;
+        m_cacheRefreshTick = GetTickCount();
         m_hasCachedSignal = true;
 
         m_voteCount++;

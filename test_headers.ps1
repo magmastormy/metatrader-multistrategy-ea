@@ -45,28 +45,40 @@ if(-not (Test-Path -LiteralPath $sandboxExpertDir)) { throw "Sandbox expert dir 
 # include path is its repository path with backslashes normalised.
 function Get-HeaderList {
     param([string]$Pattern)
-    $all = Get-ChildItem -LiteralPath $repoRoot -Recurse -Filter '*.mqh' |
-        Where-Object { $_.FullName -notmatch '\\\.git\\' }
-    $rel = $all | ForEach-Object { $_.FullName.Substring($repoRoot.Length + 1) }
+    $pendingDirectories = New-Object System.Collections.Generic.Stack[string]
+    $pendingDirectories.Push($repoRoot)
+    $relativeHeaders = New-Object System.Collections.Generic.List[string]
+
+    while($pendingDirectories.Count -gt 0) {
+        $currentDirectory = $pendingDirectories.Pop()
+        foreach($entry in Get-ChildItem -LiteralPath $currentDirectory -Force) {
+            if($entry.PSIsContainer) {
+                if($entry.Name -notin @('.git', 'node_modules') -and -not ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    $pendingDirectories.Push($entry.FullName)
+                }
+                continue
+            }
+            if($entry.Extension -ieq '.mqh') {
+                $relativeHeaders.Add($entry.FullName.Substring($repoRoot.Length + 1))
+            }
+        }
+    }
+
+    $rel = @($relativeHeaders)
     if($Pattern -and $Pattern -ne '*') { $rel = $rel | Where-Object { $_ -like $Pattern } }
     return @($rel | Sort-Object)
 }
-
 # Order matters for -AllInOne: foundational enums and types first, orchestration and strategies last.
 # The sort is by bucket, then alphabetically, so the order is reproducible without a hand-maintained list.
 #
-# The prelude reproduces the six globals every program in this tree defines (`extern` is declared in
-# the headers, the definition lives in the .mq5). Without them a sweep reports "unresolved extern
-# variable" for a header that is perfectly correct - the contract is that the program defines these,
-# so the harness defines them too. Grep '^extern ' over the headers to re-derive the list.
+# The prelude reproduces the extern globals needed to compile the headers as one translation unit.
+# Without them a sweep reports unresolved externs for headers that are otherwise well-formed.
 function Get-Prelude {
     return @(
         '#include "Core/Processing/MultiAssetProfiler.mqh"'
         '#include "Core/Utils/StructuredLogger.mqh"'
-        '#include "Core/Utils/CorrelationId.mqh"'
         '#include "Core/Orchestration/GlobalDefs.mqh"'
         'CStructuredLogger g_structLog;'
-        'CCorrelationIdManager g_corrIdManager;'
     )
 }
 

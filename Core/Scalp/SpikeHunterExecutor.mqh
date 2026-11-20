@@ -13,7 +13,6 @@
 #include "../Trading/TradeManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
 #include "../Trading/TradeMgrPreflight.mqh"
-#include <Trade\Trade.mqh>
 
 #include "SpikeHunterTypes.mqh"
 #include "SpikeHunterDetector.mqh"
@@ -30,7 +29,6 @@ private:
    CPositionSizer*                 m_positionSizer;
    CUnifiedRiskManager*            m_riskManager;
    CTradeManager*                  m_tradeManager;        // For safe trade execution via TradeManager
-   CTrade                          m_trade;                // For synchronous order execution (legacy)
    CAIAdapter*                     m_aiAdapter;            // L10-018: AI adapter for vote logging
 
    CSpikeHunterDetector*           m_detector;             // Per-symbol state owner (not owned)
@@ -141,20 +139,15 @@ public:
          return false;
       }
 
-      // Calculate lot size using CPositionSizer
-            double lotSize = 0.0;
-            ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-
-            if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
-            {
-               lotSize = m_positionSizer.CalculatePositionSize(
-                           symbol, slPips, 0.80);
-            }
-      else
+      if(m_positionSizer == NULL || !m_positionSizer.IsInitialized())
       {
-         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-         lotSize = (minLot > 0.0) ? minLot : MIN_LOT_SIZE;
+         PrintFormat("[SPIKE-HUNT-TRADE] PositionSizer unavailable - refusing entry | symbol=%s", symbol);
+         return false;
       }
+
+      double lotSize = 0.0;
+      ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      lotSize = m_positionSizer.CalculatePositionSize(symbol, slPips, 0.80);
 
       if(lotSize <= 0.0)
       {
@@ -214,8 +207,20 @@ public:
 
       string dirStr = (direction == 1) ? "BUY" : "SELL";
 
+      if(m_riskManager == NULL || !m_riskManager.IsInitialized())
+      {
+         PrintFormat("[SPIKE-HUNT-TRADE] UnifiedRiskManager unavailable - refusing entry | symbol=%s", symbol);
+         return false;
+      }
+      if(m_tradeManager == NULL)
+      {
+         PrintFormat("[SPIKE-HUNT-TRADE] TradeManager unavailable - refusing entry | symbol=%s", symbol);
+         return false;
+      }
+
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
-      if(m_riskManager != NULL)
+      double validatedLotSize = lotSize;
+      SValidationResult riskResult;
       {
          STradeValidationRequest riskReq;
          ZeroMemory(riskReq);
@@ -228,12 +233,14 @@ public:
          riskReq.strategy     = "SPIKE-HUNT";
          riskReq.requestTime  = TimeCurrent();
 
-         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "spike-pretrade");
+         riskResult = m_riskManager.ValidateTradeRequest(riskReq, "spike-pretrade");
          if(!riskResult.approved)
          {
             PrintFormat("[SPIKE-HUNT-TRADE] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.message);
             return false;
          }
+
+         validatedLotSize = (riskResult.adjustedLotSize > 0.0) ? riskResult.adjustedLotSize : lotSize;
 
          // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
          // adopting that would ship more than this engine's own sizing decided.
@@ -243,6 +250,10 @@ public:
                         symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
             lotSize = riskResult.adjustedLotSize;
          }
+         if(riskResult.virtualReservationOwnerTag != "")
+            m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                    lotSize,
+                                                    riskResult.riskPercent * lotSize / validatedLotSize);
       }
 
       // L10-008: Use TradeManager for safety checks and execution
@@ -258,6 +269,17 @@ public:
              "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_detector.GetConfluenceCount(idx)) + "/3",
             (uint)magic
          );
+         STradeExecutionReceipt receipt;
+         m_tradeManager.GetLastExecutionReceipt(receipt);
+         if(receipt.accepted && riskResult.virtualReservationOwnerTag != "")
+         {
+            double filledLotSize = receipt.filledVolume > 0.0 ? receipt.filledVolume : lotSize;
+            m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                    filledLotSize,
+                                                    riskResult.riskPercent * filledLotSize / validatedLotSize);
+         }
+         else if(!result && !receipt.accepted)
+            m_riskManager.ReleaseVirtualPosition(riskResult.virtualReservationOwnerTag);
 
          // L10-018: AI-VOTE logging
          if(m_aiAdapter != NULL)
@@ -277,7 +299,7 @@ public:
          }
          else
          {
-            uint retcode = m_tradeManager.GetLastRetcode();
+            uint retcode = receipt.retcode;
             PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
                         symbol, dirStr, lotSize, retcode);
          }

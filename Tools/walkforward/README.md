@@ -1,9 +1,6 @@
 # Walk-Forward Validator (Phase 1)
 
-A **cost-aware, look-ahead-safe walk-forward validation engine** that proves whether a
-strategy edge is *real* (OOS beats IS, stable across windows) **before** it ever ships
-live to the EA. This is the single highest-leverage gap the research flagged: the repo
-had no walk-forward discipline, so every "strategy" was unproven.
+A standalone, cost-aware walk-forward research tool for checking signals across time. Its reports can inform review, but it does not gate the production EA and cannot prove a strategy will retain an edge live.
 
 The harness exists in two forms that implement the **same methodology**:
 
@@ -27,8 +24,9 @@ A genuine edge must satisfy **all** of:
    One lucky window is not a strategy.
 4. **OOS max drawdown ≤ 35%** — survivable.
 
-Anything else is `REJECTED` (noise / overfit) or `CONDITIONAL` (borderline — trade only
-with reduced risk).
+These are screening thresholds for this tool, not live EA controls. Anything else is
+reported as `REJECTED` (noise / overfit) or `CONDITIONAL` (borderline); the production EA
+does not automatically apply those labels or reduce risk from this report.
 
 ## Python usage
 

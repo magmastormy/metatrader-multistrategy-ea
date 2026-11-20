@@ -121,13 +121,16 @@ export interface EAStrategy {
   weight: number;
 }
 
-export interface EAScalp {
-  active: boolean;
-  open_positions: number;
-  max_positions: number;
-  total_entries: number;
-  total_rejections: number;
-}
+export type EAScalp =
+  | { available: false }
+  | {
+      available: true;
+      active: boolean;
+      open_positions: number;
+      max_positions: number;
+      total_entries: number;
+      total_rejections: number;
+    };
 
 export interface EAHeartbeat {
   scans: number;

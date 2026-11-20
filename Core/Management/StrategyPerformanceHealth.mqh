@@ -1,14 +1,11 @@
-// Per-strategy performance accounting, rolling statistics and health scoring; mutates the manager through
-// narrow per-field accessors. Deliberately NOT moved: the health/participation reads inside
-// EvaluateConsensusInternal and its two siblings (the hottest per-strategy loop), and CStrategyHealthMonitor
-// itself, which this module only mirrors and delegates to.
+// Singleton-attribution counters, average outcome and bounded health scoring; mutates the manager through
+// narrow per-field accessors. Consensus health and participation reads remain in the hot voting loop.
 // Implementation detail of EnterpriseStrategyManager.mqh - included from there, not standalone.
 #ifndef STRATEGY_PERFORMANCE_HEALTH_MQH
 #define STRATEGY_PERFORMANCE_HEALTH_MQH
 
 #include "../Utils/Enums.mqh"                          // ENUM_STRATEGY_TYPE
 #include "../../Interfaces/IStrategy.mqh"              // IStrategy::GetType
-#include "StrategyHealthMonitor.mqh"                   // CStrategyHealthMonitor
 #include "../../Core/AI/AIPerformanceFeedback.mqh"     // SAIModelMetrics
 
 #define AI_WEIGHT_MIN_PREDICTIONS 50
@@ -42,9 +39,6 @@ public:
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
     void   UpdatePerformance(const string strategyName, double netProfit);
-    void   UpdateRecentPerformance(const int index, const double result);
-    bool   ShouldDisableStrategy(const int index);
-    bool   ShouldReEnableStrategy(const int index);
     void   UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics);
 };
 
@@ -82,8 +76,6 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
         m_src.SetStrategyConsecutiveWins(idx, 0);
     }
 
-    UpdateRecentPerformance(idx, netProfit);
-
     // Health score: 0.55 prior blended by sample trust = outcomes/20, clamped to 0.35..1.0
     int totalOutcomes = m_src.GetStrategySuccessCount(idx) + m_src.GetStrategyFailCount(idx);
     if(totalOutcomes > 0)
@@ -95,58 +87,6 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
         m_src.SetStrategyHealthScore(idx, MathMax(0.35, MathMin(1.0, blendedWinRate)));
     }
 
-    if(ShouldDisableStrategy(idx))
-    {
-        m_src.SetStrategyTemporarilyDisabled(idx, true);
-        m_src.SetStrategyDisabledUntil(idx, TimeCurrent() + 3600); // Disable for 1 hour
-        // The park is decided from the monitor's sample, so the numbers printed here come from the
-        // same holder. The roster's own winRate/recentWinRate had no live writer and printed 0.00.
-        CStrategyHealthMonitor* parkMonitor = m_src.GetHealthMonitor();
-        PrintFormat("[Enterprise-Adaptation] Strategy %s DISABLED due to poor performance (WinRate: %.2f, recent: %.2f, Losses: %d)",
-                    strategyName,
-                    parkMonitor != NULL ? parkMonitor.GetWinRate(idx) : 0.0,
-                    parkMonitor != NULL ? parkMonitor.GetRecentWinRate(idx) : 0.0,
-                    m_src.GetStrategyConsecutiveLosses(idx));
-    }
-}
-
-void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const double result)
-{
-    if(m_src == NULL)
-        return;
-
-    // The manager's constructor allocates the monitor, so it is the only holder of these numbers;
-    // the roster's own recent-trade ring was the second holder and never received a write.
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-        healthMonitor.RecordTradeResult(index, result);
-}
-
-// Auto-disable predicate; without usable data it returns false (never disables blind)
-bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
-{
-    if(m_src == NULL)
-        return false;
-
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-        return healthMonitor.CheckStrategyDisabling(index);
-
-    return false;
-}
-
-// Governance predicate: the monitor parks on its own flag and releases it on the next
-// CheckAllStrategiesReEnabling pass, which arms no cooldown of its own.
-bool CStrategyPerformanceHealth::ShouldReEnableStrategy(const int index)
-{
-    if(m_src == NULL)
-        return false;
-
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-        return healthMonitor.CheckStrategyReEnabling(index);
-
-    return false;
 }
 
 void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)

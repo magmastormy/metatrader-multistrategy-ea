@@ -2,6 +2,8 @@
 #ifndef CORE_RISK_VIRTUAL_POSITION_MQH
 #define CORE_RISK_VIRTUAL_POSITION_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 struct SVirtualPosition
 {
     string ownerTag;
@@ -52,10 +54,8 @@ public:
         ArrayResize(m_positions, 0);
     }
 
-// A reservation bridges the gap between approval and visibility. Two things end it: the TTL, and the position
-// arriving. The terminal's own position list feeds GetPortfolioRisk(), so a reservation that outlives its fill
-// charges the same risk twice - once as an open position and once as pending - for the rest of the minute, and the
-// portfolio cap refuses entries it should have allowed.
+// A reservation bridges approval and position visibility. A confirmed executor fill releases its owner token; the
+// position scan is the recovery path for fills observed outside that executor, and the TTL is the final fallback.
     int PruneStale()
     {
         datetime now = TimeCurrent();
@@ -84,8 +84,8 @@ public:
     }
 
 // One position can cover one reservation: matched oldest first, by symbol, direction, a lot at least as large, and
-// an open time at or after the reservation. POSITION_MAGIC != 0 keeps a manual trade from discharging our pending
-// risk, and the time test keeps an older same-direction position from covering a reservation it predates.
+// an open time at or after the reservation. IsMagicOwned() prevents foreign or manual positions from discharging
+// our pending risk, and the time test keeps an older same-direction position from covering a reservation it predates.
     int PruneCoveredByPositions()
     {
         int total = ArraySize(m_positions);
@@ -109,7 +109,7 @@ public:
             ulong ticket = PositionGetTicket(p);
             if(ticket == 0 || !PositionSelectByTicket(ticket))
                 continue;
-            if(PositionGetInteger(POSITION_MAGIC) == 0)
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
                 continue;
             posSymbol[count] = PositionGetString(POSITION_SYMBOL);
             posTime[count] = (datetime)PositionGetInteger(POSITION_TIME);
@@ -194,10 +194,8 @@ public:
         }
     }
 
-    // sync a reservation to the validated numbers once they exist. Reserve() books the provisional lot and
-    // risk and refuses riskPercent<=0, so a zero-risk placeholder can never sit in the book. adds the lot:
-    // a correlation shrink or lot-floor change lands after Reserve, and a reservation still carrying the pre-adjustment
-    // lot can never be matched by the position that actually filled, so it would double-charge the portfolio cap.
+    // Sync the reservation to the validated numbers once they exist. Reserve() books a provisional lot and risk;
+    // correlation shrink or lot-floor changes land after Reserve and the position reconciler needs the final lot.
     bool UpdateRisk(const string ownerTag, const double lotSize, const double riskPercent)
     {
         if(ownerTag == "" || lotSize <= 0.0 || riskPercent <= 0.0)
@@ -248,6 +246,19 @@ public:
         return ArraySize(m_positions);
     }
 
+    int GetReservedPositionCountExcludingOwner(const string ownerTag)
+    {
+        PruneStale();
+        int total = 0;
+        for(int i = 0; i < ArraySize(m_positions); i++)
+        {
+            if(ownerTag != "" && m_positions[i].ownerTag == ownerTag)
+                continue;
+            total++;
+        }
+        return total;
+    }
+
     double GetReservedRiskPercent()
     {
         PruneStale();
@@ -257,14 +268,28 @@ public:
         return total;
     }
 
-    double GetReservedRiskPercentForSymbol(const string symbol)
+    double GetReservedRiskPercentExcludingOwner(const string ownerTag)
     {
         PruneStale();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
-            if(m_positions[i].symbol == symbol)
-                total += MathMax(0.0, m_positions[i].riskPercent);
+            if(ownerTag != "" && m_positions[i].ownerTag == ownerTag)
+                continue;
+            total += MathMax(0.0, m_positions[i].riskPercent);
+        }
+        return total;
+    }
+
+    double GetReservedRiskPercentForSymbolExcludingOwner(const string symbol, const string ownerTag)
+    {
+        PruneStale();
+        double total = 0.0;
+        for(int i = 0; i < ArraySize(m_positions); i++)
+        {
+            if(m_positions[i].symbol != symbol || (ownerTag != "" && m_positions[i].ownerTag == ownerTag))
+                continue;
+            total += MathMax(0.0, m_positions[i].riskPercent);
         }
         return total;
     }
@@ -281,14 +306,16 @@ public:
         return total;
     }
 
-    int GetReservedPositionsOnSymbol(const string symbol)
+    int GetReservedPositionsOnSymbol(const string symbol, const string ownerTag = "")
     {
         PruneStale();
         int total = 0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
-            if(m_positions[i].symbol == symbol)
-                total++;
+            if(m_positions[i].symbol != symbol ||
+               (ownerTag != "" && m_positions[i].ownerTag == ownerTag))
+                continue;
+            total++;
         }
         return total;
     }

@@ -53,7 +53,6 @@ private:
     double m_validatorIntrabarMinQuality;
     double m_validatorNewBarMinQuality;
     double m_hardSpreadCutoffPoints;
-    bool   m_spikeHunterEnabled;
     bool   m_enableOFIProxy;
     bool   m_enableVPINFilter;
     double m_baseSpreadATRRatio;
@@ -66,7 +65,6 @@ public:
                                 // [BUGFIX] Cutoff tracks the configured max entry spread (InpMaxEntrySpreadPoints=15000):
                                 // synthetic indices spread 1,727-11,140 pts, so the old 1000-pt default vetoed every one.
                                 m_hardSpreadCutoffPoints(15000.0),
-                                m_spikeHunterEnabled(false),
                                 m_enableOFIProxy(false),
                                 m_enableVPINFilter(false),
                                 m_baseSpreadATRRatio(VALIDATOR_BASE_SPREAD_ATR_RATIO),
@@ -95,7 +93,7 @@ public:
     double GetAdaptiveQualityThreshold(const SConsensusDecisionContext& ctx, ENUM_SIGNAL_EVAL_MODE evalMode);
 
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
-                            bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
+                            bool enableOFI, bool enableVPIN,
                             double baseSpreadATRRatio, double syntheticSpreadATRRatio);
 };
 
@@ -170,11 +168,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         result.passed = false;
         result.vetoReason = "vpin_toxicity";
         return result;
-    }
-
-    if(m_spikeHunterEnabled)
-    {
-        // No-op: the spike monitor is not reachable from the validator.
     }
 
     // Full-margin circuit breaker and safe-mode kill zone are enforced at higher levels.
@@ -482,7 +475,6 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
 void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
                                                  double newBarMinQuality,
                                                  double hardSpreadCutoff,
-                                                 bool spikeHunterEnabled,
                                                  bool enableOFI,
                                                  bool enableVPIN,
                                                  double baseSpreadATRRatio,
@@ -492,7 +484,6 @@ void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
     m_validatorNewBarMinQuality = MathMax(0.0, MathMin(1.0, newBarMinQuality));
     // [BUGFIX] Floor of 1000 pts keeps a stale/small config from disarming the cutoff; larger settings pass through.
     m_hardSpreadCutoffPoints = MathMax(hardSpreadCutoff, 1000.0);
-    m_spikeHunterEnabled = spikeHunterEnabled;
     m_enableOFIProxy = enableOFI;
     m_enableVPINFilter = enableVPIN;
     m_baseSpreadATRRatio = baseSpreadATRRatio;

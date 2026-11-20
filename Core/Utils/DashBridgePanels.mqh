@@ -69,17 +69,9 @@ string CDashBridgePanels::BuildPositionsJson()
    return json;
 }
 
-// Build scalp panel JSON (placeholder for now)
 string CDashBridgePanels::BuildScalpJson()
 {
-   string json = "\"scalp\":{";
-   json += "\"active\":false,";
-   json += "\"open_positions\":0,";
-   json += "\"max_positions\":0,";
-   json += "\"total_entries\":0,";
-   json += "\"total_rejections\":0";
-   json += "}";
-   return json;
+   return "\"scalp\":{\"available\":false}";
 }
 
 string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData,

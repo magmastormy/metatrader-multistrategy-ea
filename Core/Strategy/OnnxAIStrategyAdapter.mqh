@@ -9,7 +9,6 @@
 #include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/OnnxBrain.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
-#include "../AI/PipelineScaler.mqh"
 #include "../AI/IFeaturePipeline.mqh"
 #include "../AI/FeaturePipelineONNX.mqh"
 
@@ -30,9 +29,7 @@ private:
     double          m_cachedConfidence;
     string          m_lastDecisionReasonTag;
     double          m_minConfidence;
-    CPipelineScaler m_scaler;
     string          m_scalerWatchPath;
-    datetime        m_lastScalerCheckTime;
     ulong           m_voteCount;
     ulong           m_buyVotes;
     ulong           m_sellVotes;
@@ -130,7 +127,6 @@ public:
         m_lastDecisionReasonTag = "ONNX_UNSET";
         m_minConfidence = 0.50;
         m_scalerWatchPath = "Resources\\scaler.bin";
-        m_lastScalerCheckTime = 0;
         m_voteCount = 0;
         m_buyVotes = 0;
         m_sellVotes = 0;
@@ -166,8 +162,6 @@ public:
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
-        m_lastScalerCheckTime = 0;
-
         if(!m_brain.Init(m_modelBuffer))
         {
             m_lastDecisionReasonTag = "ONNX_MODEL_UNAVAILABLE";
@@ -181,10 +175,6 @@ public:
             m_featurePipeline = new CFeaturePipelineONNX(m_scalerWatchPath);
             m_ownsPipeline = true;
         }
-        
-        if(m_scaler.LoadParams(m_scalerWatchPath, true))
-            PrintFormat("[ONNX] Loaded scaler parameters | features=%d | path=%s",
-                        m_scaler.GetFeatureCount(), m_scalerWatchPath);
         m_lastDecisionReasonTag = "ONNX_INITIALIZED";
         return true;
     }

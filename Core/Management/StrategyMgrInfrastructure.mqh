@@ -1,5 +1,5 @@
 // Leaf value object held BY VALUE by CEnterpriseStrategyManager; it has no back-pointer to the manager.
-// ReleaseOnDeinit() drops the infra-owned objects, FinishDeinit() the health monitor and the init flag.
+// ReleaseOnDeinit() drops the infrastructure-owned objects and FinishDeinit() clears the init flag.
 // Include only from EnterpriseStrategyManager.mqh.
 #ifndef STRATEGY_MGR_INFRASTRUCTURE_MQH
 #define STRATEGY_MGR_INFRASTRUCTURE_MQH
@@ -12,8 +12,6 @@
 #include "../Engines/FamilyStrategyWeightMatrix.mqh"      // CFamilyStrategyWeightMatrix
 #include "../Engines/FourStateRegimeDetector.mqh"         // CFourStateRegimeDetector
 #include "../Strategy/StrategyRegistry.mqh"               // CStrategyRegistry
-#include "StrategyHealthMonitor.mqh"                      // CStrategyHealthMonitor
-#include "EntStrategyQuorumConfig.mqh"                    // CEntStrategyQuorumConfig (health-monitor config source)
 #include "../../Core/Trading/TradeAttributionManager.mqh" // CTradeAttributionManager
 
 // Pointer-only collaborators (never dereferenced here)
@@ -39,7 +37,6 @@ private:
     bool                         m_regimeDetectorInitialized;
 
     CTradeAttributionManager* m_attribution;
-    CStrategyHealthMonitor*   m_healthMonitor;
 
     string          m_symbol;
     ENUM_TIMEFRAMES m_baseTimeframe;
@@ -53,17 +50,14 @@ public:
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                     bool usePipeline,
                     CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
-                    CUnifiedRiskManager* unifiedRiskManagerPtr,
-                    CEntStrategyQuorumConfig &quorumConfig);
+                    CUnifiedRiskManager* unifiedRiskManagerPtr);
 
     //--- destructor teardown; does NOT delete the injected m_attribution
     void ReleaseOnDestruct();
     //--- explicit-Deinit teardown, part 1 (up to and including attribution)
     void ReleaseOnDeinit();
-    //--- explicit-Deinit teardown, part 2 (health monitor + init flag)
+    //--- explicit-Deinit completion
     void FinishDeinit();
-
-    void AllocateHealthMonitor();
 
     //--- pipeline half of SetPipelineFilters(); the confidence-floor cache stays in the quorum config object
     void ApplyPipelineFilters(SignalFilterSettings &settings);
@@ -90,8 +84,6 @@ public:
     CFourStateRegimeDetector*    GetFourStateRegimeDetector() const{ return m_fourStateRegimeDetector; }
     CStrategyRegistry*           GetStrategyRegistry() const       { return m_strategyRegistry; }
     CTradeAttributionManager*    GetAttribution() const            { return m_attribution; }
-    CStrategyHealthMonitor*      GetHealthMonitor() const          { return m_healthMonitor; }
-
     bool            IsRegimeDetectorInitialized() const { return m_regimeDetectorInitialized; }
     string          GetManagedSymbol() const            { return m_symbol; }
     ENUM_TIMEFRAMES GetBaseTimeframe() const            { return m_baseTimeframe; }
@@ -114,7 +106,6 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_strategyRegistry(NULL),                // Injected registry
     m_regimeDetectorInitialized(false),
     m_attribution(NULL),
-    m_healthMonitor(NULL),
     m_baseTimeframe(PERIOD_CURRENT),
     m_initialized(false),
     m_usePipeline(true)
@@ -122,18 +113,12 @@ CStrategyMgrInfrastructure::CStrategyMgrInfrastructure() :
     m_symbol = "";
 }
 
-void CStrategyMgrInfrastructure::AllocateHealthMonitor()
-{
-    m_healthMonitor = new CStrategyHealthMonitor();
-}
-
 // The pipeline is mandatory: allocation or initialization failure returns false.
 // FourStateRegimeDetector is optional: its failure only warns and leaves the pointer NULL.
 bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                             bool usePipeline,
                                             CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
-                                            CUnifiedRiskManager* unifiedRiskManagerPtr,
-                                            CEntStrategyQuorumConfig &quorumConfig)
+                                            CUnifiedRiskManager* unifiedRiskManagerPtr)
 {
     m_symbol = symbol;
     m_baseTimeframe = timeframe;
@@ -167,19 +152,6 @@ bool CStrategyMgrInfrastructure::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_drawingManager = NULL;
 
     // m_attribution is injected from EAOrchestrator; never create it here.
-
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
-    m_healthMonitor = new CStrategyHealthMonitor();
-    if(m_healthMonitor != NULL)
-    {
-        m_healthMonitor.SetOrchestratorMode(quorumConfig.GetMinWinRateThreshold(),
-                                            quorumConfig.GetMaxConsecutiveLossesLimit());
-        m_healthMonitor.SetRollingWindowSize(quorumConfig.GetRollingWindowSize());
-    }
 
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
     if(m_fourStateRegimeDetector != NULL)
@@ -223,11 +195,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDestruct()
     }
 
     // Do not delete m_attribution here (injected; the orchestrator owns it).
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
 }
 
 void CStrategyMgrInfrastructure::ReleaseOnDeinit()
@@ -250,12 +217,6 @@ void CStrategyMgrInfrastructure::ReleaseOnDeinit()
 
 void CStrategyMgrInfrastructure::FinishDeinit()
 {
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
-
     m_initialized = false;
 }
 

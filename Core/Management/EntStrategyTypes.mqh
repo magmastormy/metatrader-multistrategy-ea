@@ -1,10 +1,10 @@
 // Shared value types and file-scope enum -> text / clamp helpers for the manager slice modules.
-// They must be visible before CStrategyStateReporter / CStrategyRegistryState / CIntrabarPolicy /
+// They must be visible before CStrategyStateReporter / CStrategyRegistryState /
 // CConsensusEngine define, so keep this include where the originals sat: after the registry, before them.
 #ifndef ENT_STRATEGY_TYPES_MQH
 #define ENT_STRATEGY_TYPES_MQH
 
-#include "../Utils/Enums.mqh"              // ENUM_STRATEGY_TIER / ROLE / CLUSTER / INTRABAR_POLICY / TRADE_SIGNAL
+#include "../Utils/Enums.mqh"              // ENUM_STRATEGY_TIER / ROLE / CLUSTER / TRADE_SIGNAL
 #include "../../Interfaces/IStrategy.mqh"  // IStrategy* member of StrategyEntry
 
 struct StrategyEntry
@@ -12,7 +12,6 @@ struct StrategyEntry
     IStrategy* strategy;
     string name;
     bool enabled;
-    int intrabarPolicy;
     bool liveVotingEnabled;
     int role;
     int cluster;
@@ -34,8 +33,6 @@ struct StrategyEntry
     int consecutiveLosses;
     int consecutiveWins;
 
-    bool temporarilyDisabled;
-    datetime disabledUntil;
 };
 
 string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
@@ -73,17 +70,6 @@ string StrategyClusterShortCode(const ENUM_STRATEGY_CLUSTER cluster)
         case STRATEGY_CLUSTER_NONE:
         default:
             return "N";
-    }
-}
-
-string IntrabarPolicyToString(const ENUM_INTRABAR_POLICY policy)
-{
-    switch(policy)
-    {
-        case INTRABAR_POLICY_OFF: return "OFF";
-        case INTRABAR_POLICY_PROBE: return "PROBE";
-        case INTRABAR_POLICY_LIVE: return "LIVE";
-        default: return "OFF";
     }
 }
 

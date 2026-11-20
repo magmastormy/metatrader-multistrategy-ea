@@ -22,7 +22,7 @@ private:
         m_config.featureCount = FEATURE_VECTOR_SIZE;
         m_config.sequenceLength = ONNX_SEQ_LEN;
         m_config.modelType = "ONNX";
-        m_config.description = "ONNX pipeline with 65 features + scaler + sequence";
+        m_config.description = "ONNX pipeline with a training scaler and sequence";
         m_config.createdTime = TimeCurrent();
         m_config.author = "System";
         
@@ -40,11 +40,9 @@ public:
         m_scalerPath = scalerPath;
         InitializeConfig();
         
-        // Load scaler if available
-        if(FileIsExist(m_scalerPath, FILE_COMMON))
-        {
-            m_scaler.LoadParams(m_scalerPath, true);
-        }
+        if(!m_scaler.LoadParams(m_scalerPath, true, FEATURE_VECTOR_SIZE))
+            PrintFormat("[PIPELINE-ONNX] Scaler missing or incompatible | expected_features=%d | path=%s | inference disabled",
+                        FEATURE_VECTOR_SIZE, m_scalerPath);
     }
     
     virtual ~CFeaturePipelineONNX() {}
@@ -58,15 +56,8 @@ public:
         if(!CAIFeatureVectorBuilder::BuildNNFeatureVector(symbol, timeframe, features, barShift))
             return false;
         
-        // Apply scaler if loaded
-        if(m_scaler.IsLoaded())
-        {
-            if(!m_scaler.Apply(features))
-            {
-                PrintFormat("[PIPELINE-ONNX] WARNING: Scaler apply failed for %s", symbol);
-                // Don't fail, just continue with unscaled features
-            }
-        }
+        if(!m_scaler.IsLoaded() || !m_scaler.Apply(features))
+            return false;
         
         m_metadata.usageCount++;
         return true;
@@ -141,26 +132,6 @@ public:
         m_config = metadata.config;
     }
     
-    // Reload scaler parameters
-    bool ReloadScaler()
-    {
-        if(FileIsExist(m_scalerPath, FILE_COMMON))
-        {
-            return m_scaler.LoadParams(m_scalerPath, true);
-        }
-        return false;
-    }
-    
-    // Check if scaler is loaded
-    bool HasScaler() const
-    {
-        return m_scaler.IsLoaded();
-    }
-    
-    void SetScalerPath(const string path)
-    {
-        m_scalerPath = path;
-    }
 };
 
 #endif // CORE_AI_FEATURE_PIPELINE_ONNX_MQH

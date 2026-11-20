@@ -7,10 +7,9 @@
 #ifndef STRATEGY_REGISTRY_STATE_MQH
 #define STRATEGY_REGISTRY_STATE_MQH
 
-#include "../Utils/Enums.mqh"                       // ENUM_STRATEGY_TIER / ROLE / CLUSTER, ENUM_INTRABAR_POLICY
+#include "../Utils/Enums.mqh"                       // ENUM_STRATEGY_TIER / ROLE / CLUSTER
 #include "../../Interfaces/IStrategy.mqh"           // IStrategy::Init / InitializeAI / ValidateRiskManagerInjection
 #include "../Strategy/StrategyRegistry.mqh"         // CStrategyRegistry::IsStrategyActive
-#include "StrategyHealthMonitor.mqh"                // CStrategyHealthMonitor::RegisterStrategy
 
 //--- Registration data lives in Core/Strategy/StrategyCatalog.mqh.
 
@@ -31,7 +30,6 @@ public:
                           bool enabled, double weight,
                           ENUM_STRATEGY_TIER tier,
                           ENUM_TIMEFRAMES tf,
-                          ENUM_INTRABAR_POLICY intrabarPolicy,
                           ENUM_STRATEGY_ROLE role,
                           ENUM_STRATEGY_CLUSTER cluster,
                           bool liveVotingEnabled);
@@ -45,7 +43,6 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
                                               bool enabled, double weight,
                                               ENUM_STRATEGY_TIER tier,
                                               ENUM_TIMEFRAMES tf,
-                                              ENUM_INTRABAR_POLICY intrabarPolicy,
                                               ENUM_STRATEGY_ROLE role,
                                               ENUM_STRATEGY_CLUSTER cluster,
                                               bool liveVotingEnabled)
@@ -107,15 +104,13 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
     strategy.SetEnabled(enabled);
     strategy.SetWeight(weight);
 
-    // Entry append, health-monitor enrolment and count bump stay in the manager
-    // behind AppendRegisteredStrategyEntry (see header note).
+    // Entry append and count bump stay in the manager behind AppendRegisteredStrategyEntry.
     m_src.AppendRegisteredStrategyEntry(strategy, name, enabled, weight, tier, resolvedTf,
-                                        intrabarPolicy, role, cluster, liveVotingEnabled);
+                                        role, cluster, liveVotingEnabled);
 
     Print("[EnterpriseStrategyManager] Registered strategy: ", name,
           " | Enabled: ", enabled, " | Tier: ", (int)tier, " | Weight: ", weight,
           " | TF: ", EnumToString(resolvedTf),
-          " | Intrabar(report-only): ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_src.GetStrategyIntrabarPolicyRaw(m_src.GetStrategyCount() - 1)),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
           " | LiveVote: ", liveVotingEnabled ? "YES" : "NO");

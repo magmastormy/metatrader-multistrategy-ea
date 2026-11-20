@@ -105,16 +105,30 @@ public:
             if(!HasTakenPartial(ticket) && halfVol >= minVol && halfVol < volume &&
                GlobalVariableSet(LatchName(ticket), (double)TimeCurrent()) != 0)
             {
-               if(!trade.PositionClosePartial(ticket, halfVol))
+               bool requestAccepted = trade.PositionClosePartial(ticket, halfVol);
+               uint retcode = trade.ResultRetcode();
+               bool fillRetcode = (retcode == TRADE_RETCODE_DONE ||
+                                   retcode == TRADE_RETCODE_DONE_PARTIAL);
+               bool positionStillOpen = PositionSelectByTicket(ticket);
+               double remainingVolume = positionStillOpen ? PositionGetDouble(POSITION_VOLUME) : 0.0;
+               double volumeTolerance = MathMax(stepVol * 0.5, 1e-8);
+               bool volumeReduced = positionStillOpen && remainingVolume < volume - volumeTolerance;
+
+               if(!volumeReduced)
                {
                   GlobalVariableDel(LatchName(ticket));
                   PrintFormat("[ATR-SCALP-PARTIAL-FAILED] %s | ticket=%I64u | retcode=%u",
-                              symbol, ticket, trade.ResultRetcode());
+                              symbol, ticket, retcode);
                }
                else
                {
-                  PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
-                              symbol, ticket, halfVol, profitPoints, slDistancePoints);
+                  double closedVolume = volume - remainingVolume;
+                  if(!fillRetcode || !requestAccepted)
+                     PrintFormat("[ATR-SCALP-PARTIAL-RETCODE-MISMATCH] %s | ticket=%I64u | accepted=%s | retcode=%u | volume_reduced=%.2f",
+                                 symbol, ticket, requestAccepted ? "true" : "false", retcode, closedVolume);
+                  else
+                     PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
+                                 symbol, ticket, closedVolume, profitPoints, slDistancePoints);
                }
             }
          }

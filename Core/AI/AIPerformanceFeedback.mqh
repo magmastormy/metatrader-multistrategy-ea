@@ -180,7 +180,10 @@ public:
     double CalculateCalibrationError(void);
     double CalculateSharpeRatio(void);
     
-    void PersistRetrainingRequest(const string reason);
+    bool PersistRetrainingRequest(const string reason);
+    bool ReadRetrainingSnapshot(const string &fileName, uchar &bytes[]);
+    bool ValidateRetrainingSnapshot(const uchar &bytes[], const bool allowEmpty);
+    bool PromoteRetrainingSnapshot(const string &tempFile, const string &fileName);
     void ExportLabeledDataset(const string fileName, const int maxRows);
     
     void LogFeedback(const string message)
@@ -188,6 +191,76 @@ public:
         PrintFormat("[AI-FEEDBACK] %s", message);
     }
 };
+
+bool CAIPerformanceFeedback::ReadRetrainingSnapshot(const string &fileName, uchar &bytes[])
+{
+    int handle = FileOpen(fileName, FILE_READ | FILE_BIN);
+    if(handle == INVALID_HANDLE)
+        return false;
+
+    ulong size = FileSize(handle);
+    if(size > 2147483647)
+    {
+        FileClose(handle);
+        return false;
+    }
+
+    if(ArrayResize(bytes, (int)size) != (int)size)
+    {
+        FileClose(handle);
+        return false;
+    }
+
+    uint bytesRead = (size > 0) ? FileReadArray(handle, bytes, 0, (uint)size) : 0;
+    FileClose(handle);
+    return (ulong)bytesRead == size;
+}
+
+bool CAIPerformanceFeedback::ValidateRetrainingSnapshot(const uchar &bytes[], const bool allowEmpty)
+{
+    int size = ArraySize(bytes);
+    if(size == 0)
+        return allowEmpty;
+
+    string expectedHeader = "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n";
+    int headerSize = StringLen(expectedHeader);
+    if(size < headerSize || bytes[size - 1] != 10)
+        return false;
+
+    for(int i = 0; i < headerSize; i++)
+        if(bytes[i] != (uchar)StringGetCharacter(expectedHeader, i))
+            return false;
+
+    int commas = 0;
+    int lineLength = 0;
+    for(int i = 0; i < size; i++)
+    {
+        if(bytes[i] == 44)
+            commas++;
+        if(bytes[i] == 10)
+        {
+            if(lineLength <= 0 || commas != 5)
+                return false;
+            commas = 0;
+            lineLength = 0;
+        }
+        else if(bytes[i] != 13)
+        {
+            lineLength++;
+        }
+    }
+    return lineLength == 0;
+}
+
+bool CAIPerformanceFeedback::PromoteRetrainingSnapshot(const string &tempFile, const string &fileName)
+{
+    if(FileMove(tempFile, 0, fileName, FILE_REWRITE))
+        return true;
+
+    LogFeedback("Failed to promote staged retraining log: " + fileName +
+                " (err=" + IntegerToString(GetLastError()) + "); preserving both files");
+    return false;
+}
 
 CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_maxRecords(1000),
@@ -513,31 +586,40 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
         return;
     }
 
+    bool effectivenessWindow = false;
+    bool metricsImproved = true;
+
     // Effectiveness check: runs only after a previous retrain and two metrics-update intervals
     if(m_retrainingCount > 0 && m_currentMetrics.totalPredictions > m_minPredictionsForRetraining)
     {
         double timeSinceLastRetrain = (double)(TimeCurrent() - m_lastRetrainingTime);
         if(timeSinceLastRetrain > m_metricsUpdateInterval * 2)  // Wait for at least 2 metric update cycles
         {
-            bool metricsImproved = (m_currentMetrics.accuracy > m_preRetrainAccuracy + 0.001 ||
-                                    m_currentMetrics.profitability > m_preRetrainProfitability + 0.0001 ||
-                                    m_currentMetrics.sharpeRatio > m_preRetrainSharpe + 0.001);
+            effectivenessWindow = true;
+            metricsImproved = (m_currentMetrics.accuracy > m_preRetrainAccuracy + 0.001 ||
+                               m_currentMetrics.profitability > m_preRetrainProfitability + 0.0001 ||
+                               m_currentMetrics.sharpeRatio > m_preRetrainSharpe + 0.001);
             if(!metricsImproved)
             {
-                m_consecutiveFailedRetrains++;
-                if(m_consecutiveFailedRetrains >= 3)
+                if(m_consecutiveFailedRetrains + 1 >= 3)
                 {
+                    m_consecutiveFailedRetrains++;
                     m_retrainPauseUntil = TimeCurrent() + 3600;  // 1 hour pause
                     PrintFormat("[AI-RETRAIN-PAUSED] 3 consecutive ineffective retrain attempts. Pausing for 1 hour.");
                     return;
                 }
             }
-            else
-            {
-                m_consecutiveFailedRetrains = 0;
-            }
         }
     }
+
+    if(!PersistRetrainingRequest(reason))
+    {
+        LogFeedback("Retraining request persistence failed; cooldown and attempt count unchanged");
+        return;
+    }
+
+    if(effectivenessWindow)
+        m_consecutiveFailedRetrains = metricsImproved ? 0 : m_consecutiveFailedRetrains + 1;
 
     m_lastRetrainingTime = TimeCurrent();
     m_retrainingCount++;
@@ -549,7 +631,6 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     m_preRetrainProfitability = m_currentMetrics.profitability;
     m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
 
-    PersistRetrainingRequest(reason);
     ExportLabeledDataset("AI_Retraining_Dataset.csv", 500);
 
     LogFeedback("AI model retraining triggered: " + reason);
@@ -764,7 +845,7 @@ void CAIPerformanceFeedback::SetRetrainingThresholds(double minAccuracy, double 
                             m_minAccuracyThreshold * 100, m_minProfitabilityThreshold));
 }
 
-void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
+bool CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
 {
     string cleanReason = reason;
     StringReplace(cleanReason, ",", ";");
@@ -774,33 +855,30 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
     string fileName = "AI_Retraining_Requests.csv";
     string tempFile = fileName + ".tmp";
 
-    // Read the existing log verbatim so pending requests survive the rewrite.
-    // The previous code opened the live file with FILE_READ | FILE_WRITE, which
-    // truncates it ahead of writing back only the new row; a crash or write
-    // failure between those steps lost every pending retraining request. We now
-    // stage the full log in a temp file and atomically replace the original with
-    // FileMove(FILE_REWRITE), the same approach as crash_recovery_helpers.mqh.
-    uchar existing[];
+    if(FileIsExist(tempFile, 0))
     {
-        int inHandle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI);
-        if(inHandle != INVALID_HANDLE)
+        uchar stagedSnapshot[];
+        if(!ReadRetrainingSnapshot(tempFile, stagedSnapshot) ||
+           !ValidateRetrainingSnapshot(stagedSnapshot, false))
         {
-            uchar buffer[];
-            ArrayResize(buffer, 4096);
-            while(!FileIsEnding(inHandle))
-            {
-                uint bytesRead = FileReadArray(inHandle, buffer, 0, 4096);
-                if(bytesRead <= 0)
-                    break;
-                int old = ArraySize(existing);
-                ArrayResize(existing, old + (int)bytesRead);
-                ArrayCopy(existing, buffer, old, 0, (int)bytesRead);
-            }
-            FileClose(inHandle);
+            LogFeedback("Staged retraining log is unreadable or incomplete; preserving it and refusing overwrite");
+            return false;
         }
+        if(!PromoteRetrainingSnapshot(tempFile, fileName))
+            return false;
     }
 
-    bool writeHeader = (ArraySize(existing) == 0);
+    uchar existing[];
+    bool hasExistingFile = FileIsExist(fileName, 0);
+    if(hasExistingFile &&
+       (!ReadRetrainingSnapshot(fileName, existing) ||
+        !ValidateRetrainingSnapshot(existing, true)))
+    {
+        LogFeedback("Existing retraining log is unreadable or incomplete; refusing to replace it");
+        return false;
+    }
+
+    bool writeHeader = (!hasExistingFile || ArraySize(existing) == 0);
 
     string line = StringFormat("%s,%s,%d,%.6f,%.6f,%.6f\n",
                                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
@@ -816,7 +894,7 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
     if(handle == INVALID_HANDLE)
     {
         LogFeedback("Failed to open retraining request log: " + tempFile);
-        return;
+        return false;
     }
 
     bool ok = true;
@@ -830,27 +908,19 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
 
     if(!ok)
     {
-        FileDelete(tempFile, 0);
-        return;
+        LogFeedback("Failed to write complete staged retraining log; preserving staged file");
+        return false;
     }
 
-    // FILE_REWRITE replaces the destination in one step, so the last good state
-    // is never deleted ahead of a failed move. This terminal rejects FILE_REWRITE
-    // (err 5020, measured in the live journal), so the fallback is the same one
-    // crash recovery learned: remove the destination, then plain-move the temp.
-    if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
+    uchar stagedSnapshot[];
+    if(!ReadRetrainingSnapshot(tempFile, stagedSnapshot) ||
+       !ValidateRetrainingSnapshot(stagedSnapshot, false))
     {
-        int rewriteErr = GetLastError();
-        if(FileIsExist(fileName, 0))
-            FileDelete(fileName, 0);
-        if(!FileMove(tempFile, 0, fileName, 0))
-        {
-            // Both failed. The temp file is the only complete copy, so keep it instead of deleting it.
-            LogFeedback("Failed to promote temp retraining log: " + fileName +
-                        " (rewriteErr=" + IntegerToString(rewriteErr) +
-                        " moveErr=" + IntegerToString(GetLastError()) + ") - kept " + tempFile + " as the only copy");
-        }
+        LogFeedback("Staged retraining log failed validation; preserving it and the last good log");
+        return false;
     }
+
+    return PromoteRetrainingSnapshot(tempFile, fileName);
 }
 
 // Writes the newest maxRows labelled records; FILE_WRITE truncates the previous export
@@ -913,7 +983,7 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
     }
 
     FileClose(handle);
-    if(!FileMove(tempFile, FILE_REWRITE, fileName, 0))
+    if(!FileMove(tempFile, 0, fileName, FILE_REWRITE))
     {
         LogFeedback("Failed to promote temp file: " + fileName + " (err=" + IntegerToString(GetLastError()) + ")");
         FileDelete(tempFile, 0);

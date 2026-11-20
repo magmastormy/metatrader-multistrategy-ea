@@ -61,13 +61,6 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
       return result;
    }
    
-   if(!health.CheckHealth(transport))
-   {
-      result.success = false;
-      result.error_message = "Python bridge not available";
-      return result;
-   }
-   
    string json = CPyBridgeProtocol::BuildPredictRequest(features, features_size, mode,
                                                         family_id, symbol,
                                                         asset_class, asset_class_name);
@@ -76,9 +69,8 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
    string requestUrl = transport.GetEndpoint() + "/predict";
    if(transport.SendHttpRequest("POST", requestUrl, json, response))
    {
+      health.MarkSuccessfulResponse(transport, TimeCurrent());
       result = CPyBridgeProtocol::ParsePredictionResponse(response);
-      if(result.success)
-         health.MarkHeartbeat(TimeCurrent());
    }
    else
    {

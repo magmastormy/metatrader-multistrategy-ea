@@ -7,7 +7,6 @@ interface UseWebSocketReturn {
   lastMessage: WSMessage | null;
   isConnected: boolean;
   status: ConnectionStatus;
-  send: (data: unknown) => void;
   reconnect: () => void;
 }
 
@@ -97,12 +96,6 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, [connect]);
 
-  const send = useCallback((data: unknown) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
-    }
-  }, []);
-
   const reconnect = useCallback(() => {
     reconnectDelayRef.current = 1000;
     reconnectAttemptsRef.current = 0;
@@ -113,5 +106,5 @@ export function useWebSocket(): UseWebSocketReturn {
     connect();
   }, [connect]);
 
-  return { lastMessage, isConnected: status === 'connected', status, send, reconnect };
+  return { lastMessage, isConnected: status === 'connected', status, reconnect };
 }

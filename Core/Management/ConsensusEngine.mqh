@@ -165,7 +165,7 @@ void CConsensusEngine::SyncEnabledWithRegistry()
     {
         string entryName = m_src.GetStrategyName(i);
         bool registryActive = strategyRegistry.IsStrategyActive(entryName);
-        bool shouldEnable = registryActive && !m_src.IsStrategyTemporarilyDisabled(i);
+        bool shouldEnable = registryActive;
         if(shouldEnable != m_src.IsStrategyEnabled(i))
         {
             m_src.SetStrategyEnabledFlag(i, shouldEnable);

@@ -379,10 +379,6 @@ public:
       }
       int magic = m_baseMagic + m_config.magicOffset + level;
 
-      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
-      if(!m_execution.PassesRiskValidation(symbol, orderType, lotSize, slDistance, level))
-         return false;
-
       // L10-018: AI-VOTE logging
       m_execution.LogAIVote(symbol, direction);
 
@@ -417,6 +413,22 @@ public:
 
       if(atr <= 0.0 || direction == 0)
          return;
+
+      for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
+      {
+         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket > 0)
+            continue;
+
+         int expectedMagic = m_baseMagic + m_config.magicOffset + l;
+         ulong resolvedTicket = m_execution.FindLevelPositionTicket(symbol, expectedMagic);
+         if(resolvedTicket == 0)
+         {
+            PrintFormat("[GRID-RECOVERY] POSITION RECONCILIATION PENDING | %s L%d | blocking additional entries until the position ticket resolves",
+                        symbol, l);
+            return;
+         }
+         m_symbolStates[idx].levels[l].ticket = resolvedTicket;
+      }
 
       // Check drawdown limit
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
@@ -497,13 +509,29 @@ public:
 
       for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
       {
-         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket == 0)
+         if(!m_symbolStates[idx].levels[l].isActive)
             continue;
+
+         if(m_symbolStates[idx].levels[l].ticket == 0)
+         {
+            int expectedMagic = m_baseMagic + m_config.magicOffset + l;
+            m_symbolStates[idx].levels[l].ticket = m_execution.FindLevelPositionTicket(symbol, expectedMagic);
+            if(m_symbolStates[idx].levels[l].ticket == 0)
+            {
+               allClosed = false;
+               PrintFormat("[GRID-RECOVERY] CLOSE DEFERRED | %s L%d | position ticket unresolved; ownership and risk state retained",
+                           symbol, l);
+               continue;
+            }
+         }
 
          if(PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
          {
             if(!m_execution.ClosePositionTicket(symbol, l, m_symbolStates[idx].levels[l].ticket))
+            {
                allClosed = false;
+               continue;
+            }
             else
                closedCount++;
          }
@@ -512,10 +540,13 @@ public:
          m_symbolStates[idx].levels[l].ticket = 0;
       }
 
-      m_symbolStates[idx].activeLevelCount = 0;
-      m_symbolStates[idx].direction = 0;
-      m_symbolStates[idx].totalGridRisk = 0.0;
-      m_metrics.RecordGridClosed();
+      if(allClosed)
+      {
+         m_symbolStates[idx].activeLevelCount = 0;
+         m_symbolStates[idx].direction = 0;
+         m_symbolStates[idx].totalGridRisk = 0.0;
+         m_metrics.RecordGridClosed();
+      }
 
       PrintFormat("[GRID-RECOVERY] Closed grid for %s | closed=%d | allClosed=%s",
                   symbol, closedCount, allClosed ? "true" : "false");

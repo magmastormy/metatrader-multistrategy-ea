@@ -10,9 +10,6 @@ import NeuralNetViz from './components/shared/NeuralNetViz';
 import NetworkMesh from './components/shared/NetworkMesh';
 import AnimatedCounter from './components/shared/AnimatedCounter';
 import { ModelTopology } from './components/ai/ModelTopology';
-import { RegimeTransitionDiagram } from './components/ai/RegimeTransitionDiagram';
-import { AttentionHeatmap } from './components/ai/AttentionHeatmap';
-import { SignalFlowDiagram } from './components/ai/SignalFlowDiagram';
 import { AIModelSelector } from './components/ai/AIModelSelector';
 import type { ReactNode } from 'react';
 
@@ -54,7 +51,7 @@ function Section({ id, title, meta, children }: { id: string; title: string; met
    DASHBOARD
    ===================================================================== */
 export default function Dashboard({ theme }: { theme: string }) {
-  const { state, logs, isConnected, connectionStatus, reconnect, sendCommand } = useEAState();
+  const { state, logs, isConnected, connectionStatus, reconnect } = useEAState();
 
   /* equity history */
   const eqRef = useRef<{ time: string; equity: number; balance: number }[]>([]);
@@ -86,25 +83,6 @@ export default function Dashboard({ theme }: { theme: string }) {
 
   const mode = state?.execution_mode ?? '—';
   const [selectedModel, setSelectedModel] = useState<'Neural Net (MLP)' | 'Transformer' | 'Ensemble' | 'ONNX' | 'Meta-Labeler'>('Neural Net (MLP)');
-
-  // Mock attention weights for demo (in production, comes from WebSocket)
-  const attentionWeights = useMemo(() => {
-    const weights: number[] = [];
-    const numHeads = 4;
-    const seqLen = 20;
-    for (let h = 0; h < numHeads; h++) {
-      for (let q = 0; q < seqLen; q++) {
-        for (let k = 0; k < seqLen; k++) {
-          // Diagonal-heavy attention pattern
-          const dist = Math.abs(q - k);
-          const base = Math.exp(-dist * 0.3);
-          const noise = Math.random() * 0.1;
-          weights.push(Math.min(base + noise, 1.0));
-        }
-      }
-    }
-    return weights;
-  }, []);
 
   const statusMeta = isConnected
       ? mode === 'LIVE'
@@ -219,11 +197,20 @@ export default function Dashboard({ theme }: { theme: string }) {
               <div className="card">
                 <div className="between" style={{ marginBottom: 8 }}>
                   <span className="divider-label" style={{ margin: 0 }}>Scalp Mode</span>
-                  <StatusBadge status={state.scalp.active ? 'online' : 'offline'} label={state.scalp.active ? 'Active' : 'Inactive'} />
+                  <StatusBadge
+                    status={state.scalp.available && state.scalp.active ? 'online' : 'offline'}
+                    label={!state.scalp.available ? 'Unavailable' : state.scalp.active ? 'Active' : 'Inactive'}
+                  />
                 </div>
-                <div className="kv"><span className="k">Positions</span><span className="v">{state.scalp.open_positions}/{state.scalp.max_positions}</span></div>
-                <div className="kv"><span className="k">Entries</span><span className="v">{state.scalp.total_entries}</span></div>
-                <div className="kv"><span className="k">Rejected</span><span className="v">{state.scalp.total_rejections}</span></div>
+                {state.scalp.available ? (
+                  <>
+                    <div className="kv"><span className="k">Positions</span><span className="v">{state.scalp.open_positions}/{state.scalp.max_positions}</span></div>
+                    <div className="kv"><span className="k">Entries</span><span className="v">{state.scalp.total_entries}</span></div>
+                    <div className="kv"><span className="k">Rejected</span><span className="v">{state.scalp.total_rejections}</span></div>
+                  </>
+                ) : (
+                  <div className="kv"><span className="k">Telemetry</span><span className="v">Not connected</span></div>
+                )}
               </div>
             </div>
           </>
@@ -396,7 +383,7 @@ export default function Dashboard({ theme }: { theme: string }) {
       </Section>
 
       {/* ================= AI / CONSENSUS ================= */}
-      <Section id="ai" title="AI & Consensus" meta={state ? `Features ${state.ai.features_total ?? 65}` : undefined}>
+      <Section id="ai" title="AI & Consensus" meta={state?.ai.features_total !== undefined ? `Features ${state.ai.features_total}` : undefined}>
         {state && (
           <div className="stack">
             <div className="grid cols-6">
@@ -448,27 +435,30 @@ export default function Dashboard({ theme }: { theme: string }) {
             {/* --- AI Architecture & Diagnostics --- */}
             <div className="split-6-6">
               <div className="card">
-                <div className="between" style={{ marginBottom: 8 }}>
-                  <span className="divider-label" style={{ margin: 0 }}>Model Architecture</span>
-                  <StatusBadge status={state.ai.neural_net?.active ? 'online' : 'offline'} label={state.ai.neural_net?.active ? 'Loaded' : 'Off'} />
-                </div>
+                <div className="divider-label">Architecture Preview (Local)</div>
                 <AIModelSelector selected={selectedModel} onSelect={setSelectedModel} />
                 <ModelTopology modelName={selectedModel} />
+                <div className="muted" style={{ marginTop: 8 }}>Changing this selection updates the diagram only; it does not configure the EA.</div>
               </div>
               <div className="card">
-                <div className="divider-label">Signal Pipeline</div>
-                <SignalFlowDiagram ai={state.ai} nn={state.ai.neural_net} regime={state.ai.regime} />
+                <div className="divider-label">Pipeline Gate Telemetry</div>
+                <div className="empty">Stage-level gate outcomes are not exposed by the EA. Aggregate AI values do not prove that a pipeline gate passed.</div>
               </div>
             </div>
 
             <div className="split-6-6">
               <div className="card">
-                <div className="divider-label">Regime Transitions (HMM)</div>
-                <RegimeTransitionDiagram regime={state.ai.regime} />
+                <div className="divider-label">Regime Probabilities</div>
+                <Detail k="Current" v={state.ai.regime?.current ?? '—'} />
+                <Detail k="Trend" v={state.ai.regime?.trend_prob !== undefined ? pct(state.ai.regime.trend_prob) : '—'} />
+                <Detail k="Range" v={state.ai.regime?.range_prob !== undefined ? pct(state.ai.regime.range_prob) : '—'} />
+                <Detail k="Volatile" v={state.ai.regime?.volatile_prob !== undefined ? pct(state.ai.regime.volatile_prob) : '—'} />
+                <Detail k="Spike" v={state.ai.regime?.spike_prob !== undefined ? pct(state.ai.regime.spike_prob) : '—'} />
+                <div className="empty">Transition probabilities are not provided by EA telemetry.</div>
               </div>
               <div className="card">
                 <div className="divider-label">Attention Weights (Transformer)</div>
-                <AttentionHeatmap attentionWeights={attentionWeights} numHeads={4} seqLen={20} />
+                <div className="empty">Unavailable: the EA does not publish transformer attention weights.</div>
               </div>
             </div>
 
@@ -525,8 +515,8 @@ export default function Dashboard({ theme }: { theme: string }) {
       </Section>
 
       {/* ================= CONTROL ================= */}
-      <Section id="control" title="Control" meta={mode !== '—' ? `Mode: ${mode}` : undefined}>
-        <ControlPanel mode={mode} isConnected={isConnected} sendCommand={sendCommand} />
+      <Section id="control" title="Execution Status" meta={mode !== '—' ? `Mode: ${mode}` : undefined}>
+        <ControlPanel mode={mode} isConnected={isConnected} />
       </Section>
     </main>
   );
@@ -684,58 +674,15 @@ function LogsPanel({ logs }: { logs: LogEntry[] }) {
 /* =====================================================================
    CONTROL PANEL
    ===================================================================== */
-function ControlPanel({ mode, isConnected, sendCommand }: {
-  mode: string; isConnected: boolean; sendCommand: (c: string, p?: Record<string, unknown>) => void;
-}) {
-  const [param, setParam] = useState('');
-  const [val, setVal] = useState('');
-  const [confirmStop, setConfirmStop] = useState(false);
-  const [fb, setFb] = useState('');
-
-  const note = (m: string) => { setFb(m); setTimeout(() => setFb(''), 3000); };
-
-  if (!isConnected) return <div className="empty"><div className="em">Disconnected</div>Connect to the EA to use controls.</div>;
-
+function ControlPanel({ mode, isConnected }: { mode: string; isConnected: boolean }) {
   return (
-    <div className="grid cols-2">
-      <div className="card">
-        <div className="divider-label">Execution Mode</div>
-        <div className="seg" style={{ marginTop: 6 }}>
-          <button className={mode === 'SHADOW' ? 'sel' : ''} onClick={() => { sendCommand('set_mode', { mode: 'SHADOW' }); note('Switching to SHADOW'); }}>Shadow</button>
-          <button className={mode === 'LIVE' ? 'sel' : ''} onClick={() => { sendCommand('set_mode', { mode: 'LIVE' }); note('Switching to LIVE'); }}>Live</button>
-          <button className={mode === 'OFF' ? 'sel' : ''} onClick={() => { sendCommand('set_mode', { mode: 'OFF' }); note('Switching to OFF'); }}>Off</button>
-        </div>
-        <div className="note" style={{ marginTop: 10 }}>Current mode: <span className="strong">{mode}</span></div>
-      </div>
-
-      <div className="card">
-        <div className="divider-label">Emergency Stop</div>
-        <p className="note" style={{ margin: '8px 0 12px' }}>Immediately halt all trading and close open positions.</p>
-        {!confirmStop ? (
-          <button className="btn danger" onClick={() => setConfirmStop(true)}>EMERGENCY STOP</button>
-        ) : (
-          <div className="row">
-            <button className="btn danger" onClick={() => { sendCommand('emergency_stop'); setConfirmStop(false); note('Emergency stop activated'); }}>CONFIRM STOP</button>
-            <button className="btn" onClick={() => setConfirmStop(false)}>Cancel</button>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="divider-label">Parameter Editor</div>
-        <div className="row" style={{ marginTop: 8, gap: 8 }}>
-          <input className="input" placeholder="Parameter name" value={param} onChange={(e) => setParam(e.target.value)} />
-          <input className="input" placeholder="Value" value={val} onChange={(e) => setVal(e.target.value)} />
-          <button className="btn primary" onClick={() => {
-            if (param && val) { sendCommand('set_param', { name: param, value: val }); note(`Set ${param} = ${val}`); setParam(''); setVal(''); }
-          }}>Apply</button>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="divider-label">Status</div>
-        <p className="note" style={{ marginTop: 8 }}>{fb ? <span className="accent">{fb}</span> : 'Ready'}</p>
-      </div>
+    <div className="card">
+      <div className="divider-label">Read-only dashboard</div>
+      <p className="note" style={{ margin: '8px 0 12px' }}>
+        Trading controls are unavailable here. Change EA inputs in MetaTrader; use the terminal to stop or close trades.
+      </p>
+      <div className="note">Current mode: <span className="strong">{mode}</span></div>
+      <div className="note">EA connection: <span className="strong">{isConnected ? 'Connected' : 'Disconnected'}</span></div>
     </div>
   );
 }

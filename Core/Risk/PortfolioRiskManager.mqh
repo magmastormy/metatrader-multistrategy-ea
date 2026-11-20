@@ -19,9 +19,11 @@ private:
     double m_maxPortfolioRisk;      // Total open-risk cap, % of the equity-aware risk denominator
     double m_maxCorrelation;        // Max correlation coefficient (e.g. 0.7)
     bool   m_emergencyMode;         // Hard veto on every entry
-    double m_currentTotalRisk;      // Cached total risk %
+    double m_currentTotalRisk;      // Current total risk %
     bool   m_missingStopDetected;   // True when any open position has no protective SL
     int    m_missingStopCount;      // Number of open positions without SL
+    bool   m_unpriceableRiskDetected;
+    int    m_unpriceableRiskCount;
     string m_lastBlockReason;       // Last deterministic veto reason
     string m_lastPrintedBlockReason;
     datetime m_lastPrintedBlockTime;
@@ -29,30 +31,6 @@ private:
     // Value member: constructed and destroyed with this manager, never a pointer
     CCorrelationEngine m_correlationEngine;
     
-    struct SymbolExposure
-    {
-        string symbol;
-        double riskPercent;
-        double correlationGroup;
-    };
-
-    // Risk cache: reads are rebuilt by a full PositionsTotal() scan, because the incremental hooks have no caller
-    struct SCachedPortfolioRisk
-    {
-        double   totalRiskPct;           // Total portfolio risk %
-        double   perSymbolRisk[];        // Per-symbol risk % (dynamic array)
-        string   perSymbolName[];        // Symbol names index-aligned with perSymbolRisk
-        datetime lastFullRefresh;
-        int      positionCount;          // Risk-bearing positions at last refresh (SL-protected only)
-        int      rawPositionCount;       // PositionsTotal() snapshot: the staleness probe has to compare like with
-                                          // like, positionCount excludes positions without computable risk and would
-                                          // force a full rescan on every call while any SL-less position exists
-        bool     isValid;                // Whether cache is valid
-                int      version;                // Version counter for race condition prevention (L5-006)
-    };
-
-    SCachedPortfolioRisk m_riskCache;
-    int                  m_cacheRefreshIntervalSec;  // Full-refresh interval in seconds
 
     double m_tradeReturns[];     // Rolling trade returns (P&L as % of equity)
     int    m_maxReturnHistory;   // Default 100
@@ -118,14 +96,11 @@ public:
 
 private:
     double GetPositionRisk(ulong ticket);
-    void   UpdateCurrentRisk();
     double GetRiskDenominator() const;
     double CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints = 0.0);
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
     void   RecordBlockReason(const string reason);
 
-    int    FindSymbolInCache(string symbol);
-    void   RefreshRiskCache();
 
     bool   IsSameAssetClass(string symbol1, string symbol2);
     double GetEffectiveCorrelationThreshold(string symbol1, string symbol2);
@@ -139,10 +114,11 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_currentTotalRisk(0.0),
     m_missingStopDetected(false),
     m_missingStopCount(0),
+    m_unpriceableRiskDetected(false),
+    m_unpriceableRiskCount(0),
     m_lastBlockReason(""),
     m_lastPrintedBlockReason(""),
     m_lastPrintedBlockTime(0),
-    m_cacheRefreshIntervalSec(60),
     m_maxReturnHistory(100),
     m_returnCount(0),
     m_cvarConfidence(0.95),
@@ -157,13 +133,6 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_lastCorrUnknownLog(0),
     m_stopFallbackPoints(100.0)
 {
-    m_riskCache.totalRiskPct = 0.0;
-    m_riskCache.lastFullRefresh = 0;
-    m_riskCache.positionCount = 0;
-    m_riskCache.rawPositionCount = 0;
-    m_riskCache.isValid = false;
-    ArrayResize(m_riskCache.perSymbolRisk, 0);
-    ArrayResize(m_riskCache.perSymbolName, 0);
     ArrayResize(m_tradeReturns, m_maxReturnHistory);
     ArrayInitialize(m_tradeReturns, 0.0);
     
@@ -189,17 +158,11 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     m_emergencyMode = false;
     m_missingStopDetected = false;
     m_missingStopCount = 0;
+    m_unpriceableRiskDetected = false;
+    m_unpriceableRiskCount = 0;
     m_lastBlockReason = "";
     m_lastPrintedBlockReason = "";
     m_lastPrintedBlockTime = 0;
-
-    m_riskCache.totalRiskPct = 0.0;
-    m_riskCache.lastFullRefresh = 0;
-    m_riskCache.positionCount = 0;
-    m_riskCache.rawPositionCount = 0;
-    m_riskCache.isValid = false;
-    ArrayResize(m_riskCache.perSymbolRisk, 0);
-    ArrayResize(m_riskCache.perSymbolName, 0);
 
     // One-time seed of the engine with both thresholds; SetAssetClassCorrThreshold/SetCrossAssetCorrThreshold have no
     // caller, so the ctor defaults (0.85 same-class / 0.70 cross-class) are what the engine keeps using
@@ -214,27 +177,64 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
 // Total open risk as 0-100 % of CRiskMath::GetRiskDenominator(); rescans when the cache is stale
 double CPortfolioRiskManager::GetPortfolioRisk()
 {
-        if(!m_riskCache.isValid ||
-           (int)(TimeCurrent() - m_riskCache.lastFullRefresh) > m_cacheRefreshIntervalSec ||
-           PositionsTotal() != m_riskCache.rawPositionCount)
+    double totalRiskDollar = 0.0;
+    double riskDenominator = GetRiskDenominator();
+    int ownedPositionCount = 0;
+    m_missingStopDetected = false;
+    m_missingStopCount = 0;
+    m_unpriceableRiskDetected = false;
+    m_unpriceableRiskCount = 0;
+
+    for(int i = 0; i < PositionsTotal(); i++)
     {
-        // versionBefore is never read back and the version counter has no reader at all (MQL5 is single-threaded)
-        int versionBefore = m_riskCache.version;
-        RefreshRiskCache();
+        ulong ticket = PositionGetTicket(i);
+        if(!PositionSelectByTicket(ticket) || !IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
+            continue;
+
+        ownedPositionCount++;
+        double positionRisk = GetPositionRisk(ticket);
+        if(positionRisk < 0.0)
+        {
+            if(PositionSelectByTicket(ticket) && PositionGetDouble(POSITION_SL) <= 0.0)
+            {
+                m_missingStopDetected = true;
+                m_missingStopCount++;
+            }
+            else
+            {
+                m_unpriceableRiskDetected = true;
+                m_unpriceableRiskCount++;
+            }
+            continue;
+        }
+        totalRiskDollar += positionRisk;
     }
 
-    if(m_missingStopDetected)
+    if(riskDenominator > 0.0)
+        m_currentTotalRisk = (totalRiskDollar / riskDenominator) * 100.0;
+    else
     {
-        static datetime s_lastMissingStopLog = 0;
-        datetime nowTime = TimeCurrent();
-        if(s_lastMissingStopLog == 0 || (nowTime - s_lastMissingStopLog) >= 60)
+        m_currentTotalRisk = 0.0;
+        if(ownedPositionCount > 0)
         {
-            PrintFormat("[PortfolioRisk] BLOCKED: %d open position(s) missing stop-loss protection",
-                        m_missingStopCount);
-            s_lastMissingStopLog = nowTime;
+            int denominatorUnpriceableCount = ownedPositionCount - m_missingStopCount;
+            if(denominatorUnpriceableCount > m_unpriceableRiskCount)
+                m_unpriceableRiskCount = denominatorUnpriceableCount;
+            m_unpriceableRiskDetected = m_unpriceableRiskCount > 0;
         }
-        // Both return paths hand back the same m_currentTotalRisk; the SL-less elevation happens in UpdateCurrentRisk
-        return m_currentTotalRisk;
+    }
+
+    if(m_missingStopDetected || m_unpriceableRiskDetected)
+    {
+        m_currentTotalRisk = MathMax(m_currentTotalRisk, m_maxPortfolioRisk + 0.01);
+        static datetime s_lastUnsafeRiskLog = 0;
+        datetime nowTime = TimeCurrent();
+        if(s_lastUnsafeRiskLog == 0 || (nowTime - s_lastUnsafeRiskLog) >= 60)
+        {
+            PrintFormat("[PortfolioRisk] BLOCKED: missingSL=%d unpriceable=%d open position(s) | new entries refused",
+                        m_missingStopCount, m_unpriceableRiskCount);
+            s_lastUnsafeRiskLog = nowTime;
+        }
     }
     return m_currentTotalRisk;
 }
@@ -266,6 +266,12 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
     }
     
     double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
+    if(!MathIsValidNumber(estimatedNewRisk) || estimatedNewRisk <= 0.0)
+    {
+        RecordBlockReason("Unable to calculate candidate portfolio risk");
+        return false;
+    }
+
     if(currentRisk + estimatedNewRisk > m_maxPortfolioRisk)
     {
         RecordBlockReason(StringFormat("New Total %.2f%% > Max %.2f%%",
@@ -378,42 +384,6 @@ void CPortfolioRiskManager::RecordBlockReason(const string reason)
     m_lastPrintedBlockTime = nowTime;
 }
 
-void CPortfolioRiskManager::UpdateCurrentRisk()
-{
-    double totalRiskDollar = 0.0;
-    double riskDenominator = GetRiskDenominator();
-    m_missingStopDetected = false;
-    m_missingStopCount = 0;
-    
-    if(riskDenominator <= 0.0)
-    {
-        m_currentTotalRisk = 0.0;
-        return;
-    }
-    
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(!PositionSelectByTicket(ticket)) continue;
-        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
-
-        double positionRisk = GetPositionRisk(ticket);
-        if(positionRisk < 0.0)
-        {
-            m_missingStopDetected = true;
-            m_missingStopCount++;
-            continue;
-        }
-        totalRiskDollar += positionRisk;
-    }
-    
-    m_currentTotalRisk = (totalRiskDollar / riskDenominator) * 100.0;
-    if(m_missingStopDetected)
-    {
-        // An SL-less book forces risk to cap + 0.01 so new entries stay refused until it is protected (fail-closed)
-        m_currentTotalRisk = MathMax(m_currentTotalRisk, m_maxPortfolioRisk + 0.01);
-    }
-}
 
 // Denominator is CRiskMath::GetRiskDenominator() = min(balance, equity), the same base CPositionSizer sizes against
 double CPortfolioRiskManager::GetRiskDenominator() const
@@ -434,30 +404,41 @@ double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
     if(sl <= 0)
         return -1.0; // Missing SL is an unbounded-risk state and must hard-veto new entries.
     
+    if(openPrice <= 0.0 || volume <= 0.0 || symbol == "" ||
+       !MathIsValidNumber(openPrice) || !MathIsValidNumber(volume))
+        return -1.0;
+
     double diff = MathAbs(openPrice - sl);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
     
-    if(tickSize <= 0) return 0.0;
-    
-    return (diff / tickSize) * tickValue * volume;
+    if(tickSize <= 0.0 || tickValue <= 0.0 ||
+       !MathIsValidNumber(tickSize) || !MathIsValidNumber(tickValue))
+        return -1.0;
+
+    double riskDollar = (diff / tickSize) * tickValue * volume;
+    if(!MathIsValidNumber(riskDollar) || riskDollar < 0.0)
+        return -1.0;
+
+    return riskDollar;
 }
 
 // Risk % a proposed trade adds on the same denominator; stopLossPoints is in SYMBOL_POINT units, not price
 double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints)
 {
     if(lotSize <= 0.0 || symbol == "")
-        return 0.0;
+        return -1.0;
 
     double riskDenominator = GetRiskDenominator();
     if(riskDenominator <= 0.0)
-        return 0.0;
+        return -1.0;
 
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
-        return 0.0;
+    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0 ||
+       !MathIsValidNumber(point) || !MathIsValidNumber(tickValue) || !MathIsValidNumber(tickSize))
+        return -1.0;
 
     double effectiveStopPoints = stopLossPoints;
 
@@ -495,10 +476,17 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
         effectiveStopPoints = MathMax(m_stopFallbackPoints, (double)stopLevelPoints * 2.0);
     }
 
+    if(effectiveStopPoints <= 0.0 || !MathIsValidNumber(effectiveStopPoints))
+        return -1.0;
+
     double stopLossPriceDistance = effectiveStopPoints * point;
     double riskPerLot = (stopLossPriceDistance / tickSize) * tickValue;
     double totalRisk = riskPerLot * lotSize;
-    return (totalRisk / riskDenominator) * 100.0;
+    double riskPercent = (totalRisk / riskDenominator) * 100.0;
+    if(!MathIsValidNumber(riskPercent) || riskPercent <= 0.0)
+        return -1.0;
+
+    return riskPercent;
 }
 
 double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
@@ -521,71 +509,6 @@ int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
     }
     return count;
 }
-
-int CPortfolioRiskManager::FindSymbolInCache(string symbol)
-{
-    for(int i = 0; i < ArraySize(m_riskCache.perSymbolName); i++)
-    {
-        if(m_riskCache.perSymbolName[i] == symbol)
-            return i;
-    }
-    return -1;
-}
-
-void CPortfolioRiskManager::RefreshRiskCache()
-{
-    m_riskCache.version++;
-    
-    UpdateCurrentRisk();
-
-    ArrayResize(m_riskCache.perSymbolRisk, 0);
-    ArrayResize(m_riskCache.perSymbolName, 0);
-    m_riskCache.totalRiskPct = 0.0;
-    m_riskCache.positionCount = 0;
-
-    double riskDenominator = GetRiskDenominator();
-    if(riskDenominator <= 0.0)
-    {
-        m_riskCache.lastFullRefresh = TimeCurrent();
-        m_riskCache.isValid = true;
-        m_riskCache.version++; // Increment again to mark completion
-        return;
-    }
-
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(!PositionSelectByTicket(ticket)) continue;
-        if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
-
-        string symbol = PositionGetString(POSITION_SYMBOL);
-        double riskDollar = GetPositionRisk(ticket);
-
-        if(riskDollar > 0.0)
-        {
-            double riskPct = (riskDollar / riskDenominator) * 100.0;
-
-            int idx = FindSymbolInCache(symbol);
-            if(idx >= 0)
-                m_riskCache.perSymbolRisk[idx] += riskPct;
-            else
-            {
-                int size = ArraySize(m_riskCache.perSymbolRisk);
-                ArrayResize(m_riskCache.perSymbolRisk, size + 1);
-                ArrayResize(m_riskCache.perSymbolName, size + 1);
-                m_riskCache.perSymbolRisk[size] = riskPct;
-                m_riskCache.perSymbolName[size] = symbol;
-            }
-            m_riskCache.totalRiskPct += riskPct;
-            m_riskCache.positionCount++;
-        }
-    }
-
-    m_riskCache.lastFullRefresh = TimeCurrent();
-    m_riskCache.rawPositionCount = PositionsTotal();
-        m_riskCache.isValid = true;
-        m_riskCache.version++; // Increment again to mark completion
-    }
 
 bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
 {

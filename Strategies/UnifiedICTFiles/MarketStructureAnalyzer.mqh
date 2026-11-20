@@ -306,16 +306,24 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
 bool CMarketStructureAnalyzer::IdentifyISP(bool &isBullish)
 {
     double atr = GetATR(14);
+    if(!MathIsValidNumber(atr) || atr <= 0.0 || Bars(m_symbol, m_timeframe) < 22)
+        return false;
+
     double consolidationThreshold = atr * 0.30;
     
     int consolidationBars = 0;
     double consolidationHigh = 0;
     double consolidationLow = DBL_MAX;
     
-    for(int i = 1; i <= 20; i++)
+    for(int i = 2; i <= 21; i++)
     {
+        if(iTime(m_symbol, m_timeframe, i) == 0)
+            return false;
+
         double high = iHigh(m_symbol, m_timeframe, i);
         double low = iLow(m_symbol, m_timeframe, i);
+        if(!MathIsValidNumber(high) || !MathIsValidNumber(low) || high < low)
+            return false;
         
         if(consolidationHigh == 0) consolidationHigh = high;
         if(consolidationLow == DBL_MAX) consolidationLow = low;
@@ -333,8 +341,13 @@ bool CMarketStructureAnalyzer::IdentifyISP(bool &isBullish)
     if(consolidationBars < 5)
         return false;
     
+    if(iTime(m_symbol, m_timeframe, 1) == 0)
+        return false;
+
     double currentHigh = iHigh(m_symbol, m_timeframe, 1);
     double currentLow = iLow(m_symbol, m_timeframe, 1);
+    if(!MathIsValidNumber(currentHigh) || !MathIsValidNumber(currentLow) || currentHigh < currentLow)
+        return false;
     
     if(currentHigh > consolidationHigh)
     {
@@ -646,9 +659,9 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(close, true);
     
-    if(CopyHigh(m_symbol, tfStruct.timeframe, 0, 50, high) <= 0) return;
-    if(CopyLow(m_symbol, tfStruct.timeframe, 0, 50, low) <= 0) return;
-    if(CopyClose(m_symbol, tfStruct.timeframe, 0, 50, close) <= 0) return;
+    if(CopyHigh(m_symbol, tfStruct.timeframe, 1, 50, high) <= 0) return;
+    if(CopyLow(m_symbol, tfStruct.timeframe, 1, 50, low) <= 0) return;
+    if(CopyClose(m_symbol, tfStruct.timeframe, 1, 50, close) <= 0) return;
     
     // Swing = beyond both neighbours one and two bars either side; only the first two count
     int swingHigh1 = -1, swingHigh2 = -1;

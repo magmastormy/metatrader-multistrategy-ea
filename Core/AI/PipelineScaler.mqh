@@ -10,38 +10,16 @@ private:
     double m_means[];
     double m_scales[];
     bool   m_loaded;
-    string m_lastPath;
-    bool   m_lastCommonPath;
-    long   m_lastModified;
-
-    long ReadModifiedTime(const string path, const bool commonPath) const
-    {
-        if(!FileIsExist(path, commonPath ? FILE_COMMON : 0))
-            return 0;
-
-        int handle = FileOpen(path, FILE_READ | FILE_BIN | (commonPath ? FILE_COMMON : 0));
-        if(handle == INVALID_HANDLE)
-            return 0;
-
-        long modified = (long)FileGetInteger(handle, FILE_MODIFY_DATE);
-        FileClose(handle);
-        return modified;
-    }
 
 public:
     CPipelineScaler()
     {
         m_loaded = false;
-        m_lastPath = "";
-        m_lastCommonPath = true;
-        m_lastModified = 0;
     }
 
-    bool LoadParams(const string path, const bool commonPath = true)
+    bool LoadParams(const string path, const bool commonPath = true,
+                    const int expectedFeatureCount = 0)
     {
-        m_lastPath = path;
-        m_lastCommonPath = commonPath;
-
         int flags = FILE_READ | FILE_BIN;
         if(commonPath)
             flags |= FILE_COMMON;
@@ -54,7 +32,9 @@ public:
         }
 
         int featureCount = FileReadInteger(handle, INT_VALUE);
-        if(featureCount <= 0)
+        if(featureCount <= 0 ||
+           (expectedFeatureCount > 0 && featureCount != expectedFeatureCount) ||
+           (long)FileSize(handle) != 4 + (long)featureCount * 16)
         {
             FileClose(handle);
             m_loaded = false;
@@ -72,6 +52,12 @@ public:
                 return false;
             }
             m_means[i] = FileReadDouble(handle);
+            if(!MathIsValidNumber(m_means[i]))
+            {
+                FileClose(handle);
+                m_loaded = false;
+                return false;
+            }
         }
         for(int i = 0; i < featureCount; i++)
         {
@@ -82,27 +68,18 @@ public:
                 return false;
             }
             double scale = FileReadDouble(handle);
-            m_scales[i] = (MathAbs(scale) > 1e-6) ? scale : 1.0;
+            if(!MathIsValidNumber(scale) || scale <= 0.0)
+            {
+                FileClose(handle);
+                m_loaded = false;
+                return false;
+            }
+            m_scales[i] = scale;
         }
 
-        m_lastModified = (long)FileGetInteger(handle, FILE_MODIFY_DATE);
         FileClose(handle);
         m_loaded = true;
         return true;
-    }
-
-    bool MaybeReload(const string path = "", const bool commonPath = true)
-    {
-        string effectivePath = (path != "") ? path : m_lastPath;
-        bool effectiveCommonPath = (path != "") ? commonPath : m_lastCommonPath;
-        if(effectivePath == "")
-            return false;
-
-        long modified = ReadModifiedTime(effectivePath, effectiveCommonPath);
-        if(modified <= 0 || modified == m_lastModified)
-            return false;
-
-        return LoadParams(effectivePath, effectiveCommonPath);
     }
 
     bool Apply(double &features[]) const
@@ -111,7 +88,7 @@ public:
             return false;
 
         int featureCount = ArraySize(m_means);
-        if(featureCount <= 0 || ArraySize(features) < featureCount)
+        if(featureCount <= 0 || ArraySize(features) != featureCount)
             return false;
 
         for(int i = 0; i < featureCount; i++)

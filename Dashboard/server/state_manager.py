@@ -10,7 +10,6 @@ from .config import (
     RISK_HISTORY_SIZE,
     LOG_BUFFER_SIZE,
     ALERT_BUFFER_SIZE,
-    COMMAND_TIMEOUT_SEC,
 )
 
 
@@ -27,10 +26,6 @@ class StateManager:
         self._risk_history: deque[dict] = deque(maxlen=RISK_HISTORY_SIZE)
         self._log_entries: deque[dict] = deque(maxlen=LOG_BUFFER_SIZE)
         self._alerts: deque[dict] = deque(maxlen=ALERT_BUFFER_SIZE)
-
-        # Command queue
-        self._commands: list[dict] = []
-        self._command_counter: int = 0
 
     async def update_state(self, data: dict) -> None:
         """Update the current EA state from a push."""
@@ -136,36 +131,6 @@ class StateManager:
         """Get recent alerts."""
         async with self._lock:
             return list(self._alerts)[-limit:]
-
-    async def add_command(self, cmd_type: str, params: dict) -> str:
-        """Queue a control command for the EA. Returns command ID."""
-        async with self._lock:
-            self._command_counter += 1
-            cmd_id = f"cmd-{self._command_counter:06d}"
-            self._commands.append({
-                "id": cmd_id,
-                "type": cmd_type,
-                "params": params,
-                "timestamp": time.time(),
-            })
-            return cmd_id
-
-    async def get_pending_commands(self) -> list:
-        """Get pending (unexpired) commands for EA to poll."""
-        async with self._lock:
-            now = time.time()
-            self._commands = [
-                c for c in self._commands
-                if (now - c["timestamp"]) < COMMAND_TIMEOUT_SEC
-            ]
-            return list(self._commands)
-
-    async def acknowledge_command(self, cmd_id: str) -> bool:
-        """Remove a command after EA acknowledges execution."""
-        async with self._lock:
-            before = len(self._commands)
-            self._commands = [c for c in self._commands if c["id"] != cmd_id]
-            return len(self._commands) < before
 
     @property
     def last_update(self) -> float:

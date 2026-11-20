@@ -71,7 +71,6 @@ struct SNeuralNetConfig;
 
 struct SConsensusDecisionContext;
 
-class CStrategyHealthMonitor;
 
 class CPythonBridge;
 extern CPythonBridge* g_pythonBridge;

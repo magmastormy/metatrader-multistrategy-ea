@@ -71,7 +71,7 @@ private:
 
    bool OpenScalpTrade(int idx, int direction)
    {
-      return m_entry.OpenScalpTrade(idx, direction, m_symbolStates[idx], m_config, m_trade);
+      return m_entry.OpenScalpTrade(idx, direction, m_symbolStates[idx], m_config);
    }
 
 // Manage open scalp positions: partial close, breakeven, trailing
@@ -91,11 +91,18 @@ public:
       Deinit();
    }
 
-   bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
+   bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer,
+             CUnifiedRiskManager *pRiskManager, CTradeManager *pTradeManager)
    {
+      if(pRiskManager == NULL || !pRiskManager.IsInitialized() || pTradeManager == NULL)
+      {
+         Print("[ATR-SCALP-ENGINE] Required risk or trade manager unavailable - refusing initialization");
+         return false;
+      }
+
       m_config         = config;
       m_symbolCount    = 0;
-      m_entry.Configure(baseMagic, pSizer, pRiskManager);
+      m_entry.Configure(baseMagic, pSizer, pRiskManager, pTradeManager);
 
       PrintFormat("[ATR-SCALP-ENGINE] Initialized | atrPeriod=%d | emaFast=%d | emaSlow=%d | rsi=%d | slATR=%.1f | tpATR=%.1f | maxPos=%d | cooldown=%dms | spikeAvoid=%dmin | magicOffset=%d",
                   m_config.atrPeriod,

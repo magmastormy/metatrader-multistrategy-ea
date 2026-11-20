@@ -7,19 +7,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
-// Per-slot registration config, indexed by the catalog row's siPolicyIndex. A timeframe of
-// PERIOD_CURRENT means "register on the manager's base (chart) timeframe".
-struct SStrategyIntrabarConfig
-{
-    ENUM_INTRABAR_POLICY defaultPolicy;
-    bool                 syntheticLeanPrimary;
-
-    SStrategyIntrabarConfig() : defaultPolicy(INTRABAR_POLICY_OFF), syntheticLeanPrimary(false) {}
-};
-
-// Static sizing for strategy config rows: must stay >= the number of strategies, because every
-// strategy owns one policy row (FVG Scalper takes [21], Statistical Arbitrage [22]). Borrowing a
-// neighbour's slot clobbers its policy. Legacy mode never indexes 21/22.
+// Static sizing for strategy-specific timeframe overrides.
 #define MAX_STRATEGY_CONFIGS 23
 
 // SOrchestratorConfig - All input parameters grouped by domain
@@ -53,9 +41,7 @@ struct SOrchestratorConfig
     string  symbolsToTrade;
     int     minSecondsBetweenTrades;
     int     maxPositionsTotal;
-    int     maxPositionsTotalMin;
     int     maxPositionsPerSymbol;
-    int     maxPositionsPerSymbolMin;
     int     maxTradeSendsPerCycle;
 
     // Strategy selection
@@ -163,7 +149,6 @@ struct SOrchestratorConfig
     bool    dashboardEnabled;
     string  dashboardEndpoint;
     int     dashboardPushIntervalSec;
-    bool    dashboardControlEnabled;
 
     bool    enableLiveAuthorityGate;
     bool    allowHybridAIStandalone;
@@ -202,17 +187,6 @@ struct SOrchestratorConfig
     int     momentumScalpCooldownSeconds;
     ENUM_TIMEFRAMES momentumScalpTimeframe;
     ENUM_TIMEFRAMES candlestickIntrabarTimeframe;
-    ENUM_INTRABAR_POLICY intrabarEligibilityMomentum;
-    ENUM_INTRABAR_POLICY intrabarEligibilityTrend;
-    ENUM_INTRABAR_POLICY intrabarEligibilitySupportResistance;
-    ENUM_INTRABAR_POLICY intrabarEligibilityCandlestick;
-    ENUM_INTRABAR_POLICY intrabarEligibilityMeanReversion;
-    ENUM_INTRABAR_POLICY intrabarEligibilityVolatilityBreakout;
-    ENUM_INTRABAR_POLICY intrabarEligibilityNeuralNetworkAI;
-    ENUM_INTRABAR_POLICY intrabarEligibilityTransformerAI;
-    ENUM_INTRABAR_POLICY intrabarEligibilityEnsembleAI;
-    ENUM_INTRABAR_POLICY intrabarEligibilityOnnxAI;
-    ENUM_INTRABAR_POLICY intrabarEligibilityPythonBridgeAI;
     int     maxSignalEvaluationsPerCycle;
     int     readinessReuseTtlSeconds;
     bool    enableNNOnlineTraining;
@@ -223,16 +197,11 @@ struct SOrchestratorConfig
     int     nnCheckpointEveryLabeled;
 
     ENUM_TIMEFRAMES         strategyTimeframes[MAX_STRATEGY_CONFIGS];
-    SStrategyIntrabarConfig  strategyIntrabarConfigs[MAX_STRATEGY_CONFIGS];
     int                     strategyConfigCount;
 
     // Signal validator
-    int     validatorNewBarMinConfluence;
     double  validatorNewBarMinQuality;
-    double  validatorNewBarMinConfidence;
-    int     validatorIntrabarMinConfluence;
     double  validatorIntrabarMinQuality;
-    double  validatorIntrabarMinConfidence;
 
     // Execution safety
     ENUM_ORDER_TYPE_FILLING orderFillingMode;
@@ -375,9 +344,6 @@ struct SOrchestratorConfig
     // Config versioning
     int     configVersion;
 
-    // Symbol Universe
-    bool    autoAddChartSymbol;
-
     // Skew Step Analyzer
     int     skewStepBufferSize;
     double  skewStepCalmThreshold;
@@ -409,9 +375,7 @@ struct SOrchestratorConfig
         symbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
         minSecondsBetweenTrades = 10;
         maxPositionsTotal = 15;
-        maxPositionsTotalMin = 3;
         maxPositionsPerSymbol = 5;
-        maxPositionsPerSymbolMin = 1;
         maxTradeSendsPerCycle = 3;
 
         enableMomentum = true;
@@ -513,7 +477,6 @@ struct SOrchestratorConfig
         dashboardEnabled = true;
         dashboardEndpoint = "http://127.0.0.1:8765";
         dashboardPushIntervalSec = 5;
-        dashboardControlEnabled = false;
 
         enableLiveAuthorityGate = false;
         allowHybridAIStandalone = true;
@@ -551,17 +514,6 @@ struct SOrchestratorConfig
         momentumScalpCooldownSeconds = 20;
         momentumScalpTimeframe = PERIOD_M5;
         candlestickIntrabarTimeframe = PERIOD_M5;
-        intrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
-        intrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
-        intrabarEligibilityPythonBridgeAI = INTRABAR_POLICY_LIVE;
         maxSignalEvaluationsPerCycle = 8;
         readinessReuseTtlSeconds = 60;
         enableNNOnlineTraining = true;
@@ -571,12 +523,8 @@ struct SOrchestratorConfig
         nnSampleIntervalSeconds = 15;
         nnCheckpointEveryLabeled = 3;
 
-        validatorNewBarMinConfluence = 1;
         validatorNewBarMinQuality = 0.68;
-        validatorNewBarMinConfidence = 0.55;
-        validatorIntrabarMinConfluence = 1;
         validatorIntrabarMinQuality = 0.70;
-        validatorIntrabarMinConfidence = 0.60;
 
         orderFillingMode = ORDER_FILLING_IOC;
         tradeSlippagePoints = 50;
@@ -703,15 +651,13 @@ struct SOrchestratorConfig
         equityCurveReductionFactor = 0.50;
         kellyFraction = 0.25;
         configVersion = 109;  // Current config version (batch number)
-        autoAddChartSymbol = true;
         skewStepBufferSize = 200;
         skewStepCalmThreshold = 0.80;
         skewStepSmallThreshold = 0.2;
         skewStepLargeThreshold = 0.5;
         sessionDSTOffsetHours = 0;
 
-        // strategyTimeframes/strategyIntrabarConfigs are filled by InitializeStrategyConfigs(),
-        // not by this constructor; only the count is set here.
+        // Strategy timeframes are filled by InitializeStrategyConfigs().
         strategyConfigCount = 0;
     }
 

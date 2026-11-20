@@ -111,9 +111,9 @@ public:
     virtual void   ReleaseVirtualPosition(const string ownerTag) = 0;
     virtual void   UpdateVirtualPositionRisk(const string ownerTag, const double lotSize, const double riskPercent) = 0;
 
-    virtual bool   IsSymbolBudgetAvailable(const string symbol, const double riskPct) = 0;
+    virtual bool   IsSymbolBudgetAvailable(const string symbol, const double riskPct, const string ownerTag = "") = 0;
     virtual double GetSymbolRiskAllocation(const string symbol) = 0;
-    virtual double GetSymbolUsedRisk(const string symbol) = 0;
+    virtual double GetSymbolUsedRisk(const string symbol, const string ownerTag = "") = 0;
 
     virtual bool   IsSymbolDataValid(const string symbolParam) = 0;
     virtual bool   CheckAccountTradingPermissions(void) = 0;
@@ -121,7 +121,6 @@ public:
                                       const double lotSize,
                                       const double stopLossPips) const = 0;
     virtual double EstimatePositionRiskPercent(const ulong ticket) const = 0;
-    virtual double CalculatePortfolioRiskAfterTrade(const double additionalRisk) = 0;
     virtual void   LogValidationResult(const STradeValidationRequest &request,
                                        const SValidationResult &result) = 0;
     virtual void   UpdatePerformanceMetrics(const ulong startTime) = 0;
@@ -269,14 +268,16 @@ public:
 
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
-    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent = 0.0);
+    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message,
+                               const string ownReservationOwnerTag = "");
     // Item 15: one shared exposure check used by every entry route (consensus, ATR scalp, spike hunter,
     // fast scalp). Validates per-symbol count, total EA-owned position count and total risk percent
-    // against configured caps before any risk is reserved.
-    bool ValidateExposure(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
+    // against configured caps without counting this candidate's provisional reservation twice.
+    bool ValidateExposure(const STradeValidationRequest &request, const double tradeRiskPercent, string &message,
+                          const string ownReservationOwnerTag = "");
     bool ApplySymbolBudgetLotCap(const STradeValidationRequest &request,
                                  SValidationResult &result,
-                                 const double ownReservedRiskPercent,
+                                 const string ownReservationOwnerTag,
                                  const string phaseTag,
                                  const string corrId,
                                  string &message);
@@ -463,7 +464,7 @@ public:
     }
     result.riskPercent = tradeRisk;
     
-    if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage, virtualReserved ? provisionalRiskPct : 0.0))
+    if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage, virtualReserved ? virtualOwnerTag : ""))
     {
         result.message = "Portfolio risk validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_ERROR;
@@ -478,7 +479,7 @@ public:
     // Item 15: shared exposure check - per-symbol count, total EA-owned position count and total
     // risk percent against configured caps. Runs for every entry route (consensus, ATR scalp,
     // spike hunter, fast scalp) because all of them pass through RunInternal().
-    if(!ValidateExposure(request, tradeRisk, validationMessage))
+    if(!ValidateExposure(request, tradeRisk, validationMessage, virtualReserved ? virtualOwnerTag : ""))
     {
         result.message = "Exposure validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_WARNING;
@@ -545,7 +546,7 @@ public:
     // daily-risk / CVaR gates below can still reject. Approval bookkeeping runs again at the final exit.
     result.approved = true;
     result.message = "Trade request approved";
-    result.portfolioRisk = m_host.CalculatePortfolioRiskAfterTrade(tradeRisk);
+    result.portfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
 
     // Lot floor: a sub-SYMBOL_VOLUME_MIN lot is clamped UP to the minimum (CPositionSizer::NormalizeVolume behaviour, not
@@ -602,7 +603,7 @@ public:
     // a smaller broker-valid lot would fit. This optional path makes the existing allocation bind on size.
     // It runs after the broker-minimum policy so it never launders an under-minimum request into a full lot.
     if(!ApplySymbolBudgetLotCap(request, result,
-                                virtualReserved ? provisionalRiskPct : 0.0,
+                                virtualReserved ? virtualOwnerTag : "",
                                 phaseTag, corrId, validationMessage))
     {
         result.approved = false;
@@ -622,14 +623,22 @@ public:
     if(virtualReserved && result.riskPercent > 0.0 && result.adjustedLotSize > 0.0)
         m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.adjustedLotSize, result.riskPercent);
 
-    if(result.riskPercent > 0.0 && !m_host.IsSymbolBudgetAvailable(request.symbol, result.riskPercent))
+    if(result.riskPercent > 0.0 &&
+       !m_host.IsSymbolBudgetAvailable(request.symbol, result.riskPercent, virtualReserved ? virtualOwnerTag : ""))
     {
         double allocation = m_host.GetSymbolRiskAllocation(request.symbol);
-        double used = m_host.GetSymbolUsedRisk(request.symbol);
+        double used = m_host.GetSymbolUsedRisk(request.symbol, virtualReserved ? virtualOwnerTag : "");
 
         // Cold-start bypass: with no open positions and no prior reservations the per-symbol allocation is ignored.
         // The portfolio gate below shares this same condition, so on a cold start nothing caps total risk.
-        int openPositionCount = PositionsTotal();
+        int openPositionCount = 0;
+        for(int i = 0; i < PositionsTotal(); i++)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0 || !PositionSelectByTicket(ticket)) continue;
+            if(IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
+                openPositionCount++;
+        }
         // Snapshot taken before this trade's own reservation, so it cannot disable the bypass.
         int virtualReservationCount = preValidationReservations;
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
@@ -658,18 +667,19 @@ public:
         }
     }
 
-    double projectedPortfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, result.riskPercent);
+    double otherReservedRisk = m_virtualPositionBook.GetReservedRiskPercentExcludingOwner(virtualReserved ? virtualOwnerTag : "");
+    double projectedPortfolioRisk = openExposureRisk + otherReservedRisk + MathMax(0.0, result.riskPercent);
     if(projectedPortfolioRisk > m_config.maxPortfolioRiskPercent)
     {
         result.approved = false;
         result.severity = ERROR_LEVEL_WARNING;
         result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                      phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
+                                      phaseTag, openExposureRisk + otherReservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
         PrintFormat("[RISK-GATE-REJECT] %s | reason=portfolio_risk_exceeded | open=%.2f%% + reserved=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
-                    request.symbol, openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
+                    request.symbol, openExposureRisk, otherReservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
         CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PORTFOLIO_RISK_EXCEEDED",
-            StringFormat("Open %.2f%% + reserved %.2f%% + new %.2f%% > limit %.2f%%", openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent),
-            openExposureRisk + reservedRisk + result.riskPercent, m_config.maxPortfolioRiskPercent, corrId);
+            StringFormat("Open %.2f%% + other reserved %.2f%% + new %.2f%% > limit %.2f%%", openExposureRisk, otherReservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent),
+            openExposureRisk + otherReservedRisk + result.riskPercent, m_config.maxPortfolioRiskPercent, corrId);
         CJsonLogger::ClearCorrelationId();
         m_host.ReleaseVirtualPosition(virtualOwnerTag);
         return result;
@@ -885,7 +895,8 @@ public:
 
     result.approved = true;
     result.message = "Trade request approved";
-    result.portfolioRisk = m_host.CalculatePortfolioRiskAfterTrade(tradeRisk);
+    result.virtualReservationOwnerTag = virtualReserved ? virtualOwnerTag : "";
+    result.portfolioRisk = openExposureRisk + otherReservedRisk + MathMax(0.0, result.riskPercent);
     result.severity = ERROR_LEVEL_INFO;
 
     CJsonLogger::LogRiskEvent("RiskGateApprove", request.symbol, "APPROVED",
@@ -903,7 +914,7 @@ public:
 // minimum still refuses the trade rather than re-expanding it through the min-lot policy.
 bool CRiskValidationPipeline::ApplySymbolBudgetLotCap(const STradeValidationRequest &request,
                                                        SValidationResult &result,
-                                                       const double ownReservedRiskPercent,
+                                                       const string ownReservationOwnerTag,
                                                        const string phaseTag,
                                                        const string corrId,
                                                        string &message)
@@ -919,10 +930,8 @@ bool CRiskValidationPipeline::ApplySymbolBudgetLotCap(const STradeValidationRequ
         return true;
 
     const double allocation = m_host.GetSymbolRiskAllocation(request.symbol);
-    const double openUsed = m_host.GetSymbolUsedRisk(request.symbol);
-    const double allReserved = m_virtualPositionBook.GetReservedRiskPercentForSymbol(request.symbol);
-    const double otherReserved = MathMax(0.0, allReserved - MathMax(0.0, ownReservedRiskPercent));
-    const double remainingRisk = allocation - openUsed - otherReserved;
+    const double used = m_host.GetSymbolUsedRisk(request.symbol, ownReservationOwnerTag);
+    const double remainingRisk = allocation - used;
     const double epsilon = 0.000001;
 
     if(result.riskPercent <= remainingRisk + epsilon)
@@ -930,10 +939,10 @@ bool CRiskValidationPipeline::ApplySymbolBudgetLotCap(const STradeValidationRequ
 
     if(remainingRisk <= epsilon)
     {
-        message = StringFormat("%s has no remaining symbol budget: allocation=%.3f%% used=%.3f%% reserved=%.3f%%",
-                               request.symbol, allocation, openUsed, otherReserved);
-        PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | scale=true | allocation=%.3f%% used=%.3f%% reserved=%.3f%% remaining=%.3f%%",
-                    request.symbol, allocation, openUsed, otherReserved, remainingRisk);
+        message = StringFormat("%s has no remaining symbol budget: allocation=%.3f%% used=%.3f%%",
+                               request.symbol, allocation, used);
+        PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | scale=true | allocation=%.3f%% used=%.3f%% remaining=%.3f%%",
+                    request.symbol, allocation, used, remainingRisk);
         return false;
     }
 
@@ -996,9 +1005,9 @@ bool CRiskValidationPipeline::ApplySymbolBudgetLotCap(const STradeValidationRequ
     result.riskPercent = cappedRisk;
     result.requiresAdjustment = true;
     message = "";
-    PrintFormat("[RISK-SYMBOL-BUDGET] SCALED | %s | lot=%.4f->%.4f | risk=%.3f%%->%.3f%% | allocation=%.3f%% used=%.3f%% reserved=%.3f%% | phase=%s",
+    PrintFormat("[RISK-SYMBOL-BUDGET] SCALED | %s | lot=%.4f->%.4f | risk=%.3f%%->%.3f%% | allocation=%.3f%% used=%.3f%% remaining=%.3f%% | phase=%s",
                 request.symbol, originalLot, cappedLot, originalRisk, cappedRisk,
-                allocation, openUsed, otherReserved, phaseTag);
+                allocation, used, remainingRisk, phaseTag);
     CJsonLogger::LogRiskEvent("RiskGateReduce", request.symbol, "SYMBOL_BUDGET_LOT_SCALED",
         StringFormat("Lot %.4f->%.4f; risk %.3f%%->%.3f%% inside %.3f%% remaining budget",
             originalLot, cappedLot, originalRisk, cappedRisk, remainingRisk),
@@ -1107,7 +1116,8 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
     return true;
 }
 
-bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent)
+bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent,
+                                                     string &message, const string ownReservationOwnerTag)
 {
     if(!IsWired())
     {
@@ -1130,10 +1140,9 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
         return false;
     }
     
-    // Same basis as CUnifiedRiskManager::GetRemainingPortfolioRiskPercent (open exposure + reservations). The book
-    // already holds THIS trade's provisional reservation, so the caller passes it in to subtract it.
+    // The book already holds this candidate; exclude its reservation by owner identity before adding final risk.
     double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
-    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent() - MathMax(0.0, ownReservationRiskPercent);
+    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercentExcludingOwner(ownReservationOwnerTag);
     double currentRisk = openExposureRisk + reservedRisk;
     double totalRisk = currentRisk + tradeRiskPercent;
     
@@ -1164,7 +1173,8 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
 // magic filter so positions from other EAs or manual trades are not counted against this EA's caps.
 bool CRiskValidationPipeline::ValidateExposure(const STradeValidationRequest &request,
                                                 const double tradeRiskPercent,
-                                                string &message)
+                                                string &message,
+                                                const string ownReservationOwnerTag)
 {
     if(!IsWired())
     {
@@ -1173,50 +1183,60 @@ bool CRiskValidationPipeline::ValidateExposure(const STradeValidationRequest &re
     }
     SyncConfig();
 
-    //--- Per-symbol position count (EA-owned only)
+    //--- Per-symbol position count (EA-owned open positions plus other in-flight reservations)
     if(m_config.maxPositionsPerSymbol > 0)
     {
-        int positionsOnSymbol = m_portfolioRiskManager.GetPositionsOnSymbol(request.symbol);
+        int openPositionsOnSymbol = m_portfolioRiskManager.GetPositionsOnSymbol(request.symbol);
+        int reservedPositionsOnSymbol = m_virtualPositionBook.GetReservedPositionsOnSymbol(request.symbol,
+                                                                                             ownReservationOwnerTag);
+        int positionsOnSymbol = openPositionsOnSymbol + reservedPositionsOnSymbol;
         if(positionsOnSymbol >= m_config.maxPositionsPerSymbol)
         {
-            message = StringFormat("Per-symbol position cap reached: %d/%d on %s",
-                                   positionsOnSymbol, m_config.maxPositionsPerSymbol, request.symbol);
-            PrintFormat("[RISK-EXPOSURE] %s | per_symbol_count=%d/%d | entry refused",
-                        request.symbol, positionsOnSymbol, m_config.maxPositionsPerSymbol);
+            message = StringFormat("Per-symbol position cap reached: %d open + %d reserved / %d on %s",
+                                   openPositionsOnSymbol, reservedPositionsOnSymbol,
+                                   m_config.maxPositionsPerSymbol, request.symbol);
+            PrintFormat("[RISK-EXPOSURE] %s | open=%d reserved=%d cap=%d | entry refused",
+                        request.symbol, openPositionsOnSymbol, reservedPositionsOnSymbol,
+                        m_config.maxPositionsPerSymbol);
             CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PER_SYMBOL_CAP",
-                StringFormat("Per-symbol cap %d/%d on %s", positionsOnSymbol, m_config.maxPositionsPerSymbol, request.symbol),
+                StringFormat("Per-symbol cap open=%d reserved=%d cap=%d on %s",
+                             openPositionsOnSymbol, reservedPositionsOnSymbol,
+                             m_config.maxPositionsPerSymbol, request.symbol),
                 (double)positionsOnSymbol, (double)m_config.maxPositionsPerSymbol, "");
             return false;
         }
     }
 
-    //--- Total EA-owned position count (magic-filtered, same as GetEAPositionCount in EAOrchestrator)
+    //--- Total EA-owned open positions plus other in-flight reservations
     if(m_config.maxPositionsTotal > 0)
     {
-        int totalPositions = 0;
+        int openPositions = 0;
         for(int i = 0; i < PositionsTotal(); i++)
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0 || !PositionSelectByTicket(ticket)) continue;
             if(IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
-                totalPositions++;
+                openPositions++;
         }
+        int reservedPositions = m_virtualPositionBook.GetReservedPositionCountExcludingOwner(ownReservationOwnerTag);
+        int totalPositions = openPositions + reservedPositions;
         if(totalPositions >= m_config.maxPositionsTotal)
         {
-            message = StringFormat("Total position cap reached: %d/%d EA-owned positions",
-                                   totalPositions, m_config.maxPositionsTotal);
-            PrintFormat("[RISK-EXPOSURE] total_count=%d/%d | entry refused",
-                        totalPositions, m_config.maxPositionsTotal);
+            message = StringFormat("Total position cap reached: %d open + %d reserved / %d EA-owned entries",
+                                   openPositions, reservedPositions, m_config.maxPositionsTotal);
+            PrintFormat("[RISK-EXPOSURE] total_count open=%d reserved=%d cap=%d | entry refused",
+                        openPositions, reservedPositions, m_config.maxPositionsTotal);
             CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "TOTAL_POSITION_CAP",
-                StringFormat("Total cap %d/%d", totalPositions, m_config.maxPositionsTotal),
+                StringFormat("Total cap open=%d reserved=%d cap=%d",
+                             openPositions, reservedPositions, m_config.maxPositionsTotal),
                 (double)totalPositions, (double)m_config.maxPositionsTotal, "");
             return false;
         }
     }
 
-    //--- Total risk percent (open exposure + virtual reservations + this trade)
+    //--- Total risk percent (open exposure + other reservations + this trade)
     double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
-    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent();
+    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercentExcludingOwner(ownReservationOwnerTag);
     double totalRisk = openExposureRisk + reservedRisk + MathMax(0.0, tradeRiskPercent);
     if(totalRisk > m_config.maxPortfolioRiskPercent)
     {
@@ -1364,65 +1384,74 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
     }
     SyncConfig();
 
-    ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
-    bool isHedging = (marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
-    
-    double marginRequired = 0.0;
-    double currentPriceLocal = (request.orderType == ORDER_TYPE_BUY) ?
-                              SymbolInfoDouble(request.symbol, SYMBOL_ASK) :
-                              SymbolInfoDouble(request.symbol, SYMBOL_BID);
-    
-    if(!OrderCalcMargin(request.orderType, request.symbol, request.lotSize, currentPriceLocal, marginRequired))
+    if(request.symbol == "" || !MathIsValidNumber(request.lotSize) || request.lotSize <= 0.0 ||
+       (request.orderType != ORDER_TYPE_BUY && request.orderType != ORDER_TYPE_SELL))
     {
-        message = "Unable to calculate margin requirement";
+        message = "Invalid market-order margin request";
         return false;
     }
-    
-    // Netting mode: an opposite position nets the order out, so margin is re-asked for the net volume; the loop breaks
-    // on the first one. Margin is checked on request.lotSize, not the adjustedLotSize the lot floor may still raise below.
-    if(!isHedging)
+
+    MqlTick currentTick;
+    if(!SymbolInfoTick(request.symbol, currentTick) ||
+       !MathIsValidNumber(currentTick.bid) || !MathIsValidNumber(currentTick.ask) ||
+       currentTick.bid <= 0.0 || currentTick.ask <= 0.0)
     {
-        int totalPositions = PositionsTotal();
-        for(int i = 0; i < totalPositions; i++)
-        {
-            ulong ticket = PositionGetTicket(i);
-            if(ticket <= 0) continue;
-            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
-            
-            string posSymbol = PositionGetString(POSITION_SYMBOL);
-            if(posSymbol != request.symbol) continue;
-            
-            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            ENUM_POSITION_TYPE reqType = (request.orderType == ORDER_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-            
-            if(posType != reqType)
-            {
-                double existingVolume = PositionGetDouble(POSITION_VOLUME);
-                double netVolume = request.lotSize - existingVolume;
-                if(netVolume <= 0.0)
-                {
-                    // Net volume <= 0: the order only closes existing exposure, so margin 0.0 is intentional here
-                    marginRequired = 0.0;
-                }
-                else
-                {
-                    double currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_BID);
-                    if(currentPrice <= 0.0) currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_ASK);
-                    if(!OrderCalcMargin(request.orderType, request.symbol, netVolume, currentPrice, marginRequired))
-                    {
-                        // Fail closed: marginRequired = 0.0 would pass the affordability check
-                        // trivially, so an unresolvable margin must reject the trade.
-                        PrintFormat("[RISK-VALIDATION] OrderCalcMargin failed for %s: %d", request.symbol, GetLastError());
-                        message = StringFormat("Unable to calculate net margin requirement for %s", request.symbol);
-                        return false;
-                    }
-                }
-                break;
-            }
-        }
+        message = StringFormat("Unable to read valid prices for margin check: %s", request.symbol);
+        return false;
     }
-    
-    return m_marginHealth.CheckFreeMarginAndLevel(marginRequired, isHedging, message);
+
+    long fillingFlags = 0;
+    long executionMode = 0;
+    if(!SymbolInfoInteger(request.symbol, SYMBOL_FILLING_MODE, fillingFlags) ||
+       !SymbolInfoInteger(request.symbol, SYMBOL_TRADE_EXEMODE, executionMode))
+    {
+        message = StringFormat("Unable to read broker execution settings for %s", request.symbol);
+        return false;
+    }
+
+    ENUM_ORDER_TYPE_FILLING fillingMode = ORDER_FILLING_RETURN;
+    if((fillingFlags & SYMBOL_FILLING_IOC) != 0)
+        fillingMode = ORDER_FILLING_IOC;
+    else if((fillingFlags & SYMBOL_FILLING_FOK) != 0)
+        fillingMode = ORDER_FILLING_FOK;
+    else if(executionMode == SYMBOL_TRADE_EXECUTION_MARKET)
+    {
+        message = StringFormat("No supported market fill policy for %s", request.symbol);
+        return false;
+    }
+
+    MqlTradeRequest marginRequest;
+    MqlTradeCheckResult marginCheck;
+    ZeroMemory(marginRequest);
+    ZeroMemory(marginCheck);
+    marginRequest.action = TRADE_ACTION_DEAL;
+    marginRequest.symbol = request.symbol;
+    marginRequest.volume = request.lotSize;
+    marginRequest.type = request.orderType;
+    marginRequest.price = (request.orderType == ORDER_TYPE_BUY) ? currentTick.ask : currentTick.bid;
+    marginRequest.type_filling = fillingMode;
+    marginRequest.magic = (ulong)m_eaMagicNumber;
+
+    ResetLastError();
+    bool orderCheckPassed = OrderCheck(marginRequest, marginCheck);
+    int orderCheckError = GetLastError();
+    if(!orderCheckPassed || marginCheck.retcode != 0)
+    {
+        PrintFormat("[RISK-VALIDATION] Broker margin check failed for %s | retcode=%u | error=%d | %s",
+                    request.symbol, marginCheck.retcode, orderCheckError, marginCheck.comment);
+        message = StringFormat("Broker margin check failed for %s: %s", request.symbol, marginCheck.comment);
+        return false;
+    }
+    if(!MathIsValidNumber(marginCheck.margin) || marginCheck.margin < 0.0 ||
+       !MathIsValidNumber(marginCheck.margin_free) || marginCheck.margin_free < 0.0 ||
+       !MathIsValidNumber(marginCheck.margin_level) || marginCheck.margin_level < 0.0 ||
+       (marginCheck.margin > 0.0 && marginCheck.margin_level <= 0.0))
+    {
+        message = StringFormat("Broker returned an invalid margin projection for %s", request.symbol);
+        return false;
+    }
+
+    return m_marginHealth.CheckFreeMarginAndLevel(marginCheck.margin_free, marginCheck.margin_level, message);
 }
 
 bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
