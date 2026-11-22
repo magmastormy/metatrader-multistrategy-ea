@@ -754,8 +754,7 @@ cannot trade; it does not add a signal.
 **Why Batch 285's opposite sign did not veto it:** that measurement ran on a build carrying the Batch 289
 indicator-handle defect (M15 ATR(14) answered by a D1 handle), which AGENTS.md already excludes as a baseline.
 
-**Known deviation:** `InpAutoAddChartSymbol = true` still re-injects the chart symbol, so a trimmed run takes 2-4
-`Volatility 75` closes. The universe input is a priority list plus the chart symbol, not an absolute exclusion.
+**Historical deviation in this batch's binary:** chart-symbol reinjection added 2-4 `Volatility 75` closes, so the universe acted as a priority list. The input and reinjection path have since been removed; the new source still needs a cold run proving an excluded chart symbol cannot trade.
 
 **Not done:** all five windows are 2026-09/10; no window shows `Crash 1000` trending against the book, so the trim's
 downside is only observed as −0.599%. A per-symbol risk cap remains the untested lever.

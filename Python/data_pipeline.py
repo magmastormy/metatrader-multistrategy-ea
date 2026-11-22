@@ -107,9 +107,26 @@ def triple_barrier_labels(
     k: float = 1.5,
     vertical_bars: int = 20,
 ) -> np.ndarray:
+    return triple_barrier_labels_with_ends(close, high, low, atr, k, vertical_bars)[0]
+
+
+def triple_barrier_labels_with_ends(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    atr: np.ndarray,
+    k: float = 1.5,
+    vertical_bars: int = 20,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if vertical_bars < 1:
+        raise ValueError("vertical_bars must be positive")
+    if not (len(close) == len(high) == len(low) == len(atr)):
+        raise ValueError("OHLC and ATR arrays must have identical lengths")
+
     n = len(close)
     labels = np.zeros(n, dtype=np.int8)
-    for i in range(n - vertical_bars):
+    end_bars = np.minimum(np.arange(n, dtype=np.int32) + vertical_bars, max(0, n - 1))
+    for i in range(max(0, n - vertical_bars)):
         if atr[i] <= 0:
             continue
         upper = close[i] + k * atr[i]
@@ -118,11 +135,13 @@ def triple_barrier_labels(
             # Stop is checked first: when one bar touches both barriers, the conservative outcome is the loss.
             if low[j] <= lower:
                 labels[i] = -1
+                end_bars[i] = j
                 break
             if high[j] >= upper:
                 labels[i] = 1
+                end_bars[i] = j
                 break
-    return labels
+    return labels, end_bars
 
 
 def compute_uniqueness_weights(
@@ -186,6 +205,16 @@ def cusum_filter(
     return events
 
 
+def _lag(values: np.ndarray, periods: int) -> np.ndarray:
+    values = np.asarray(values)
+    if periods <= 0:
+        return values.copy()
+    lagged = np.zeros_like(values)
+    if periods < len(values):
+        lagged[periods:] = values[:-periods]
+    return lagged
+
+
 def _ema(x: np.ndarray, period: int) -> np.ndarray:
     alpha = 2.0 / (period + 1)
     result = np.empty_like(x, dtype=np.float64)
@@ -225,7 +254,10 @@ def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int 
     macd = _ema(close, fast) - _ema(close, slow)
     signal = _ema(macd, sig)
     hist = macd - signal
-    atr = compute_atr(np.maximum(close, np.roll(close, 1)), np.minimum(close, np.roll(close, 1)), close, 14)
+    previous_close = _lag(close, 1)
+    if len(previous_close):
+        previous_close[0] = close[0]
+    atr = compute_atr(np.maximum(close, previous_close), np.minimum(close, previous_close), close, 14)
     return hist / (atr + 1e-9)
 
 
@@ -419,36 +451,36 @@ def build_feature_matrix(
         np.zeros(n, dtype=np.float64),
         np.zeros(n, dtype=np.float64),
         np.zeros(n, dtype=np.float64),
-        np.roll(log_ret, 1),
-        np.roll(log_ret, 5),
-        np.roll(log_ret, 20),
+        _lag(log_ret, 1),
+        _lag(log_ret, 5),
+        _lag(log_ret, 20),
         _rolling_zscore(close.astype(np.float64), 20),
         _rolling_zscore(close.astype(np.float64), 50),
         (high - low) / (close + 1e-9),
         _rolling_zscore(high - low, 20),
         _cci(high, low, close, 14),
-        np.roll(log_ret / (atr14 + 1e-9), 2),
-        np.roll(log_ret / (atr14 + 1e-9), 3),
-        np.roll(log_ret / (atr14 + 1e-9), 5),
-        np.roll(log_ret / (atr14 + 1e-9), 8),
-        np.roll(log_ret / (atr14 + 1e-9), 13),
+        _lag(log_ret / (atr14 + 1e-9), 2),
+        _lag(log_ret / (atr14 + 1e-9), 3),
+        _lag(log_ret / (atr14 + 1e-9), 5),
+        _lag(log_ret / (atr14 + 1e-9), 8),
+        _lag(log_ret / (atr14 + 1e-9), 13),
         _rolling_zscore(volume.astype(np.float64), 20),
-        np.roll(_rsi(close, 14), 1),
-        np.roll(_rsi(close, 14), 3),
-        np.roll(_bb_pct_b(close, 20, 2.0), 1),
-        np.roll(_bb_pct_b(close, 20, 2.0), 3),
+        _lag(_rsi(close, 14), 1),
+        _lag(_rsi(close, 14), 3),
+        _lag(_bb_pct_b(close, 20, 2.0), 1),
+        _lag(_bb_pct_b(close, 20, 2.0), 3),
         _rolling_zscore(_rsi(close, 14), 20),
         _rolling_zscore(_rsi(close, 7), 20),
         _macd_hist_norm(close, 12, 26, 9),
-        np.roll(_macd_hist_norm(close, 12, 26, 9), 1),
+        _lag(_macd_hist_norm(close, 12, 26, 9), 1),
         atr14 / (atr5 + 1e-9),
         _rolling_zscore(atr14, 20),
-        np.roll(log_ret, 10),
-        np.roll(log_ret, 15),
+        _lag(log_ret, 10),
+        _lag(log_ret, 15),
         (close - _sma(close, 50)) / (atr14 + 1e-9),
         (close - _sma(close, 200)) / (atr14 + 1e-9),
-        _rolling_zscore(np.roll(log_ret, 1) * log_ret, 20),
-        _rolling_zscore(np.roll(log_ret, 5) * log_ret, 20),
+        _rolling_zscore(_lag(log_ret, 1) * log_ret, 20),
+        _rolling_zscore(_lag(log_ret, 5) * log_ret, 20),
         (close - _ema(close, 100)) / (atr50 + 1e-9),
         _rolling_zscore(volume.astype(np.float64), 50),
         atr50 / (atr14 + 1e-9),
@@ -505,17 +537,27 @@ def prepare_sequences(
     timestamps: np.ndarray,
     seq_len: int,
     sample_indices: Sequence[int],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    X, y, w, r, ts = [], [], [], [], []
-    for idx, sample_index in enumerate(sample_indices):
-        if sample_index < seq_len:
+    label_end_indices: Optional[Sequence[int]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    X, y, w, r, ts, label_end_ts = [], [], [], [], [], []
+    if not (len(sample_indices) == len(weights) == len(returns)):
+        raise ValueError("sample_indices, weights, and returns must align")
+    if label_end_indices is not None and len(label_end_indices) != len(sample_indices):
+        raise ValueError("label_end_indices must align with sample_indices")
+
+    for position, sample_index in enumerate(sample_indices):
+        sample_index = int(sample_index)
+        if sample_index < seq_len - 1 or sample_index >= len(features):
             continue
-        end = int(sample_index)
-        X.append(features[end - seq_len : end])
-        y.append(int(labels[end - 1]) + 1)
-        w.append(float(weights[idx]))
-        r.append(float(returns[idx]))
-        ts.append(timestamps[end - 1])
+        label_end_index = int(label_end_indices[position]) if label_end_indices is not None else sample_index
+        if label_end_index < sample_index or label_end_index >= len(timestamps):
+            raise ValueError("label_end_indices must be at or after each sample and within timestamps")
+        X.append(features[sample_index - seq_len + 1 : sample_index + 1])
+        y.append(int(labels[sample_index]) + 1)
+        w.append(float(weights[position]))
+        r.append(float(returns[position]))
+        ts.append(timestamps[sample_index])
+        label_end_ts.append(timestamps[label_end_index])
 
     return (
         np.asarray(X, dtype=np.float32),
@@ -523,6 +565,7 @@ def prepare_sequences(
         np.asarray(w, dtype=np.float32),
         np.asarray(r, dtype=np.float32),
         np.asarray(ts),
+        np.asarray(label_end_ts),
     )
 
 
@@ -532,30 +575,38 @@ def _split_arrays(
     weights: np.ndarray,
     returns: np.ndarray,
     timestamps: np.ndarray,
+    label_end_timestamps: np.ndarray,
     label_bars: np.ndarray,
+    label_end_bars: np.ndarray,
     train_ratio: float,
     val_ratio: float,
-    vertical_bars: int,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
     n = len(X)
     if n < 48:
         raise ValueError("Not enough prepared samples to split safely.")
+    if not all(
+        len(array) == n
+        for array in (y, weights, returns, timestamps, label_end_timestamps, label_bars, label_end_bars)
+    ):
+        raise ValueError("split arrays and label intervals must align")
+    if np.any(label_end_bars < label_bars):
+        raise ValueError("label end bars cannot precede sample bars")
 
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
     train_end = max(24, min(train_end, n - 24))
     val_end = max(train_end + 12, min(val_end, n - 12))
 
-    # A sample's label is resolved at label_bar + vertical_bars, so it is kept only if that
-    # horizon ends strictly before the first bar of the next segment.
+    # Keep a sample only when its actual barrier-resolution bar precedes the next segment.
     idx = np.arange(n)
-    horizon_end = label_bars + vertical_bars
-    train_sel = idx[(idx < train_end) & (horizon_end < label_bars[train_end])]
-    val_sel = idx[(idx >= train_end) & (idx < val_end) & (horizon_end < label_bars[val_end])]
+    train_sel = idx[(idx < train_end) & (label_end_bars < label_bars[train_end])]
+    val_sel = idx[(idx >= train_end) & (idx < val_end) & (label_end_bars < label_bars[val_end])]
     test_sel = idx[val_end:]
+    if not len(train_sel) or not len(val_sel) or not len(test_sel):
+        raise ValueError("Purging left an empty train, validation, or test split")
 
     def take(sel: np.ndarray) -> Tuple[np.ndarray, ...]:
-        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel])
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_end_timestamps[sel])
 
     return take(train_sel), take(val_sel), take(test_sel)
 
@@ -620,30 +671,36 @@ def build_dataset_splits(
             features = add_calendar_features(features, pd.DatetimeIndex(symbol_df["date"]))
 
         atr = compute_atr(high, low, close, 14)
-        labels = triple_barrier_labels(close, high, low, atr, k=k, vertical_bars=vertical_bars)
+        labels, label_end_bars = triple_barrier_labels_with_ends(
+            close, high, low, atr, k=k, vertical_bars=vertical_bars
+        )
         events = np.asarray(cusum_filter(close, threshold_multiplier=1.0, atr=atr), dtype=np.int32)
-        label_indices = np.asarray([idx - 1 for idx in events if idx >= 1], dtype=np.int32)
-        if len(label_indices) < 48:
+        sample_indices = events[
+            (events >= seq_len - 1) & (events + vertical_bars < len(close))
+        ]
+        if len(sample_indices) < 48:
             continue
 
-        weights = compute_uniqueness_weights(label_indices, vertical_bars, len(close))
-        returns = compute_forward_returns(close, label_indices, holding_bars=vertical_bars)
+        weights = compute_uniqueness_weights(sample_indices, vertical_bars, len(close))
+        returns = compute_forward_returns(close, sample_indices, holding_bars=vertical_bars)
         timestamps = symbol_df["date"].to_numpy()
-        X, y, w, r, ts = prepare_sequences(
+        sample_label_end_bars = label_end_bars[sample_indices]
+        X, y, w, r, ts, label_end_ts = prepare_sequences(
             features,
             labels,
             weights,
             returns,
             timestamps,
             seq_len=seq_len,
-            sample_indices=label_indices,
+            sample_indices=sample_indices,
+            label_end_indices=sample_label_end_bars,
         )
         if len(X) < 48:
             continue
 
-        kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
         train, val, test = _split_arrays(
-            X, y, w, r, ts, kept_label_bars, train_ratio, val_ratio, vertical_bars=vertical_bars,
+            X, y, w, r, ts, label_end_ts, sample_indices, sample_label_end_bars,
+            train_ratio, val_ratio,
         )
         train_parts.append(train)
         val_parts.append(val)
@@ -667,9 +724,9 @@ def _scale_splits(
     test: Tuple[np.ndarray, ...],
     scaler_output: Optional[str] = None,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Optional[StandardScaler]]:
-    X_tr, y_tr, w_tr, r_tr, ts_tr = train
-    X_va, y_va, w_va, r_va, ts_va = val
-    X_te, y_te, w_te, r_te, ts_te = test
+    X_tr, y_tr, w_tr, r_tr, ts_tr, end_ts_tr = train
+    X_va, y_va, w_va, r_va, ts_va, end_ts_va = val
+    X_te, y_te, w_te, r_te, ts_te, end_ts_te = test
 
     scaler = StandardScaler()
     n_train, seq_len, n_features = X_tr.shape
@@ -684,9 +741,9 @@ def _scale_splits(
         save_scaler_to_bin(scaler, scaler_output)
 
     return (
-        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr),
-        (transform(X_va), y_va, w_va, r_va, ts_va),
-        (transform(X_te), y_te, w_te, r_te, ts_te),
+        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, end_ts_tr),
+        (transform(X_va), y_va, w_va, r_va, ts_va, end_ts_va),
+        (transform(X_te), y_te, w_te, r_te, ts_te, end_ts_te),
         scaler,
     )
 

@@ -6,16 +6,27 @@ Tests: imports, feature engineering (57 features), label generation, scaler save
 model forward passes (B,60,57)->(B,3), and ONNX export.
 """
 
+import atexit
 import json
 import os
 import struct
 import sys
 import tempfile
 import traceback
+import unittest
 import warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
+
+if __name__ != "__main__":
+    raise unittest.SkipTest("Run this standalone smoke check directly.")
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+SMOKE_TEMP_DIR = tempfile.TemporaryDirectory(dir=Path(__file__).parent)
+atexit.register(SMOKE_TEMP_DIR.cleanup)
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,13 +119,7 @@ try:
         patience: int = 15
         grad_clip: float = 1.0
         amp: bool = True
-        cpcv_n_splits: int = 6
-        cpcv_n_test: int = 2
-        cpcv_purge: int = 5
-        cpcv_embargo: int = 5
-        psr_threshold: float = 0.95
-        min_ic: float = 0.02
-        output_dir: str = tempfile.mkdtemp()
+        output_dir: str = SMOKE_TEMP_DIR.name
         onnx_opset: int = 12
         seed: int = 42
 
@@ -586,58 +591,6 @@ except Exception as e:
     record("SequenceMLP forward", FAIL, str(e))
     traceback.print_exc()
 
-# PatchTST
-try:
-    class PatchTST(nn.Module):
-        def __init__(self, seq_len=60, n_features=N_FEATURES,
-                     patch_len=12, stride=6,
-                     d_model=128, n_heads=8, n_layers=3,
-                     dropout=0.1, n_classes=N_CLASSES):
-            super().__init__()
-            self.patch_len = patch_len
-            self.stride = stride
-            self.n_patches = (seq_len - patch_len) // stride + 1
-
-            self.patch_embed = nn.Linear(patch_len, d_model)
-            self.cls_token = nn.Parameter(torch.zeros(1, n_features, 1, d_model))
-            self.pos_embed = nn.Parameter(torch.zeros(1, n_features, self.n_patches + 1, d_model))
-            nn.init.trunc_normal_(self.cls_token, std=0.02)
-            nn.init.trunc_normal_(self.pos_embed, std=0.02)
-
-            enc_layer = nn.TransformerEncoderLayer(
-                d_model=d_model, nhead=n_heads,
-                dim_feedforward=d_model * 4,
-                dropout=dropout, norm_first=True,
-                batch_first=True,
-            )
-            self.transformer = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
-            self.norm = nn.LayerNorm(d_model)
-            self.head = nn.Linear(n_features * d_model, n_classes)
-            self.drop = nn.Dropout(dropout)
-
-        def forward(self, x):
-            B, S, F = x.shape
-            x = x.permute(0, 2, 1)
-            patches = x.unfold(-1, self.patch_len, self.stride)
-            patches = self.patch_embed(patches)
-            cls = self.cls_token.expand(B, -1, -1, -1)
-            patches = torch.cat([cls, patches], dim=2) + self.pos_embed
-            b2, f2, np_, dm = patches.shape
-            patches = self.transformer(patches.reshape(b2 * f2, np_, dm))
-            patches = patches.reshape(b2, f2, np_, dm)
-            out = self.norm(patches[:, :, 0, :]).reshape(B, -1)
-            return self.head(self.drop(out))
-
-    m = PatchTST(seq_len=cfg.seq_len, n_features=cfg.n_features)
-    dummy = torch.zeros(2, cfg.seq_len, cfg.n_features)
-    out = m(dummy)
-    record("PatchTST forward", PASS if out.shape == (2, 3) else FAIL,
-           f"output shape={tuple(out.shape)}")
-    del m
-except Exception as e:
-    record("PatchTST forward", FAIL, str(e))
-    traceback.print_exc()
-
 # Conv1D
 try:
     class Conv1DModel(nn.Module):
@@ -719,7 +672,6 @@ print("=" * 70)
 
 model_defs = {
     "SequenceMLP": lambda: SequenceMLP(seq_len=cfg.seq_len, n_features=cfg.n_features),
-    "PatchTST": lambda: PatchTST(seq_len=cfg.seq_len, n_features=cfg.n_features),
     "Conv1D": lambda: Conv1DModel(seq_len=cfg.seq_len, n_features=cfg.n_features),
     "LSTM": lambda: LSTMModel(seq_len=cfg.seq_len, n_features=cfg.n_features),
 }
@@ -741,12 +693,19 @@ for name, factory in model_defs.items():
             output_names=["output"],
             dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
             do_constant_folding=True,
+            dynamo=False,
         )
         record(f"{name} ONNX export", PASS)
 
         # Verify ONNX model loads
         onnx_model = onnx.load(onnx_path)
         onnx.checker.check_model(onnx_model)
+        actual_opset = next(
+            item.version for item in onnx_model.opset_import
+            if item.domain in ("", "ai.onnx")
+        )
+        record(f"{name} ONNX opset", PASS if actual_opset == cfg.onnx_opset else FAIL,
+               f"got {actual_opset}, expected {cfg.onnx_opset}")
         record(f"{name} ONNX checker", PASS)
 
         # Check input/output shapes (batch dim is 0 for dynamic_axes, which is expected)
@@ -861,43 +820,29 @@ except Exception as e:
 # ── Test 8: CPCV functions ──────────────────────────────────────────────────
 
 print("\n" + "=" * 70)
-print("TEST 8: CPCV Validation Functions (Cell 9)")
+print("TEST 8: CPCV deployment gate (Cell 9)")
 print("=" * 70)
 
 try:
-    from itertools import combinations
-
-    def purge_embargo(train_idx, test_idx, purge=5, embargo=5):
-        t0, t1 = test_idx.min(), test_idx.max()
-        mask = (train_idx < t0 - purge) | (train_idx > t1 + embargo)
-        return train_idx[mask]
-
-    def cpcv_folds(n, n_splits=6, n_test=2, purge=5, embargo=5):
-        groups = np.array_split(np.arange(n), n_splits)
-        folds = []
-        for test_groups in combinations(range(n_splits), n_test):
-            test_idx = np.concatenate([groups[i] for i in test_groups])
-            train_idx = np.concatenate([groups[i] for i in range(n_splits) if i not in test_groups])
-            train_idx = purge_embargo(train_idx, test_idx, purge, embargo)
-            folds.append((train_idx, test_idx))
-        return folds
-
-    def psr(sharpe_ratios, sr_ref=0.0):
-        mu = sharpe_ratios.mean()
-        sig = sharpe_ratios.std(ddof=1) + 1e-9
-        z = (mu - sr_ref) / sig * np.sqrt(len(sharpe_ratios))
-        return float(norm.cdf(z))
-
-    folds = cpcv_folds(100, n_splits=6, n_test=2, purge=5, embargo=5)
-    record("cpcv_folds generates folds", PASS, f"{len(folds)} folds")
-
-    # PSR test
-    sr_test = np.array([0.5, 0.3, 0.7, 0.2, 0.6])
-    psr_val = psr(sr_test)
-    record("psr function", PASS if 0 < psr_val < 1 else FAIL, f"psr={psr_val:.4f}")
-
+    cpcv_cell = next(
+        (source for _, source in code_cells if 'cpcv_status = "not_run"' in source),
+        "",
+    )
+    record(
+        "CPCV gate fails closed until fold-local refit",
+        PASS if "deploy_gate = False" in cpcv_cell else FAIL,
+    )
+    all_notebook_code = "\n".join(source for _, source in code_cells)
+    record(
+        "CPCV metrics are unavailable, not fabricated",
+        PASS if '"cpcv_psr": None' in all_notebook_code else FAIL,
+    )
+    record(
+        "Unvalidated ONNX uses research-only filename",
+        PASS if "research_model_unvalidated.onnx" in all_notebook_code else FAIL,
+    )
 except Exception as e:
-    record("CPCV functions", FAIL, str(e))
+    record("CPCV deployment gate", FAIL, str(e))
     traceback.print_exc()
 
 # ── Test 9: Training loop functions exist and are callable ──────────────────

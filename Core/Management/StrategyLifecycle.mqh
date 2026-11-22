@@ -5,7 +5,6 @@
 
 #include "../Utils/Enums.mqh"                          // ENUM_TRADE_SIGNAL, ENUM_TIMEFRAMES
 #include "../../Interfaces/IStrategy.mqh"              // IStrategy::SetEnabled / ShouldDisableModel / OnNewBar
-#include "StrategyHealthMonitor.mqh"                   // CStrategyHealthMonitor
 #include "../Engines/FourStateRegimeDetector.mqh"      // CFourStateRegimeDetector
 #include "../Visualization/ChartDrawingManager.mqh"    // CChartDrawingManager
 
@@ -22,70 +21,8 @@ public:
 
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
-    void CheckStrategyDisabling();
-    void CheckStrategyReEnabling();
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
 };
-
-void CStrategyLifecycle::CheckStrategyDisabling()
-{
-    if(m_src == NULL)
-        return;
-
-    // The manager's constructor allocates the monitor, so this guard is always taken. The loop that
-    // used to sit under it was the second park authority: it wrote the roster's enabled flag and
-    // printed "disabled by AI model degeneration check" from a path no build could enter.
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-    {
-        healthMonitor.CheckAllStrategiesDisabling();
-    }
-}
-
-void CStrategyLifecycle::CheckStrategyReEnabling()
-{
-    if(m_src == NULL)
-        return;
-
-    // Unlike CheckStrategyDisabling, this branch does NOT return: the loop below always runs.
-    CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
-    if(healthMonitor != NULL)
-    {
-        healthMonitor.CheckAllStrategiesReEnabling();
-    }
-
-    const int strategyCount = m_src.GetStrategyCount();
-    for(int i = 0; i < strategyCount; i++)
-    {
-        if(m_src.IsStrategyEnabled(i))
-            continue;
-        if(!m_src.IsStrategyTemporarilyDisabled(i))
-            continue;
-
-        // GetStrategyPtr(i) is dereferenced with no NULL guard here; kept as-is deliberately.
-        if(!m_src.GetStrategyPtr(i).ShouldDisableModel())
-        {
-            if(m_src.ShouldReEnableStrategy(i))
-            {
-                m_src.SetStrategyTemporarilyDisabled(i, false);
-                m_src.SetStrategyDisabledUntil(i, 0);
-                m_src.SetStrategyEnabledFlag(i, true);
-                PrintFormat("[Enterprise-Adaptation] Strategy %s re-enabled after AI model recovery",
-                            m_src.GetStrategyName(i));
-            }
-            continue;
-        }
-
-        if(m_src.ShouldReEnableStrategy(i))
-        {
-            m_src.SetStrategyTemporarilyDisabled(i, false);
-            m_src.SetStrategyDisabledUntil(i, 0);
-            m_src.SetStrategyEnabledFlag(i, true);
-            PrintFormat("[Enterprise-Adaptation] Strategy %s re-enabled after cooldown",
-                        m_src.GetStrategyName(i));
-        }
-    }
-}
 
 // Must be called from main EA on each new bar
 void CStrategyLifecycle::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)

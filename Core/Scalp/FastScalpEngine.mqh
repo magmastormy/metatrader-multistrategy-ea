@@ -35,7 +35,6 @@ class CAIAdapter;
 #include "FastScalpSignal.mqh"
 #include "FastScalpRiskBudget.mqh"
 #include "FastScalpPositionTracker.mqh"
-#include "FastScalpPendingOrders.mqh"
 #include "FastScalpAsyncTracker.mqh"
 #include "FastScalpExit.mqh"
 #include "FastScalpEntry.mqh"
@@ -59,6 +58,7 @@ private:
    datetime                  m_lastScalpTime;        // Last scalp entry time
    long                      m_magicNumber;          // EA magic number for pending orders �?Batch 125: changed from uint to long
    bool                      m_initialized;
+   bool                      m_asyncRecoveryAttempted;
 
    string                    m_refusalLogSymbols[];   // per-symbol refusal-log throttle
    datetime                  m_refusalLogTimes[];
@@ -97,6 +97,10 @@ private:
 // Open positions on `symbol` whose comment starts with "SCALP" (same ownership test as CountScalpPositions).
    int CountScalpPositionsOnSymbol(const string symbol)
    {
+      long expectedMagic = m_magicNumber + MAGIC_ENGINE_FAST_SCALP;
+      if(expectedMagic <= 0)
+         return 0;
+
       int count = 0;
       int total = PositionsTotal();
       for(int i = 0; i < total; i++)
@@ -105,6 +109,8 @@ private:
          if(ticket <= 0 || !PositionSelectByTicket(ticket))
             continue;
          if(PositionGetString(POSITION_SYMBOL) != symbol)
+            continue;
+         if(PositionGetInteger(POSITION_MAGIC) != expectedMagic)
             continue;
          if(StringFind(PositionGetString(POSITION_COMMENT), "SCALP") == 0)
             count++;
@@ -171,7 +177,6 @@ private:
    CFastScalpIndicators      m_indicators;      // one slot: symbol tag + bar time + ATR + RSI
    CFastScalpRiskBudget      m_riskBudget;      // was m_usedScalpRiskPct
    CFastScalpPositionTracker m_posTracker;      // was m_scalpPositions[20] / m_scalpPositionCount
-   CFastScalpPendingOrders   m_pendingBook;     // was m_pendingOrders[10] / m_pendingOrderCount / m_tradeObj
    CFastScalpAsyncTracker    m_asyncTracker;    // was m_pendingAsync[20] / m_pendingAsyncCount / m_asyncMode / m_maxLatencyMs
 
    bool RefreshIndicators(string symbol)
@@ -214,6 +219,77 @@ private:
    int FindScalpPositionState(ulong ticket)
    { return m_posTracker.FindScalpPositionState(ticket); }
 
+   void RestoreAsyncRiskReservations()
+   {
+      if(m_asyncRecoveryAttempted)
+         return;
+      m_asyncRecoveryAttempted = true;
+
+      if(m_tradeManager == NULL)
+      {
+         m_asyncTracker.MarkUntrackedRiskReservation(1e100, 0, "", 0);
+         return;
+      }
+
+      SAsyncTradeRequest requests[];
+      bool replayComplete = false;
+      int requestCount = m_tradeManager.GetAsyncRecoverySnapshot(requests, replayComplete);
+      if(requestCount < 0)
+      {
+         m_asyncTracker.MarkUntrackedRiskReservation(1e100, 0, "", 0);
+         Print("[SCALP-ASYNC-RECOVERY] Snapshot unavailable; risk budget is held fail-closed");
+         return;
+      }
+
+      ulong expectedMagic = (ulong)(m_magicNumber + MAGIC_ENGINE_FAST_SCALP);
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      for(int i = 0; i < requestCount; i++)
+      {
+         if(requests[i].magic != expectedMagic)
+            continue;
+
+         double riskPct = requests[i].riskReservedPct;
+         if(!(riskPct > 0.0) || !MathIsValidNumber(riskPct) || riskPct >= 1e308)
+         {
+            if(!CFastScalpRiskBudget::EstimateRiskPct(requests[i].orderType,
+                                                      requests[i].symbol,
+                                                      requests[i].lot,
+                                                      requests[i].price,
+                                                      requests[i].sl,
+                                                      equity,
+                                                      riskPct))
+               riskPct = 1e100;
+         }
+
+         if(requests[i].ticket == 0 || requests[i].symbol == "" ||
+            (requests[i].orderType != ORDER_TYPE_BUY && requests[i].orderType != ORDER_TYPE_SELL))
+         {
+            m_asyncTracker.MarkUntrackedRiskReservation(riskPct, requests[i].ticket,
+                                                        requests[i].symbol, requests[i].submitTime);
+            continue;
+         }
+
+         int direction = (requests[i].orderType == ORDER_TYPE_BUY) ? 1 : -1;
+         if(!m_asyncTracker.OnAsyncOrderSent(requests[i].ticket,
+                                             requests[i].symbol,
+                                             direction,
+                                             requests[i].lot,
+                                             requests[i].price,
+                                             requests[i].sl,
+                                             requests[i].tp,
+                                             riskPct,
+                                             requests[i].submitTime))
+            m_asyncTracker.MarkUntrackedRiskReservation(riskPct, requests[i].ticket,
+                                                        requests[i].symbol, requests[i].submitTime);
+      }
+
+      if(!replayComplete)
+      {
+         m_asyncTracker.MarkUntrackedRiskReservation(1e100, 0, "", 0);
+         Print("[SCALP-ASYNC-RECOVERY] Journal replay incomplete; risk budget is held fail-closed");
+      }
+   }
+
 public:
    CFastScalpEngine() :
       m_tradeManager(NULL),
@@ -225,13 +301,13 @@ public:
       m_lastScalpTime(0),
       m_magicNumber(123456),
       m_initialized(false),
+      m_asyncRecoveryAttempted(false),
       m_entryConfigSymbol("")
    {
    }
 
    ~CFastScalpEngine()
    {
-      m_pendingBook.CancelAllOnShutdown();
       m_posTracker.Reset();
    }
 
@@ -253,23 +329,23 @@ public:
       m_positionSizer   = scalpPosSizer;
       m_riskTierManager = riskTierManager;
       m_aiAdapter       = aiAdapter;  // L10-018: Store AI adapter
+      m_asyncTracker.SetExpectedMagic((ulong)(m_magicNumber + MAGIC_ENGINE_FAST_SCALP));
 
       // CTradeManager has no GetMagicNumber accessor: market orders get base magic + per-symbol offset inside it
-      // (TradeManager.mqh:1267), while m_magicNumber is set from config by the orchestrator and reaches only the
-      // pending/async paths. The tier budget is re-read in ShouldEnterScalp, so a 0% tier at init is not a latch.
+      // (TradeManager.mqh:1267), while m_magicNumber reaches the async path. The tier budget is re-read in
+      // ShouldEnterScalp, so a 0% tier at init is not a latch.
 
       m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
       if(m_config.scalpRiskPct <= 0.0)
          Print("[SCALP-ENGINE] Scalp budget is 0% at init - entries refused until the tier raises it (re-read every cycle)");
 
       m_initialized = true;
-      PrintFormat("[SCALP-ENGINE] Initialized | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d | cooldown=%dms | pending=%s | partial=%s",
+      PrintFormat("[SCALP-ENGINE] Initialized | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d | cooldown=%dms | partial=%s",
                   m_config.maxScalpPositions,
                   m_config.scalpRiskPct,
                   m_config.scalpSLPips,
                   m_config.scalpTPPips,
                   m_config.scalpCooldownMs,
-                  m_config.usePendingOrders ? "ON" : "OFF",
                   m_config.partialCloseEnabled ? "ON" : "OFF");
       return true;
    }
@@ -284,7 +360,11 @@ public:
 
    SScalpConfig GetConfig() const { return m_config; }
 
-   void SetMagicNumber(long magic) { m_magicNumber = magic; }
+   void SetMagicNumber(long magic)
+   {
+      m_magicNumber = magic;
+      m_asyncTracker.SetExpectedMagic((ulong)(m_magicNumber + MAGIC_ENGINE_FAST_SCALP));
+   }
 
 // With a cache attached, EvaluateScalpSignal reads indicator values from it instead of calling
 // CopyBuffer, so the fast path does no indicator computation itself.
@@ -346,7 +426,27 @@ public:
       if(m_riskTierManager != NULL)
          m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
 
-      if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get()))
+      if(m_riskManager == NULL || !m_riskManager.IsInitialized())
+      {
+         if(RefusalLogDue(symbol, 60))
+            PrintFormat("[SCALP-GATE] %s | entry refused | reason=UnifiedRiskManager unavailable", symbol);
+         return false;
+      }
+
+      RestoreAsyncRiskReservations();
+      SyncScalpPositionTracking();
+      long expectedMagic = m_magicNumber + MAGIC_ENGINE_FAST_SCALP;
+      double unrepresentedRiskPct = m_asyncTracker.GetUnrepresentedRiskPct();
+      if(!m_riskBudget.Rebuild(expectedMagic, unrepresentedRiskPct))
+      {
+         if(RefusalLogDue(symbol, 60))
+            PrintFormat("[SCALP-GATE] %s | entry refused | reason=broker exposure could not be priced", symbol);
+         return false;
+      }
+
+      double candidateRiskPct = m_riskManager.GetActiveRiskPerTradePercent();
+      if(!CFastScalpEntry::PassesEntryGates(m_config, m_lastScalpTime, m_riskBudget.Get(),
+                                            candidateRiskPct, m_magicNumber + MAGIC_ENGINE_FAST_SCALP))
       {
          if(RefusalLogDue(symbol, 60))
             PrintFormat("[SCALP-GATE] %s | entry refused | usedRisk=%.2f%% of budget=%.2f%% | maxPos=%d | cooldownLeftMs=%d",
@@ -426,24 +526,13 @@ public:
       bool sent = CFastScalpEntry::Execute(symbol, signal, lotSize, confidence,
                                            m_entryConfig, m_magicNumber,
                                            m_tradeManager, m_riskManager, m_aiAdapter,
-                                           m_asyncTracker, m_posTracker, m_riskBudget,
+                                           m_asyncTracker, m_posTracker,
                                            m_lastScalpTime);
       if(sent)
          StampEntry(symbol);
       m_entryConfigSymbol = "";
       return sent;
    }
-
-// No caller in this repo: the tick driver only sends market orders, so the BUY_LIMIT/SELL_LIMIT book
-// stays empty even though usePendingOrders defaults to true and the init log prints pending=ON.
-   bool PlaceScalpPendingOrder(string symbol, ENUM_TRADE_SIGNAL signal, double lotSize)
-   {
-      return m_pendingBook.Place(symbol, signal, lotSize, m_config, m_magicNumber, m_lastScalpTime);
-   }
-
-   void CheckPendingScalpOrders() { m_pendingBook.CheckExpired(m_config); }
-
-   void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
 // 1R partial close / breakeven / trailing. No throttle of its own �?it runs once per ProcessScalpFastPath
 // pass, and that driver is the thing limited to one call per second.
@@ -452,64 +541,56 @@ public:
       if(!m_initialized || m_tradeManager == NULL)
          return;
 
-      CFastScalpExit::ManageScalpPositions(m_posTracker, m_riskBudget,
-                                           m_tradeManager, m_riskManager, m_config);
+      CFastScalpExit::ManageScalpPositions(m_posTracker,
+                                           m_tradeManager, m_config,
+                                           m_magicNumber + MAGIC_ENGINE_FAST_SCALP);
    }
 
-// Counts every open position whose comment STARTS with "SCALP" (StringFind==0), terminal-wide and without
-// a magic-number or symbol filter �?this is the number the maxScalpPositions gate is compared against.
-   int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
+// Counts positions owned by this engine's magic and SCALP comment.
+   int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(m_magicNumber + MAGIC_ENGINE_FAST_SCALP); }
 
-   bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }
+   bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket, m_magicNumber + MAGIC_ENGINE_FAST_SCALP); }
 
-// Adopts open SCALP positions the tracker lost (keyed by position ticket) and frees the risk budget of
-// tracked tickets that no longer select a position.
+// Adopts broker-visible SCALP positions missing from the management tracker.
    void SyncScalpPositionTracking()
    {
-      CFastScalpExit::SyncScalpPositionTracking(m_posTracker, m_riskBudget, m_riskManager);
+      CFastScalpExit::SyncScalpPositionTracking(m_posTracker,
+                                                m_magicNumber + MAGIC_ENGINE_FAST_SCALP);
    }
 
-// Dead wrappers, no caller in this repo: SetConfig, RemovePendingOrder, FreeScalpRiskBudget,
-// RemovePendingAsync, IsScalpPosition, GetUsedScalpRiskPct, GetPendingOrderCount. The send path and the
-// exit path use CFastScalpEntry / CFastScalpExit against the trackers directly instead of these.
-   void FreeScalpRiskBudget(ulong ticket)
+// Compatibility wrappers retained for external consumers; the repository has no call sites.
+   bool OnAsyncOrderSent(ulong orderTicket, string symbol, int direction,
+                         double lotSize, double entryPrice, double sl, double tp,
+                         double riskReservedPct)
    {
-      CFastScalpExit::FreeScalpRiskBudget(ticket, m_posTracker, m_riskBudget, m_riskManager);
-   }
-
-   void OnAsyncOrderSent(ulong orderTicket, string symbol, int direction,
-                          double lotSize, double entryPrice, double sl, double tp)
-   {
-      m_asyncTracker.OnAsyncOrderSent(orderTicket, symbol, direction, lotSize, entryPrice, sl, tp);
+      return m_asyncTracker.OnAsyncOrderSent(orderTicket, symbol, direction, lotSize, entryPrice, sl, tp,
+                                             riskReservedPct);
    }
 
 // Live: MultiStrategyAutonomousEA.mq5:1366 -> EAOrchestrator::ProcessScalpDealConfirmed -> here.
 // Confirms an async deal into the position tracker; no-op when nothing is pending.
    void OnDealConfirmed(ulong dealTicket, ulong orderTicket)
    {
-      m_asyncTracker.OnDealConfirmed(dealTicket, orderTicket, m_config, m_posTracker);
+      m_asyncTracker.OnDealConfirmed(dealTicket, orderTicket, m_posTracker);
    }
 
-// Live from ProcessScalpFastPath (tick path, 1 s throttle): expires async entries unconfirmed for
-// > 3x scalpMaxLatencyMs. Timed-out orders with no broker state are quarantined in the
-// reserved-budget ledger (budget stays reserved); budget is released only on a final
-// zero-fill outcome by the ledger re-check.
+// Live from ProcessScalpFastPath (tick path, 1 s throttle): reconciles stale requests against
+// broker orders, deals and positions; unresolved requests stay reserved.
    void CheckPendingAsyncOrders()
    {
-      m_asyncTracker.CheckPendingAsyncOrders(m_riskBudget, m_riskManager, m_config, m_posTracker);
+      m_asyncTracker.CheckPendingAsyncOrders(m_posTracker);
    }
 
    void RemovePendingAsync(int index) { m_asyncTracker.RemovePendingAsync(index); }
 
    void PrintDiagnostics()
    {
-      PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | pending=%d | tracked=%d | async=%s | pendingAsync=%d | reservedLedger=%d",
+      PrintFormat("[SCALP-DIAG] initialized=%s | maxPos=%d | currentPos=%d | riskUsed=%.1f/%.1f%% | tracked=%d | async=%s | pendingAsync=%d | reservedLedger=%d",
                   m_initialized ? "true" : "false",
                   m_config.maxScalpPositions,
                   CountScalpPositions(),
                   m_riskBudget.Get(),
                   m_config.scalpRiskPct,
-                  m_pendingBook.Count(),
                   m_posTracker.Count(),
                   m_asyncTracker.IsAsyncMode() ? "ON" : "OFF",
                   m_asyncTracker.Count(),
@@ -518,7 +599,6 @@ public:
 
    double GetUsedScalpRiskPct() const { return m_riskBudget.Get(); }
 
-   int GetPendingOrderCount() const { return m_pendingBook.Count(); }
 };
 
 #endif // CORE_SCALP_FAST_SCALP_ENGINE_MQH

@@ -43,44 +43,6 @@ public:
       m_aiAdapter      = pAIAdapter;     // L10-018: Store AI adapter
    }
 
-// Pre-trade risk validation via UnifiedRiskManager
-// (AGENTS.md invariant #1)
-   bool PassesRiskValidation(const string symbol, ENUM_ORDER_TYPE orderType, double &lotSize,
-                             double slDistance, int level)
-   {
-      if(m_riskManager != NULL)
-      {
-         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-         double slPips = (point > 0.0) ? (slDistance / point) : 0.0;
-         STradeValidationRequest riskReq;
-         ZeroMemory(riskReq);
-         riskReq.symbol       = symbol;
-         riskReq.orderType    = orderType;
-         riskReq.lotSize      = lotSize;
-         riskReq.stopLossPips = slPips;
-         riskReq.confidence   = 0.6;
-         riskReq.strategy     = "GRID-RECOVERY";
-         riskReq.requestTime  = TimeCurrent();
-
-         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "grid-pretrade");
-         if(!riskResult.approved)
-         {
-            PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.message);
-            return false;
-         }
-
-         // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
-         // adopting that would ship more than this engine's own sizing decided.
-         if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
-         {
-            PrintFormat("[GRID-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
-                        symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
-            lotSize = riskResult.adjustedLotSize;
-         }
-      }
-      return true;
-   }
-
 // L10-018: AI-VOTE logging
    void LogAIVote(const string symbol, int direction)
    {
@@ -92,7 +54,7 @@ public:
    }
 
 // Execute a grid level entry; ticketOut receives the result order
-   bool ExecuteEntry(const string symbol, int direction, int level, double lotSize,
+   bool ExecuteEntry(const string symbol, int direction, int level, double &lotSize,
                      double entryPrice, double sl, double tp, int magic, ulong &ticketOut)
    {
       ticketOut = 0;
@@ -113,30 +75,76 @@ public:
          return false;
       }
 
+      if(m_riskManager == NULL || !m_riskManager.IsInitialized())
+      {
+         PrintFormat("[GRID-RECOVERY] UnifiedRiskManager unavailable - refusing entry | symbol=%s L%d", symbol, level);
+         return false;
+      }
+
       string comment = "GRID-RECOVERY|L:" + IntegerToString(level) + "|D:" + IntegerToString(direction);
 
       // Convert absolute stop levels to pip distances: TradeManager prices stops from pips
       // and applies slippage from GetDynamicSlippage internally (no hardcoded fallback).
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-      double slPips = (point > 0.0) ? MathAbs(entryPrice - sl) / point : 0.0;
+      if(point <= 0.0)
+      {
+         PrintFormat("[GRID-RECOVERY] Invalid point - refusing entry | symbol=%s L%d", symbol, level);
+         return false;
+      }
+      double slPips = MathAbs(entryPrice - sl) / point;
       double tpPips = (point > 0.0) ? MathAbs(tp - entryPrice) / point : 0.0;
+
+      STradeValidationRequest riskReq;
+      ZeroMemory(riskReq);
+      riskReq.symbol       = symbol;
+      riskReq.orderType    = gridOrderType;
+      riskReq.lotSize      = lotSize;
+      riskReq.stopLossPips = slPips;
+      riskReq.takeProfitPips = tpPips;
+      riskReq.confidence   = 0.6;
+      riskReq.strategy     = "GRID-RECOVERY";
+      riskReq.requestTime  = TimeCurrent();
+
+      SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "grid-pretrade");
+      if(!riskResult.approved)
+      {
+         PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.message);
+         return false;
+      }
+
+      double validatedLotSize = (riskResult.adjustedLotSize > 0.0) ? riskResult.adjustedLotSize : lotSize;
+      if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
+      {
+         PrintFormat("[GRID-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
+                     symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
+         lotSize = riskResult.adjustedLotSize;
+      }
+      if(riskResult.virtualReservationOwnerTag != "")
+         m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                 lotSize,
+                                                 riskResult.riskPercent * lotSize / validatedLotSize);
 
       bool result = m_tradeManager.OpenPosition(symbol, gridOrderType, lotSize, entryPrice,
                                                 slPips, tpPips, comment, (uint)magic);
+      STradeExecutionReceipt receipt;
+      m_tradeManager.GetLastExecutionReceipt(receipt);
+      if(receipt.accepted && riskResult.virtualReservationOwnerTag != "")
+      {
+         double filledLotSize = receipt.filledVolume > 0.0 ? receipt.filledVolume : lotSize;
+         m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                 filledLotSize,
+                                                 riskResult.riskPercent * filledLotSize / validatedLotSize);
+      }
+      else if(!result && !receipt.accepted)
+         m_riskManager.ReleaseVirtualPosition(riskResult.virtualReservationOwnerTag);
 
       if(result)
       {
-         // The stored ticket is used by PositionSelectByTicket and CTrade::PositionClose, both of
-         // which take a POSITION ticket. ResultOrder() is the ORDER ticket and differs from it on a
-         // hedging account, so a level tracked by order ticket can never be selected or closed -
-         // the position then has no exit owner at all, because engine-tagged comments are excluded
-         // from lifecycle management (Batch 170).
          ticketOut = FindLevelPositionTicket(symbol, magic);
          if(ticketOut == 0)
          {
-            ticketOut = m_tradeManager.GetLastTicket();
-            PrintFormat("[GRID-RECOVERY] TICKET UNRESOLVED | %s L%d | no open position matched magic=%d yet, tracking TradeManager ticket %I64u - this level cannot be closed until it resolves",
-                        symbol, level, magic, ticketOut);
+            PrintFormat("[GRID-RECOVERY] POSITION TICKET UNRESOLVED | %s L%d | no open position matched magic=%d; management will wait for reconciliation",
+                        symbol, level, magic);
          }
 
          PrintFormat("[GRID-RECOVERY] Level opened: %s L%d %s lot=%.2f entry=%.5f SL=%.5f TP=%.5f magic=%d ticket=%I64u",

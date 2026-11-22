@@ -20,7 +20,6 @@ class CPerformanceAnalytics;
 class CResourceManager;
 class CSessionManager;
 class CInstrumentRegistry;
-class CSymbolContext;
 class CEnsembleMetaLearner;
 class CMarketRegimeClassifier;
 

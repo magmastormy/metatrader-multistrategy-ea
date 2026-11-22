@@ -193,8 +193,8 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
     
-    if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
-    if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
+    if(CopyHigh(m_symbol, m_timeframe, 1, lookback, high) <= 0) return;
+    if(CopyLow(m_symbol, m_timeframe, 1, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
     
     int str = m_swingStrength;
@@ -221,7 +221,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 ArrayResize(m_swingHighs, m_swingHighCount + 1);
                 m_swingHighs[m_swingHighCount].time = time[i];
                 m_swingHighs[m_swingHighCount].price = high[i];
-                m_swingHighs[m_swingHighCount].barIndex = i;
+                m_swingHighs[m_swingHighCount].barIndex = i + 1;
                 m_swingHighs[m_swingHighCount].isHigh = true;
                 m_swingHighCount++;
             }
@@ -248,7 +248,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 ArrayResize(m_swingLows, m_swingLowCount + 1);
                 m_swingLows[m_swingLowCount].time = time[i];
                 m_swingLows[m_swingLowCount].price = low[i];
-                m_swingLows[m_swingLowCount].barIndex = i;
+                m_swingLows[m_swingLowCount].barIndex = i + 1;
                 m_swingLows[m_swingLowCount].isHigh = false;
                 m_swingLowCount++;
             }
@@ -499,7 +499,8 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
 
     // Also test beyond P2 (newest side): the line must continue to hold after the second anchor.
     int checkBars = MathMin(20, p2.barIndex - 1);
-    for(int i = p2.barIndex - 1; i >= MathMax(0, p2.barIndex - checkBars); i--)
+    int oldestClosedShift = MathMax(1, p2.barIndex - checkBars);
+    for(int i = p2.barIndex - 1; i >= oldestClosedShift; i--)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime == 0) break;

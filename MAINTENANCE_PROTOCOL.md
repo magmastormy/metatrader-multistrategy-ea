@@ -1,7 +1,7 @@
 # Maintenance Protocol
 
 ## Document Metadata
-- Last Updated: 2026-02-23
+- Last Updated: 2026-11-19
 - Scope: Forward update contract
 
 This document defines mandatory implementation, validation, and documentation steps for future batches.
@@ -10,7 +10,7 @@ This document defines mandatory implementation, validation, and documentation st
 
 ### 1.1 Code and config
 - Update runtime code.
-- Update affected tester/session inputs (`shadow_session*.ini`, `shadow_session.set`) when behavior depends on profile settings.
+- Update the relevant tester `.ini`/`.set` inputs when behavior depends on profile settings. Make test values explicit and verify MT5 has not inherited a prior per-expert `.set` file.
 
 ### 1.2 Documentation
 - Update `README.md` for operational behavior changes.
@@ -28,8 +28,11 @@ Validate relevant log tags:
 - `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` (authority gate replaces shadow mode)
 
 ### 1.4 Risk/execution invariants
-- Unified risk remains pre-execution veto authority.
-- Execution remains `CTradeManager`-owned.
+- Verify every enabled entry path reaches the shared risk veto; raw-order engine paths are not covered until proven otherwise.
+- Verify the provisional candidate reservation is excluded by owner identity, other pending risk counts in portfolio and symbol budgets, and the configured symbol list is exact; chart symbols are not implicitly added.
+- Verify post-modifier minimum-lot handling honors both InpAllowMinLotRoundUp and InpMinLotRiskMultiplier.
+- Treat the EA risk inputs and supported `risk.*` live overrides as explicit risk authorities. Compare effective risk logs with tier requests; a tier label is not the applied risk value.
+- For strategy P&L, union contributor identities across all fills of a position; score only singleton positions and report multi-contributor/unattributed coverage separately.
 - Deinit keeps explicit `CIndicatorManager::DestroyInstance()`.
 
 ### 1.5 Code quality requirements
@@ -45,9 +48,11 @@ Validate relevant log tags:
 ## 2. Release Gate Template
 Use this structure before promoting a batch:
 - Build status: `PASS|FAIL`
-- Runtime mode: `Shadow|Live`
+- Runtime mode: `Tester|Demo|Live`
 - Symbols tested:
-- Cadence validated (`new-bar`, `intrabar`):
+- Entry/exit cadence and active strategy timeframe overrides verified from runtime logs:
+- Effective risk and exact trading universe verified:
+- Paired cold-window backtest completed for performance claims:
 - Signal rate summary:
 - Rejection breakdown:
 - AI liveness summary:

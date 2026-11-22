@@ -42,6 +42,7 @@
 #include "../../Core/Risk/UnprotectedPositionTracker.mqh"
 #include "../../Core/Utils/ErrorHandling.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
+#include "../../Core/Utils/IntentTrace.mqh"
 #include "../../Core/Utils/LogMacros.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/Instruments.mqh"
@@ -70,7 +71,6 @@
 #include "../../Core/Strategy/StrategyRegistry.mqh"
 #include "../../Core/Management/SymbolUniverseBuilder.mqh"
 #include "../../Core/Utils/StructuredLogger.mqh"
-#include "../../Core/Utils/CorrelationId.mqh"
 #include "../../Core/Config/LiveConfigReloader.mqh"
 #include "../../Core/Visualization/RiskDashboardPanel.mqh"
 #include "../../Core/Monitoring/SymbolHealthMonitor.mqh"
@@ -95,7 +95,6 @@
 // decomposition hubs are held BY VALUE and need their complete type.
 #include "OrchestratorSymbolClassifier.mqh"     // static: symbol / roster classification
 #include "OrchestratorStrategyFlagBuilder.mqh"  // static: global + per-symbol strategy flags
-#include "OrchestratorIntrabarPolicy.mqh"       // static: L7-009/L7-010 intrabar + timeframe policy
 #include "OrchestratorModeResolver.mqh"         // static: EA-mode degradation + topology logs
 #include "OrchestratorProfitGuard.mqh"          // stateful: daily profit target / trading halt
 #include "OrchestratorMathEngineHub.mqh"        // stateful: math engine fleet
@@ -406,7 +405,6 @@ class CEAOrchestrator
 
         m_scalpCache.Cleanup();
 
-        UncertaintyDeinit();
 
         // (Risk runtime state was written at the top of this method, before any teardown.)
 
@@ -520,7 +518,6 @@ void CleanupOnInitFailure()
     m_atrScalping.Deinit();
     m_tradeManager.Deinit();
     m_scalpCache.Cleanup();
-    UncertaintyDeinit();
 
     // RegistryAggregator owns the strategy registry and the other sub-registries
     m_registryAggregator.Deinitialize();
@@ -604,8 +601,7 @@ symConfig.minDailyVolumeLots = m_config.symbolMinDailyVolumeLots;
 symConfig.enableVolumeCheck = m_config.symbolEnableVolumeCheck;
 
 string validatedSymbols[];
-string chartSymbolToAdd = m_config.autoAddChartSymbol ? _Symbol : "";
-if(!CSymbolUniverseBuilder::Build(m_config.symbolsToTrade, validatedSymbols, symConfig, chartSymbolToAdd))
+if(!CSymbolUniverseBuilder::Build(m_config.symbolsToTrade, validatedSymbols, symConfig))
 {
     Print("[CRITICAL] Symbol universe validation failed - no valid symbols accepted");
     CleanupOnInitFailure();
@@ -619,6 +615,16 @@ if(symbolCount <= 0)
     CleanupOnInitFailure();
     return false;
 }
+
+string resolvedUniverse = "";
+for(int i = 0; i < symbolCount; i++)
+{
+    if(i > 0)
+        resolvedUniverse += ",";
+    resolvedUniverse += validatedSymbols[i];
+}
+PrintFormat("[SYMBOL-UNIVERSE] chart=%s | configured_list_authoritative=true | resolved=%s",
+            _Symbol, resolvedUniverse);
 
 m_managerCount = symbolCount;
 ArrayResize(m_enterpriseManagers, symbolCount);
@@ -702,7 +708,6 @@ if(m_dashboardBridge == NULL)
 m_dashboardBridge.Initialize(
 m_config.dashboardEndpoint,
 m_config.dashboardEnabled,
-m_config.dashboardControlEnabled,
 m_config.dashboardPushIntervalSec,
 1000
 );
@@ -756,9 +761,8 @@ if(!InitializeComponents())
             m_enterpriseManagers[mi].SyncEnabledWithRegistry();
     }
 
-    // Restore the per-strategy scoreboard AFTER the roster is populated and reconciled, so the
-    // per-row counters land on existing rows. Without this every restart reset every row to the
-    // 0.55 prior, and the pruning loop could never learn which rows earn.
+    // Restore per-row performance history after the roster is populated and reconciled, so the
+    // bounded singleton health scores do not reset to their 0.55 prior on every restart.
     RestoreStrategyScoreboard();
 
     // All cross-manager SetDependencies/SetManagers calls plus their validation live here;
@@ -778,7 +782,7 @@ if(!InitializeComponents())
     // The four IConfigCallback stubs that lived here printed "[LIVE-CONFIG] <section> section reloaded" and
     // discarded the JSON they were handed; a class declared inside a method cannot reach this owner, so no
     // callback at that seam could have applied a value. The owner consumes the reload from OnTimer now.
-    Print("[LIVE-CONFIG] live overrides armed | applied=risk section(absent key keeps the running value) | report-only=weights,thresholds,symbols,ai,engines");
+    Print("[LIVE-CONFIG] live overrides armed | applied=risk.* only | ignored=weights,thresholds,symbols,ai,engines (unsupported; no strategy behavior changes)");
     
     m_riskDashboard.Init(ChartID(), CORNER_RIGHT_UPPER, 10, 10);
     
@@ -810,8 +814,8 @@ bool InitializeSubsystems()
 
     SUnifiedRiskConfig unifiedRiskConfig;
     unifiedRiskConfig.baseRiskPerTradePercent = m_config.maxRiskPerTrade;
-    unifiedRiskConfig.minRiskPerTradePercent  = 0.1;
-    unifiedRiskConfig.maxRiskPerTradePercent  = MathMin(MathMax(m_config.maxRiskPerTrade * 2.0, 5.0), 25.0);
+    unifiedRiskConfig.minRiskPerTradePercent  = MathMin(0.1, m_config.maxRiskPerTrade);
+    unifiedRiskConfig.maxRiskPerTradePercent  = m_config.maxRiskPerTrade;
     unifiedRiskConfig.maxDailyRiskPercent     = m_config.maxDailyRisk;
     unifiedRiskConfig.maxPortfolioRiskPercent = m_config.maxPortfolioRisk;
     unifiedRiskConfig.correlationThreshold    = 0.7;
@@ -883,7 +887,11 @@ m_positionSizer.SetLogLevel(m_config.logLevel);
 m_positionSizer.SetAllowMinLotRoundUp(m_config.allowMinLotRoundUp);
 m_positionSizer.SetMinLotRiskMultiplier(m_config.EffectiveMinLotRiskMultiplier());
 
-m_riskTierManager.ApplyToPositionSizer(m_positionSizer, m_config.maxRiskPerTrade);
+SPositionSizingParams tierBoundSizingParams = m_positionSizer.GetParameters();
+tierBoundSizingParams.riskPercent = MathMin(m_config.maxRiskPerTrade,
+                                            m_unifiedRiskManager.GetActiveRiskPerTradePercent());
+if(!m_positionSizer.SetParameters(tierBoundSizingParams))
+    Print("[RISK-ENVELOPE] WARNING: failed to apply the operator-capped risk to PositionSizer");
 m_riskTierManager.ApplyToTradeManager(m_tradeManager);
 
 m_equityCurveManager = new CEquityCurveManager(m_config.equityCurveEmaPeriod, m_config.equityCurveReductionFactor, 1.0);
@@ -1018,7 +1026,7 @@ else if(m_config.riskTier == RISK_TIER_CONSERVATIVE)
 else
 {
     SSafeModeConfig announced = m_safeMode.GetConfig();
-    PrintFormat("[INIT] Conservative safe mode ENABLED | enforced: minConfidence>=%.2f, minVoters>=%d, quorum>=%.2f, spread<=%.2f*ATR, noStacking(per-symbol cap -> %d) | not enforced: tradeOnlyKillZones (FX-session hours; the live roster is 24/7 synthetics the session filter exempts) and avoidNewsEvents (no calendar feed)",
+    PrintFormat("[INIT] Conservative safe mode ENABLED | enforced: minConfidence>=%.2f, minVoters>=%d, quorum>=%.2f, spread<=%.2f*ATR, noStacking(per-symbol cap -> %d) | unavailable: FX kill-zone schedule (24/7 synthetic roster) and news avoidance (no calendar feed)",
                 announced.minConfidence, announced.minVoters, announced.minQuorumThreshold,
                 announced.maxSpreadATRRatio, 1);
 }
@@ -1054,9 +1062,11 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
                 (m_config.lossGuardAdverseMomentumExit || m_config.lossGuardConsecutiveLossLimit > 0) ? "yes" : "no");
     // The loss guard's daily-loss circuit breaker compares realised losses against
     // maxDailyRisk x its own trigger percent; without this writer it could never arm.
-    m_lifecycleManager.SetDailyRiskBudgetPercent(m_config.maxDailyRisk);
+    SUnifiedRiskConfig effectiveLifecycleRiskConfig;
+    m_unifiedRiskManager.CopyRiskConfig(effectiveLifecycleRiskConfig);
+    m_lifecycleManager.SetDailyRiskBudgetPercent(effectiveLifecycleRiskConfig.maxDailyRiskPercent);
     PrintFormat("[INIT] PositionLifecycleManager initialized (Blueprint R6a) | dailyRiskBudget=%.2f%% of equity",
-                m_config.maxDailyRisk);
+                effectiveLifecycleRiskConfig.maxDailyRiskPercent);
     }
     else
     Print("[INIT] WARNING: PositionLifecycleManager initialization failed");
@@ -1179,7 +1189,8 @@ if(m_config.spikeHunterEnabled)
     spikeConfig.alertThrottleSeconds     = m_config.spikeHunterAlertThrottle;
     spikeConfig.minConfluence            = m_config.spikeHunterMinConfluence;
 
-    if(m_spikeHunter.Init(spikeConfig, (int)m_config.magicNumber, &m_positionSizer, &m_unifiedRiskManager))
+    if(m_spikeHunter.Init(spikeConfig, (int)m_config.magicNumber, &m_positionSizer,
+                          &m_unifiedRiskManager, &m_tradeManager))
     {
         for(int i = 0; i < m_managerCount; i++)
         {
@@ -1271,7 +1282,8 @@ if(m_config.multiAssetProfilerEnabled)
             gridConfig.maxDrawdownPercent      = 10;
             gridConfig.cooldownMs              = 30000;
 
-            if(m_gridRecovery.Init(gridConfig, (int)m_config.magicNumber, &m_positionSizer, &m_unifiedRiskManager))
+            if(m_gridRecovery.Init(gridConfig, (int)m_config.magicNumber, &m_positionSizer,
+                                   &m_unifiedRiskManager, &m_tradeManager))
             {
                 for(int i = 0; i < m_managerCount; i++)
                 {
@@ -1320,7 +1332,8 @@ if(m_config.multiAssetProfilerEnabled)
         scalpConfig.cooldownMs             = 30000;
         scalpConfig.spikeWindowAvoidMinutes = 5;
 
-        if(m_atrScalping.Init(scalpConfig, (int)m_config.magicNumber, &m_positionSizer, &m_unifiedRiskManager))
+        if(m_atrScalping.Init(scalpConfig, (int)m_config.magicNumber, &m_positionSizer,
+                              &m_unifiedRiskManager, &m_tradeManager))
         {
             for(int i = 0; i < m_managerCount; i++)
             {
@@ -1424,7 +1437,7 @@ void WireAndValidateDependencies()
                                        perfAnalytics, derivProfiler);
 
     // TradeExecutor: same rule - its Initialize() sets none of these deps.
-    m_tradeExecutor.SetDependencies(tradeManager, attributionMgr,
+    m_tradeExecutor.SetDependencies(tradeManager, riskManager, attributionMgr,
                                     positionManager, neuralRegistry);
 
     // SetPositionManager takes a reference, so pass the sub-object directly.
@@ -1505,8 +1518,7 @@ bool InitializeComponents()
     }
     Print("[INIT] CandidateBuilder initialized");
 
-    // Configure() must be called explicitly: without it the per-symbol position caps stay at 0
-    // (CheckSymbolPositionLimit bypassed) and minLotRiskMultiplier ignores the configured input.
+    // Configure() must be called explicitly or the per-symbol position cap stays at 0.
     // Safe mode's noStacking is enforced through this cap rather than a second counting gate:
     // CheckSymbolPositionLimit already owns "how many positions may this symbol hold".
     int safeModeMaxPositionsPerSymbol = m_config.maxPositionsPerSymbol;
@@ -1517,8 +1529,8 @@ bool InitializeComponents()
         PrintFormat("[SAFE-MODE] noStacking enforced through the per-symbol position cap | max_positions_per_symbol %d -> 1",
                     m_config.maxPositionsPerSymbol);
     }
-    m_candidateBuilder.Configure(2.0, 1.5, m_config.maxRiskPerTrade,
-                                 0.15, m_config.EffectiveMinLotRiskMultiplier(), m_config.aiDrawdownSizingLimit,
+    m_candidateBuilder.Configure(2.0, 1.5,
+                                 0.15, m_config.aiDrawdownSizingLimit,
                                  true, safeModeMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
@@ -1546,7 +1558,8 @@ bool InitializeComponents()
             if(mathReg != NULL)
             {
                 mathReg.SetSignalDiagnostics(m_signalDiagnostics);
-                mathReg.InitializePipelineEngines(m_enterpriseManagerSymbols, m_managerCount);
+                if(m_config.pipelineEngineRegistry)
+                    mathReg.InitializePipelineEngines(m_enterpriseManagerSymbols, m_managerCount);
             }
         }
     else
@@ -1848,11 +1861,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
         CUnifiedSignalPipeline* pipeline = manager.GetPipeline();
         if(pipeline != NULL)
         {
-            // m_mathRegistry stayed NULL in every build - SetMathRegistry had no caller - so each pipeline
-            // getter that reads it answered NULL: the five announced filters passed signals straight
-            // through, the two TTL calls below configured nothing, and the manager's regime refresh could
-            // not reach an engine. Binding it turns those filters on, which refuses entries, so the input
-            // ships off and [PIPELINE-ENGINES] states which of the two modes a symbol is in.
+            // Engine-backed filters remain opt-in until paired cold-window tests validate their additional vetoes.
             CMathematicalEngineRegistry* mathRegistry =
                 (m_config.pipelineEngineRegistry ? m_registryAggregator.GetMathRegistry() : NULL);
             pipeline.SetMathRegistry(mathRegistry);
@@ -1948,12 +1957,11 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.SetValidatorConfig(MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
                                MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
                                validatorHardSpreadCutoff,
-                               m_config.spikeHunterEnabled,
                                m_config.enableOFIProxy,
                                m_config.enableVPINFilter,
                                VALIDATOR_BASE_SPREAD_ATR_RATIO,
                                VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO);
-    PrintFormat("[VALIDATOR-CONFIG] %s | quality_newbar=%.3f quality_intrabar=%.3f | hard_spread_cutoff=%.1fpts (input=%.1f entry_max=%.1f) | OFI=%s VPIN=%s | spread_atr=%.2f/%.2f | spike_arm=%s",
+    PrintFormat("[VALIDATOR-CONFIG] %s | quality_newbar=%.3f quality_intrabar=%.3f | hard_spread_cutoff=%.1fpts (input=%.1f entry_max=%.1f) | OFI=%s VPIN=%s | spread_atr=%.2f/%.2f",
                 symbol,
                 MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
                 MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
@@ -1963,9 +1971,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                 m_config.enableOFIProxy ? "ON" : "OFF",
                 m_config.enableVPINFilter ? "ON" : "OFF",
                 VALIDATOR_BASE_SPREAD_ATR_RATIO,
-                VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO,
-                m_config.spikeHunterEnabled ? "set(no-op branch)" : "OFF");
-    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | intrabar_dynamic_quorum_input=%s | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) �?only the two quality floors are enforced; the confidence and confluence floors are printed here and gate nothing | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+                VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO);
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | intrabar_dynamic_quorum_input=%s | pipeline_min_conf=%.2f | validator_arms=spread_cutoff+exogenous_atr+quality+ofi+vpin | quality_floor_newbar=%.2f quality_floor_intrabar=%.2f | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
     symbol,
     symbolClass,
     symbolProfile,
@@ -1976,28 +1983,20 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     manager.GetSupportFloorIntrabar(),
     m_config.intrabarDynamicQuorumEnabled ? "true" : "false",
     MathMax(0.0, MathMin(1.0, m_config.pipelineMinConfidence)),
-    MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinConfidence)),
-    MathMax(1, m_config.validatorNewBarMinConfluence),
     MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
-    MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinConfidence)),
-    MathMax(1, m_config.validatorIntrabarMinConfluence),
     MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
     MathMax(10, m_config.deadlockAttributionIntervalSec),
     MathMax(0.0, m_config.pipelineIntrabarConfidenceCap));
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     if(syntheticLeanProfile)
-    PrintFormat("[SYMBOL-PROFILE] %s uses synthetic lean roster: Momentum/Trend suppressed from manager roster; Candlestick remains new-bar active but intrabar PROBE while Fibonacci/Elliott/SupportResistance/UICT stay LIVE",
+    PrintFormat("[SYMBOL-PROFILE] %s uses the configured synthetic lean roster",
     symbol);
 
-    // Per-slot policy and timeframe must be set from the config arrays before auto-registration:
-    // both are read inside AutoRegisterStrategies, and timeframe is consumed by strategy Init, so
+    // Timeframe overrides are applied before registration so strategy Init creates matching handles.
+    // The timeframe is consumed by strategy Init, so
     // an indicator handle created later would otherwise be keyed to the wrong bar size.
     for(int si = 0; si < m_config.strategyConfigCount; si++)
-    {
-        manager.SetStrategyIntrabarPolicyConfig(si, m_config.strategyIntrabarConfigs[si].defaultPolicy);
         manager.SetStrategyTimeframeConfig(si, m_config.strategyTimeframes[si]);
-    }
-    // Strategies beyond strategyConfigCount will use defaults from GetIntrabarPolicy lambda
 
     // These three inputs are read by the strategies' own Init, so they have to land before registration.
     manager.SetStrategyConstructionInputs(m_config.candlestickRequireTrend,
@@ -2005,8 +2004,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                                           m_config.momentumScalpCooldownSeconds);
 
     manager.AutoRegisterStrategies(strategyFlags);
-    ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
-
     // Array is pre-sized in Initialize(); place the manager at its symbol index. Do NOT append:
     // appending leaves indices 0..11 NULL, so CSignalGenerator sees an all-NULL manager array.
     m_enterpriseManagers[assignIndex] = manager;
@@ -2057,7 +2054,7 @@ PrintFormat("[ENTERPRISE] Manager initialized for %s | registered=%d | profile=%
 return true;
 }
 
-// Forwarders to COrchestratorStrategyFlagBuilder, COrchestratorSymbolClassifier and COrchestratorIntrabarPolicy.
+// Forwarders to strategy flag and symbol classification helpers.
 
 bool BuildStrategyFlags(bool& flags[])
 {
@@ -2075,21 +2072,9 @@ int CountEffectiveIndicatorStrategiesForSymbol(const bool& symbolFlags[])
     return COrchestratorSymbolClassifier::CountEffectiveIndicatorStrategiesForSymbol(symbolFlags);
 }
 
-// Synthetic lean overrides come from the CDerivAssetProfiler family profile, not indices
-ENUM_INTRABAR_POLICY GetIntrabarPolicy(const string symbol, int strategyIndex, const bool& strategyFlags[])
-{
-    return COrchestratorIntrabarPolicy::GetIntrabarPolicy(
-        m_config, GetPointer(m_multiAssetProfiler), symbol, strategyIndex, strategyFlags);
-}
-
 string BuildEnabledStrategyList(const bool& strategyFlags[])
 {
     return COrchestratorSymbolClassifier::BuildEnabledStrategyList(strategyFlags);
-}
-
-void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
-{
-    // Intentional pass-through: no governance layer is active; consensus weights the strategies.
 }
 
 // The operator's InpWeight* for a flag slot, falling back to the catalog row when a row has no slot.
@@ -2471,7 +2456,6 @@ void ReleaseNeuralNetStrategies()
         if(!mgr.RegisterStrategy(adapter, name, true, aiWeight,
                                  g_strategyCatalog[catIdx].tier,
                                  g_strategyCatalog[catIdx].timeframe,
-                                 g_strategyCatalog[catIdx].fixedPolicy,
                                  g_strategyCatalog[catIdx].role,
                                  g_strategyCatalog[catIdx].cluster,
                                  g_strategyCatalog[catIdx].liveVoting))
@@ -2668,6 +2652,24 @@ void OnTimer()
     // Early exit during shutdown: released resources must not be touched.
     if(m_shuttingDown)
     return;
+
+    // Timer-dependent strategies opt in explicitly; ordinary strategies remain tick/bar driven.
+    for(int managerIndex = 0; managerIndex < m_managerCount; managerIndex++)
+    {
+        CEnterpriseStrategyManager* manager = m_enterpriseManagers[managerIndex];
+        if(manager == NULL)
+            continue;
+
+        for(int strategyIndex = 0; strategyIndex < manager.GetStrategyCount(); strategyIndex++)
+        {
+            if(!manager.IsStrategyEnabled(strategyIndex))
+                continue;
+
+            IStrategy* strategy = manager.GetStrategyPtr(strategyIndex);
+            if(strategy != NULL && strategy.RequiresTimerCallback())
+                strategy.OnTimer();
+        }
+    }
 
     // Emergency close request from the circuit breaker
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
@@ -2871,8 +2873,8 @@ if(m_dashboardBridge != NULL && m_dashboardBridge.IsEnabled() && m_bridgesReady
 
     // A push is a blocking WebRequest. Never start one on the way out: a call still in flight when the
     // EA is removed from the chart is the shape behind "Abnormal termination" 2 s into a teardown.
-    if(!m_shuttingDown && m_dashboardBridge.PushState() && m_dashboardBridge.IsControlEnabled())
-    m_dashboardBridge.PollCommands();
+    if(!m_shuttingDown)
+        m_dashboardBridge.PushState();
 }
 
 // OnTick delivers no tick when the chart symbol is quiet, and the spike windows cover the whole traded
@@ -2959,7 +2961,7 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
         m_heartbeat.Emit(GetPointer(m_diagnosticsManager), m_spikeMonitor.IsPaused());
         s_lastHeartbeat = now;
 
-        // Scoreboard durability on the same cadence: counters and park flags, so a restart does not
+        // Scoreboard durability on the same cadence: counters and bounded health history, so a restart does not
         // erase what the roster learned. Small file (rows = strategies x symbols), so this is not a
         // hot-path cost; it is throttled to every 5 minutes rather than every heartbeat.
         static datetime s_lastScoreboardSave = 0;
@@ -2998,48 +3000,86 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
 }
 
 // Update risk parameters from input changes
-void UpdateRiskParametersFromInputs(double maxRiskPerTrade, double maxDailyRisk,
+void UpdateRiskParametersFromOverrides(double maxRiskPerTrade, double maxDailyRisk,
 double maxPortfolioRisk, double maxDrawdown,
 double dailyLossLimitPercent,
 bool allowMinLotRoundUp, double minLotRiskMultiplier,
 bool scaleLotToSymbolBudget,
-bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
+bool enableCompoundingTiers, bool updateRiskEnvelope)
 {
-    // Same order as initialization: the operator's per-trade risk becomes the base, then the tier may scale it down.
-    // Until now maxRiskPerTrade reached only the print below - neither the gate's copy nor the sizer was updated.
-    m_config.maxRiskPerTrade = maxRiskPerTrade;
+    // Live inputs may tighten the startup envelope; tier presets may only reduce the resulting limits.
+    bool compoundingPolicyChanged = enableCompoundingTiers != m_config.enableCompoundingTiers;
+    if(updateRiskEnvelope && !m_unifiedRiskManager.UpdateOperatorRiskEnvelope(maxRiskPerTrade, maxDailyRisk,
+                                                                              maxPortfolioRisk, maxDrawdown,
+                                                                              dailyLossLimitPercent))
+    {
+        Print("[RISK-OVERRIDE] rejected: risk manager is not initialized");
+        return;
+    }
+
+    if(updateRiskEnvelope)
+    {
+        m_config.maxRiskPerTrade = maxRiskPerTrade;
+        m_config.maxDailyRisk = maxDailyRisk;
+        m_config.maxPortfolioRisk = maxPortfolioRisk;
+        m_config.maxDrawdown = maxDrawdown;
+        m_config.dailyLossLimitPercent = dailyLossLimitPercent;
+        m_unifiedRiskManager.SetBaseRiskPerTrade(maxRiskPerTrade);
+    }
     m_config.allowMinLotRoundUp = allowMinLotRoundUp;
     m_config.minLotRiskMultiplier = minLotRiskMultiplier;
     m_config.scaleLotToSymbolBudget = scaleLotToSymbolBudget;
-    // Each parameter this method applies is written to m_config as well: a reader of the config would
-    // otherwise keep the previous values while the gate and the sizer moved.
-    m_config.maxDailyRisk = maxDailyRisk;
-    m_config.maxPortfolioRisk = maxPortfolioRisk;
-    m_config.maxDrawdown = maxDrawdown;
-    m_config.dailyLossLimitPercent = dailyLossLimitPercent;
     m_config.enableCompoundingTiers = enableCompoundingTiers;
-    m_config.riskTier = riskTier;
-    m_unifiedRiskManager.SetBaseRiskPerTrade(maxRiskPerTrade);
 
-    m_riskTierManager.SetTier(riskTier);
-    m_riskTierManager.ApplyToRiskManager(m_unifiedRiskManager, &m_performanceAnalytics,
-    maxDailyRisk, maxPortfolioRisk,
-    maxDrawdown * 0.7, maxDrawdown,
-    dailyLossLimitPercent);
-    m_riskTierManager.ApplyToPositionSizer(m_positionSizer, maxRiskPerTrade);
+    bool reapplyTierPolicy = updateRiskEnvelope || compoundingPolicyChanged;
+    if(reapplyTierPolicy)
+    {
+        m_riskTierManager.ApplyToRiskManager(m_unifiedRiskManager, &m_performanceAnalytics,
+        m_config.maxDailyRisk, m_config.maxPortfolioRisk,
+        m_config.maxDrawdown * 0.7, m_config.maxDrawdown,
+        m_config.dailyLossLimitPercent);
+        SPositionSizingParams updatedSizingParams = m_positionSizer.GetParameters();
+        updatedSizingParams.riskPercent = MathMin(m_config.maxRiskPerTrade,
+                                                   m_unifiedRiskManager.GetActiveRiskPerTradePercent());
+        if(!m_positionSizer.SetParameters(updatedSizingParams))
+            Print("[RISK-OVERRIDE] WARNING: failed to apply the operator-capped risk to PositionSizer");
+    }
 
     m_positionSizer.SetAllowMinLotRoundUp(allowMinLotRoundUp);
     m_positionSizer.SetMinLotRiskMultiplier(m_config.EffectiveMinLotRiskMultiplier());
     m_unifiedRiskManager.SetMinLotRoundupPolicy(allowMinLotRoundUp, minLotRiskMultiplier);
     m_unifiedRiskManager.SetScaleLotToSymbolBudget(scaleLotToSymbolBudget);
 
-    m_compoundingTierManager.SetAutoSwitch(enableCompoundingTiers);
+    if(enableCompoundingTiers && !m_compoundingTierManager.IsInitialized())
+    {
+        if(!m_compoundingTierManager.Initialize(true))
+        {
+            m_config.enableCompoundingTiers = false;
+            Print("[RISK-OVERRIDE] compounding enable rejected: tier manager initialization failed");
+        }
+    }
 
-    PrintFormat("[RISK-INPUT-UPDATE] Risk parameters updated | risk=%.1f%% daily=%.1f%% portfolio=%.1f%% dd=%.1f%% dailyLoss=%.1f%% roundUp=%s roundupCap=%.1f enforced symbolLotCap=%s compounding=%s tier=%d",
-        maxRiskPerTrade, maxDailyRisk, maxPortfolioRisk, maxDrawdown, dailyLossLimitPercent,
+    if(m_compoundingTierManager.IsInitialized())
+    {
+        m_compoundingTierManager.SetAutoSwitch(m_config.enableCompoundingTiers);
+        if(m_config.enableCompoundingTiers && reapplyTierPolicy)
+        {
+            m_compoundingTierManager.ApplyTierToRiskManager(m_unifiedRiskManager);
+            m_compoundingTierManager.ApplyTierToPositionSizer(m_positionSizer, m_unifiedRiskManager);
+        }
+    }
+
+    SUnifiedRiskConfig effectiveRiskConfig;
+    m_unifiedRiskManager.CopyRiskConfig(effectiveRiskConfig);
+    m_lifecycleManager.SetDailyRiskBudgetPercent(effectiveRiskConfig.maxDailyRiskPercent);
+    SPositionSizingParams effectiveSizingParams = m_positionSizer.GetParameters();
+    PrintFormat("[RISK-OVERRIDE] applied perTrade=%.2f%% daily=%.2f%% portfolio=%.2f%% | effective sizerPerTrade=%.2f%% daily=%.2f%% portfolio=%.2f%% | dd=%.1f%% dailyLoss=%.1f%% roundUp=%s roundupCap=%.1f symbolLotCap=%s compounding=%s",
+        m_config.maxRiskPerTrade, m_config.maxDailyRisk, m_config.maxPortfolioRisk,
+        effectiveSizingParams.riskPercent, effectiveRiskConfig.maxDailyRiskPercent,
+        effectiveRiskConfig.maxPortfolioRiskPercent, m_config.maxDrawdown, m_config.dailyLossLimitPercent,
         allowMinLotRoundUp ? "true" : "false", m_config.EffectiveMinLotRiskMultiplier(),
         scaleLotToSymbolBudget ? "true" : "false",
-        enableCompoundingTiers ? "true" : "false", (int)riskTier);
+        m_config.enableCompoundingTiers ? "true" : "false");
     }
 
     // Apply MQL5\Files\Config\live_overrides.json after a detected content change. Every key is read with the
@@ -3058,25 +3098,44 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         double roundupCap = CLiveConfigReloader::GetDouble(json, "risk.minLotRiskMultiplier", m_config.minLotRiskMultiplier);
         bool symbolLotCap = CLiveConfigReloader::GetBool(json, "risk.scaleLotToSymbolBudget", m_config.scaleLotToSymbolBudget);
         bool compounding = CLiveConfigReloader::GetBool(json, "risk.enableCompoundingTiers", m_config.enableCompoundingTiers);
-        ENUM_RISK_TIER tier = (ENUM_RISK_TIER)CLiveConfigReloader::GetInt(json, "risk.riskTier", (int)m_config.riskTier);
 
-        PrintFormat("[LIVE-CONFIG-RISK] perTrade=%.2f->%.2f | daily=%.1f->%.1f | portfolio=%.1f->%.1f | maxDD=%.1f->%.1f | dailyLoss=%.1f->%.1f | roundUp=%s->%s | cap=%.1f->%.1f | symbolLotCap=%s->%s | compounding=%s->%s | tier=%d->%d",
-                    m_config.maxRiskPerTrade, riskPerTrade,
-                    m_config.maxDailyRisk, dailyRisk,
-                    m_config.maxPortfolioRisk, portfolioRisk,
-                    m_config.maxDrawdown, maxDD,
-                    m_config.dailyLossLimitPercent, dailyLoss,
-                    m_config.allowMinLotRoundUp ? "yes" : "no", roundUp ? "yes" : "no",
-                    m_config.minLotRiskMultiplier, roundupCap,
-                    m_config.scaleLotToSymbolBudget ? "yes" : "no", symbolLotCap ? "yes" : "no",
-                    m_config.enableCompoundingTiers ? "yes" : "no", compounding ? "yes" : "no",
-                    (int)m_config.riskTier, (int)tier);
+        bool riskEnvelopeChanged = m_unifiedRiskManager.IsOperatorRiskEnvelopeDifferent(
+                                      riskPerTrade, dailyRisk, portfolioRisk, maxDD, dailyLoss);
+        bool riskSettingsChanged = riskEnvelopeChanged ||
+                                  roundUp != m_config.allowMinLotRoundUp ||
+                                  MathAbs(roundupCap - m_config.minLotRiskMultiplier) > 0.00000001 ||
+                                  symbolLotCap != m_config.scaleLotToSymbolBudget ||
+                                  compounding != m_config.enableCompoundingTiers;
 
-        // An operator who just edited a weight needs to be told it did not land, or the reload reads as success.
-        Print("[LIVE-CONFIG] weights/thresholds/symbols/ai/engines | applied=no(report-only sections, no consumer reads them)");
+        if(StringFind(json, "\"riskTier\"") >= 0)
+            Print("[LIVE-CONFIG] risk.riskTier ignored | choose the startup input and reinitialize to change tier policy");
 
-        UpdateRiskParametersFromInputs(riskPerTrade, dailyRisk, portfolioRisk, maxDD, dailyLoss,
-                                      roundUp, roundupCap, symbolLotCap, compounding, tier);
+        if(StringFind(json, "\"weights\"") >= 0 ||
+           StringFind(json, "\"thresholds\"") >= 0 ||
+           StringFind(json, "\"symbols\"") >= 0 ||
+           StringFind(json, "\"ai\"") >= 0 ||
+           StringFind(json, "\"engines\"") >= 0)
+            Print("[LIVE-CONFIG] strategy settings ignored | supported keys are risk.* only");
+
+        if(riskSettingsChanged)
+        {
+            PrintFormat("[LIVE-CONFIG-RISK] changed perTrade=%.2f->%.2f | daily=%.1f->%.1f | portfolio=%.1f->%.1f | maxDD=%.1f->%.1f | dailyLoss=%.1f->%.1f | roundUp=%s->%s | cap=%.1f->%.1f | symbolLotCap=%s->%s | compounding=%s->%s",
+                        m_config.maxRiskPerTrade, riskPerTrade,
+                        m_config.maxDailyRisk, dailyRisk,
+                        m_config.maxPortfolioRisk, portfolioRisk,
+                        m_config.maxDrawdown, maxDD,
+                        m_config.dailyLossLimitPercent, dailyLoss,
+                        m_config.allowMinLotRoundUp ? "yes" : "no", roundUp ? "yes" : "no",
+                        m_config.minLotRiskMultiplier, roundupCap,
+                        m_config.scaleLotToSymbolBudget ? "yes" : "no", symbolLotCap ? "yes" : "no",
+                        m_config.enableCompoundingTiers ? "yes" : "no", compounding ? "yes" : "no");
+            UpdateRiskParametersFromOverrides(riskPerTrade, dailyRisk, portfolioRisk, maxDD, dailyLoss,
+                                             roundUp, roundupCap, symbolLotCap, compounding, riskEnvelopeChanged);
+        }
+        else
+        {
+            Print("[LIVE-CONFIG-RISK] no supported risk values changed; runtime state preserved");
+        }
 
         // Edge-triggered so a file left at true cannot re-arm trading while the operator edits something else.
         bool resetAsk = CLiveConfigReloader::GetBool(json, "risk.resetCircuitBreaker", false);
@@ -3125,9 +3184,8 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         PersistRiskRuntimeState(false);
     }
 
-    // Per-strategy scoreboard (counters + park flags), keyed by symbol+strategy. Restored after the
-    // rosters are built, persisted periodically and at teardown, so the selection state survives a
-    // restart instead of resetting every row to the 0.55 prior.
+    // Per-strategy performance history, keyed by symbol+strategy. Restored periodically and at teardown,
+    // so singleton health scores retain their bounded history across restarts.
     void RestoreStrategyScoreboard()
     {
         if(ArraySize(m_enterpriseManagers) <= 0)
@@ -3219,21 +3277,6 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 
     RefreshRuntimeState();
 
-    // Strategy lifecycle governance: sweep disabling AND re-enabling on a 60 s cadence regardless
-    // of AI mode, so a strategy auto-disabled by trade feedback can recover with AI off.
-    static datetime s_lastGovernanceSweep = 0;
-    datetime nowGov = TimeCurrent();
-    if(nowGov - s_lastGovernanceSweep >= 60)
-    {
-        for(int gi = 0; gi < m_managerCount; gi++)
-        {
-            if(m_enterpriseManagers[gi] == NULL) continue;
-            m_enterpriseManagers[gi].CheckStrategyDisabling();
-            m_enterpriseManagers[gi].CheckStrategyReEnabling();
-        }
-        s_lastGovernanceSweep = nowGov;
-    }
-
     ProcessAISubsystems();
 
     DetectNewBarsPerSymbol();
@@ -3292,8 +3335,9 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
         ulong positionIds[];
         double profits[];
         string predictionIds[];
+        string intentIds[];
 
-        int closedCount = m_attributionManager.GetPendingCloseProfits(positionIds, profits, predictionIds);
+        int closedCount = m_attributionManager.GetPendingCloseProfits(positionIds, profits, predictionIds, intentIds);
         if(closedCount <= 0)
             return;
 
@@ -3302,6 +3346,14 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
             // Every row is consumed, linked to a prediction or not: a row left behind is re-read
             // on each cycle forever, and an indicator trade has no consumer at all.
             m_attributionManager.ConsumePendingCloseProfit(positionIds[i]);
+
+            PrintFormat("[INTENT-OUTCOME] intent_id=%s | stage=POSITION_CLOSED | outcome=REALIZED | position_id=%I64u | net_profit=%.2f | matched=%s",
+                        intentIds[i] == "" ? "UNTRACKED" : intentIds[i],
+                        positionIds[i], profits[i], intentIds[i] == "" ? "false" : "true");
+            if(intentIds[i] != "")
+                CIntentTrace::LogStage(intentIds[i], "", "POSITION_CLOSED", "REALIZED",
+                                       StringFormat("position_id=%I64u net_profit=%.2f", positionIds[i], profits[i]));
+            m_attributionManager.RemoveIntentPositionMap(positionIds[i]);
 
             string predId = predictionIds[i];
             if(predId == "")
@@ -3454,8 +3506,8 @@ void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
                                      const MqlTradeRequest &request,
                                      const MqlTradeResult &result)
 {
-    // Per-strategy fan-out: attribution pop, UpdatePerformance, health monitor, governance
-    // disable write-through. Each manager filters by its own symbol/magic internally.
+    // Per-strategy fan-out: attribution pop and exact-singleton performance feedback.
+    // Each manager filters by its own symbol/magic internally.
     for(int i = 0; i < m_managerCount; i++)
     {
         if(m_enterpriseManagers[i] == NULL) continue;
@@ -3524,11 +3576,10 @@ void ProcessScalpFastPath()
         m_scalpCache.UpdateTickValues();
 
         // Drive the scalp lifecycle BEFORE scanning for new entries: open scalps need their 1R partial /
-        // breakeven / trailing management and pending sync+async orders need confirming or expiring.
+        // breakeven / trailing management and async orders need confirmation or timeout reconciliation.
         m_scalpEngine.SyncScalpPositionTracking();
         m_scalpEngine.ManageScalpPositions();
         m_scalpEngine.CheckPendingAsyncOrders();
-        m_scalpEngine.CheckPendingScalpOrders();
 
         // Basket equity stop halts NEW scalp entries; existing scalps are already managed above.
         if(m_basketEquityStop.IsHaltActive())
@@ -3675,6 +3726,13 @@ void GenerateAndProcessSignals(const string cycleCorrId)
             continue;
         }
 
+        if(!canOpenNewTrades)
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, m_enterpriseManagerSymbols[i],
+                                   "ENTRY_GATE", "REJECT", "entry_disabled_or_risk_halt");
+            continue;
+        }
+
         // Top of the funnel. Until this had no writer, so signals_generated printed 0 in
         // every journal while a later stage counted 1, and every [CONVERSION-RATES] percentage that
         // divides by a stage was pinned at 0.0%.
@@ -3685,6 +3743,9 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // rather than at the send because a held slot must not reserve risk no position will ever take.
         if(sendsThisCycle >= cycleSendCap || eaPositions + sendsThisCycle >= m_config.maxPositionsTotal)
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, m_enterpriseManagerSymbols[i],
+                                   "ENTRY_GATE", "REJECT",
+                                   (sendsThisCycle >= cycleSendCap) ? "cycle_send_cap" : "position_total_cap");
             if(TimeCurrent() - s_lastGateLog >= 15)
             {
                 s_lastGateLog = TimeCurrent();
@@ -3698,7 +3759,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         string symbol = m_enterpriseManagerSymbols[i];
         CEnterpriseStrategyManager* manager = m_enterpriseManagers[i];
-        if(manager == NULL) continue;
+        if(manager == NULL)
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "strategy_manager_unavailable");
+            continue;
+        }
 
         // Batch 272: the symbol health monitor used to print "disabling trading" for every symbol
         // and nothing read it. This is the reader. A frozen feed cannot fill an order, but it can
@@ -3707,6 +3772,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // strategy.
         if(!m_symbolHealth.IsHealthy(symbol))
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "symbol_feed_unhealthy");
             static datetime s_lastFeedHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastFeedHoldLog >= 60)
@@ -3732,6 +3798,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         if(!SymbolInfoTick(symbol, quoteCheck) ||
            (quoteCheck.bid <= 0.0 && quoteCheck.ask <= 0.0))
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "quote_unavailable");
             static datetime s_lastNoQuoteLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastNoQuoteLog >= 300)
@@ -3749,6 +3816,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // symbol-scoped; this is the reader, and it is off unless InpSymbolLossStreakLimit > 0.
         if(manager.IsSymbolStreakBlocked())
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "symbol_loss_streak_hold");
             static datetime s_lastStreakHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastStreakHoldLog >= 60)
@@ -3771,6 +3839,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         const double volScale = VolReg_RiskScale(symbol);
         if(volScale == 0.0)
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "extreme_volatility_compression");
             static datetime s_lastVolHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastVolHoldLog >= 60)
@@ -3792,6 +3861,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 newBarSignals[i].confluence, EVAL_MODE_NEW_BAR, newBarSignals[i].decisionContext,
                 ++m_scanCycleSequence, cycleCorrId);
 
+        CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "POST_CONSENSUS",
+                               validation.passed ? "ACCEPT" : "REJECT",
+                               validation.passed ? "validated" :
+                               ((validation.vetoReason == "") ? "validator_rejected" : validation.vetoReason));
+
         if(!validation.passed)
         {
             m_heartbeat.IncValidatorRejects();
@@ -3807,8 +3881,17 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, newBarSignals[i].decisionContext,
-                manager, m_scanCycleSequence, candidate, m_config.useStrategyStops, cycleCorrId, symbolStreakScale))
+                manager, m_scanCycleSequence, candidate, m_config.useStrategyStops, cycleCorrId, symbolStreakScale,
+                newBarSignals[i].intentId))
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "CANDIDATE_BUILD", "REJECT",
+                                   candidate.failureReason == "" ? "unspecified_candidate_rejection" : candidate.failureReason);
                 continue;
+        }
+        CIntentTrace::LogStage(candidate.intentId, symbol, "CANDIDATE_BUILD", "ACCEPT",
+                               StringFormat("risk_pct=%.3f lot=%.4f reservation=%s",
+                                            candidate.riskPercent, candidate.lotSize,
+                                            candidate.virtualReservationOwnerTag));
         candidateBuilt = true;
         candidatesBuilt++;
 
@@ -3827,14 +3910,25 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         candidate.liveAuthorityReason = authority.reason;
 
-        if(!authority.allowed) continue;
+        if(!authority.allowed)
+        {
+            CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY", "REJECT",
+                                   authority.reason == "" ? "authority_denied" : authority.reason);
+            m_unifiedRiskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
+            continue;
+        }
+        CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY", "ACCEPT",
+                               authority.reason == "" ? "authorized" : authority.reason);
 
         // this multiplier sets the shipped lot. It is shrink-only, and a lot that drops under the
         // broker minimum is refused loudly rather than rounded back up, so no normalization undoes the gate.
         if(!m_candidateBuilder.ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId))
+        {
+            CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY_SIZING", "REJECT",
+                                   "scaled_lot_not_tradeable");
             continue;
+        }
 
-                if(!canOpenNewTrades) continue;
 
                 // Reserve the neural-net observation this send will be labelled against, and put the
                 // id in the order comment so the trade is traceable to the prediction that made it.
@@ -3845,7 +3939,13 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 bool nnLabelBound = false;
 
                 // Only a real send arms the min-seconds-between-trades cooldown.
+                CIntentTrace::LogStage(candidate.intentId, symbol, "EXECUTION", "SUBMITTED",
+                                       StringFormat("requested_lot=%.4f", candidate.lotSize));
                 CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
+                CIntentTrace::LogStage(candidate.intentId, symbol, "EXECUTION",
+                                       execResult.executed ? "ACCEPTED" : "REJECTED",
+                                       execResult.executed ? "trade_manager_accepted" :
+                                       ((execResult.reason == "") ? "execution_failed" : execResult.reason));
                 if(execResult.executed)
                 {
                     // Only a fill consumes the cycle budget: a refused or deduped send creates no exposure.
@@ -3867,6 +3967,9 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                         long provPosId = HistoryDealGetInteger(execResult.dealTicket, DEAL_POSITION_ID);
                         if(provPosId > 0)
                         {
+                            m_attributionManager.UpsertIntentPositionMap((ulong)provPosId, candidate.intentId);
+                            CIntentTrace::LogStage(candidate.intentId, symbol, "POSITION_LINK", "BOUND",
+                                                   StringFormat("position_id=%I64d", provPosId));
                             RecordExecutedTradeProvenance((ulong)provPosId, i,
                                                           candidate.contributorSummary, strategyIndices);
                             if(m_enterpriseManagers[i] != NULL)

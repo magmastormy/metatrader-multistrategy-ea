@@ -417,7 +417,4 @@ public:
 // its own CUncertaintyQuantifier via NextGenStrategyBrain. In MT5, globals are
 // per-chart (separate program memory space), so no cross-symbol collision.
 
-// Stub for backward compatibility (callers in main EA)
-void UncertaintyDeinit() { /* no-op: per-instance cleanup handled by owner */ }
-
 #endif // __UNCERTAINTY_QUANTIFIER_MQH__

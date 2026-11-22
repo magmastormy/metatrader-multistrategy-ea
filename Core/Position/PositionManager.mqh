@@ -32,6 +32,21 @@ private:
     {
         return m_stateStore.GetPositionPredictionId(positionId);
     }
+
+    void UpsertPositionIntentId(const ulong positionId, const string intentId)
+    {
+        m_stateStore.UpsertPositionIntentId(positionId, intentId);
+    }
+
+    string GetPositionIntentId(const ulong positionId)
+    {
+        return m_stateStore.GetPositionIntentId(positionId);
+    }
+
+    void RemovePositionIntentId(const ulong positionId)
+    {
+        m_stateStore.RemovePositionIntentId(positionId);
+    }
     
     void RemovePositionPrediction(const ulong positionId)
     {
@@ -78,6 +93,21 @@ public:
     void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
     {
         UpsertPositionPredictionId(positionId, predictionId);
+    }
+
+    void UpsertIntentPositionMap(const ulong positionId, const string intentId)
+    {
+        UpsertPositionIntentId(positionId, intentId);
+    }
+
+    string GetIntentIdForPosition(const ulong positionId)
+    {
+        return GetPositionIntentId(positionId);
+    }
+
+    void RemoveIntentPositionMap(const ulong positionId)
+    {
+        RemovePositionIntentId(positionId);
     }
     
     string GetPredictionIdForPosition(const ulong positionId)

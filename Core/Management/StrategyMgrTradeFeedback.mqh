@@ -40,6 +40,7 @@ public:
     //--- ownership predicate / partial-close guard
     bool IsEAOwnedMagic(long magic) const;
     bool IsPositionIdStillOpen(const ulong positionId) const;
+    bool GetPositionNetProfit(const ulong positionId, double &netProfit);
 
     //--- trade outcome feedback
     void OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -76,6 +77,35 @@ bool CStrategyMgrTradeFeedback::IsPositionIdStillOpen(const ulong positionId) co
     }
 
     return false;
+}
+
+bool CStrategyMgrTradeFeedback::GetPositionNetProfit(const ulong positionId, double &netProfit)
+{
+    netProfit = 0.0;
+    if(positionId == 0 || !HistorySelectByPosition(positionId))
+        return false;
+
+    double positionNet = 0.0;
+    bool foundDeal = false;
+    int dealCount = HistoryDealsTotal();
+    for(int i = 0; i < dealCount; i++)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(dealTicket == 0 || (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID) != positionId)
+            continue;
+
+        positionNet += HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                     + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                     + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION)
+                     + HistoryDealGetDouble(dealTicket, DEAL_FEE);
+        foundDeal = true;
+    }
+
+    if(!foundDeal)
+        return false;
+
+    netProfit = positionNet;
+    return true;
 }
 
 void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -122,10 +152,11 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                     double engineProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
                     double engineSwap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
                     double engineCommission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                    double engineFee = HistoryDealGetDouble(dealTicket, DEAL_FEE);
                     PrintFormat("[ENGINE-CLOSE] %s | ticket=%I64u | position=%I64u | magic=%I64d | net=%.2f | comment=%s",
                                 dealSymbol, dealTicket,
                                 (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID),
-                                dealMagic, engineProfit + engineSwap + engineCommission, dealComment);
+                                dealMagic, engineProfit + engineSwap + engineCommission + engineFee, dealComment);
                 }
                 return;
             }
@@ -143,54 +174,51 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                 if(positionId > 0 && IsPositionIdStillOpen(positionId))
                     return;
 
-                double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
-                double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
-                double commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-                double netProfit = profit + swap + commission;
-
-                bool success = (netProfit > 0);
+                double netProfit = 0.0;
+                bool netProfitAvailable = GetPositionNetProfit(positionId, netProfit);
                 string contributors[];
                 CTradeAttributionManager* attribution = m_src.GetAttribution();
                 bool attributed = false;
                 if(positionId > 0 && attribution != NULL && attribution.PopPositionAttribution(positionId, contributors))
                     attributed = true;
 
-                // Fallback: when no map entry exists for this position id, score the strategies that
-                // produced this symbol's last signal rather than dropping the outcome on the floor. The
-                // store above is keyed by position id and the entry map can legitimately miss (a fill the
-                // tester reports before the deal reaches history), and an unattributed close teaches the
-                // book nothing: the earlier measured window closed 46 positions and credited 2 rows.
-                if(!attributed)
+                int contributorCount = 0;
+                string soleContributor = "";
+                for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
                 {
-                    m_src.GetLastSignalContributors(contributors);
-                    attributed = (ArraySize(contributors) > 0);
+                    if(contributors[contributorIdx] == "")
+                        continue;
+                    contributorCount++;
+                    soleContributor = contributors[contributorIdx];
                 }
 
-                if(attributed)
+                string netText = netProfitAvailable ? DoubleToString(netProfit, 2) : "unavailable";
+                if(netProfitAvailable && attributed && contributorCount == 1 && MathAbs(netProfit) > 0.01)
                 {
-                    // The whole closed-trade attribution path: strategy stats are written here
-                    // and nowhere else.
-                    for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
-                    {
-                        if(contributors[contributorIdx] == "")
-                            continue;
-                        m_src.UpdatePerformance(contributors[contributorIdx], netProfit);
-                        // UpdatePerformance already feeds the health monitor (CStrategyPerformanceHealth
-                        // forwards it as RecordTradeResult). This used to call RecordTradeResult again
-                        // here, so every closed trade entered the rolling sample twice and the
-                        // consecutive-loss park fired after 3 real losses, not its stated 5.
-                    }
+                    m_src.UpdatePerformance(soleContributor, netProfit);
+                    PrintFormat("[STRATEGY-GOVERNANCE] position=%I64u | outcome=eligible | strategy=%s | net=%.2f",
+                                positionId, soleContributor, netProfit);
+                }
+                else
+                {
+                    string reason = !netProfitAvailable ? "position_history_incomplete" :
+                                    !attributed ? "missing_position_attribution" :
+                                    contributorCount > 1 ? "multi_contributor_not_causal" :
+                                    contributorCount == 0 ? "empty_contributor_set" : "break_even";
+                    PrintFormat("[STRATEGY-GOVERNANCE] position=%I64u | outcome=excluded | reason=%s | contributors=%d | net=%s",
+                                positionId, reason, contributorCount, netText);
                 }
 
                 // Reset cached contributor context after close in manager-only governance mode.
                 m_src.ResetLastContributorContext();
 
-                PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %.2f | Result: %s",
-                           dealSymbol, dealTicket, positionId, netProfit, success ? "SUCCESS" : "FAILURE");
+                string outcome = netProfitAvailable ? (netProfit > 0.0 ? "SUCCESS" : "FAILURE") : "UNAVAILABLE";
+                PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %s | Result: %s",
+                           dealSymbol, dealTicket, positionId, netText, outcome);
 
                 // Per-symbol loss-streak breaker: the fill that trips it says so once, here, with the symbol name
                 // in hand. A winner resets the count, so the block only fires on a real run of losses.
-                if(m_src.RecordSymbolClose(netProfit))
+                if(netProfitAvailable && m_src.RecordSymbolClose(netProfit))
                     PrintFormat("[SYMBOL-STREAK] %s | %d consecutive losing closes -> entries held for %d min",
                                 dealSymbol, m_src.GetSymbolLossStreak(), m_src.GetSymbolLossStreakCooldownSec() / 60);
             }

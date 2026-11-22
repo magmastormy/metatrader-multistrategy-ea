@@ -24,15 +24,6 @@
 #include "RiskValidationPipeline.mqh"
 #include <Trade/Trade.mqh>
 
-struct SSymbolRiskBudget
-{
-    string   symbol;
-    double   allocatedPct;     // allocated daily risk %
-    double   usedPct;          // used daily risk %
-    double   winRate;          // recent win rate
-    double   profitFactor;     // recent profit factor
-};
-
 #define MAX_SYMBOL_BUDGETS 30
 
 // Wall-clock poll for the margin ladder: TimeCurrent() only advances with ticks, so a tick-gated poll would stall on a
@@ -110,18 +101,15 @@ private:
     int m_lastTradingDayKey;         // Cached trading day key (YYYYMMDD)
     int m_tradingDayStartHour;       // Hour when broker trading day starts (default 0 = midnight server time)
 
-    SSymbolRiskBudget m_symbolBudgets[];
-    int m_symbolBudgetCount;
-    datetime m_lastBudgetRefresh;
-
     SSymbolRiskOverride m_riskOverrides[];
     int m_riskOverrideCount;
 
     long m_eaMagicNumber;  // Magic number used to filter positions for EA-owned accounting
 
-    // Configured envelope captured once at Initialize; ApplyTierOverrides clamps tier values to it, so tiers may LOWER authorised risk but never raise it.
+    // Startup input envelope is immutable; live edits may tighten it, and tiers may only lower the active operator limits.
     double m_envelopeMaxRiskPerTradePercent;
     double m_envelopeBaseRiskPerTradePercent;
+    double m_envelopeMinRiskPerTradePercent;
     double m_envelopeMaxDailyRiskPercent;
     double m_envelopeMaxPortfolioRiskPercent;
     double m_envelopeDrawdownWarningPercent;
@@ -129,6 +117,13 @@ private:
     double m_envelopeDailyLossLimitPercent;
     int    m_envelopeMaxPositionsSameBase;
     bool   m_envelopeCaptured;
+    double m_runtimeBaseRiskPerTradePercent;
+    double m_runtimeMaxRiskPerTradePercent;
+    double m_runtimeMaxDailyRiskPercent;
+    double m_runtimeMaxPortfolioRiskPercent;
+    double m_runtimeDrawdownWarningPercent;
+    double m_runtimeDrawdownCriticalPercent;
+    double m_runtimeDailyLossLimitPercent;
 
         CDerivAssetProfiler m_derivAssetProfiler;
 
@@ -165,8 +160,18 @@ public:
 
     void SetPerformanceAnalytics(CPerformanceAnalytics* analytics);
 
-    // No caller in this repo: dual-mode auto-switching never wired to this setter.
+    // Live risk-input updates set the base before applying the selected tier.
     void SetBaseRiskPerTrade(double riskPercent);
+    bool UpdateOperatorRiskEnvelope(double &riskPerTrade,
+                                    double &dailyRisk,
+                                    double &portfolioRisk,
+                                    double &maxDrawdown,
+                                    double &dailyLossLimit);
+    bool IsOperatorRiskEnvelopeDifferent(double riskPerTrade,
+                                         double dailyRisk,
+                                         double portfolioRisk,
+                                         double maxDrawdown,
+                                         double dailyLossLimit) const;
 
     // Tier overrides applied in place (no reinit): only daily/portfolio risk, drawdown thresholds and daily-loss limit change; circuit breaker, daily risk used and virtual reservations keep state.
         void ApplyTierOverrides(double tierRiskPerTradePct,
@@ -263,9 +268,8 @@ public:
     virtual bool CheckDailyLossLimit();
 
     virtual double GetSymbolRiskAllocation(const string symbol);
-    virtual bool IsSymbolBudgetAvailable(const string symbol, const double riskPct);
-    void RefreshSymbolBudgets();
-    virtual double GetSymbolUsedRisk(const string symbol);
+    virtual bool IsSymbolBudgetAvailable(const string symbol, const double riskPct, const string ownerTag = "");
+    virtual double GetSymbolUsedRisk(const string symbol, const string ownerTag = "");
     double GetSymbolWinRate(const string symbol);
     double GetSymbolProfitFactor(const string symbol);
 
@@ -295,7 +299,6 @@ public:
 
     virtual double CalculateTradeRisk(const string symbolParam, const double lotSize, const double stopLossPips) const;
     double CalculateCorrelationRisk(const string symbolParam);
-    virtual double CalculatePortfolioRiskAfterTrade(const double additionalRisk);
     double GetPortfolioRiskValue();
     bool PortfolioAllowsTrade(const string symbolParam, const double lotSize);
     bool PortfolioCorrelationAllowed(const string symbolParam);
@@ -344,6 +347,106 @@ void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
     m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(riskPercent));
 }
 
+bool CUnifiedRiskManager::UpdateOperatorRiskEnvelope(double &riskPerTrade,
+                                                      double &dailyRisk,
+                                                      double &portfolioRisk,
+                                                      double &maxDrawdown,
+                                                      double &dailyLossLimit)
+{
+    if(!m_envelopeCaptured)
+        return false;
+
+    double requestedRisk = riskPerTrade;
+    double requestedDaily = dailyRisk;
+    double requestedPortfolio = portfolioRisk;
+    double requestedDrawdown = maxDrawdown;
+    double requestedDailyLoss = dailyLossLimit;
+
+    if(!MathIsValidNumber(riskPerTrade) || riskPerTrade <= 0.0)
+        riskPerTrade = m_runtimeMaxRiskPerTradePercent;
+    if(!MathIsValidNumber(dailyRisk) || dailyRisk <= 0.0)
+        dailyRisk = m_runtimeMaxDailyRiskPercent;
+    if(!MathIsValidNumber(portfolioRisk) || portfolioRisk <= 0.0)
+        portfolioRisk = m_runtimeMaxPortfolioRiskPercent;
+    if(!MathIsValidNumber(maxDrawdown) || maxDrawdown <= 0.0)
+        maxDrawdown = m_runtimeDrawdownCriticalPercent;
+    if(!MathIsValidNumber(dailyLossLimit) || dailyLossLimit <= 0.0)
+        dailyLossLimit = m_runtimeDailyLossLimitPercent;
+
+    riskPerTrade = MathMin(riskPerTrade,
+                           MathMin(m_envelopeBaseRiskPerTradePercent,
+                                   m_envelopeMaxRiskPerTradePercent));
+    dailyRisk = MathMin(dailyRisk, m_envelopeMaxDailyRiskPercent);
+    portfolioRisk = MathMin(portfolioRisk, m_envelopeMaxPortfolioRiskPercent);
+    maxDrawdown = MathMin(maxDrawdown, m_envelopeDrawdownCriticalPercent);
+    dailyLossLimit = MathMin(dailyLossLimit, m_envelopeDailyLossLimitPercent);
+
+    m_runtimeBaseRiskPerTradePercent = riskPerTrade;
+    m_runtimeMaxRiskPerTradePercent = riskPerTrade;
+    m_runtimeMaxDailyRiskPercent = dailyRisk;
+    m_runtimeMaxPortfolioRiskPercent = portfolioRisk;
+    m_runtimeDrawdownWarningPercent = MathMin(maxDrawdown * 0.7,
+                                               m_envelopeDrawdownWarningPercent);
+    m_runtimeDrawdownCriticalPercent = maxDrawdown;
+    m_runtimeDailyLossLimitPercent = dailyLossLimit;
+
+    m_config.baseRiskPerTradePercent = riskPerTrade;
+    m_config.minRiskPerTradePercent = MathMin(m_envelopeMinRiskPerTradePercent, riskPerTrade);
+    m_config.maxRiskPerTradePercent = riskPerTrade;
+    m_config.maxDailyRiskPercent = dailyRisk;
+    m_config.maxPortfolioRiskPercent = portfolioRisk;
+    m_config.drawdownWarningPercent = m_runtimeDrawdownWarningPercent;
+    m_config.drawdownCriticalPercent = maxDrawdown;
+    m_config.dailyLossLimitPercent = dailyLossLimit;
+    m_portfolioRiskManager.SetMaxPortfolioRisk(portfolioRisk);
+
+    if(requestedRisk != riskPerTrade || requestedDaily != dailyRisk ||
+       requestedPortfolio != portfolioRisk || requestedDrawdown != maxDrawdown ||
+       requestedDailyLoss != dailyLossLimit)
+    {
+        PrintFormat("[RISK-ENVELOPE] Live inputs clamped | perTrade %.2f->%.2f daily %.2f->%.2f portfolio %.2f->%.2f maxDD %.2f->%.2f dailyLoss %.2f->%.2f",
+                    requestedRisk, riskPerTrade, requestedDaily, dailyRisk,
+                    requestedPortfolio, portfolioRisk, requestedDrawdown, maxDrawdown,
+                    requestedDailyLoss, dailyLossLimit);
+    }
+    return true;
+}
+
+bool CUnifiedRiskManager::IsOperatorRiskEnvelopeDifferent(double riskPerTrade,
+                                                           double dailyRisk,
+                                                           double portfolioRisk,
+                                                           double maxDrawdown,
+                                                           double dailyLossLimit) const
+{
+    if(!m_envelopeCaptured)
+        return true;
+
+    if(!MathIsValidNumber(riskPerTrade) || riskPerTrade <= 0.0)
+        riskPerTrade = m_runtimeMaxRiskPerTradePercent;
+    if(!MathIsValidNumber(dailyRisk) || dailyRisk <= 0.0)
+        dailyRisk = m_runtimeMaxDailyRiskPercent;
+    if(!MathIsValidNumber(portfolioRisk) || portfolioRisk <= 0.0)
+        portfolioRisk = m_runtimeMaxPortfolioRiskPercent;
+    if(!MathIsValidNumber(maxDrawdown) || maxDrawdown <= 0.0)
+        maxDrawdown = m_runtimeDrawdownCriticalPercent;
+    if(!MathIsValidNumber(dailyLossLimit) || dailyLossLimit <= 0.0)
+        dailyLossLimit = m_runtimeDailyLossLimitPercent;
+
+    riskPerTrade = MathMin(riskPerTrade,
+                           MathMin(m_envelopeBaseRiskPerTradePercent,
+                                   m_envelopeMaxRiskPerTradePercent));
+    dailyRisk = MathMin(dailyRisk, m_envelopeMaxDailyRiskPercent);
+    portfolioRisk = MathMin(portfolioRisk, m_envelopeMaxPortfolioRiskPercent);
+    maxDrawdown = MathMin(maxDrawdown, m_envelopeDrawdownCriticalPercent);
+    dailyLossLimit = MathMin(dailyLossLimit, m_envelopeDailyLossLimitPercent);
+
+    return MathAbs(riskPerTrade - m_runtimeBaseRiskPerTradePercent) > 0.00000001 ||
+           MathAbs(dailyRisk - m_runtimeMaxDailyRiskPercent) > 0.00000001 ||
+           MathAbs(portfolioRisk - m_runtimeMaxPortfolioRiskPercent) > 0.00000001 ||
+           MathAbs(maxDrawdown - m_runtimeDrawdownCriticalPercent) > 0.00000001 ||
+           MathAbs(dailyLossLimit - m_runtimeDailyLossLimitPercent) > 0.00000001;
+}
+
 void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              int tierMaxPositions,
                                              double effectiveDaily, double effectivePortfolio,
@@ -351,20 +454,27 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              double effectiveDailyLossLimit,
                                              double maxRiskPerTradeOverride)
 {
-    // Every tier value is clamped to the operator's envelope: lowering risk is allowed, raising it past what was configured is not.
-    double clampedBaseRisk   = m_envelopeCaptured ? MathMin(tierRiskPerTradePct, m_envelopeBaseRiskPerTradePercent) : tierRiskPerTradePct;
-    double clampedMaxRisk    = m_envelopeCaptured ? MathMin(maxRiskPerTradeOverride, m_envelopeMaxRiskPerTradePercent) : maxRiskPerTradeOverride;
-    double clampedDaily      = m_envelopeCaptured ? MathMin(effectiveDaily, m_envelopeMaxDailyRiskPercent) : effectiveDaily;
-    double clampedPortfolio  = m_envelopeCaptured ? MathMin(effectivePortfolio, m_envelopeMaxPortfolioRiskPercent) : effectivePortfolio;
-    double clampedDdWarning  = m_envelopeCaptured ? MathMin(effectiveDdWarning, m_envelopeDrawdownWarningPercent) : effectiveDdWarning;
-    double clampedDdCritical = m_envelopeCaptured ? MathMin(effectiveDdCritical, m_envelopeDrawdownCriticalPercent) : effectiveDdCritical;
-    double clampedDailyLoss  = m_envelopeCaptured ? MathMin(effectiveDailyLossLimit, m_envelopeDailyLossLimitPercent) : effectiveDailyLossLimit;
+    // Every tier value is clamped to the current operator envelope: tiers may lower risk but never restore a higher cap.
+    double clampedBaseRisk   = m_envelopeCaptured ? MathMin(tierRiskPerTradePct, m_runtimeBaseRiskPerTradePercent) : tierRiskPerTradePct;
+    double clampedMaxRisk    = m_envelopeCaptured ? MathMin(maxRiskPerTradeOverride, m_runtimeMaxRiskPerTradePercent) : maxRiskPerTradeOverride;
+    double clampedDaily      = m_envelopeCaptured ? MathMin(effectiveDaily, m_runtimeMaxDailyRiskPercent) : effectiveDaily;
+    double clampedPortfolio  = m_envelopeCaptured ? MathMin(effectivePortfolio, m_runtimeMaxPortfolioRiskPercent) : effectivePortfolio;
+    double clampedDdWarning  = m_envelopeCaptured ? MathMin(effectiveDdWarning, m_runtimeDrawdownWarningPercent) : effectiveDdWarning;
+    double clampedDdCritical = m_envelopeCaptured ? MathMin(effectiveDdCritical, m_runtimeDrawdownCriticalPercent) : effectiveDdCritical;
+    double clampedDailyLoss  = m_envelopeCaptured ? MathMin(effectiveDailyLossLimit, m_runtimeDailyLossLimitPercent) : effectiveDailyLossLimit;
     int    clampedSameBase   = (m_envelopeCaptured && m_envelopeMaxPositionsSameBase > 0)
                                ? MathMin(tierMaxPositions, m_envelopeMaxPositionsSameBase) : tierMaxPositions;
 
     // Clamping can invert the warning/critical pair; restore the same +4 relationship Initialize uses.
     if(clampedDdCritical <= clampedDdWarning)
-        clampedDdCritical = clampedDdWarning + 4.0;
+    {
+        clampedDdCritical = MathMin(clampedDdWarning + 4.0, m_runtimeDrawdownCriticalPercent);
+        if(clampedDdCritical <= clampedDdWarning)
+        {
+            clampedDdWarning = m_runtimeDrawdownCriticalPercent * 0.7;
+            clampedDdCritical = m_runtimeDrawdownCriticalPercent;
+        }
+    }
 
     // Base risk must never exceed the per-trade cap after clamping.
     if(clampedBaseRisk > clampedMaxRisk)
@@ -494,12 +604,11 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_marginHealthLevel(MARGIN_HEALTH_OK),
     m_lastTradingDayKey(0),
     m_tradingDayStartHour(0),
-    m_symbolBudgetCount(0),
-    m_lastBudgetRefresh(0),
     m_riskOverrideCount(0),
     m_eaMagicNumber(0),
     m_envelopeMaxRiskPerTradePercent(0.0),
     m_envelopeBaseRiskPerTradePercent(0.0),
+    m_envelopeMinRiskPerTradePercent(0.0),
     m_envelopeMaxDailyRiskPercent(0.0),
     m_envelopeMaxPortfolioRiskPercent(0.0),
     m_envelopeDrawdownWarningPercent(0.0),
@@ -507,6 +616,13 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_envelopeDailyLossLimitPercent(0.0),
     m_envelopeMaxPositionsSameBase(0),
     m_envelopeCaptured(false),
+    m_runtimeBaseRiskPerTradePercent(0.0),
+    m_runtimeMaxRiskPerTradePercent(0.0),
+    m_runtimeMaxDailyRiskPercent(0.0),
+    m_runtimeMaxPortfolioRiskPercent(0.0),
+    m_runtimeDrawdownWarningPercent(0.0),
+    m_runtimeDrawdownCriticalPercent(0.0),
+    m_runtimeDailyLossLimitPercent(0.0),
     m_clusterGovernanceEnabled(true),
     m_clusterMutexEnabled(true),
     m_maxConcurrentPerCluster(5),
@@ -624,12 +740,20 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     {
         m_envelopeMaxRiskPerTradePercent   = m_config.maxRiskPerTradePercent;
         m_envelopeBaseRiskPerTradePercent  = m_config.baseRiskPerTradePercent;
+        m_envelopeMinRiskPerTradePercent   = m_config.minRiskPerTradePercent;
         m_envelopeMaxDailyRiskPercent      = m_config.maxDailyRiskPercent;
         m_envelopeMaxPortfolioRiskPercent  = m_config.maxPortfolioRiskPercent;
         m_envelopeDrawdownWarningPercent   = m_config.drawdownWarningPercent;
         m_envelopeDrawdownCriticalPercent  = m_config.drawdownCriticalPercent;
         m_envelopeDailyLossLimitPercent    = m_config.dailyLossLimitPercent;
         m_envelopeMaxPositionsSameBase     = m_config.maxPositionsSameBase;
+        m_runtimeBaseRiskPerTradePercent   = m_envelopeBaseRiskPerTradePercent;
+        m_runtimeMaxRiskPerTradePercent    = m_envelopeMaxRiskPerTradePercent;
+        m_runtimeMaxDailyRiskPercent       = m_envelopeMaxDailyRiskPercent;
+        m_runtimeMaxPortfolioRiskPercent   = m_envelopeMaxPortfolioRiskPercent;
+        m_runtimeDrawdownWarningPercent    = m_envelopeDrawdownWarningPercent;
+        m_runtimeDrawdownCriticalPercent   = m_envelopeDrawdownCriticalPercent;
+        m_runtimeDailyLossLimitPercent     = m_envelopeDailyLossLimitPercent;
         m_envelopeCaptured = true;
         PrintFormat("[RISK-ENVELOPE] Operator ceiling captured | risk/trade<=%.2f%% daily<=%.2f%% portfolio<=%.2f%% ddWarn<=%.2f%% ddCrit<=%.2f%% dailyLoss<=%.2f%% sameBase<=%d",
                     m_envelopeMaxRiskPerTradePercent, m_envelopeMaxDailyRiskPercent,
@@ -851,6 +975,9 @@ bool CUnifiedRiskManager::ReserveVirtualPosition(const string ownerTag,
 
 void CUnifiedRiskManager::ReleaseVirtualPosition(const string ownerTag)
 {
+    if(ownerTag == "")
+        return;
+
     int before = m_virtualPositionBook.GetReservationCount();
     m_virtualPositionBook.ClearOwner(ownerTag);
     int after = m_virtualPositionBook.GetReservationCount();
@@ -1276,36 +1403,40 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     }
     
     double volume = PositionGetDouble(POSITION_VOLUME);
+    if(volume <= 0.0)
+        return 0.0;
+
+    double unpriceableRiskPercent = MathMax(m_config.maxPortfolioRiskPercent,
+                                            m_config.maxRiskPerTradePercent) + 0.01;
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
     double sl = PositionGetDouble(POSITION_SL);
     double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-    
-    // MT5 quirk: closed/closing positions still pass PositionSelectByTicket but report zero volume or zero SL; skipping them avoids phantom risk.
-    if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0) {
-        return 0.0;
-    }
+
+    if(sl <= 0.0 || openPrice <= 0.0 || currentPrice <= 0.0)
+        return unpriceableRiskPercent;
     
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
 
-    if(point <= 0.0 || tickValue <= 0.0) {
-        return 0.0;
-    }
+    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+        return unpriceableRiskPercent;
 
     // MTM SL distance (current price -> SL), so the budget tracks live exposure rather than the distance at entry.
     double slDistance = MathAbs(currentPrice - sl) / point;
-    // Units: slDistance is in POINTS (SYMBOL_POINT) while tickValue is per TICK; those coincide only when tickSize == point, so unscaled index/metal risk is understated.
-    double ticksPerPoint = (tickSize > 0.0) ? (point / tickSize) : 1.0;
+    double ticksPerPoint = point / tickSize;
     double riskAmount = volume * slDistance * tickValue * ticksPerPoint;
     
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-    if(equity <= 0.0) {
-        return 0.0;
-    }
-    
-    return (riskAmount / equity) * 100.0;  // fraction -> 0-100 % scale
+    if(equity <= 0.0 || !MathIsValidNumber(riskAmount) || riskAmount <= 0.0)
+        return unpriceableRiskPercent;
+
+    double riskPercent = (riskAmount / equity) * 100.0;
+    if(!MathIsValidNumber(riskPercent) || riskPercent <= 0.0)
+        return unpriceableRiskPercent;
+
+    return riskPercent;  // fraction -> 0-100 % scale
 }
 
 // Recovery cooldown counts bars (iBarShift), not wall-clock minutes; wall clock is used only when the bar shift fails.
@@ -1433,109 +1564,43 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
     return allocation;
 }
 
-bool CUnifiedRiskManager::IsSymbolBudgetAvailable(const string symbol, const double riskPct)
+bool CUnifiedRiskManager::IsSymbolBudgetAvailable(const string symbol, const double riskPct, const string ownerTag)
 {
     double allocation = GetSymbolRiskAllocation(symbol);
-    double used = GetSymbolUsedRisk(symbol);
+    double used = GetSymbolUsedRisk(symbol, ownerTag);
     return ((used + riskPct) <= allocation);
 }
 
-void CUnifiedRiskManager::RefreshSymbolBudgets()
+double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol, const string ownerTag)
 {
     datetime now = TimeCurrent();
-    if(m_lastBudgetRefresh > 0 && (now - m_lastBudgetRefresh) < 60)
-        return;
-    m_lastBudgetRefresh = now;
-
-    ArrayResize(m_symbolBudgets, 0);
-    m_symbolBudgetCount = 0;
-
+    double usedRisk = 0.0;
+    static datetime s_lastPhantomLog = 0;
     int totalPositions = PositionsTotal();
     for(int i = 0; i < totalPositions; i++)
     {
         ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-        if(!PositionSelectByTicket(ticket)) continue;
+        if(ticket <= 0 || !PositionSelectByTicket(ticket)) continue;
+        if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
 
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
         double posRisk = CalculatePositionRiskPercent(ticket);
-
-        // Phantom risk: a closed/closing position still in the terminal contributes zero risk.
         if(posRisk <= 0.0)
         {
             double vol = PositionGetDouble(POSITION_VOLUME);
             double slCheck = PositionGetDouble(POSITION_SL);
-            if(vol > 0.0 && slCheck > 0.0)
+            if(vol > 0.0 && slCheck > 0.0 && now - s_lastPhantomLog > 30)
             {
-                static datetime s_lastPhantomLog = 0;
-                if(now - s_lastPhantomLog > 30)
-                {
-                    PrintFormat("[RISK-PHANTOM] Skipped phantom risk entry | ticket=%I64u | symbol=%s | vol=%.2f | SL=%.5f",
-                                ticket, posSymbol, vol, slCheck);
-                    s_lastPhantomLog = now;
-                }
+                PrintFormat("[RISK-PHANTOM] Skipped unpriceable symbol-budget position | ticket=%I64u | symbol=%s | vol=%.2f | SL=%.5f",
+                            ticket, symbol, vol, slCheck);
+                s_lastPhantomLog = now;
             }
             continue;
         }
-
-        int idx = -1;
-        for(int j = 0; j < m_symbolBudgetCount; j++)
-        {
-            if(m_symbolBudgets[j].symbol == posSymbol) { idx = j; break; }
-        }
-
-        if(idx < 0)
-        {
-            ArrayResize(m_symbolBudgets, m_symbolBudgetCount + 1);
-            idx = m_symbolBudgetCount;
-            m_symbolBudgetCount++;
-
-            m_symbolBudgets[idx].symbol = posSymbol;
-            m_symbolBudgets[idx].allocatedPct = 0.0;
-            m_symbolBudgets[idx].usedPct = 0.0;
-            m_symbolBudgets[idx].winRate = GetSymbolWinRate(posSymbol);
-            m_symbolBudgets[idx].profitFactor = GetSymbolProfitFactor(posSymbol);
-        }
-
-        m_symbolBudgets[idx].usedPct += posRisk;
-    }
-
-    for(int j = 0; j < m_symbolBudgetCount; j++)
-    {
-        m_symbolBudgets[j].allocatedPct = GetSymbolRiskAllocation(m_symbolBudgets[j].symbol);
-    }
-}
-
-// Profitable positions reduce used risk via unrealized P&L credit
-double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
-{
-    RefreshSymbolBudgets();
-
-    for(int i = 0; i < m_symbolBudgetCount; i++)
-    {
-        if(m_symbolBudgets[i].symbol == symbol)
-        {
-            double rawUsedRisk = m_symbolBudgets[i].usedPct;
-            double adjustedUsedRisk = ApplyPnlRiskAdjustment(symbol, rawUsedRisk);
-            return adjustedUsedRisk;
-        }
-    }
-
-    double usedRisk = 0.0;
-    int totalPositions = PositionsTotal();
-    for(int i = 0; i < totalPositions; i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-        if(!PositionSelectByTicket(ticket)) continue;
-        if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
-        double posRisk = CalculatePositionRiskPercent(ticket);
-        if(posRisk > 0.0)
-            usedRisk += posRisk;
+        usedRisk += posRisk;
     }
 
     double adjustedUsedRisk = ApplyPnlRiskAdjustment(symbol, usedRisk);
-    return adjustedUsedRisk;
+    return adjustedUsedRisk + m_virtualPositionBook.GetReservedRiskPercentForSymbolExcludingOwner(symbol, ownerTag);
 }
 
 double CUnifiedRiskManager::GetSymbolWinRate(const string symbol)
@@ -1673,11 +1738,6 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
 double CUnifiedRiskManager::CalculateCorrelationRisk(const string symbolParam)
 {
     return m_tieredCorrelation.CalculateCorrelationRisk(symbolParam);
-}
-
-double CUnifiedRiskManager::CalculatePortfolioRiskAfterTrade(const double additionalRisk)
-{
-    return GetPortfolioRiskValue() + additionalRisk;
 }
 
 void CUnifiedRiskManager::LogValidationResult(const STradeValidationRequest &request, const SValidationResult &result)

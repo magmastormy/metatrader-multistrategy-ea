@@ -4,9 +4,7 @@
 #ifndef REGISTRY_AGGREGATOR_MQH
 #define REGISTRY_AGGREGATOR_MQH
 
-// CRegistryBase<T> (IRegistry.mqh) is deliberately NOT included: it models one "string -> T* owned
-// instance" map, but every registry here stores structs BY VALUE (SStrategyDescriptor, SNNEntry, SEngineSlot,
-// SDrawingEntry, SSymbolScanState) and maps one symbol to MANY engines, which the template cannot express.
+// Each registry here has a specialized ownership model and is managed directly by this aggregator.
 #include "MathematicalEngineRegistry.mqh"
 #include "NeuralNetRegistry.mqh"
 #include "DrawingManagerRegistry.mqh"

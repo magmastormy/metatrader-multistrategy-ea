@@ -12,13 +12,13 @@
 #include "../../Core/Orchestration/CandidateBuilder.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
-#include "../../Core/Utils/CorrelationId.mqh"
 #include <Trade\Trade.mqh>
 
 class CTradeExecutor
 {
 private:
     CTradeManager* m_tradeManager;
+    CUnifiedRiskManager* m_riskManager;
     CTradeAttributionManager* m_attributionManager;
     CPositionManager* m_positionManager;
     CNeuralNetRegistry* m_neuralNetRegistry;
@@ -59,7 +59,7 @@ public:
                             filledPrice(0), filledVolume(0), retcode(0) {}
     };
     
-    CTradeExecutor() : m_tradeManager(NULL), m_attributionManager(NULL), m_positionManager(NULL),
+    CTradeExecutor() : m_tradeManager(NULL), m_riskManager(NULL), m_attributionManager(NULL), m_positionManager(NULL),
                        m_neuralNetRegistry(NULL), m_pendingCount(0), m_maxPending(50)
     {
         ArrayResize(m_pendingConfirmations, m_maxPending);
@@ -67,10 +67,11 @@ public:
     
     ~CTradeExecutor() {}
     
-    void SetDependencies(CTradeManager* tm, CTradeAttributionManager* att, 
+    void SetDependencies(CTradeManager* tm, CUnifiedRiskManager* risk, CTradeAttributionManager* att,
                          CPositionManager* psm, CNeuralNetRegistry* nnReg)
     {
         m_tradeManager = tm;
+        m_riskManager = risk;
         m_attributionManager = att;
         m_positionManager = psm;
         m_neuralNetRegistry = nnReg;
@@ -87,6 +88,8 @@ public:
         
         if(candidate.lotSize <= 0)
         {
+            if(m_riskManager != NULL)
+                m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
             result.reason = "Invalid lot size";
             CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "INVALID_LOT", "Lot size <= 0", 0.0, candidate.lotSize, corrId);
             CJsonLogger::ClearCorrelationId();
@@ -97,6 +100,8 @@ public:
         // dereferencing a NULL m_tradeManager (which caused an invalid-pointer crash at OpenPosition).
         if(m_tradeManager == NULL)
         {
+            if(m_riskManager != NULL)
+                m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
             result.reason = "TradeExecutor: m_tradeManager dependency not wired";
             CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "NO_DEPENDENCY", "m_tradeManager == NULL", 0.0, candidate.lotSize, corrId);
             CJsonLogger::ClearCorrelationId();
@@ -114,15 +119,19 @@ public:
             candidate.entryPrice,
             candidate.stopLossPips,
             candidate.takeProfitPips,
-            comment
+            comment,
+            0,
+            candidate.intentId
         );
         
         if(!executed)
         {
+            if(m_riskManager != NULL)
+                m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
             result.retcode = m_tradeManager.GetLastRetcode();
             result.reason = GetTradeErrorDescription(m_tradeManager.GetLastRetcode());
             CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED", 
-                StringFormat("retcode=%u reason=%s", result.retcode, result.reason), 
+                StringFormat("intent_id=%s retcode=%u reason=%s", candidate.intentId, result.retcode, result.reason),
                 0.0, candidate.lotSize, corrId);
             CJsonLogger::ClearCorrelationId();
             return result;
@@ -137,6 +146,9 @@ public:
         result.filledPrice = receipt.averagePrice;
         result.filledVolume = receipt.filledVolume;
         result.retcode = receipt.retcode;
+
+        if(result.dealTicket > 0 && m_riskManager != NULL)
+            m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
         
         // Log trade open via structured JSON logger
         CJsonLogger::LogTradeOpen(candidate.symbol, 
@@ -189,6 +201,9 @@ public:
                                 dealPrice, dealVolume, EnumToString(dealType), m_pendingConfirmations[i].checkAttempts);
                     
                     RecordAttribution(m_pendingConfirmations[i].candidate, dealTicket, dealPrice, dealVolume);
+
+                    if(m_riskManager != NULL)
+                        m_riskManager.ReleaseVirtualPosition(m_pendingConfirmations[i].candidate.virtualReservationOwnerTag);
                     
                     RecordPositionState(dealTicket, m_pendingConfirmations[i].candidate, dealPrice, dealVolume);
                     

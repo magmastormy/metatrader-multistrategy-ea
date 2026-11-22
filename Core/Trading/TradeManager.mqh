@@ -73,8 +73,8 @@ private:
     CEnhancedErrorHandler* m_errorHandler;
 
     uint m_slippage;                         // Maximum slippage (in points)
-    long m_magicNumber;                      // Magic number for trades (base) â€?changed from uint to long for 64-bit support
-    long m_magicRangeMax;                    // Max magic number for EA ownership range check â€?changed from uint to long
+    long m_magicNumber;                      // Magic number for trades (base) -changed from uint to long for 64-bit support
+    long m_magicRangeMax;                    // Max magic number for EA ownership range check -changed from uint to long
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
@@ -90,10 +90,10 @@ private:
     int m_dynamicSlippageAtrPeriod;          // ATR period for volatility calculation
     uint m_baseSlippage;                     // Base slippage before dynamic adjustment
 
-    // Execution quality metrics â€?state owned by CExecutionQualityTracker
+    // Execution quality metrics -state owned by CExecutionQualityTracker
     CExecutionQualityTracker m_execQuality;
 
-    // Trade tracking and statistics â€?state owned by CTradeStatsTracker
+    // Trade tracking and statistics -state owned by CTradeStatsTracker
     CTradeStatsTracker m_tradeStats;
 
     int m_totalTrades;
@@ -110,7 +110,7 @@ private:
     // Pending confirmation tracking for non-blocking execution (CTradeMgrConfirmationQueue)
     CTradeMgrConfirmationQueue m_confirmationQueue;
 
-    // Async trade execution tracking â€?state owned by CTradeMgrAsyncExecutor
+    // Async trade execution tracking -state owned by CTradeMgrAsyncExecutor
     CTradeMgrAsyncExecutor m_asyncExecutor;
 
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -135,7 +135,7 @@ private:
     PendingOrder m_pendingOrders[100];       // Track pending orders
     int m_pendingOrderCount;
 
-    // State tracking to prevent redundant modifications â€?owned by CPositionStateTracker
+    // State tracking to prevent redundant modifications -owned by CPositionStateTracker
     CPositionStateTracker m_positionStateTracker;
 
 
@@ -163,7 +163,7 @@ private:
 
             double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
 
-// Position state registry â€?thin forwarders onto CPositionStateTracker.
+// Position state registry -thin forwarders onto CPositionStateTracker.
     void UpdatePositionState(ulong ticket, double sl, double tp) { m_positionStateTracker.UpdatePositionState(ticket, sl, tp); }
 
     void CleanupPositionStates() { m_positionStateTracker.CleanupPositionStates(); }
@@ -321,8 +321,6 @@ public:
 public:
     ~CTradeManager()
     {
-        CleanupPersistedAsyncTrades();
-
         m_atrCache.Reset();
 
         m_asyncExecutor.FreePending();
@@ -385,7 +383,7 @@ public:
 
     bool SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
                         double lot, double price, double sl, double tp,
-                        ulong magic, int timeoutMs = 5000);
+                        ulong magic, int timeoutMs = 5000, double riskReservedPct = 0.0);
 
     // Process trade transaction event (call from OnTradeTransaction)
     void ProcessTradeTransaction(const MqlTradeTransaction &trans,
@@ -399,13 +397,11 @@ public:
 
     ulong GetPendingAsyncTicket(int index) const;
 
-    void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade);
+    int GetAsyncRecoverySnapshot(SAsyncTradeRequest &requests[], bool &replayComplete) const;
 
     void ReplayAsyncTradeRequests();
 
     bool IsDuplicateIdempotencyKey(const string key) const;
-
-    void CleanupPersistedAsyncTrades();
 
     uint GetDynamicSlippage(const string symbol)
     {
@@ -481,7 +477,8 @@ public:
                      const double stopLossPips,
                      const double takeProfitPips,
                      const string comment = "",
-                     const uint magicNumber = 0);
+                     const uint magicNumber = 0,
+                     const string intentId = "");
 
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
     bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
@@ -644,7 +641,7 @@ public:
                            const double volume, const double requestedPrice,
                            const double stopLossPips,
                            const double takeProfitPips,
-                           const string comment);
+                           const string comment, const string intentId = "");
 
     void UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin);
 
@@ -690,8 +687,6 @@ bool CTradeManager::Initialize(const long magicNumber,
 
     void CTradeManager::Deinit()
     {
-        CleanupPersistedAsyncTrades();
-    
         m_atrCache.Reset();
     
         m_asyncExecutor.FreePending();
@@ -699,7 +694,7 @@ bool CTradeManager::Initialize(const long magicNumber,
 
         m_confirmationQueue.Clear();
     
-        Print("[TRADE-MANAGER] Deinit complete - async trades cleaned up");
+        Print("[TRADE-MANAGER] Deinit complete - unresolved async requests remain journaled for recovery");
             }
 
         CTrade* CTradeManager::GetSymbolTrade(const string symbol)
@@ -789,54 +784,71 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)m_positionInfo.Type();
     double volume = m_positionInfo.Volume();
     double profit = m_positionInfo.Profit();
+    long journalMagic = (long)PositionGetInteger(POSITION_MAGIC);
 
     CTrade* symbolTrade = GetSymbolTrade(localSymbol);
-    bool result = symbolTrade.PositionClose(ticket);
-
-    if(result)
+    if(symbolTrade == NULL)
     {
-        RemoveEAOwnedPosition(ticket);
+        LogTradeOperation("CLOSE", localSymbol, orderType, volume, false, "No per-symbol trade instance");
+        return false;
+    }
 
-        long journalMagic = (long)PositionGetInteger(POSITION_MAGIC);
-        double exitPrice = (orderType == ORDER_TYPE_BUY)
+    uint closeDeviation = m_enableDynamicSlippage ? GetDynamicSlippage(localSymbol) : m_baseSlippage;
+    symbolTrade.SetDeviationInPoints(closeDeviation);
+    bool closeRequestAccepted = symbolTrade.PositionClose(ticket);
+    MqlTradeResult closeResult;
+    ZeroMemory(closeResult);
+    symbolTrade.Result(closeResult);
+    m_lastTradeResult = closeResult;
+
+    if(PositionSelectByTicket(ticket))
+    {
+        double remainingVolume = PositionGetDouble(POSITION_VOLUME);
+        LogTradeOperation("CLOSE", localSymbol, orderType, volume, false,
+                         StringFormat("Close not confirmed - retcode=%u remaining_volume=%.2f",
+                                      closeResult.retcode, remainingVolume));
+        return false;
+    }
+
+    if(!closeRequestAccepted)
+        PrintFormat("[POSITION-MANAGEMENT] Close confirmed by position reconciliation despite request flag=false | ticket=%I64u retcode=%u",
+                    ticket, closeResult.retcode);
+
+    RemoveEAOwnedPosition(ticket);
+
+    double exitPrice = (orderType == ORDER_TYPE_BUY)
+                       ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
+                       : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
+    JournalTradeClose(ticket, localSymbol, orderType, volume, exitPrice,
+                      posSL, posTP, journalMagic, profit, reason);
+
+    // TP/SL calibration warning: if closed by profit-target before TP hit, log remaining distance
+    if(posTP > 0.0 && reason != "")
+    {
+        double currentPrice = (orderType == ORDER_TYPE_BUY)
                               ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
                               : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
-        JournalTradeClose(ticket, localSymbol, orderType, volume, exitPrice,
-                          posSL, posTP, journalMagic, profit, reason);
-
-        // TP/SL calibration warning: if closed by profit-target before TP hit, log remaining distance
-        if(posTP > 0.0 && reason != "")
+        if(currentPrice > 0.0)
         {
-            double currentPrice = (orderType == ORDER_TYPE_BUY)
-                                  ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
-                                  : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
-            if(currentPrice > 0.0)
+            double pointCal = SymbolInfoDouble(localSymbol, SYMBOL_POINT);
+            if(pointCal <= 0.0)
+                pointCal = 0.00001;
+            double distRemainingTP = MathAbs(posTP - currentPrice) / pointCal;
+            double originalDistTP = MathAbs(posTP - posOpenPrice) / pointCal;
+            if(distRemainingTP > 0.0 && originalDistTP > 0.0)
             {
-                double pointCal = SymbolInfoDouble(localSymbol, SYMBOL_POINT);
-                if(pointCal <= 0.0)
-                    pointCal = 0.00001;
-                double distRemainingTP = MathAbs(posTP - currentPrice) / pointCal;
-                double originalDistTP = MathAbs(posTP - posOpenPrice) / pointCal;
-                if(distRemainingTP > 0.0 && originalDistTP > 0.0)
-                {
-                    PrintFormat("[TP-CALIBRATION-WARNING] %s | Closed before TP hit. TP dist remaining: %.0f pts (%.1f%% of original %.0f pts) | reason=%s",
-                                localSymbol, distRemainingTP, distRemainingTP / originalDistTP * 100.0, originalDistTP, reason);
-                }
+                PrintFormat("[TP-CALIBRATION-WARNING] %s | Closed before TP hit. TP dist remaining: %.0f pts (%.1f%% of original %.0f pts) | reason=%s",
+                            localSymbol, distRemainingTP, distRemainingTP / originalDistTP * 100.0, originalDistTP, reason);
             }
         }
-
-        LogTradeOperation("CLOSE", localSymbol, orderType, volume, true,
-                         StringFormat("Profit: %.2f, Reason: %s", profit, reason));
-
-        UpdatePerformanceMetrics(ticket, profit, profit > 0);
-    }
-    else
-    {
-        LogTradeOperation("CLOSE", localSymbol, orderType, volume, false,
-                         "Close failed - " + IntegerToString(GetLastError()));
     }
 
-    return result;
+    LogTradeOperation("CLOSE", localSymbol, orderType, volume, true,
+                      StringFormat("Profit: %.2f, Reason: %s", profit, reason));
+
+    UpdatePerformanceMetrics(ticket, profit, profit > 0);
+
+    return true;
 }
 
 bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, const string reason)
@@ -1167,7 +1179,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                                       const double volume, const double requestedPrice,
                                       const double stopLossPips,
                                       const double takeProfitPips,
-                                      const string comment)
+                                      const string comment,
+                                      const string intentId)
 {
     if(symbolName == "" || volume <= 0)
     {
@@ -1404,21 +1417,25 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
             if(m_lastExecutionReceipt.partialFill)
             {
-                PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u",
+                PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u | intent_id=%s",
                             symbolName,
                             volume,
                             m_lastExecutionReceipt.filledVolume,
-                            m_lastExecutionReceipt.retcode);
+                            m_lastExecutionReceipt.retcode,
+                            intentId == "" ? "UNTRACKED" : intentId);
             }
 
-            PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d",
+            PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d | order=%I64u | deal=%I64u | intent_id=%s",
                         symbolName,
                         m_lastExecutionReceipt.accepted ? "true" : "false",
                         volume,
                         m_lastExecutionReceipt.filledVolume,
                         m_lastExecutionReceipt.averagePrice,
                         m_lastExecutionReceipt.retcode,
-                        m_lastExecutionReceipt.retryCount);
+                        m_lastExecutionReceipt.retryCount,
+                        m_lastExecutionReceipt.orderTicket,
+                        m_lastExecutionReceipt.dealTicket,
+                        intentId == "" ? "UNTRACKED" : intentId);
             PrintFormat("[EXECUTION-TELEMETRY] %s | requested_price=%.5f | fill_price=%.5f | slippage_points=%.1f | latency_ms=%I64u | submit_time=%s",
                         symbolName,
                         m_lastExecutionReceipt.requestedPrice,
@@ -1631,7 +1648,7 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
     
     m_tradeStats.RecordTrade(isWin, netProfit);
 
-    // Legacy backward-compatibility mirrors â€?intentionally retained here
+    // Legacy backward-compatibility mirrors -intentionally retained here
     m_totalTrades = m_tradeStats.TotalTrades();
     m_successfulTrades = m_tradeStats.SuccessfulTrades();
     m_failedTrades = m_tradeStats.FailedTrades();
@@ -1828,7 +1845,8 @@ bool CTradeManager::OpenPosition(const string symbol,
                                 const double stopLossPips,
                                 const double takeProfitPips,
                                 const string comment,
-                                const uint magicNumber)
+                                const uint magicNumber,
+                                const string intentId)
 {
     double normalizedVolume = NormalizeVolume(symbol, volume);
     if(normalizedVolume <= 0.0)
@@ -1848,7 +1866,8 @@ bool CTradeManager::OpenPosition(const string symbol,
     // left the real send on the pool stamped with the bare base magic, so every strategy shipped an identical magic.
     m_pendingExplicitMagic = (ulong)magicNumber;
 
-    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips,
+                                       takeProfitPips, comment, intentId);
 
     if(executed)
     {
@@ -1905,7 +1924,7 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
 // here because they need CTradeManager-owned pricing, ATR cache and slippage config.
 bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
                                    double lot, double price, double sl, double tp,
-                                   ulong magic, int timeoutMs)
+                                   ulong magic, int timeoutMs, double riskReservedPct)
 {
     if(!m_asyncExecutor.CheckSendGuards(symbol, lot))
         return false;
@@ -1945,7 +1964,7 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     UpdateDynamicSlippage(symbol);
 
     return m_asyncExecutor.SubmitAsync(orderType, symbol, normalizedLot, executionPrice, sl, tp,
-                                       magic, timeoutMs, m_slippage, m_trade.RequestTypeFilling());
+                                       magic, timeoutMs, m_slippage, m_trade.RequestTypeFilling(), riskReservedPct);
 }
 
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
@@ -1970,24 +1989,19 @@ ulong CTradeManager::GetPendingAsyncTicket(int index) const
     return m_asyncExecutor.GetPendingAsyncTicket(index);
 }
 
-void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
+int CTradeManager::GetAsyncRecoverySnapshot(SAsyncTradeRequest &requests[], bool &replayComplete) const
 {
-    CTradeMgrAsyncExecutor::PersistAsyncTradeRequest(asyncTrade);
+    return m_asyncExecutor.GetAsyncRecoverySnapshot(requests, replayComplete);
 }
 
 void CTradeManager::ReplayAsyncTradeRequests()
 {
-    m_asyncExecutor.ReplayAsyncTradeRequests();
+    m_asyncExecutor.ReplayAsyncTradeRequests(m_magicNumber, m_magicRangeMax);
 }
 
 bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
 {
     return m_asyncExecutor.IsDuplicateIdempotencyKey(key);
-}
-
-void CTradeManager::CleanupPersistedAsyncTrades()
-{
-    CTradeMgrAsyncExecutor::CleanupPersistedAsyncTrades();
 }
 
 #endif // CORE_TRADE_MANAGER_MQH

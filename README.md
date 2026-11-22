@@ -1,13 +1,13 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
-A MetaTrader 5 Expert Advisor that makes trade decisions by weighted consensus. Fourteen indicator-based strategy modules and five AI adapters each vote on a symbol, and no single strategy can enter a trade alone. Every entry must then pass a centralized pre-trade risk gate before execution.
+A MetaTrader 5 Expert Advisor that forms weighted strategy votes per symbol, then applies configured admission checks and centralized pre-trade risk validation. The default `InpMinLiveVoters=1` permits a single live voter when other entry checks pass; multi-strategy agreement is not guaranteed.
 
 > **Risk warning:** This software trades real money when attached to a live account. Backtest and forward-test on a demo account before running it live. Past results do not guarantee future performance, and you are responsible for the settings you choose.
 
 ## Features
 
-- **Weighted consensus voting.** Strategies are grouped into Institutional (ICT/SMC), Structure (support/resistance, trend), and Indicator (momentum, candlestick, moving averages) tiers. A quorum and minimum confidence are required before an entry is considered.
-- **Centralized risk authority.** Per-trade, daily, portfolio, correlation, drawdown, and margin checks run before any order is sent. Virtual reservations stop concurrent signals from double-counting the same risk budget.
+- **Weighted voting.** Strategy tiers contribute configured weights. Quorum and confidence settings apply only where their runtime gates are wired; the default minimum is one live voter.
+- **Centralized risk authority.** Per-trade, daily, portfolio, correlation, drawdown, and margin checks run before any order is sent. Exposure checks exclude a candidate's own reservation by owner tag while including other pending risk in portfolio and symbol budgets.
 - **Per-asset-class profiles.** Symbols are classified automatically (Forex, Metals, Indices, Energies, Deriv synthetics), and risk parameters and strategy weights are adjusted per class.
 - **AI operating modes.** `INDICATOR_ONLY`, `AI_ONLY`, and `HYBRID` control how human-designed strategies and machine-learned predictions are blended.
 - **Python ML bridge.** A ZMQ/HTTP bridge connects to Python-trained CatBoost, XGBoost, and LightGBM models. Trained models can also be exported to ONNX and run natively in MT5.
@@ -17,13 +17,13 @@ A MetaTrader 5 Expert Advisor that makes trade decisions by weighted consensus. 
 ## Architecture
 
 ```
-Strategies ──▶ Pipeline ──▶ Consensus ──▶ Risk Gate ──▶ Execution ──▶ Position Lifecycle
-(indicator,    (regime,     (weighted     (pre-trade    (TradeManager)  (SL / breakeven /
- AI adapters)   cost,        quorum)       validation)                   trailing)
-               spread)
+Strategies --> Signal Pipeline --> Weighted Consensus --> Risk Gate --> Execution --> Position Lifecycle
+(indicator / AI)   (configured checks; engine-backed filters are opt-in)
+
+
 ```
 
-Signal flow: a strategy produces a signal, the pipeline filters it by regime, cost, and spread, the consensus manager tallies weighted votes, the risk gate validates exposure and drawdown, `TradeManager` executes, and the position lifecycle manages stops and exits.
+Signal flow: strategies produce votes; configured pipeline checks run, while registry-backed trend, volatility, liquidity, structure, and regime/cost filters pass through by default when `InpPipelineEngineRegistry=false`. Consensus applies its configured quorum, the risk gate validates exposure and drawdown, execution places approved orders, and the lifecycle manager handles stops and exits.
 
 For the full component ownership map, see [SYSTEM_STRUCTURE.md](SYSTEM_STRUCTURE.md).
 
@@ -37,7 +37,7 @@ For the full component ownership map, see [SYSTEM_STRUCTURE.md](SYSTEM_STRUCTURE
 1. **Install.** Copy the repository into a folder under your MT5 `MQL5/Experts/` directory, keeping the folder structure intact. The EA uses relative includes, so partial copies will fail to compile.
 2. **Compile.** Open the EA in MetaEditor and compile it. Confirm there are no errors.
 3. **Attach.** Drag the EA onto a chart (for example EURUSD M15).
-4. **Set symbols.** Set `InpSymbols` to the instruments you want to trade. Asset class is detected automatically.
+4. **Set symbols.** `InpSymbolsToTrade` is the exact trading universe. The chart symbol is never injected; include it explicitly if it should trade.
 5. **Set risk.** Review the risk inputs (per-trade, daily, and portfolio risk percentages, and the drawdown thresholds) before enabling trading.
 6. **Choose a mode.** Set `InpEAMode` to `EA_MODE_INDICATOR_ONLY`, an AI-only mode, or `EA_MODE_HYBRID` (the default).
 
@@ -52,13 +52,15 @@ Settings are exposed as EA inputs in these groups:
 | Risk | Per-trade and daily risk budgets, portfolio exposure, drawdown warning and stop thresholds, minimum lot risk |
 | Strategies | Enable flags for each strategy module and strategy weights |
 | AI | Operating mode, which AI adapters are active, and the Python bridge mode |
-| Live overrides | `Config/live_overrides.json` can change selected risk values while the EA is running |
+| Live overrides | `Config/live_overrides.json` applies supported risk keys only; unsupported strategy weights, thresholds, symbols, AI, and engine changes are logged but not applied |
 
-The input dialog is the authoritative list of parameters and their current defaults.
+Startup risk inputs define the hard operator envelope; risk tiers and compounding can only reduce it. The live override file is a second, risk-only control channel that can tighten this envelope, not raise it above startup inputs. Risk-tier policy is startup-only and requires reinitialization; a `risk.riskTier` override is logged and ignored. Compounding can be toggled live, and unrelated or unchanged file edits preserve the current adaptive/compounding state. Verify effective values in `[RISK-TIER]`, `[COMPOUNDING-TIER]`, `[RISK-OVERRIDE]`, and `[LIVE-CONFIG-RISK]` logs.
 
-## Current state (Batch 289, 2026-11-13)
+## Current state (2026-11-19)
 
-Uncompiled and unmeasured. A demo journal showed the EA trading two symbols out of thirteen; the causes found were a shared ATR handle being replaced by a daily one (which vetoed every consensus entry), a scalper whose stop and target were the same raw point count on every symbol, an unmeasured correlation reported as 1.00, and a portfolio check that priced a lot on the wrong stop. All four are changed in code; see `changelogs.md` Batch 289 and `RUNS_AND_GAINS.md`. Compile with `sync_and_compile.ps1 -All` and re-run the cold windows before relying on it.
+The latest measured comparison is Batch 298: the six-symbol trim was rejected, leaving the eight-symbol roster unchanged. The current cleanup compiles with zero errors and zero warnings across all eight MetaTrader targets; the dashboard build passes with an advisory large-chunk warning. It has no paired cold-window backtest, so historical performance results do not validate this source state.
+
+Runtime limitations: pipeline confidence applies only when that pipeline runs, while engine-derived filters pass through by default because the math-engine registry is unbound. Safe-mode FX kill-zone and news filters are unavailable. Per-strategy intrabar-eligibility settings and policy metadata were removed because no decision path enforced them; Momentum and Candlestick timeframe overrides remain active. Position contributors are unioned across fills; only exact single-contributor closes update a bounded health score that can modify vote weight; there is no hard strategy auto-parking, and the score is not dollar-expectancy evidence. Mixed and unattributed P&L is excluded, not apportioned. The live reloader applies risk fields only; unsupported strategy changes are explicitly logged as ignored. Candidate sizing enforces the minimum-lot permission and uplift ceiling after drawdown and momentum scaling; the current MQL source compiles cleanly and the dashboard build passes with a large-chunk advisory; paired cold-window tests remain pending.
 
 ## Strategy Roster
 

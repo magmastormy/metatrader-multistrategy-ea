@@ -1,6 +1,6 @@
 ﻿# MQH Model Training System
 
-Standalone training framework for MQH AI models, completely isolated from the EA (Expert Advisor) runtime components.
+Reusable MQL5 header library for the four root-level model training, evaluation, tuning, and visualization scripts. The headers are outside the trading EA execution path, but share feature-building and AI configuration modules with the rest of the repository.
 
 ## Folder Structure
 
@@ -19,9 +19,7 @@ MQHModelTrainer/
 ├── Models/                  # Model training and evaluation
 │   ├── FeedForwardNN.mqh    # Neural network model
 │   ├── TrainingSession.mqh  # Training orchestration
-│   ├── ModelEvaluator.mqh   # Model evaluation utilities
-│   └── ModelComparer.mqh    # Model comparison utilities
-└── Scripts/                 # Runnable scripts (optional)
+│   └── ModelEvaluator.mqh   # Model evaluation utilities
 ```
 
 ## Key Components
@@ -38,7 +36,6 @@ MQHModelTrainer/
 
 ### Evaluation
 - **ModelEvaluator**: Evaluates trained models on test data with detailed reports
-- **ModelComparer**: Compares multiple models and ranks by performance
 
 ### Visualization
 - **TrainingVisualizer**: Real-time chart visualization of training progress
@@ -47,6 +44,8 @@ MQHModelTrainer/
 - **HyperparameterOptimizer**: Automated hyperparameter search with default candidates
 
 ## Scripts
+
+Runnable `.mq5` scripts live at the repository root, not in this folder:
 
 | Script | Purpose |
 |--------|---------|

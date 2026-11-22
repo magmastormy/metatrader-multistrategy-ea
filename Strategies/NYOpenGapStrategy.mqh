@@ -16,20 +16,20 @@
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
 // CNYOpenGapStrategy trades the NDOG fade with FVG confluence during NY open.
-// US DST: second Sunday of March (2:00 AM local) to first Sunday of November (2:00 AM local).
-// `when` is a GMT datetime (UTC seconds). The transition hour is honoured by comparing against
-// the exact UTC timestamps of the 2:00 AM local transitions, so a bar exactly on the transition
-// date is classified by its time of day, not just its date.
+// when is UTC: US DST transitions use UTC timestamps rather than local clock hours.
+// Spring transition: 07:00 UTC; autumn transition: 06:00 UTC.
+// Exact boundaries let transition Sundays use the correct state on either side of the change.
+//
 bool NYOpenIsUSDaylightTime(const datetime when)
 {
     MqlDateTime dt;
     TimeToStruct(when, dt);
     int year = dt.year;
 
-    // DST start: second Sunday of March at 2:00 AM local time.
+    // Calculate the first Sunday using the UTC calendar date.
     MqlDateTime marchStart;
     marchStart.year = year; marchStart.mon = 3; marchStart.day = 1;
-    marchStart.hour = 2; marchStart.min = 0; marchStart.sec = 0;
+    marchStart.hour = 0; marchStart.min = 0; marchStart.sec = 0;
     datetime marchStartTime = StructToTime(marchStart);
     MqlDateTime marchProbe;
     TimeToStruct(marchStartTime, marchProbe);
@@ -39,13 +39,13 @@ bool NYOpenIsUSDaylightTime(const datetime when)
 
     MqlDateTime dstStartStruct;
     dstStartStruct.year = year; dstStartStruct.mon = 3; dstStartStruct.day = secondSundayMarch;
-    dstStartStruct.hour = 2; dstStartStruct.min = 0; dstStartStruct.sec = 0;
+    dstStartStruct.hour = 7; dstStartStruct.min = 0; dstStartStruct.sec = 0;
     datetime dstStart = StructToTime(dstStartStruct);
 
-    // DST end: first Sunday of November at 2:00 AM local time.
+    // Calculate the first Sunday using the UTC calendar date.
     MqlDateTime novemberStart;
     novemberStart.year = year; novemberStart.mon = 11; novemberStart.day = 1;
-    novemberStart.hour = 2; novemberStart.min = 0; novemberStart.sec = 0;
+    novemberStart.hour = 0; novemberStart.min = 0; novemberStart.sec = 0;
     datetime novemberStartTime = StructToTime(novemberStart);
     MqlDateTime novemberProbe;
     TimeToStruct(novemberStartTime, novemberProbe);
@@ -54,7 +54,7 @@ bool NYOpenIsUSDaylightTime(const datetime when)
 
     MqlDateTime dstEndStruct;
     dstEndStruct.year = year; dstEndStruct.mon = 11; dstEndStruct.day = firstSundayNovember;
-    dstEndStruct.hour = 2; dstEndStruct.min = 0; dstEndStruct.sec = 0;
+    dstEndStruct.hour = 6; dstEndStruct.min = 0; dstEndStruct.sec = 0;
     datetime dstEnd = StructToTime(dstEndStruct);
 
     return (when >= dstStart && when < dstEnd);
@@ -163,9 +163,9 @@ public:
         }
 
         // --- Detect gap: open of the NY-open M30 bar vs close of the M30 bar ending at the prior NY close ---
-        // Both bars are located by GMT time converted to broker time. The broker offset is computed per
-        // candidate from the bar's own GMT time (DST-aware) instead of being reused from TimeCurrent(),
-        // so DST transition weekends and seasonal broker offsets cannot shift the session boundary by an hour.
+        // US DST is evaluated at each target GMT time; the broker offset uses the current server/GMT estimate.
+        // Exact bar-time checks refuse a candidate if this estimate does not match the
+        // broker's historical offset around an independent broker DST transition.
         const datetime gmtDay = gmtNow - (gmtNow % 86400);
         const int brokerOffsetNow = (int)MathRound((double)(TimeCurrent() - gmtNow) / 1800.0) * 1800;
         const int standardOffset  = brokerOffsetNow - (dstNow ? 3600 : 0);

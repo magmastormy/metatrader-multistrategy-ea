@@ -47,7 +47,7 @@ public:
 
    // Utility
    bool              ShouldLogNotConfigured();
-   void              MarkHeartbeat(datetime heartbeat_time) { m_last_heartbeat = heartbeat_time; }
+   void              MarkSuccessfulResponse(CPyBridgeTransport &transport, datetime heartbeat_time);
 };
 
 // Constructor - defaults identical to the original CPythonBridge
@@ -83,6 +83,17 @@ void CPyBridgeHealth::Reset()
    m_lastNotConfiguredLogTime = 0;
    m_server_version.version = "";
    m_server_version.compatible = false;
+}
+
+void CPyBridgeHealth::MarkSuccessfulResponse(CPyBridgeTransport &transport, datetime heartbeat_time)
+{
+   m_last_heartbeat = heartbeat_time;
+   m_reconnect_attempts = 0;
+   if(transport.GetState() != PYTHON_BRIDGE_CONNECTED)
+   {
+      transport.SetState(PYTHON_BRIDGE_CONNECTED);
+      transport.LogBridgeState("Python bridge connection restored via prediction response");
+   }
 }
 
 // Check server health

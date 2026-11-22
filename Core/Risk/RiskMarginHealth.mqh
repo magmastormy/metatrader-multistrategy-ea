@@ -32,53 +32,45 @@ public:
 // message prints the ceiling in force.
 
     //--- Free-margin headroom + post-trade margin-level check, behind CRiskValidationPipeline::ValidateMarginRequirements.
-    bool CheckFreeMarginAndLevel(const double marginRequired,
-                                 const bool isHedging,
+    bool CheckFreeMarginAndLevel(const double projectedFreeMargin,
+                                 const double projectedMarginLevel,
                                  string &message) const
     {
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-
-        if(marginRequired > freeMargin * m_maxFreeMarginUsage)
+        if(!MathIsValidNumber(projectedFreeMargin) || projectedFreeMargin < 0.0 ||
+           !MathIsValidNumber(projectedMarginLevel) || projectedMarginLevel < 0.0 ||
+           !MathIsValidNumber(freeMargin) || freeMargin <= 0.0)
         {
-            message = StringFormat("Insufficient margin: required %.2f, available %.2f (threshold: %.0f%%) [mode: %s]",
-                                 marginRequired, freeMargin, m_maxFreeMarginUsage * 100.0,
-                                 isHedging ? "hedging" : "netting");
+            message = "Invalid broker margin projection";
+            return false;
+        }
+
+        double minimumProjectedFreeMargin = freeMargin * (1.0 - m_maxFreeMarginUsage);
+        if(projectedFreeMargin < minimumProjectedFreeMargin)
+        {
+            message = StringFormat("Insufficient projected free margin: %.2f, minimum %.2f (max usage: %.0f%%)",
+                                 projectedFreeMargin, minimumProjectedFreeMargin, m_maxFreeMarginUsage * 100.0);
             return false;
         }
 
         double currentMarginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-        if(currentMarginLevel > 0 && currentMarginLevel < m_minMarginLevel)
+        if(!MathIsValidNumber(currentMarginLevel) || currentMarginLevel < 0.0)
+        {
+            message = "Invalid current margin level";
+            return false;
+        }
+        if(currentMarginLevel > 0.0 && currentMarginLevel < m_minMarginLevel)
         {
             message = StringFormat("Margin level too low: %.2f%% (threshold: %.0f%%)",
                                  currentMarginLevel, m_minMarginLevel);
             return false;
         }
 
-        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-        double currentMargin = AccountInfoDouble(ACCOUNT_MARGIN);
-        double projectedMargin;
-        if(isHedging)
+        if(projectedMarginLevel > 0.0 && projectedMarginLevel < m_minMarginLevel)
         {
-            // Hedging: simply add new margin requirement
-            projectedMargin = currentMargin + marginRequired;
-        }
-        else
-        {
-            // Netting: subtract margin already held on same symbol in opposite direction
-            // before adding new requirement
-            projectedMargin = currentMargin + marginRequired;
-            // Note: For netting accounts, same-symbol opposite positions offset margin.
-            // This requires symbol-specific position enumeration; conservatively keep full add.
-        }
-        if(projectedMargin > 0.0)
-        {
-            double projectedLevel = equity / projectedMargin * 100.0;
-            if(projectedLevel < m_minMarginLevel)
-            {
-                message = StringFormat("Projected post-trade margin level %.2f%% below threshold %.0f%% [mode: %s]",
-                                     projectedLevel, m_minMarginLevel, isHedging ? "hedging" : "netting");
-                return false;
-            }
+            message = StringFormat("Projected post-trade margin level %.2f%% below threshold %.0f%%",
+                                 projectedMarginLevel, m_minMarginLevel);
+            return false;
         }
 
         return true;

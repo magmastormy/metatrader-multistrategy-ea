@@ -2,11 +2,34 @@
 
 ## Document Metadata
 
-- Last Updated: 2026-10-26
-- Last Architecture Sync: 2026-10-26
+- Last Updated: 2026-11-20
+- Last Architecture Sync: 2026-11-20
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 262
+- Current State: Batch 298 is the latest historical measured comparison; this dirty working tree has not been recompiled or paired-backtested
+
+## Current Implementation Notes (2026-11-20)
+
+- `CLiveAuthorityResolver` in `EAOrchestrator` owns the authority decision after candidate construction and before lot scaling. `CandidateBuilder` no longer contains an always-allow placeholder.
+- Risk tiers and compounding are bounded by the operator risk envelope; portfolio and symbol gates exclude the candidate reservation by owner identity and include other pending risk.
+- Candidate risk calculations fail closed on unavailable tick/stop/account data. Unpriceable or unprotected open positions saturate portfolio and symbol risk budgets instead of disappearing as zero risk.
+- CandidateBuilder applies the broker minimum only after drawdown and momentum modifiers, honoring allowMinLotRoundUp and the configured uplift ceiling.
+- `InpSymbolsToTrade` is always authoritative; chart-symbol auto-add has been removed. The live-overrides sample contains only the risk subset its reloader applies.
+- Position contributor sets are unioned across all fills; only exact single-contributor closes update bounded strategy health scores that can modify vote weight. Mixed and unattributed closes are excluded. Hard auto-parking and its recovery sweep have been removed; health scores are not causal dollar-expectancy evidence.
+- Unsupported validator confidence/confluence controls were removed. Pipeline confidence applies only when the pipeline runs; engine-backed filters pass through by default while `InpPipelineEngineRegistry` is false.
+- Per-strategy intrabar-eligibility controls were removed because no entry-path consumer enforced them; Momentum and Candlestick timeframe overrides remain active. Non-risk live overrides remain unsupported and are logged as ignored. Startup risk inputs define the hard envelope; live risk overrides can tighten it, while tier policy is startup-only and logged as ignored if supplied in JSON. Risk reapplication is change-driven, preserves compounding state, and updates the lifecycle loss guard from the final effective daily budget.
+- Async market requests use an append-only FILE_COMMON journal: PREPARED risk is flushed before send, lifecycle events carry request ID, EA magic, reserved percentage, ticket, and fill totals, and restart replay adopts unresolved requests without resending. Malformed or unreadable journals block async sends; FastScalp restores matching reservations before entry admission. Tester runs skip this account-level journal. MetaEditor and broker-backed restart verification remain pending.
+- Safe-mode position tracking had no registration path, so its partial-close/breakeven manager was removed; open positions remain owned by the regular lifecycle manager.
+- Dashboard AI panels now show only published telemetry; invented attention, transition, and inferred gate data were removed. The `?demo` dataset is restricted to development builds.
+- Dashboard control was removed because its queue only logged/acknowledged commands without applying EA actions. It now exposes telemetry only; the service stays loopback-bound, disables credentialed CORS, and checks browser origins on state writes and WebSocket connections. No API token is configured, so localhost remains the trust boundary.
+- Ten unreachable MQL headers and one duplicate strategy-health monitor were removed after include/call-site checks; the empty root Node scaffold was also removed. The remaining model-training modules stay in `MQHModelTrainer`.
+- The eight-target compile and dashboard production build recorded in earlier notes are historical verification, not proof for this dirty working tree. The current MQL changes have not been recompiled; paired cold-window backtesting remains pending.
+- Python trainers gate on validation and development-only CPCV; holdout scores are report-only after model selection. The stale, unreferenced train_all_models.ipynb duplicate was removed; write_colab.py owns the generated Colab notebook.
+- The Kaggle trainer gate fails closed until fold-local retraining exists. Test classification metrics were removed from selection/export metadata; its final forward-return proxy is report-only, zero-cost, and not broker performance evidence.
+- The active FastScalp path has no pending-limit placement or management consumer; the unreachable pending wrapper was removed. Pending-order details in dated batch notes below describe historical code only.
+- GridRecovery entry and close code uses the shared trade manager and preserves unresolved/failed grid state, but the orchestrator has no `ProcessTick` caller for that engine; it remains dormant and is not runtime-verified.
+- ICT ISP breakouts compare the latest closed bar against a prior-only consolidation range; support/resistance touch counts use closed bars.
+- Dated batch entries below are historical snapshots; this current section is authoritative where behavior changed later.
 
 ## 1. System Goal
 
@@ -146,7 +169,7 @@ min R:R enforcement (2.0 default, 1.5 for the mean-reversion cluster; the "1:5" 
   - detect synthetic-index tick-velocity spikes and trigger flatten-plus-pause protection
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
   - resolve strategy registration timeframes per strategy so scalp/intrabar modules can use lower timeframes than the attached chart when explicitly configured
-  - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
+  - adapt per-symbol runtime profiles (strategy roster and context posture) by instrument class when symbol-class profiles are enabled
   - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
   - emit runtime fingerprints with both requested and effective EA mode so `AI_ONLY` logs cannot be mistaken for failed indicator/hybrid participation
   - emit explicit AI topology diagnostics so MT5-native voters, Python-trained ONNX runtime voting, Python sidecar expectations, and external LLM reasoning are not conflated
@@ -211,19 +234,18 @@ min R:R enforcement (2.0 default, 1.5 for the mean-reversion cluster; the "1:5" 
 | Read | `CEnterpriseStrategyManager::AutoRegisterStrategies` via `CatalogEnableSlot(i)` | semantic `SI_*` |
 | Read (registry) | `CEAOrchestrator::BuildStrategyRegistry` via `CatalogEnableSlot(i)` | semantic `SI_*` (Batch 193) |
 | Read (roster report) | `COrchestratorSymbolClassifier::BuildEnabledStrategyList` / `CountEffectiveIndicatorStrategiesForSymbol`, both row loops (Batch 209) | semantic `SI_*`, named by row |
-| Intrabar policy | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` | each strategy's own `siPolicyIndex` |
-| Strategy timeframe | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` (bound in Batch 249) | same `siPolicyIndex`; `PERIOD_CURRENT` = inherit the chart |
+| Strategy timeframe | `StrategyConfigBuilder` → `CEnterpriseStrategyManager::m_strategyTimeframes` | `siTimeframeConfigIndex`; `PERIOD_CURRENT` = inherit the chart |
 | Voting weight | catalog row, overridden once at init by `InpWeight*` | `StrategyConfigWeight(siIndex, rowDefault)` (Batch 193) |
 
 Ownership after Batch 147 (legacy scheme deleted):
 
-- **`CEnterpriseStrategyManager` owns registration.** `AutoRegisterStrategies` calls `CatalogLogIndexAudit()` (no arg), `CatalogEnableSlot(i)`, `CatalogPolicySlot(i)` — all unconditional semantic. There is no scheme flag to set; `SetUseSemanticStrategyIndices` was removed.
-- **`StrategyCatalog` resolves slots, never decides.** `CatalogEnableSlot(i)`, `CatalogPolicySlot(i)` and `CatalogCuratedEnable(i)` are the only slot/roster resolvers; `CatalogFlagEnabled` was removed. `CatalogLogIndexAudit()` prints `slot_scheme=SEMANTIC (legacy literals removed in Batch 147)` and is report-only.
+- **`CEnterpriseStrategyManager` owns registration.** `AutoRegisterStrategies` calls `CatalogLogIndexAudit()`, `CatalogEnableSlot(i)`, and `CatalogTimeframeConfigSlot(i)` using semantic catalog rows.
+- **`StrategyCatalog` resolves slots, never decides.** `CatalogEnableSlot(i)`, `CatalogTimeframeConfigSlot(i)`, and `CatalogCuratedEnable(i)` resolve enable, timeframe, and curated-roster slots. `CatalogFlagEnabled` was removed; the audit remains diagnostic.
 - **No flag slot may be cast to a strategy type (Batch 209).** `ENUM_STRATEGY_INDEX` and `ENUM_STRATEGY_TYPE` number the same strategies differently (`SI_MEAN_REVERSION = 7`, `STRATEGY_MEAN_REVERSION = 8`) and the type enum has gaps at 3, 4, 6, 16 and 17. `[CURATION]` used to print `EnumToString((ENUM_STRATEGY_TYPE)i)` over flag indices, which named the wrong row for everything after Momentum. Roster text and roster counts now come from row loops, and the `STRATEGY_*_AI 17..20` literals those loops relied on are deleted.
 - **`SStrategyDefinition` is the whole registration contract (Batch 193).** The row gained `registryType`, the `ENUM_STRATEGY_TYPE` the registry filter matches on, and `BuildStrategyRegistry` now loops the catalog's indicator rows instead of repeating fourteen hand-written `enabled = flags[SI_X]; RegisterDefinition("X", ...)` pairs — which is how Statistical Arbitrage stayed unregistered while its input, flag slot, class and row all existed. A row with `registryType < 0` prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row - it cannot pass the registry filter`. AI rows keep their own definitions: their enabled flag comes from adapter availability, not a strategy input.
 - **One weight per strategy (Batch 193).** `ApplyCatalogWeightOverrides()` runs after the registry aggregator initializes and before `InitializeEnterpriseManagers()`, writing each row's resolved `InpWeight*` into `SStrategyDefinition.weight`. That row value is what `RegisterStrategy` -> `SetWeight` -> the roster -> `GetStrategyWeight()` gives consensus, and what the registry descriptor reports; before it, the operator's fourteen weight inputs reached only the descriptor, which no indicator path reads. `CatalogApplyConfigWeight` logs every row it moves.
-- **`CIntrabarPolicy` holds the hard-coded LIVE fallback pair** (Mean Reversion / Volatility Breakout) at semantic slots `7/8`. The always-LIVE pair no longer depends on a scheme — it is fixed at the semantic slots, which is exactly what the producer writes.
-- **`MAX_STRATEGY_CONFIGS` = 23.** Slots 21 (FVG Scalper) and 22 (Statistical Arbitrage) own their own rows. `CIntrabarPolicy::m_policyConfig` is sized 32, so the count is safely absorbed.
+- Per-strategy intrabar-eligibility inputs, enum, registry metadata, and helper classes were removed because they had no decision-path consumer. Intrabar reversal checks continue through `EVAL_MODE_INTRABAR` using the live-voter and mode-specific consensus gates.
+- **`MAX_STRATEGY_CONFIGS` = 23.** `StrategyConfigBuilder` initializes every timeframe to `PERIOD_CURRENT` and overrides slots 0 (Momentum) and 4 (Candlestick).
 
 There is no legacy default — the semantic scheme is the only scheme.
 
@@ -234,10 +256,10 @@ A strategy now needs five facts and no other call site:
 1. `Strategies/<Name>.mqh` defining a class derived from `IStrategy`.
 2. `#include "../../Strategies/<Name>.mqh"` in `StrategyCatalog.mqh`, tagged `// [CAT:<Name>]`.
 3. `CATALOG_SIMPLE_CREATOR(CatCreate_<Name>, C<Name>)` on the next anchored line.
-4. One `CatalogAdd("<Name>", CAT_KIND_INDICATOR, ..., siIndex, siPolicyIndex, ..., weight, ..., registryType)` row, carrying the row's own `SI_*` flag slot, its own `StrategyConfigBuilder` policy slot, the `STRATEGY_*` enum the registry matches on, and its default weight.
+4. One `CatalogAdd("<Name>", CAT_KIND_INDICATOR, ..., siIndex, siTimeframeConfigIndex, ..., weight, ..., registryType)` row, carrying the strategy enable slot, optional timeframe-config slot (`-1` uses the catalog timeframe), registry enum, and default weight.
 5. `InpEnable<Name>` / `InpWeight<Name>` in each root `.mq5`, written into `config.enable<Name>` / `config.weight<Name>`, the new slot appended to `ENUM_STRATEGY_INDEX`, and one `case` for it in `COrchestratorStrategyFlagBuilder::ConfigEnableForSlot`. `BuildStrategyFlags` itself needs no new line: it walks the rows.
 
-Registration, the registry definition, the enable gate, the intrabar policy, the curated roster, the contributor class and the consensus weight are all read from that row. Remove a strategy by deleting the lines carrying its `[CAT:]` anchor and its input. One enumeration is still not catalog-driven and is worth naming: `BuildStrategyFlagsForSymbol` suppresses named strategies per symbol class. A row whose `registryType` is missing prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row` rather than trading nothing in silence, a row whose `siIndex` is `-1` is registered for every symbol (what the AI adapter rows rely on), and a row whose slot has no `ConfigEnableForSlot` case prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being quietly unreachable.
+Registration, the registry definition, the enable gate, the curated roster, the contributor class, and the consensus weight are resolved from that row. Strategy timeframe overrides are configured separately in `StrategyConfigBuilder` and applied during manager registration. Remove a strategy by deleting the lines carrying its `[CAT:]` anchor and its input. One enumeration is still not catalog-driven and is worth naming: `BuildStrategyFlagsForSymbol` suppresses named strategies per symbol class. A row whose `registryType` is missing prints `[STRATEGY-REGISTRY] <name> has no registryType in its catalog row` rather than trading nothing in silence, a row whose `siIndex` is `-1` is registered for every symbol (what the AI adapter rows rely on), and a row whose slot has no `ConfigEnableForSlot` case prints `[CATALOG] <name> | enable slot N has no operator input - it stays off unless curated` instead of being quietly unreachable.
 
 Curated membership is row data since Batch 209 (`SStrategyDefinition::curatedEnable`): the twelve indicator rows the operator cannot switch off under `InpUseCuratedStrategySet` are every indicator row except Candlestick and Statistical Arbitrage, which is the set the deleted `if(!config.enableX)` ladder named by hand.
 
@@ -344,11 +366,11 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 
 - Class: `CUnifiedSignalPipeline`
 - Responsibilities:
-- Engine access: `CUnifiedSignalPipeline::SetMathRegistry` is the single seam; Batch 258 wires it from `EAOrchestrator.mqh:1815` under `InpPipelineEngineRegistry` (default false, which is the behaviour every previous build had)
+- Engine access: `EAOrchestrator` binds its math-engine registry only when `InpPipelineEngineRegistry=true` (default `false`). Without binding, engine-backed filter getters pass through; confidence and time/session controls are configured separately.
   - cache structural/indicator context once per symbol/timeframe/bar for reuse across strategy votes
   - apply symbol-class-aware context posture so synthetic indices can bypass FX-style ADX trend assumptions while FX keeps full trend filtering
-  - apply trend/volatility/liquidity/structure/confidence filters - **inert while `registry=unbound`** (Batch 258): each filter reads `m_mathRegistry`, which `SetMathRegistry` never populated in any build, so signals passed straight through; `InpPipelineEngineRegistry=true` binds the orchestrator's registry and turns them on
-  - apply deterministic regime + cost viability pre-gate via `CRegimeEngine` - same dependency, and `SignalPipelineFilter.mqh:41` returns 'pass' when the engine pointer is NULL
+  - apply configured pipeline confidence and time/session gates independently of math-registry binding
+  - apply engine-backed trend, volatility, liquidity, structure, and regime/cost gates only when the registry is bound; they pass through by default because binding adds entry vetoes
   - recover ATR/Bollinger inputs from raw `CopyRates(...)` data when volatility/regime indicator buffers fault or warm slowly despite mature price history
   - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass\`, readiness class, reuse/staleness flags)
   - retain the last rejecting filter name and reason for manager-level no-signal summaries
@@ -388,7 +410,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   - remain optional at runtime; orchestration/adaptation failure disables AI adaptation without violating trade/risk/execution ownership
   - avoid duplicate component-local diagnostics so AI observability remains concentrated in `[AI-VOTE]`, manager telemetry, and runtime heartbeat surfaces
   - enforce a `0.70` minimum runtime confidence floor for the hardened AI defaults
-  - reload Python-exported ONNX scaler parameters (`scaler.bin`) before inference when updated in Common files
+  - load the paired Python-exported ONNX scaler (`scaler.bin`) before inference; missing or wrong-width parameters disable ONNX feature generation
   - make runtime topology explicit:
     - `CNextGenStrategyBrain` / Universal Transformer = local feature brain, not a direct live voter
     - `Neural Network AI`, `Transformer AI`, `Ensemble AI` = MT5-native live-voter families
@@ -732,18 +754,13 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
   confirmation + spread-vs-ATR cost gate), not a strategy object.
   - `CScalpMomentumStrategy` (`Core/Scalp/ScalpMomentumStrategy.mqh`) and `CScalpSpreadStrategy`
     (`Core/Scalp/ScalpSpreadStrategy.mqh`): **no such file has ever existed in the repository.**
-  - `CScalpVolatilityBreakout` (`Core/Scalp/ScalpVolatilityBreakout.mqh`): the file exists and is a complete
-    233-line `CStrategyBase` subclass, but nothing `#include`s it, it has no catalog row, no `SI_*` slot, no
-    `InpEnable*` input and no `factoryName` - so it is not in the binary at all. Kept rather than deleted,
-    because unlike the unreachable factory paths of Batch 210 this is a whole strategy that could be activated;
-    activation is the operator's call (it would create exposure on a path that has never traded), so it is on the
-    `unwired but wireable` list in §4.
+  - `CScalpVolatilityBreakout` was an unreachable 233-line strategy with no include, catalog row, slot, input, or factory. It was removed during the 2026-11-17 reachability audit instead of being presented as an available engine.
 - **Dual-Path Processing:**
   - `OnTick()` runs `ProcessScalpFastPath()` for tick-level cached-indicator signal evaluation alongside the existing safety loop
   - `OnTimer()` retains full consensus logic (pipeline → manager → validator → risk → execution)
   - Scalp fast path reads from `CScalpSignalCache` for zero-computation indicator access
   - Scalp entries still pass through `CUnifiedRiskManager` pre-trade gating (AGENTS.md invariant #1 preserved)
-  - **Batch 152 fast-path completion:** the fast path refreshes its own cache (`UpdateOnNewBar` + `UpdateTickValues`, self-throttled to new bars) at head and runs the full management set per tick (`SyncScalpPositionTracking / ManageScalpPositions / CheckPendingAsyncOrders / CheckPendingScalpOrders`); async fills confirm via `OnTradeTransaction` -> `ProcessScalpDealConfirmed`. ATR-scalp partial-profit is ticket-latched (one partial per position lifetime, latch pruned on close); same-bar EMA-cross re-entries are locked out per symbol; grid-recovery activation floor baselines on ACCOUNT_BALANCE (was equity-vs-equity, never failed).
+  - The fast path refreshes its own cache (`UpdateOnNewBar` + `UpdateTickValues`, self-throttled to new bars) and runs position management plus async-order reconciliation; async fills confirm via `OnTradeTransaction` -> `ProcessScalpDealConfirmed`. The unreferenced raw pending-entry path and its misleading enabled flag were removed. ATR-scalp partial-profit is ticket-latched; same-bar EMA-cross re-entries are locked out per symbol; grid-recovery activation floor baselines on ACCOUNT_BALANCE.
 
 ### 2.18 Risk Enhancement domain (Batch 97)
 
@@ -1184,7 +1201,7 @@ Mean Reversion's synthetic branch is not an input: `Init` derives `m_isSynthetic
 - All AI strategy adapters implement a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator
 - The feature contract is now unified at 55 engineered inputs shared by the MQL runtime and the offline `Python/` ONNX training/export pipeline
 - `Resources/model.onnx` is embedded as an EA resource, and `COnnxBrain` supports shadow-handle hot-swap promotion from a Common-files update path
-- `CPipelineScaler` keeps the ONNX feature normalization path aligned with Python `StandardScaler` exports and can hot-reload updated scaler parameters without restarting the EA
+- `CPipelineScaler` reads the feature-count-prefixed scaler format used by StandardScaler and RobustScaler exports, requires the exact runtime feature width, and fails closed when the paired artifact is invalid. Deploy model and scaler together and reinitialize the EA after updates.
 
 ### 3.3 Curated runtime profile
 
@@ -1383,7 +1400,7 @@ Ownership and single sources of truth introduced or moved by the live-money audi
 | Contributor context | `CEntStrategySignalContext::SetContributors`, written by `CConsensusEngine::EvaluateConsensusInternal` (Batch 199) | The decision names its voters; attribution is then recorded at execution against the fill's `positionId` (`AttributeExecutedPosition`), and closed-deal feedback filters engine books out by comment tag or magic band before scoring. Before this batch the arrays had readers and no writer, so per-strategy performance, health-derived reliability, performance auto-disable, per-cluster risk governance and `[AUTHORITY-LEARN]` all ran on an empty list. |
 | Lifecycle ownership window | `CPositionLifecycleManager::IsEAOwnedMagic` -> `CMagicRange::IsOwned` (Batch 197) | The last class still computing `base + symbolCount*100 + maxClusterCode` (Batch 168 fixed the four siblings). On the default 13-symbol universe the ceiling was `base + 1399` against magics shipped at `base + 7000..9400`, so twelve symbols read as "not ours" and Signal Reversal Exit plus the ranging breakeven path - both gated on `IsPositionLifecycleManaged()` - never ran with their inputs ON. |
 | Post-consensus validator arms | `CPostConsensusValidator::SetValidatorConfig`, called per symbol from `InitializeEnterpriseManagerForSymbol` | Before Batch 175 the method existed with no caller anywhere, so OFI confirmation and the VPIN arm ran OFF regardless of `InpEnableOFIProxy` / `InpEnableVPINFilter`, and the quality floors were the constructor's 0.72/0.75 instead of the configured 0.70/0.68. Hard spread cutoff is passed as `max(hardSpreadCutoffPoints, maxEntrySpreadPoints)`: the configured 200-point default is below synthetic-index spreads and would veto the whole synthetic book, the failure the constructor already documented fixing. |
-| Conservative-tier safe mode | Tightens existing owners, never a parallel gate | `minVoters` → `SetMinQuorum`/`SetIntrabarMinQuorum`, `minQuorumThreshold` → `SetQuorumThreshold`, `maxSpreadATRRatio` → pipeline `regimeCostGate`, `noStacking` → the builder's per-symbol position cap. All applied after `ApplyQuorumProfile`, all `MathMax`/`MathMin` clamps. `tradeOnlyKillZones` and `avoidNewsEvents` are not enforced and `[INIT] Conservative safe mode ENABLED` says so at startup. |
+| Conservative-tier safe mode | Tightens existing owners, never a parallel gate | `minVoters` → `SetMinQuorum`/`SetIntrabarMinQuorum`, `minQuorumThreshold` → `SetQuorumThreshold`, `maxSpreadATRRatio` → pipeline `regimeCostGate`, `noStacking` → the builder's per-symbol position cap. All applied after `ApplyQuorumProfile`, all `MathMax`/`MathMin` clamps. FX kill-zone and news filters are unavailable for the current roster; startup states both limitations. |
 | Quorum profile precedence | `ApplyQuorumProfile` is the last writer of the four quantities it owns | The profile overwrites `InpMinLiveVoters` / `InpQuorumThreshold` / `InpConsensusSupportFloor*` / `InpIntrabarDynamicQuorumEnabled` with the selected preset (CONSERVATIVE 2 / 0.60 / 0.35+0.30 / ON, BALANCED 1 / 0.50 / 0.25+0.20 / ON, AGGRESSIVE 1 / 0.45 / 0.15+0.10 / OFF), and keeping it last is deliberate: the preset is the policy, and letting one input win would silently overrule AGGRESSIVE's relaxation. `intrabarMinQuorum` is the field it does **not** own, and neither voter count reaches the decision raw: `CConsensusEngine::EnforcedMinVoters` applies `MIN_CONSENSUS_VOTERS` on top — **1 since Batch 273's floor change, not 2** (Batch 283 corrected this line's older claim), so the stored `InpMinLiveVoters` is the binding number and a preset's `minQuorum = 1` does reach the decision when the input says 1. `[ENTERPRISE-CONFIG]` used to print the four inputs as if they were in force; since Batch 227 it reads them back from the manager and `[QUORUM-PRECEDENCE]` prints `input / stored / enforced` once per symbol at init. |
 | Build verification | `sync_and_compile.ps1`, one `Result:` line per program | The only acceptable evidence a compile finished. Since Batch 228 a log that never writes its `Result:` line is a failure rather than a zero count, the wait is `-MaxCompileWaitSec` (420 s; `MultiStrategyAutonomousEA.mq5` measures ~252 s), and the script exits 1 on any failure. Before that the harness counted error lines in a partial log, reported `0 errors, 0 warnings` for compiles it had given up on, and its next-iteration worker cleanup deleted the binary being written - two batches shipped against binaries from a previous day. Corollary for the operator: compare the `.ex5` timestamp with your last edit before calling a build deployed. |
 | Engine send confirmation | `CTradeMgrPreflight::FindFreshPositionForSend`, called at the four engine send sites (Batch 177) | The engines still send on their own `CTrade`/`MqlTradeRequest` (§3.2 remains unmet by choice: moving the send would recompute the magic and comment identity that positions on a live book are matched by), but a `DONE_PARTIAL` or a dropped response is no longer read as "nothing happened". Grid levels now store the **position** ticket their own close path requires, resolved by magic; `ResultOrder()` is kept only as a logged fallback. |
@@ -1431,15 +1448,9 @@ Ownership and single sources of truth introduced or moved by the live-money audi
   `EAOrchestrator.mqh:1266` (5/13/14/7). The cache and the config agree today only because neither can move;
   calling the setter would let the fast path and the slow path evaluate different EMAs on the same symbol. If
   those periods ever become operator inputs, one source must feed both paths.
-- **`CScalpVolatilityBreakout` is a complete strategy that is not in the build** (recorded Batch 216, not
-  activated). `Core/Scalp/ScalpVolatilityBreakout.mqh` is 233 lines of `CStrategyBase` subclass - squeeze
-  detection, BB breakout, bar-body filter, RSI confirmation - and nothing `#include`s it: no catalog row, no
-  `SI_*` slot, no `InpEnable*` input, no `factoryName`, so it compiles into no program. Its two documented
-  siblings (`CScalpMomentumStrategy`, `CScalpSpreadStrategy`) have no file at all. Kept because activation is a
-  strategy decision that opens exposure on a path that has never traded; enabling it takes a catalog row, an
-  enable slot and a registration, and that is the operator's call, exactly as with the three parked engines above.
+- **Historical Batch 216 note:** `CScalpVolatilityBreakout` was a complete but unreachable strategy. The file was deleted in the 2026-11-17 reachability audit; activating it would have required a measured strategy integration, not just an include.
 - **The ranging-regime trailing pause is still unwired, and why.** `CPositionLifecycleManager::m_regimeEngine` is NULL (`SetRegimeEngine` has no caller), so the branch at `PositionLifecycleManager.mqh:370` never runs. The per-symbol regime source now exists (`GetManagerForSymbol(symbol).GetCurrentMarketRegime()`), but `CTradeManager::ManageAllPositions` walks the whole book with no symbol filter, so ranging symbols cannot be routed to the breakeven-only branch without changing the exit authority's API. Not attempted without an attach to verify it against live positions.
-- **Three phantom strategy slots deleted** (Batch 207). `SI_UNIFIED_ICT` / `SI_UNICORN_MODEL` / `SI_POWER_OF_THREE` and their `STRATEGY_*` type values had no catalog row and no class: the type values appeared only as unreachable `case` labels in `GetRegimeCategoryMultiplier`, and the three `InpIntrabarEligibility*` inputs wrote `strategyTimeframeConfigs[3]/[5]/[6]`, slots no row's `siPolicyIndex` selects - so `CatalogPolicySlot` never returned them and the inputs bound nothing. Enum values were not renumbered. `SI_EXIT_OPTIMIZER` was listed here as surviving; Batch 209 deleted the *slot* after grepping it down to its own declaration and one unread flag-array write - `CExitOptimizer` itself is untouched and still gated by `InpEnableExitOptimizer` through `config.enableExitOptimizer` at the hub's per-symbol engine creation, because it is a math engine and never a consensus voter. Batch 262 deleted the input, the field and both construction sites; the class file stays, unreferenced.
+- **Three phantom strategy slots deleted** (Batch 207). `SI_UNIFIED_ICT` / `SI_UNICORN_MODEL` / `SI_POWER_OF_THREE` and their `STRATEGY_*` type values had no catalog row and no class: the type values appeared only as unreachable `case` labels in `GetRegimeCategoryMultiplier`, and the three `InpIntrabarEligibility*` inputs wrote `strategyTimeframeConfigs[3]/[5]/[6]`, slots no row's `siPolicyIndex` selects - so `CatalogPolicySlot` never returned them and the inputs bound nothing. Enum values were not renumbered. `SI_EXIT_OPTIMIZER`'s input, field and construction sites were deleted in Batch 262; its remaining orphan file was removed in the 2026-11-17 reachability audit.
 - **`COrchestratorIntrabarPolicy::GetIntrabarPolicy` has no caller** (recorded while Batch 209 removed its only cross-space flag read). It takes a *policy* slot and looks that number up in the *enable-flag* array, which would mix the two index spaces the way the `[CURATION]` cast did; the live path is `CIntrabarPolicy::GetIntrabarPolicyHelper(pIdx)`, which reads configured policy and nothing else. Its `EAOrchestrator` wrapper is equally uncalled. Left in place rather than deleted because it is a plausible future per-symbol policy resolver, and its sibling `GetStrategyTimeframeConfig` wrapper is in the same state.
 - **Every ATR this EA measures is taken on the chart's timeframe** (recorded by Batch 206, not fixed). `CPostConsensusValidator::GetATRDirect` calls `Period()`, `CalculateStops` passes `PERIOD_CURRENT`, and both resolve identically because `EAOrchestrator.mqh:1768` initializes each per-symbol manager with `manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), ...)`. So the ATR-ratio crisis veto, the `atr_ratio > 1.5` lot halving, the spread/ATR veto and the volatility-sized stop apply to all thirteen symbols on the timeframe of whichever chart the EA sits on, while the strategies that voted carry their own catalog timeframes (`GetStrategyTimeframe(i)`). The correction is a per-symbol operating timeframe - which of a symbol's timeframes counts as its trading timeframe is a policy decision the operator owns, and guessing it on a live book is how a sizing path silently changes character.
 - **The min-R:R floor no longer caps the target** (Batch 206). `CalculateStops` clamps the stop and then sets `takeProfitPips = MathMax(proposedTP, stopLossPips * minRR)`. As `MathMin` it turned the minimum R:R requirement into a maximum take-profit, cutting every wider strategy target down to the floor and simultaneously raising the `spread / TP` ratio `CheckExecutionCost` refuses on. Stop distance, lot size and per-trade risk are untouched.
@@ -1918,7 +1929,7 @@ Any structural change must update all of:
 - `CPythonBridge` gained three private JSON parsing helpers (`ParseJsonDouble`, `ParseJsonString`, `ParseJsonInteger`) that eliminate 18+ duplicated field-extraction patterns across `ParsePredictionResponse`, `GetPairCorrelation`, `FindBestCorrelatedPair`, and `ParseVersionResponse`. The helpers take a key name and handle the find/extract/parse cycle generically.
 - `CEnsembleAIStrategyAdapter` TODO comments resolved — `TrainStep()` and `OnRegimeChange()` documented as intentional no-ops due to parameter mismatch between the adapter interface and `CEnsembleMetaLearner`'s method signatures.
 - `SignalValidator.mqh` confirmed already merged into `EnterpriseStrategyManager.mqh` — post-consensus validation (spread/ATR/OFI/VPIN checks) runs within `GetConsensusSignalForSymbolWithConfluenceMode()`.
-- `IRegistry.mqh` provides template-based `CRegistryBase<T>` with full Get/Register/Unregister/Has/Count/Clear implementation. None of the 6 concrete registries currently inherit from it — all are too specialized (multi-pointer slots, scalar state, create-on-demand logic).
+- The generic `IRegistry.mqh`/`CRegistryBase<T>` abstraction had no concrete consumers and was removed on 2026-11-17. The six specialized registries remain directly owned by `CRegistryAggregator`.
 - `Core/Position/PositionManager.mqh` is the sole position manager (not a duplicate of a non-existent `Core/Trading/PositionManager.mqh`). Actively included by 4 files via `../Position/PositionManager.mqh`.
 - Dashboard `App.tsx` now imports real page components from `./pages/` instead of rendering inline "Coming Soon" stubs for all 8 routes.
 
@@ -1928,6 +1939,13 @@ Any structural change must update all of:
 - Min-lot round-up tolerance is restored to 15x (reverted the L5-002 1x clamp) in three places: URM config default `minLotRiskMultiplier = 15.0`, `CPositionSizer` hard cap `if(riskRatio > 15.0)`, and the `SetMinLotRiskMultiplier` setter clamp `MathMin(MathMax(1.0, multiplier), 15.0)`.
 - EA inputs `InpAllowMinLotRoundUp = true` and `InpMinLotRiskMultiplier = 15.0` expose the round-up policy to the user.
 - 38 `PrintFormat("[DBG-RET0] ...")` debug statements were added to ambiguous `return 0.0` paths across `UnifiedRiskManager.mqh` (16), `TradeManager.mqh` (14), `PositionSizer.mqh` (5), and `PythonBridge.mqh` (3). Logging only — no runtime behavior change. Documented valid returns (hedging-mode path, already-braced inline early-exits) were skipped.
+
+## 17. 2026-11-20 Fast-Scalp Exposure Rebuild and Python Bridge Backoff
+
+- Fast-scalp risk authority is the broker book: before entry admission, CFastScalpRiskBudget::Rebuild prices matching-magic positions and active orders to their current stop using OrderCalcProfit. Missing/invalid stop or pricing data fails closed. The tracker supplies only unresolved reservations not represented by a live order or position; position close/release no longer subtracts a remembered tier amount.
+- Broker-visible positions and orders reconstruct after EA restart. The brokerless quarantine ledger and untracked-send sentinel remain process-local, so a request with no recoverable broker identity cannot be proven across restart.
+- Python prediction no longer spends a second synchronous request on /health before /predict; a successful prediction response marks health. Adapter cache age and refresh-attempt throttling use monotonic ticks, including failed attempts. WebRequest itself remains synchronous in OnTimer() and can still block up to its configured timeout; true asynchronous transport is not implemented.
+- Source changes are not compile/runtime verified until MetaEditor and broker-backed restart, async-fill, and bridge-timeout tests run.
 
 
 ## Batch 289 Shared Indicator Handles Cannot Be Released by a Consumer; Fast-Scalp Stops Are Per Symbol (2026-11-13, uncompiled)

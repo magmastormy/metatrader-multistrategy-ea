@@ -7,7 +7,6 @@
 #define STRATEGY_MGR_ROSTER_MQH
 
 #include "EntStrategyTypes.mqh"        // struct StrategyEntry (held BY VALUE in the array)
-#include "StrategyHealthMonitor.mqh"   // CStrategyHealthMonitor::RegisterStrategy
 
 //--- Fixed capacity of StrategyEntry::recentTrades[]. The bound checks in this file use
 //--- the literal 20, so editing the macro alone does not widen anything here.
@@ -61,18 +60,10 @@ public:
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveWins : 0; }
     int      GetStrategyConsecutiveLosses(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveLosses : 0; }
-    bool     IsStrategyTemporarilyDisabled(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].temporarilyDisabled : false; }
-    datetime GetStrategyDisabledUntil(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].disabledUntil : 0; }
     //--- `fallback` is the manager's m_baseTimeframe, which the roster does not own
     ENUM_TIMEFRAMES GetStrategyTimeframe(const int index, const ENUM_TIMEFRAMES fallback) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].timeframe : fallback; }
-    int    GetStrategyIntrabarPolicyRaw(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarPolicy : (int)INTRABAR_POLICY_OFF; }
-
-    //--- Writes the entry weight and pushes it to the strategy object, but deliberately
-    //--- does NOT touch the health monitor.
+    //--- Writes the entry weight and pushes it to the strategy object.
     void ApplyRawStrategyWeight(const int index, const double weight);
 
     void SetStrategyTotalTrades(const int index, const int value)
@@ -91,10 +82,6 @@ public:
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgProfit = value; }
     void SetStrategyHealthScore(const int index, const double value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].healthScore = value; }
-    void SetStrategyTemporarilyDisabled(const int index, const bool value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].temporarilyDisabled = value; }
-    void SetStrategyDisabledUntil(const int index, const datetime value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].disabledUntil = value; }
     //--- Writes ONLY the entry flag: no push to the IStrategy object.
     void SetStrategyEnabledFlag(const int index, const bool value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
@@ -109,21 +96,17 @@ public:
     void SetStrategyLiveVotingEnabled(const int index, const bool enabled)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].liveVotingEnabled = enabled; }
 
-    //--- StrategyEntry append. Order matters: fill the entry -> health
-    //--- monitor RegisterStrategy(weight) -> ++m_strategyCount.
+    //--- StrategyEntry append. Fill the entry before incrementing m_strategyCount.
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                        double weight, ENUM_STRATEGY_TIER tier,
                                        ENUM_TIMEFRAMES resolvedTf,
-                                       ENUM_INTRABAR_POLICY intrabarPolicy,
                                        ENUM_STRATEGY_ROLE role,
                                        ENUM_STRATEGY_CLUSTER cluster,
-                                       bool liveVotingEnabled,
-                                       CStrategyHealthMonitor* healthMonitor);
+                                       bool liveVotingEnabled);
 
     //--- By-name weight mutator: clamps to [0, 10] and finds the row by name;
     //--- ApplyRawStrategyWeight() writes an index the caller already resolved, unclamped.
-    bool UpdateStrategyWeightByName(const string name, const double weight,
-                                    CStrategyHealthMonitor* healthMonitor);
+    bool UpdateStrategyWeightByName(const string name, const double weight);
 
 
     //--- Teardown loop shared by Deinit() and the destructor.
@@ -162,11 +145,9 @@ void CStrategyMgrRoster::ApplyRawStrategyWeight(const int index, const double we
 void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                                        double weight, ENUM_STRATEGY_TIER tier,
                                                        ENUM_TIMEFRAMES resolvedTf,
-                                                       ENUM_INTRABAR_POLICY intrabarPolicy,
                                                        ENUM_STRATEGY_ROLE role,
                                                        ENUM_STRATEGY_CLUSTER cluster,
-                                                       bool liveVotingEnabled,
-                                                       CStrategyHealthMonitor* healthMonitor)
+                                                       bool liveVotingEnabled)
 {
     int newSize = m_strategyCount + 1;
     ArrayResize(m_strategies, newSize);
@@ -174,7 +155,6 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].strategy = strategy;
     m_strategies[m_strategyCount].name = name;
     m_strategies[m_strategyCount].enabled = enabled;
-    m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
     m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
     m_strategies[m_strategyCount].role = (int)role;
     m_strategies[m_strategyCount].cluster = (int)cluster;
@@ -194,18 +174,10 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategies[m_strategyCount].avgProfit = 0.0;
     m_strategies[m_strategyCount].consecutiveLosses = 0;
     m_strategies[m_strategyCount].consecutiveWins = 0;
-    m_strategies[m_strategyCount].temporarilyDisabled = false;
-    m_strategies[m_strategyCount].disabledUntil = 0;
-
-    if(healthMonitor != NULL)
-        healthMonitor.RegisterStrategy();
-
     m_strategyCount++;
 }
 
-// The health monitor is passed in by the caller because the roster does not own it.
-bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const double weight,
-                                                    CStrategyHealthMonitor* healthMonitor)
+bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const double weight)
 {
     int index = FindStrategyIndexByName(name);
     if(index < 0)

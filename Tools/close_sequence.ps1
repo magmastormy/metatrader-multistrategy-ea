@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     A per-symbol loss-streak circuit breaker is only justified if a symbol's losses actually arrive in
-    consecutive runs. This prints the ordered Net Profit of every close for one symbol so the streak structure
-    can be seen instead of assumed. Runs are segmented by simulation-time regression (the wall-clock column is
+    consecutive runs. This prints recognized close records observed in the scanned tail so the streak structure
+    can be seen instead of assumed. Missing P&L stays unpriced and breaks a loss streak. Runs are segmented by simulation-time regression (the wall-clock column is
     not a run identity: MT5 flushes a finished run's journal with one stamp).
 
 .PARAMETER Symbol
@@ -48,7 +48,7 @@ while (-not $sr.EndOfStream) {
     }
     if ($sim) {
         if ($null -eq $lastSim -or $sim -lt $lastSim) {
-            $cur = [pscustomobject]@{ start=$sim; end=$sim; closes=(New-Object 'System.Collections.Generic.List[object]') }
+            $cur = [pscustomobject]@{ start=$sim; end=$sim; partialStart=($runs.Count -eq 0 -and $start -gt 0); closes=(New-Object 'System.Collections.Generic.List[object]') }
             $runs.Add($cur)
         }
         $lastSim = $sim
@@ -56,27 +56,56 @@ while (-not $sr.EndOfStream) {
     }
     if (-not $cur) { continue }
 
-    if ($msg -match 'Trade Closed' -and $msg -match ('Symbol: ' + [regex]::Escape($Symbol) + ' \|')) {
-        $pnl = 0.0
-        if ($msg -match 'Net Profit: (-?[\d\.]+)') { $pnl = [double]::Parse($matches[1], [Globalization.CultureInfo]::InvariantCulture) }
-        $cur.closes.Add([pscustomobject]@{ sim=$lastSim; pnl=$pnl })
+    $closeKind = $null
+    $hasPnl = $false
+    $pnl = $null
+    if ($msg -match '\[ENGINE-CLOSE\]\s+(?<symbol>[^|]+?)\s+\|\s+ticket=\d+\s+\|\s+position=\d+\s+\|\s+magic=-?\d+(?:\s+\|\s+net=(?<net>[^|]*))?') {
+        if ([string]::Equals($matches['symbol'].Trim(), $Symbol, [StringComparison]::OrdinalIgnoreCase)) {
+            $closeKind = 'engine'
+            $netText = $matches['net']
+            $hasPnl = $netText -match '^\s*-?\d+(?:\.\d+)?\s*$'
+            if ($hasPnl) { $pnl = [double]::Parse($netText.Trim(), [Globalization.CultureInfo]::InvariantCulture) }
+        }
+    } elseif ($msg -match 'Trade Closed' -and $msg -match 'Symbol: ([^|]+)') {
+        $recordSymbol = $matches[1].Trim()
+        if ([string]::Equals($recordSymbol, $Symbol, [StringComparison]::OrdinalIgnoreCase)) {
+            $closeKind = 'trade'
+            $hasPnl = $msg -match 'Net Profit: (-?\d+(?:\.\d+)?)'
+            if ($hasPnl) { $pnl = [double]::Parse($matches[1], [Globalization.CultureInfo]::InvariantCulture) }
+        }
+    }
+    if ($closeKind) {
+        $cur.closes.Add([pscustomobject]@{ sim=$lastSim; pnl=$pnl; hasPnl=$hasPnl; kind=$closeKind })
     }
 }
 $sr.Close(); $reader.Close()
 
+"scanned bytes $start-$len of $len | first run may start mid-run: $($start -gt 0) | run completion not verified"
 foreach ($r in $runs) {
     if ($r.closes.Count -eq 0) { continue }
-    "=== $Symbol | run $($r.start.ToString('yyyy-MM-dd HH:mm')) -> $($r.end.ToString('yyyy-MM-dd HH:mm')) | $($r.closes.Count) closes | net $([math]::Round((($r.closes | Measure-Object pnl -Sum).Sum),2)) ==="
+    $pricedCloses = @($r.closes | Where-Object { $_.hasPnl })
+    $coverage = [math]::Round(100.0 * $pricedCloses.Count / $r.closes.Count, 1)
+    $net = 0.0
+    foreach ($close in $pricedCloses) { $net += $close.pnl }
+    $engineCloses = @($r.closes | Where-Object { $_.kind -eq 'engine' }).Count
+    $startCoverage = if ($r.partialStart) { 'possibly-truncated' } else { 'observed' }
+    "=== $Symbol | run $($r.start.ToString('yyyy-MM-dd HH:mm')) -> $($r.end.ToString('yyyy-MM-dd HH:mm')) | start=$startCoverage; end=unverified | closes observed $($r.closes.Count) | parsed P&L $($pricedCloses.Count)/$($r.closes.Count) ($coverage%) | parsed net $([math]::Round($net,2)) | engine closes $engineCloses (no strategy attribution inferred) ==="
     $seq = @()
     $i = 0
     foreach ($c in $r.closes) {
         $i++
-        $seq += ("{0}:{1:N2}" -f $i, $c.pnl)
+        $pnlText = if ($c.hasPnl) { '{0:N2}' -f $c.pnl } else { 'unpriced' }
+        $seq += ("{0}[{1}]:{2}" -f $i, $c.kind, $pnlText)
     }
     "  " + ($seq -join '  ')
     # streak statistics: longest losing run, and how much of the net loss sits inside streaks of 2+
     $maxStreak = 0; $streak = 0; $lossInStreaks = 0.0; $streakCount = 0
     foreach ($c in $r.closes) {
+        if (-not $c.hasPnl) {
+            if ($streak -ge 2) { $streakCount++ }
+            $streak = 0
+            continue
+        }
         if ($c.pnl -lt 0) {
             $streak++
             if ($streak -ge 2) { $lossInStreaks += $c.pnl }

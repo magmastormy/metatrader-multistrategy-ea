@@ -117,7 +117,7 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
 
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
-    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager - no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     ArrayFree(m_levels);
 }
@@ -125,7 +125,7 @@ CSupportResistanceDetector::~CSupportResistanceDetector()
 bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            double clusterPips, int swingStrength)
 {
-    // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
+    // ATR handle managed by CIndicatorManager - no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
 
     m_symbol = symbol;
@@ -584,7 +584,7 @@ bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIn
 {
     // scale-free floor - 5*point is ~0.05 absolute on synthetics, so
     // noise wicks could permanently consume levels; 1bp of price keeps it sane
-    // on FX (â‰?.5 pip) and synthetics alike.
+    // on FX (~0.5 pip) and synthetics alike.
     double tolerance = MathMax(5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT), price * 0.0001);
 
     MqlRates rates[];

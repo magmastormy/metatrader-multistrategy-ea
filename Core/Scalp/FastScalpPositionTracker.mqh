@@ -63,11 +63,25 @@ public:
       m_scalpPositions[index].breakevenSet = true;
    }
 
-   void RegisterScalpPosition(ulong ticket, string symbol, double entryPrice,
-                               double sl, double tp, double oneRPrice)
+   bool RegisterScalpPosition(ulong ticket, string symbol, double entryPrice,
+                              double sl, double tp, double oneRPrice)
    {
+      if(ticket == 0 || symbol == "" || entryPrice <= 0.0)
+         return false;
+
+      int existingIndex = FindScalpPositionState(ticket);
+      if(existingIndex >= 0)
+      {
+         m_scalpPositions[existingIndex].symbol          = symbol;
+         m_scalpPositions[existingIndex].entryPrice      = entryPrice;
+         m_scalpPositions[existingIndex].originalSL      = sl;
+         m_scalpPositions[existingIndex].originalTP      = tp;
+         m_scalpPositions[existingIndex].oneRProfitPrice = oneRPrice;
+         return true;
+      }
+
       if(m_scalpPositionCount >= ArraySize(m_scalpPositions))
-         return;
+         return false;
 
       m_scalpPositions[m_scalpPositionCount].ticket          = ticket;
       m_scalpPositions[m_scalpPositionCount].symbol          = symbol;
@@ -78,6 +92,7 @@ public:
       m_scalpPositions[m_scalpPositionCount].originalTP      = tp;
       m_scalpPositions[m_scalpPositionCount].oneRProfitPrice = oneRPrice;
       m_scalpPositionCount++;
+      return true;
    }
 
    void RemoveScalpPosition(ulong ticket)
@@ -107,8 +122,11 @@ public:
    }
 
 // Count positions with "SCALP" in comment
-   static int CountScalpPositions()
+   static int CountScalpPositions(const long expectedMagic)
    {
+      if(expectedMagic <= 0)
+         return 0;
+
       int count = 0;
       int total = PositionsTotal();
       for(int i = 0; i < total; i++)
@@ -117,6 +135,8 @@ public:
          if(ticket <= 0) continue;
          if(PositionSelectByTicket(ticket))
          {
+            if(PositionGetInteger(POSITION_MAGIC) != expectedMagic)
+               continue;
             string comment = PositionGetString(POSITION_COMMENT);
             // Batch 170: prefix, not substring. "ATR-SCALP" contains "SCALP", so the
             // old test made this engine claim the ATR scalp engine's positions - and
@@ -128,9 +148,11 @@ public:
       return count;
    }
 
-   static bool IsScalpPosition(ulong ticket)
+   static bool IsScalpPosition(ulong ticket, const long expectedMagic)
    {
-      if(!PositionSelectByTicket(ticket))
+      if(expectedMagic <= 0 || !PositionSelectByTicket(ticket))
+         return false;
+      if(PositionGetInteger(POSITION_MAGIC) != expectedMagic)
          return false;
       string comment = PositionGetString(POSITION_COMMENT);
       return (StringFind(comment, "SCALP") == 0);

@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # --- Configuration ---
-$ProjectRoot = "D:\TraeProjects\metatrader-multistrategy-ea"
+$ProjectRoot = $PSScriptRoot
 $TerminalHash = "FB9A56D617EDDDFE29EE54EBEFFE96C1"
 $MQL5Dir = "$env:APPDATA\MetaQuotes\Terminal\$TerminalHash\MQL5"
 $MetaEditor = "C:\Program Files\MetaTrader 5 Terminal\MetaEditor64.exe"

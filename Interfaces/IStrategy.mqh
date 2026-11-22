@@ -40,6 +40,7 @@ public:
         // Tick and timer events
         virtual void OnTick(void) = 0;
         virtual void OnTimer(void) = 0;
+        virtual bool RequiresTimerCallback(void) const { return false; }
     
     // Get strategy name
     virtual string GetName(void) const = 0;

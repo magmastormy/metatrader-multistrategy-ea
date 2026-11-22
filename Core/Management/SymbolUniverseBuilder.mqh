@@ -130,7 +130,7 @@ public:
         return false;
     }
 
-    static bool Build(const string rawSymbols, string &activePairs[], const SSymbolValidationConfig &config, const string chartSymbol = "")
+    static bool Build(const string rawSymbols, string &activePairs[], const SSymbolValidationConfig &config)
     {
         ArrayResize(activePairs, 0);
 
@@ -311,30 +311,6 @@ public:
                 accepted += activePairs[a];
             }
             PrintFormat("[SYMBOL-VALIDATION] Accepted symbols: %s", accepted);
-        }
-
-        // Auto-add chart symbol if provided and not already in universe
-        if(chartSymbol != "" && !ContainsSymbol(activePairs, chartSymbol))
-        {
-            if(SymbolSelect(chartSymbol, true))
-            {
-                long symbolTradeMode = SymbolInfoInteger(chartSymbol, SYMBOL_TRADE_MODE);
-                if(symbolTradeMode != SYMBOL_TRADE_MODE_DISABLED && symbolTradeMode != SYMBOL_TRADE_MODE_CLOSEONLY)
-                {
-                    int size = ArraySize(activePairs);
-                    ArrayResize(activePairs, size + 1);
-                    activePairs[size] = chartSymbol;
-                    PrintFormat("[SYMBOL-UNIVERSE] Auto-added chart symbol: %s", chartSymbol);
-                }
-                else
-                {
-                    PrintFormat("[SYMBOL-UNIVERSE] Chart symbol %s not tradeable (mode=%d), not adding", chartSymbol, symbolTradeMode);
-                }
-            }
-            else
-            {
-                PrintFormat("[SYMBOL-UNIVERSE] Failed to select chart symbol %s, not adding", chartSymbol);
-            }
         }
 
         return (ArraySize(activePairs) > 0);

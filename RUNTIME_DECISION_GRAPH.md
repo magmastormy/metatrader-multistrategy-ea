@@ -1,14 +1,33 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-10-26
-- Last Architecture Sync: 2026-10-26
+- Last Updated: 2026-11-20
+- Last Architecture Sync: 2026-11-20
 - Scope: Runtime signal-to-execution flow
 - Source: `Core/Orchestration/EAOrchestrator.mqh`
- - Current Batch: 262
+- Current State: Batch 298 remains the latest historical measured comparison; the current dirty working tree has not been compiled or paired-backtested
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
+
+## Current Runtime Notes (2026-11-20)
+
+- Candidate construction is followed by `CLiveAuthorityResolver::Resolve`; denied candidates stop, and approved candidates are scaled before execution. The former always-authorize builder stub is gone.
+- Specialized fast-scalp, spike-hunter, and grid-recovery send paths require an initialized `CUnifiedRiskManager`; grid validation is inseparable from `ExecuteEntry`. ATR scalp entries send through `CTradeManager`, which owns execution confirmation and receipts.
+- GridRecovery is currently dormant because the orchestrator does not call its `ProcessTick`; its shared-manager and state-retention contracts are source-only until wiring and terminal verification occur.
+- The candidate reservation is excluded by owner identity before final candidate risk is added; other pending risk counts toward both portfolio and symbol budgets.
+- Minimum-lot uplift is evaluated after drawdown and momentum scaling and is refused when disabled or above its configured multiplier.
+- Python candidate selection and deployment gates use validation metrics plus development-only CPCV; CPCV uses raw training rows, and the selected model's holdout metric is report-only. Colab tree reports use validation and stacker cells do not read holdout rows.
+- `InpSymbolsToTrade` is authoritative; no chart symbol is injected. The live-overrides example contains only applied risk keys.
+- Exact single-contributor closes update bounded strategy health scores; mixed and unattributed outcomes are excluded. Hard auto-parking and the periodic re-enable sweep have been removed; health-score weight adjustment is not causal dollar-expectancy governance.
+- Unsupported validator confidence/confluence knobs were removed. Pipeline confidence applies only when that pipeline runs; engine-derived filters pass through by default because `InpPipelineEngineRegistry=false`.
+- Live overrides apply risk fields only; unsupported weights, thresholds, symbols, AI, engine settings, and dynamic risk-tier changes are explicitly logged as ignored. Startup inputs define the hard risk envelope; supported live risk values can tighten it but cannot raise it. Risk changes are applied only when effective envelope or sizing-policy values change, and compounding state is restored after a genuine envelope change. Per-strategy intrabar-eligibility controls and policy metadata were removed because no decision path enforced them; active strategy timeframe overrides remain.
+- Safe-mode partial-position tracking had no registration callers and was removed; the regular lifecycle manager remains the sole position manager.
+- Scalp dashboard telemetry is explicitly unavailable until a live data source is connected.
+- Unreachable MQL headers, including the scalp-breakout and exit-optimizer implementations with no build consumers, were deleted; dated notes below that describe them as present are historical.
+- Python regression tests cover the current data-split and holdout contracts. The dirty MQL5 worktree has not been compiled or paired-backtested; no trading-performance claim is made.
+- The Kaggle trainer does not perform fold-local CPCV yet, so its deployment gate remains closed; the final test-set forward-return chart is a zero-cost report-only diagnostic after export.
+- Dated batch entries below are historical snapshots; this current section is authoritative where behavior changed later.
 
 ## Ownership Map
 - Orchestration: `Core/Orchestration/EAOrchestrator.mqh` (primary) → thin EA entry point `MultiStrategyAutonomousEA.mq5`
@@ -156,12 +175,12 @@ flowchart TD
   F --> J[Manager consensus + confluence + timeframe consistency]
   G --> J
   J --> J0[Strategy role/cluster governance applied]
-  J0 --> J1[Pipeline regime + cost viability gate + filter attribution]
+  J0 --> J1[Configured pipeline checks; engine-backed gates are opt-in]
   
   %% Pipeline Filter Chain (Layer 4 - Batch 129)
   %% Filter execution order is configurable via SignalFilterSettings.order.filterOrder[]
   %% Default order: RegimeCostGate -> Trend -> Volatility -> Liquidity -> Structure -> Time -> Session
-  %% (needs InpPipelineEngineRegistry=true; unbound means every filter passes through - Batch 258)
+  %% Engine-backed regime/cost, trend, volatility, liquidity, and structure gates require InpPipelineEngineRegistry=true; confidence and time/session controls are separate.
   %% Each filter can be enabled/disabled via grouped settings:
   %% - regimeCostGate.enabled (RegimeCostGateSettings)
   %% - trend.enabled (TrendFilterSettings)
@@ -336,16 +355,14 @@ them is in the binary. The live fast-scalp entry rule is `CFastScalpSignal::Eval
   - Multi-scale attention infrastructure enables per-head scaling, time window sizes, and learning rates for differential pattern detection
   - Pattern classifier head provides 10-class pattern classification alongside 3-class BUY/SELL/NONE predictions
 
-## Intrabar Policy
-- New-bar and intrabar paths are explicit evaluation modes.
-- Intrabar eligibility respects symbol scope and cadence interval.
-- Each symbol is evaluated at most once per bar of the chart's timeframe (`SignalGenerator.mqh:350-356`, unconditional since it was written). `InpSignalScanOnNewBarOnly` and the `[CADENCE-WARNING]` line documented around it are **removed in Batch 212**: the input reached no reader, and between-bar consensus evaluation was never implemented, so both its values described the same EA.
-- Total heavy evaluations per cycle are bounded by `InpMaxSignalEvaluationsPerCycle` - **from Batch 212 onward**; before it, `CSignalGenerator` used its own literal 8 and the input bound nothing. There is no new-bar/intrabar budget split any more because only one mode is ever run.
-- Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
-- Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
-- Intrabar/new-bar consensus behavior is manager-controlled.
+## Signal Evaluation Modes
+- Entry generation uses `EVAL_MODE_NEW_BAR`; no per-strategy intrabar-eligibility input or catalog policy gate remains.
+- `InpMaxSignalEvaluationsPerCycle` bounds scan work, while repeated no-signal cycles use a separate symbol dormancy cooldown.
+- Position-lifecycle reversal checks request `EVAL_MODE_INTRABAR`; the consensus engine applies mode-specific quorum and support rules.
+- `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe` select strategy input timeframes, not intrabar voter participation.
+## Batch 255: The Strategy Park Stops Double-Counting, and the Monitor Becomes the Only Holder of Its Own Numbers (2026-10-25) - Historical Snapshot
 
-## Batch 255: The Strategy Park Stops Double-Counting, and the Monitor Becomes the Only Holder of Its Own Numbers (2026-10-25)
+This dated account describes the behavior at Batch 255 and is superseded by the 2026-11-17 current-runtime notes above. Do not use its cooldown or sample-size statements as current behavior.
 
 **Decision-path changes:**
 
@@ -1500,7 +1517,7 @@ nobody wrote, or an input whose reachable range the gate ignored.
 - **`ValidateBasicParameters` can now reject on size.** Above `SYMBOL_VOLUME_MAX` it printed "caller must cap" and returned true; it returns false, guarded by `maxLot > 0.0` so a symbol reporting no maximum is not vetoed by an absent limit.
 - **Stop distance is now volatility-aware, in one unit.** `CalculateStops` had `atrValue = 0` hard-wired beside a comment saying it "would be passed in real implementation", so the ATR branch never ran; ATR(14) now comes from `CTradeMgrPricing::CalculateATR` (shared handle cache, no per-call handle). The floor compared `GetMinimumStopDistance()`'s price units against raw `STOPS_LEVEL` points, roughly 1e5x too small on 5-digit FX; it is divided by `point` now.
 - **The validator quality floor stopped testing itself.** `max(0.40, ctx.directionalQuality * 0.9)` compared to `ctx.directionalQuality` can only fail under the constant, so FULL_QUORUM and SPARSE_INTRABAR ignored the configured 0.68/0.70. The discount now applies to the configured floor: 0.612 new-bar, 0.63/0.595 intrabar. Expect more `filter=quality_gate` lines, not fewer trades than the operator asked for.
-- **Untouched:** `ResolveLiveAuthority`'s always-authorize stub (the orchestrator overwrites the three fields from `CLiveAuthorityResolver`), `ApplyDrawdownScaling`'s tautological `floorMult` guard (its result stays below the caller's lot), and the double approval bookkeeping inside one `Run()`.
+- **Historical at this point in the audit:** `ResolveLiveAuthority`'s always-authorize stub was later removed from `CandidateBuilder` on 2026-11-17; `CLiveAuthorityResolver` remains the sole authority gate. `ApplyDrawdownScaling`'s tautological `floorMult` guard and the double approval bookkeeping inside one `Run()` are separate findings.
 
 ## Batch 179: The Scalp Budget That Refunded Itself, and Two Logs That Were Not True (2026-10-12)
 - **New edge on the live scalp path:** `CFastScalpEntry` market send succeeds -> `CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, volume)` -> **hit**: register the tracker slot under the *position* ticket; **miss**: register nothing, `[SCALP-ENTRY] … ticket=0 | position not visible yet, sync will adopt it`, and `SyncScalpPositionTracking` adopts it by position ticket on the next pass.
@@ -1638,7 +1655,7 @@ Decision inputs feeding strategy votes are now computed from closed bars and cor
 - **Exit authority reduced to one class (Batch 245).** `CPositionManager`'s `ManagePositions`, five `Manage*`, six `Configure*`, `CheckSignalReversalExit`, `SetDailyRiskBudget`, `IsEAOwnedMagic` and `Initialize` are gone with the fourteen members they alone read; the class is the position-state and prediction-map registry that TradeExecutor and TradeAttributionManager call. `[INIT] PositionManager registry ready | position-state + prediction maps, no exit authority` replaces `[INIT] PositionManager initialized`, and `[CRITICAL] PositionManager initialization FAILED` has no printer now (nothing cited it; both tested pointers came from `&` expressions). `PositionMgrMagicFilter.mqh` stays because `BasketEquityStop.mqh:103` calls into it.
 - **The satellites Batch 245 orphaned are gone (Batch 246).** `CPositionMgrSRE`, `CPositionMgrPyramid` and `CPositionMgrDynamicSL` survived only as the source of five constant fields in `CPositionManager::GetStatusReport()` (`Pyramid=`, `DynamicSL=`, `SRE=`, `PyramidStates=`, `VolRegimes=`); their behaviour lived in the deleted `Manage*`/`Configure*` surface, so 488 lines and three files went. `CPositionMgrLossGuard` went with them: Batch 245 deleted the caller of its `ManageLossMinimization()`, which also removed the last route to a second `ClosePosition(ticket, "Position Loss Limit")` beside the lifecycle guard, and the remaining consecutive-loss/daily-loss counters were read only by that same report. `CPositionManager::GetStatusReport()` and `RecordClosedTrade()` are deleted along with `m_enabled`, so the `[PositionManager] Enabled=… | Pyramid=… | DynamicSL=… | LossMin=… | SRE=… | ConsecLoss=… | DailyLoss=… | PyramidStates=… | VolRegimes=…` string can no longer be built - and it was never printed: its only reader is `COrchestratorStatusReporter`, whose own entry point `CEAOrchestrator::GetStatusReport()` has no caller in any `.mq5` or `.mqh`. `CPerformanceAnalytics::RecordClosedTrade` keeps the one closed-trade feed that has live consumers (`CPerformanceAnalytics::RecordClosedTrade`).
  `PositionMgrMagicFilter.mqh` and `PositionMgrStateStore.mqh` stay: the first is called from `BasketEquityStop.mqh:103`, the second is the registry.
-- **Closed-trade feedback is wired, not pending.** `EAOrchestrator::ProcessManagerTradeTransactions` fans every deal out to each symbol manager's `OnTradeTransaction` (the per-symbol manager fan-out, so per-strategy performance, health monitor and governance disable run), and on a full close of an EA-owned position it calls `CPerformanceAnalytics::RecordClosedTrade` `CPerformanceAnalytics::RecordClosedTrade`, `FeedAuthorityOutcome` (the `[AUTHORITY-LEARN]` path) and `AccumulatePendingCloseProfit` (the NN label queue). An earlier note in this file listed those as having no call sites; Batch 154 wired the fan-out and Batch 199 the attribution, and `CPositionMgrLossGuard::RecordClosedTrade` - the only genuinely report-only member of the family - is deleted above.
+- **Closed-trade feedback (current behavior, 2026-11-18):** the manager fan-out feeds per-strategy feedback, and full EA-owned closes feed account analytics, authority learning, and the NN pending-close queue. Only exact singleton contributors update bounded health; mixed and unattributed outcomes remain unassigned. Hard disable/re-enable governance is removed, so the feedback is not causal multi-contributor dollar-P&L governance.
 - **The status-report chain is deleted (Batch 247).** `CEAOrchestrator::GetStatusReport()` had no caller, so `COrchestratorStatusReporter` and the eight collaborator reports it assembled (`CLiveAuthorityResolver`, `CTradeExecutor`, `CCandidateBuilder`, `CPostConsensusValidator` + the manager forwarder, five engine registries) could never produce output; they are gone with the write-only state that only they read - `CTradeExecutor`'s four submit/confirm/reject/timeout counters, `CPostConsensusValidator::m_lastVPINMultiplier` (its comment already called it a diagnostic mirror), `CNeuralNetRegistry::GetActiveCount`, `CDrawingManagerRegistry::GetTotalObjectCount`, `CCandidateBuilder::GetAuthorityBlockedTotal`, and all eighteen `CHeartbeatTelemetry` getters, since `Emit()` passes counters positionally to `CDiagnosticsManager::UpdateCounters` and that is what builds `[HEARTBEAT]`. What still prints the same facts: `[WIRE-STATUS]` for engine presence, `[AUTHORITY-CONFIG]` + `[AUTHORITY-REJECT]`/`[AUTHORITY-REDUCED]` for the authority gate, `[EXECUTION-TIMEOUT]`/`[EXECUTION-CONFIRMED-BY-POSITION]` for the send path, `[CANDIDATE-BUILDER]` (the authority lot-refusal ledger keeps its live reader). No entry, exit, lot or threshold moved; the EA compile measured 48.0 s against 129.3 s in Batch 246.
 
 ## Batch 152 Full Audit Closure (2026-08-23)
@@ -2199,7 +2216,7 @@ No decision path or ownership boundary changed: strategies still vote through `C
   - transformer, ensemble, and ONNX adapters cache per-bar inference outcomes and reuse them until the bar changes
 - `CNextGenStrategyBrain` and the AI adapters now source runtime features directly from the shared 55-feature `CAIFeatureVectorBuilder`, so the old `CMarketDataProcessor` wrapper is no longer in the live inference path.
 - ONNX participation is manager-owned, not EA-side parallel voting: `COnnxAIStrategyAdapter` registers per symbol, consumes the embedded `Resources/model.onnx`, and can shadow-load a replacement model before promotion.
-- `COnnxAIStrategyAdapter` now also loads and hot-reloads Python-exported `scaler.bin` parameters through `CPipelineScaler`, applying the same normalization contract used during offline training.
+- The ONNX feature pipeline loads the paired Python-exported `scaler.bin` at initialization and fails closed for missing or incompatible scaler dimensions; deploy the model and scaler together and reinitialize rather than changing only one artifact live.
 - Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
 - Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
 - AI adapters now emit explicit decision reason tags for abstain, disabled, feature-fault, inference-fault, and signal paths so consensus diagnostics can attribute AI silence without falling back to placeholder `UNTAGGED_*` buckets.
@@ -2645,3 +2662,12 @@ For each family_id (0-17):
 - **Decision path.** `CPostConsensusValidator::CheckExogenousFilters` is unchanged; it was vetoing on an ATR(14) that was a daily value. `CRiskValidationPipeline::ValidatePortfolioRisk` now passes `request.stopLossPips` to `CPortfolioRiskManager::IsTradeAllowed`. `CCorrelationEngine` slots start `CORR_ENGINE_UNKNOWN`. `VolReg_RiskScale` returns 0.5 or 1.0 (or -1.0 for no model), never 0.0, so the `[VOL-GATE] entry held` branch in `EAOrchestrator` is unreachable.
 - **Fast scalp.** `CFastScalpEngine::BuildSymbolConfig(symbol, atrM1, cfg)` is the single place a scalp stop is priced: max(1.5 x ATR(14,M1), 4 x spread, 1.5 x stop level), target at the configured TP:SL ratio. `ShouldEnterScalp` stores it; `ExecuteScalpTrade` refuses to send without it. `CFastScalpExit` derives breakeven (0.6R, 0.1R buffer) and trail (0.6R) from each position's recorded 1R. Entry holds added: one open scalp per symbol, 180 s per-symbol rest (`SCALP_SYMBOL_REENTRY_SECONDS`).
 - **Lifecycle.** `CEAOrchestrator::Shutdown()` writes the strategy scoreboard and the crash-recovery risk state before any teardown, because the terminal terminated OnDeinit before reaching them.
+
+## Current Entry Exposure Contract (2026-11-20)
+
+- The unified `ValidateExposure()` gate counts open EA-owned positions plus other in-flight reservations for per-symbol and total caps; the candidate's own reservation is excluded.
+- Fast-scalp pending-limit placement is removed because it had no call sites and bypassed the unified risk manager. The async tracker's raw `OrderSend` is cancellation-only.
+- The currently dispatched specialized entry path is fast scalp; ATR scalp, Spike Hunter and Grid Recovery entry modules are initialized but have no orchestrator `ProcessTick` dispatch. Their gate implementations do not make them active.
+- Lifecycle pyramiding remains disabled and unconfigured. Keep it parked until a future implementation has a nonzero stop and unified-risk validation.
+- Fast-scalp admission rebuilds risk from matching-magic live positions and active orders with OrderCalcProfit. Async sends journal the exact reservation before submission; restart replay is scoped to the EA magic range, adopts but never resends unresolved requests, and restores scalp reservations before rebuilding exposure. Unknown-ticket or incomplete/corrupt-journal cases hold the admission budget fail-closed. Runtime restart and late-fill verification remain open.
+- Python strategy ticks consume cache only. Each prediction now goes directly to /predict (no preceding health request), and monotonic cache age/attempt backoff throttle failures as well as successes. The refresh still uses synchronous WebRequest inside OnTimer() with a default 2-second timeout, so event-loop blocking remains an open architecture issue.
