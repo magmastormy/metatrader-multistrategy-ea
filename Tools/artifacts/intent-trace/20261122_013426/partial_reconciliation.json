@@ -1,0 +1,286 @@
+{
+  "runTag": "20261122_013426",
+  "generatedAt": "2026-11-21T19:38:13.065Z",
+  "baselineCommit": "18ea5f3c97c7000b820b4388e518146803b8a5ac",
+  "candidateHead": "0c7260c62e3391a5498a139e62ca25748edff4fc",
+  "candidateIncludesUncommittedWorktreeChanges": true,
+  "status": "partial",
+  "validWindows": [
+    "w1",
+    "w2"
+  ],
+  "invalidWindows": [
+    "w3",
+    "w4b",
+    "w5"
+  ],
+  "method": {
+    "coldReset": true,
+    "expectedOneMinuteSamplesPerArm": 10080,
+    "chart": "Volatility 75 Index M15",
+    "depositUSD": 10000,
+    "leverage": "1:100",
+    "model": 1,
+    "perTradeRiskPct": 1,
+    "dailyRiskPct": 4,
+    "portfolioRiskPct": 12,
+    "configuredSymbols": [
+      "Boom 1000 Index",
+      "Crash 1000 Index",
+      "Jump 25 Index",
+      "Jump 75 Index",
+      "Step Index",
+      "GBPUSD",
+      "AUDUSD",
+      "BTCUSD"
+    ]
+  },
+  "windows": [
+    {
+      "window": "w1",
+      "baseline": {
+        "ids": 4765,
+        "decisions": 6726,
+        "receipts": 261,
+        "untracked": 4553,
+        "acceptedFills": 261,
+        "filledClosed": 261,
+        "realizedPnL": 162.94999999999982,
+        "wins": 121,
+        "losses": 140,
+        "worstClosedTrade": -81.6,
+        "returnPct": 1.6295000000000073,
+        "maxSampledDD": 1.4102999345479912
+      },
+      "candidate": {
+        "ids": 4078,
+        "decisions": 5521,
+        "receipts": 215,
+        "untracked": 3742,
+        "acceptedFills": 215,
+        "filledClosed": 215,
+        "realizedPnL": 89.84999999999984,
+        "wins": 101,
+        "losses": 113,
+        "worstClosedTrade": -68.68,
+        "returnPct": 0.8985000000000036,
+        "maxSampledDD": 1.6325121742183237
+      },
+      "fillJoin": {
+        "shared": 187,
+        "baselineOnly": 74,
+        "candidateOnly": 28,
+        "baselineOnlyFirstRejectInCandidate": {
+          "ENTRY_GATE:cycle_send_cap": 6,
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 165.82% below threshold 200%": 1,
+          "ENTRY_GATE:entry_disabled_or_risk_halt": 6,
+          "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 54,
+          "intent_absent_from_trace": 3,
+          "CONSENSUS:no_actionable_consensus": 2,
+          "CANDIDATE_BUILD:Correlation 0.57 needs lot cut to 0.000, below broker min 0.010": 1,
+          "CANDIDATE_BUILD:Symbol risk budget exhausted for Jump 75 Index: used=0.00% + 0.78% > alloc=0.67%": 1
+        },
+        "candidateOnlyFirstRejectInBaseline": {
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 164.21% below threshold 200% [mode: hedging]": 1,
+          "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 19,
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 159.45% below threshold 200% [mode: hedging]": 1,
+          "intent_absent_from_trace": 3,
+          "CANDIDATE_BUILD:Symbol risk budget exhausted for Crash 1000 Index: used=0.00% + 1.00% > alloc=1.00%": 1,
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 184.57% below threshold 200% [mode: hedging]": 1,
+          "ENTRY_GATE:cycle_send_cap": 1,
+          "CONSENSUS:no_actionable_consensus": 1
+        }
+      },
+      "traceCoverage": {
+        "baseline": {
+          "window": "w1",
+          "arm": "baseline",
+          "stableIntentIds": 4764,
+          "untrackedEventRecords": {
+            "CONSENSUS-DECISION": 3088,
+            "CONSENSUS-ABSTAIN": 1367,
+            "CONSENSUS-REJECT": 82,
+            "CONSENSUS-VETOED": 16
+          },
+          "consensusDecisions": 6726,
+          "trackedConsensusDecisions": 3638,
+          "untrackedConsensusDecisions": 3088,
+          "acceptedReceipts": 261,
+          "uniqueReceiptIntentIds": 261,
+          "duplicateReceiptIntents": 0,
+          "closedReceipts": 261,
+          "untrackedReceipts": 0
+        },
+        "candidate": {
+          "window": "w1",
+          "arm": "candidate",
+          "stableIntentIds": 4077,
+          "untrackedEventRecords": {
+            "CONSENSUS-ABSTAIN": 1118,
+            "CONSENSUS-DECISION": 2546,
+            "CONSENSUS-REJECT": 76,
+            "CONSENSUS-VETOED": 2
+          },
+          "consensusDecisions": 5521,
+          "trackedConsensusDecisions": 2975,
+          "untrackedConsensusDecisions": 2546,
+          "acceptedReceipts": 215,
+          "uniqueReceiptIntentIds": 215,
+          "duplicateReceiptIntents": 0,
+          "closedReceipts": 215,
+          "untrackedReceipts": 0
+        }
+      }
+    },
+    {
+      "window": "w2",
+      "baseline": {
+        "ids": 4767,
+        "decisions": 6501,
+        "receipts": 250,
+        "untracked": 3863,
+        "acceptedFills": 250,
+        "filledClosed": 250,
+        "realizedPnL": 727.5600000000002,
+        "wins": 96,
+        "losses": 152,
+        "worstClosedTrade": -62.91,
+        "returnPct": 7.2755999999999945,
+        "maxSampledDD": 1.8973754011635564
+      },
+      "candidate": {
+        "ids": 4130,
+        "decisions": 5747,
+        "receipts": 210,
+        "untracked": 3362,
+        "acceptedFills": 210,
+        "filledClosed": 210,
+        "realizedPnL": 888.0400000000001,
+        "wins": 74,
+        "losses": 135,
+        "worstClosedTrade": -63.97,
+        "returnPct": 8.880400000000009,
+        "maxSampledDD": 2.3560731574956204
+      },
+      "fillJoin": {
+        "shared": 185,
+        "baselineOnly": 65,
+        "candidateOnly": 25,
+        "baselineOnlyFirstRejectInCandidate": {
+          "ENTRY_GATE:cycle_send_cap": 4,
+          "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 45,
+          "ENTRY_GATE:entry_disabled_or_risk_halt": 6,
+          "intent_absent_from_trace": 4,
+          "CANDIDATE_BUILD:execution_cost_gate": 2,
+          "CANDIDATE_BUILD:Family position limit reached: 2/2 positions in same family": 1,
+          "CONSENSUS:no_actionable_consensus": 2,
+          "CANDIDATE_BUILD:Symbol risk budget exhausted for Jump 75 Index: used=0.00% + 0.96% > alloc=0.67%": 1
+        },
+        "candidateOnlyFirstRejectInBaseline": {
+          "CONSENSUS:no_actionable_consensus": 3,
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 157.33% below threshold 200% [mode: hedging]": 1,
+          "CANDIDATE_BUILD:Family position limit reached: 2/2 positions in same family": 1,
+          "ENTRY_GATE:cycle_send_cap": 3,
+          "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 13,
+          "CANDIDATE_BUILD:position_sizer_zero_lot": 1,
+          "CANDIDATE_BUILD:Margin validation failed: Projected post-trade margin level 160.32% below threshold 200% [mode: hedging]": 1,
+          "intent_absent_from_trace": 1,
+          "CANDIDATE_BUILD:Daily risk limit would be exceeded (final-lot): 4.00% + 0.00% >= 4.00%": 1
+        }
+      },
+      "traceCoverage": {
+        "baseline": {
+          "window": "w2",
+          "arm": "baseline",
+          "stableIntentIds": 4766,
+          "untrackedEventRecords": {
+            "CONSENSUS-DECISION": 2873,
+            "CONSENSUS-ABSTAIN": 961,
+            "CONSENSUS-REJECT": 29
+          },
+          "consensusDecisions": 6501,
+          "trackedConsensusDecisions": 3628,
+          "untrackedConsensusDecisions": 2873,
+          "acceptedReceipts": 250,
+          "uniqueReceiptIntentIds": 250,
+          "duplicateReceiptIntents": 0,
+          "closedReceipts": 250,
+          "untrackedReceipts": 0
+        },
+        "candidate": {
+          "window": "w2",
+          "arm": "candidate",
+          "stableIntentIds": 4129,
+          "untrackedEventRecords": {
+            "CONSENSUS-DECISION": 2556,
+            "CONSENSUS-ABSTAIN": 767,
+            "CONSENSUS-REJECT": 39
+          },
+          "consensusDecisions": 5747,
+          "trackedConsensusDecisions": 3191,
+          "untrackedConsensusDecisions": 2556,
+          "acceptedReceipts": 210,
+          "uniqueReceiptIntentIds": 210,
+          "duplicateReceiptIntents": 0,
+          "closedReceipts": 210,
+          "untrackedReceipts": 0
+        }
+      }
+    }
+  ],
+  "aggregateFirstTwoWindows": {
+    "baselineReceipts": 511,
+    "candidateReceipts": 425,
+    "netReceiptDelta": -86,
+    "sharedReceiptIntentIds": 372,
+    "baselineOnlyReceipts": 139,
+    "candidateOnlyReceipts": 53,
+    "baselineOnlyFirstRejectCandidate": {
+      "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 99,
+      "ENTRY_GATE:cycle_send_cap": 10,
+      "ENTRY_GATE:entry_disabled_or_risk_halt": 12,
+      "intent_absent_from_trace": 7,
+      "CONSENSUS:no_actionable_consensus": 4,
+      "CANDIDATE_BUILD:margin_validation": 1,
+      "CANDIDATE_BUILD:correlation_or_min_lot": 1,
+      "CANDIDATE_BUILD:symbol_risk_budget": 2,
+      "CANDIDATE_BUILD:execution_cost_gate": 2,
+      "CANDIDATE_BUILD:family_position_limit": 1
+    },
+    "candidateOnlyFirstRejectBaseline": {
+      "LIVE_AUTHORITY_SIZING:scaled_lot_not_tradeable": 32,
+      "CANDIDATE_BUILD:margin_validation": 5,
+      "intent_absent_from_trace": 4,
+      "CANDIDATE_BUILD:symbol_risk_budget": 1,
+      "ENTRY_GATE:cycle_send_cap": 4,
+      "CONSENSUS:no_actionable_consensus": 4,
+      "CANDIDATE_BUILD:family_position_limit": 1,
+      "CANDIDATE_BUILD:position_sizer_zero_lot": 1,
+      "CANDIDATE_BUILD:daily_risk_limit": 1
+    },
+    "baselineUntrackedConsensusDecisionRecords": 5961,
+    "candidateUntrackedConsensusDecisionRecords": 5102
+  },
+  "environmentBlocker": {
+    "port": 3000,
+    "listener": "node.exe",
+    "pid": 1340,
+    "reason": "MetaTrader local tester-agent authorization error; no valid heartbeat run was produced for W3, W4b, or W5",
+    "unrelatedProcessStopped": false
+  },
+  "instrumentationFollowup": {
+    "sourceFixApplied": true,
+    "changes": [
+      "scoped replay-stable IDs for position-lifecycle consensus checks",
+      "explicit IDs required at every consensus callsite",
+      "training exporter now supplies a scoped ID"
+    ],
+    "verificationPending": "rerun all five paired windows after port 3000 is available; these W1-W2 artifacts predate the scoped-ID fix"
+  },
+  "interpretation": [
+    "First-reject categories are the first observed divergence for unmatched fills, not proof of causal attribution.",
+    "All 936 W1-W2 accepted receipts had unique stable intent IDs and a realized close record.",
+    "Sampled maximum drawdown is based on one-minute equity observations and can miss intraminute lows.",
+    "Two valid windows are insufficient for a performance conclusion."
+  ]
+}

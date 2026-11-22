@@ -1,0 +1,32 @@
+﻿[
+    {
+        "window":  "w3",
+        "arm":  "baseline",
+        "error":  "Backtest did not validate: baseline w3"
+    },
+    {
+        "window":  "w3",
+        "arm":  "candidate",
+        "error":  "Backtest did not validate: candidate w3"
+    },
+    {
+        "window":  "w4b",
+        "arm":  "baseline",
+        "error":  "Backtest did not validate: baseline w4b"
+    },
+    {
+        "window":  "w4b",
+        "arm":  "candidate",
+        "error":  "Backtest did not validate: candidate w4b"
+    },
+    {
+        "window":  "w5",
+        "arm":  "baseline",
+        "error":  "Backtest did not validate: baseline w5"
+    },
+    {
+        "window":  "w5",
+        "arm":  "candidate",
+        "error":  "Backtest did not validate: candidate w5"
+    }
+]

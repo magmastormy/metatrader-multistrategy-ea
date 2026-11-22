@@ -1,0 +1,51 @@
+﻿{
+    "runTag":  "20261122_013426",
+    "baselineCommit":  "18ea5f3c97c7000b820b4388e518146803b8a5ac",
+    "candidateHead":  "0c7260c62e3391a5498a139e62ca25748edff4fc",
+    "candidateIncludesUncommittedWorktreeChanges":  true,
+    "windows":  {
+                    "w1":  [
+                               "2026.08.01",
+                               "2026.08.08"
+                           ],
+                    "w2":  [
+                               "2026.08.08",
+                               "2026.08.15"
+                           ],
+                    "w3":  [
+                               "2026.09.01",
+                               "2026.09.08"
+                           ],
+                    "w4b":  [
+                                "2026.09.22",
+                                "2026.09.29"
+                            ],
+                    "w5":  [
+                               "2026.10.06",
+                               "2026.10.13"
+                           ]
+                },
+    "testerSettingsIdenticalExceptExpertReportDates":  true,
+    "chart":  "Volatility 75 Index M15",
+    "deposit":  10000,
+    "currency":  "USD",
+    "leverage":  "1:100",
+    "model":  1,
+    "limits":  {
+                   "portfolioPct":  12,
+                   "perTradePct":  1,
+                   "dailyPct":  4
+               },
+    "symbolUniverse":  "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD",
+    "sourceAndBinarySha256":  {
+                                  "baselineIntentTrace":  "1193A1674E36D820C4648AF21BBD14286ACB92EAB3A5F9C8FACC9317EA278E48",
+                                  "candidateIntentTrace":  "1193A1674E36D820C4648AF21BBD14286ACB92EAB3A5F9C8FACC9317EA278E48",
+                                  "baselineBinary":  "F7C256173CAD6612380E13A310F3E6FED04604A78C9CF6F901E2B486AC14663C",
+                                  "candidateBinary":  "8A174269F6C672EDEA77B95E6EA8013990F5EDA3F57529F52BC032180DBF8395"
+                              },
+    "expertFolders":  {
+                          "candidate":  "IntentTrace_20261122_013426_Candidate",
+                          "baseline":  "IntentTrace_20261122_013426_Baseline"
+                      },
+    "createdAt":  "2026-11-22T01:34:27.6315629+08:00"
+}

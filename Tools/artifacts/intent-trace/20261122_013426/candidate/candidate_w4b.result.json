@@ -1,0 +1,22 @@
+﻿{
+    "arm":  "candidate",
+    "window":  "w4b",
+    "status":  "failed",
+    "startedAt":  "2026-11-22T03:06:23.8704969+08:00",
+    "endedAt":  "2026-11-22T03:07:14.1399759+08:00",
+    "error":  "Terminal exited without a fresh successfully-finished record",
+    "equitySummary":  null,
+    "receiptSummary":  null,
+    "decisionSummary":  null,
+    "rejectSummary":  null,
+    "uniqueIntentIds":  0,
+    "receiptLines":  0,
+    "receiptsWithIntentId":  0,
+    "journalLines":  17,
+    "traceLines":  0,
+    "testerLogFiles":  [
+                           "20261122.log"
+                       ],
+    "journalArtifact":  "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\candidate\\candidate_w4b.journal.log",
+    "intentArtifact":  "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\candidate\\candidate_w4b.intent.log"
+}

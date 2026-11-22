@@ -1,0 +1,25 @@
+{
+  "arm": "candidate",
+  "window": "w1",
+  "status": "valid",
+  "startedAt": "2026-11-22T02:02:30.1285107+08:00",
+  "endedAt": "2026-11-22T02:28:41.9797727+08:00",
+  "error": "",
+  "equitySummary": "equity: samples=10080 first=10000.00 last=10089.85 min=9944.24 max=10197.78 delta=89.85 (0.898%)",
+  "receiptSummary": "fills: 215",
+  "decisionSummary": "decisions: 5521",
+  "rejectSummary": "rejects: 345",
+  "uniqueIntentIds": 4077,
+  "receiptLines": 215,
+  "receiptsWithIntentId": 215,
+  "journalLines": 567344,
+  "traceLines": 19924,
+  "testerLogFiles": [
+    "20261122.log"
+  ],
+  "journalArtifact": "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\candidate\\candidate_w1.journal.log",
+  "intentArtifact": "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\candidate\\candidate_w1.intent.log",
+  "stableIntentIds": 4077,
+  "untrackedEventRecords": 3742,
+  "untrackedConsensusDecisions": 2546
+}

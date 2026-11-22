@@ -1,0 +1,22 @@
+﻿{
+    "arm":  "baseline",
+    "window":  "w5",
+    "status":  "failed",
+    "startedAt":  "2026-11-22T03:07:14.1859851+08:00",
+    "endedAt":  "2026-11-22T03:08:04.4431194+08:00",
+    "error":  "Terminal exited without a fresh successfully-finished record",
+    "equitySummary":  null,
+    "receiptSummary":  null,
+    "decisionSummary":  null,
+    "rejectSummary":  null,
+    "uniqueIntentIds":  0,
+    "receiptLines":  0,
+    "receiptsWithIntentId":  0,
+    "journalLines":  19,
+    "traceLines":  0,
+    "testerLogFiles":  [
+                           "20261122.log"
+                       ],
+    "journalArtifact":  "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\baseline\\baseline_w5.journal.log",
+    "intentArtifact":  "C:\\Users\\Administrator\\tempo\\workspaces\\metatrader-multistrategy-ea\\braised-macaron\\Tools\\artifacts\\intent-trace\\20261122_013426\\baseline\\baseline_w5.intent.log"
+}
