@@ -119,7 +119,9 @@ public:
             candidate.entryPrice,
             candidate.stopLossPips,
             candidate.takeProfitPips,
-            comment
+            comment,
+            0,
+            candidate.intentId
         );
         
         if(!executed)
@@ -129,7 +131,7 @@ public:
             result.retcode = m_tradeManager.GetLastRetcode();
             result.reason = GetTradeErrorDescription(m_tradeManager.GetLastRetcode());
             CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED", 
-                StringFormat("retcode=%u reason=%s", result.retcode, result.reason), 
+                StringFormat("intent_id=%s retcode=%u reason=%s", candidate.intentId, result.retcode, result.reason),
                 0.0, candidate.lotSize, corrId);
             CJsonLogger::ClearCorrelationId();
             return result;

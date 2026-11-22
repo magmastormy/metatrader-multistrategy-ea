@@ -20,6 +20,8 @@
 struct STradeCandidate
 {
     string symbol;
+    string intentId;
+    string failureReason;
     ENUM_ORDER_TYPE orderType;
     double entryPrice;
     double stopLossPips;
@@ -49,7 +51,7 @@ struct STradeCandidate
     int indicatorContributorCount;
     string predictionId;  // For linking trade outcome to NN training (L11-014)
     
-    STradeCandidate() : symbol(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
+    STradeCandidate() : symbol(""), intentId(""), failureReason(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
                        takeProfitPips(0), lotSize(0), riskPercent(0), confidence(0),
                        confluence(0), virtualReservationOwnerTag(""),
                        qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
@@ -206,6 +208,12 @@ private:
             return;
         m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
         candidate.virtualReservationOwnerTag = "";
+    }
+
+    bool RejectCandidate(STradeCandidate &candidate, const string reason)
+    {
+        candidate.failureReason = reason;
+        return false;
     }
 
 public:
@@ -378,9 +386,12 @@ public:
                             int confluence, const SConsensusDecisionContext& ctx,
                             CEnterpriseStrategyManager* manager, ulong scanCycleId,
                             STradeCandidate &candidate, bool useStrategyStops = true,
-                            const string corrId = "", double symbolStreakScale = 1.0)
+                            const string corrId = "", double symbolStreakScale = 1.0,
+                            const string intentId = "")
     {
-        if(signal == TRADE_SIGNAL_NONE) return false;
+        candidate.intentId = intentId;
+        candidate.failureReason = "";
+        if(signal == TRADE_SIGNAL_NONE) return RejectCandidate(candidate, "no_consensus_signal");
         
         candidate.symbol = symbol;
         candidate.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -451,19 +462,19 @@ public:
             : SymbolInfoDouble(symbol, SYMBOL_BID);
         
         if(candidate.entryPrice <= 0)
-            return false;
+            return RejectCandidate(candidate, "entry_price_unavailable");
         
         // useStrategyStops (EA default true) prefers the strategy's designed SL/TP, quoted in pips.
         double propSL = 0.0, propTP = 0.0;
         bool useStratStops = useStrategyStops && manager.GetConsensusProposedStops(signal, propSL, propTP);
         if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
-            return false;
+            return RejectCandidate(candidate, "stop_calculation_failed");
         
         if(!CheckExecutionCost(symbol, candidate))
-            return false;
+            return RejectCandidate(candidate, "execution_cost_gate");
         
         if(!CheckAccountCapacity(symbol, candidate))
-            return false;
+            return RejectCandidate(candidate, "account_capacity_gate");
         
         double requestedRisk = m_riskManager.GetActiveRiskPerTradePercent();
         
@@ -471,11 +482,11 @@ public:
         if(proposedRisk <= 0)
         {
             PrintFormat("[CANDIDATE-BUILDER] %s | risk capped to 0", symbol);
-            return false;
+            return RejectCandidate(candidate, "risk_budget_zero");
         }
         
         if(!CheckSymbolPositionLimit(symbol, candidate))
-            return false;
+            return RejectCandidate(candidate, "symbol_position_limit");
         
         STradeValidationRequest tradeReq;
         tradeReq.symbol = symbol;
@@ -548,39 +559,55 @@ public:
         if(lotSize <= 0)
         {
             PrintFormat("[CANDIDATE-BUILDER] %s | position sizer returned 0 lot", symbol);
-            return false;
+            return RejectCandidate(candidate, "position_sizer_zero_lot");
         }
         
         // VPIN reaches size through CVPINLotModifier (registered in the sizer chain) and vetoes
         // through CPostConsensusValidator; skew step, full margin and safe mode have no size hook.
         lotSize = ApplyDrawdownScaling(symbol, lotSize);
         if(lotSize <= 0.0)
-            return false;
+            return RejectCandidate(candidate, "drawdown_scaling_zero_lot");
         lotSize = ApplyMomentumScaling(symbol, lotSize);
         double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double brokerMaxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+        double volumeStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        bool volumeSpecValid = MathIsValidNumber(brokerMinLot) && brokerMinLot > 0.0 &&
+                          MathIsValidNumber(brokerMaxLot) && brokerMaxLot >= brokerMinLot &&
+                          MathIsValidNumber(volumeStep) && volumeStep > 0.0;
+        if(!volumeSpecValid)
+        {
+            return RejectCandidate(candidate, "broker_volume_spec_unavailable");
+        }
         if(lotSize < brokerMinLot)
         {
             if(lotSize <= 0.0)
-                return false;
+                return RejectCandidate(candidate, "nonpositive_lot_before_floor");
             SPositionSizingParams sizingParams = m_positionSizer.GetParameters();
             double uplift = brokerMinLot / lotSize;
             if(!sizingParams.allowMinLotRoundUp)
             {
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_below_min_roundup_disabled | lot=%.4f | broker_min=%.4f",
                             symbol, lotSize, brokerMinLot);
-                return false;
+                return RejectCandidate(candidate, "minimum_lot_roundup_disabled");
             }
             if(uplift > sizingParams.minLotRiskMultiplier)
             {
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_floor_risk_multiplier | lot=%.4f | broker_min=%.4f | uplift=%.2fx > cap=%.2fx",
                             symbol, lotSize, brokerMinLot, uplift, sizingParams.minLotRiskMultiplier);
-                return false;
+                return RejectCandidate(candidate, "minimum_lot_risk_multiplier");
             }
             PrintFormat("[RISK-LOT-FLOOR] %s | lot %.4f -> %.4f | uplift=%.2fx <= cap=%.2fx",
                         symbol, lotSize, brokerMinLot, uplift, sizingParams.minLotRiskMultiplier);
             lotSize = brokerMinLot;
         }
         
+        double normalizedLot = CTradeMgrPricing::NormalizeVolume(symbol, lotSize);
+        if(!MathIsValidNumber(normalizedLot) || normalizedLot <= 0.0)
+            return RejectCandidate(candidate, "volume_normalization_failed");
+        if(normalizedLot < brokerMinLot || normalizedLot > brokerMaxLot || normalizedLot > lotSize)
+            return RejectCandidate(candidate, "normalized_volume_out_of_bounds");
+        if(normalizedLot < lotSize)
+            lotSize = normalizedLot;
         candidate.lotSize = lotSize;
 
         // Per-trade cap clamp: the lot here is the product of the modifiers above, so it is checked
@@ -595,7 +622,7 @@ public:
         {
             PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable | lot=%.4f | stop=%.1f pips | the stop cannot be priced, so the risk cannot be capped",
                         symbol, candidate.lotSize, candidate.stopLossPips);
-            return false;
+            return RejectCandidate(candidate, "risk_unmeasurable");
         }
         double riskDenom = CRiskMath::GetRiskDenominator();
         double finalRiskPct = (riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
@@ -604,7 +631,7 @@ public:
         {
             // Kill-switch: risk is disabled for this symbol — do not trade.
             PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_disabled | cap=%.2f%%", symbol, riskCap);
-            return false;
+            return RejectCandidate(candidate, "risk_cap_disabled");
         }
         if(finalRiskPct > riskCap)
         {
@@ -625,7 +652,7 @@ public:
                     StringFormat("Lot needed to meet cap %.4f < broker min %.4f at risk %.3f%% vs cap %.3f%%",
                                  compliantLot, brokerMinLot, finalRiskPct, riskCap),
                     compliantLot, brokerMinLot, corrId);
-                return false;
+                return RejectCandidate(candidate, "risk_cap_requires_below_minimum_lot");
             }
             PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.4f -> %.4f | risk=%.3f%% -> cap=%.3f%%",
                         symbol, lotSize, compliantLot, finalRiskPct, riskCap);
@@ -649,7 +676,7 @@ public:
                 StringFormat("Lot %.4f at %.3f%% rejected: %s",
                              candidate.lotSize, candidate.riskPercent, riskResult.message),
                 candidate.lotSize, candidate.riskPercent, corrId);
-            return false;
+            return RejectCandidate(candidate, riskResult.message);
         }
         candidate.virtualReservationOwnerTag = riskResult.virtualReservationOwnerTag;
 
@@ -670,7 +697,7 @@ public:
                     StringFormat("Risk manager asked for %.4f, below broker min %.4f: %s",
                                  adoptedLot, brokerMinLot, riskResult.message),
                  adoptedLot, brokerMinLot, corrId);
-                return false;
+                return RejectCandidate(candidate, "adjusted_lot_below_minimum");
             }
             double adoptedRisk = m_riskManager.CalculateTradeRisk(symbol, adoptedLot, candidate.stopLossPips);
             // An adopted lot that the broker cannot price is refused, not booked at the previous percentage.
@@ -679,7 +706,7 @@ public:
                 ReleaseCandidateReservation(candidate);
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable_after_adjust | lot=%.4f | %s",
                             symbol, adoptedLot, riskResult.message);
-                return false;
+                return RejectCandidate(candidate, "adjusted_risk_unmeasurable");
             }
             double adoptedPct = (riskDenom > 0.0) ? (adoptedRisk / riskDenom) * 100.0 : candidate.riskPercent;
             PrintFormat("[RISK-GATE-ADJUST] %s | lot=%.4f -> %.4f | risk=%.3f%% -> %.3f%% | %s",

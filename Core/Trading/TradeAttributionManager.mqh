@@ -99,6 +99,10 @@ public:
     string GetPredictionIdForPosition(const ulong positionId);
     void   RemovePredictionPositionMap(const ulong positionId);
 
+    void   UpsertIntentPositionMap(const ulong positionId, const string intentId);
+    string GetIntentIdForPosition(const ulong positionId);
+    void   RemoveIntentPositionMap(const ulong positionId);
+
     //--- AI prediction position mapping: same delegation; a NULL m_positionManager makes every read return its empty default, which looks like "no attribution".
     int    FindAIPredictionPositionIndex(const ulong positionId);
     void   UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal);
@@ -115,7 +119,7 @@ public:
     double ConsumePendingCloseProfit(const ulong positionId);
     
     // Read by EAOrchestrator's ProcessClosedPositionsForNNTraining; rows whose prediction id comes back empty are skipped there.
-    int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
+    int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[], string &intentIds[]);
 
     void   RecordPositionAttribution(const ulong dealTicket, const string symbol, const ENUM_ORDER_TYPE orderType,
                                      const double volume, const double price, const double stopLossPips,
@@ -294,6 +298,24 @@ void CTradeAttributionManager::RemovePredictionPositionMap(const ulong positionI
     m_positionManager.RemovePredictionPositionMap(positionId);
 }
 
+void CTradeAttributionManager::UpsertIntentPositionMap(const ulong positionId, const string intentId)
+{
+    if(m_positionManager == NULL) return;
+    m_positionManager.UpsertIntentPositionMap(positionId, intentId);
+}
+
+string CTradeAttributionManager::GetIntentIdForPosition(const ulong positionId)
+{
+    if(m_positionManager == NULL) return "";
+    return m_positionManager.GetIntentIdForPosition(positionId);
+}
+
+void CTradeAttributionManager::RemoveIntentPositionMap(const ulong positionId)
+{
+    if(m_positionManager == NULL) return;
+    m_positionManager.RemoveIntentPositionMap(positionId);
+}
+
 int CTradeAttributionManager::FindAIPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -457,7 +479,8 @@ double CTradeAttributionManager::ConsumePendingCloseProfit(const ulong positionI
     return accumulated;
 }
 
-int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
+int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[],
+                                                     string &predictionIds[], string &intentIds[])
 {
 int count = ArraySize(m_pendingClosePositionIds);
 if(count == 0)
@@ -466,6 +489,7 @@ if(count == 0)
 ArrayResize(positionIds, count);
 ArrayResize(profits, count);
 ArrayResize(predictionIds, count);
+ArrayResize(intentIds, count);
     
 for(int i = 0; i < count; i++)
 {
@@ -478,6 +502,7 @@ for(int i = 0; i < count; i++)
     predictionIds[i] = GetPredictionIdForPosition(m_pendingClosePositionIds[i]);
     if(predictionIds[i] == "" && PositionSelectByTicket(m_pendingClosePositionIds[i]))
         predictionIds[i] = ExtractPredictionIdFromComment(PositionGetString(POSITION_COMMENT));
+    intentIds[i] = GetIntentIdForPosition(m_pendingClosePositionIds[i]);
 }
     
 return count;
@@ -664,11 +689,31 @@ bool CTradeAttributionManager::RunNNAttributionSelfTest()
         ok = false;
         NNDiagLog("Self-test failed: position->prediction map upsert/get mismatch");
     }
+    const string testIntent = "INT-15-1790000000-N-EURUSD";
+    UpsertIntentPositionMap(testPositionId, testIntent);
+    if(GetIntentIdForPosition(testPositionId) != testIntent)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: position->intent map upsert/get mismatch");
+    }
+    RemovePredictionPositionMap(testPositionId);
+    if(GetPredictionIdForPosition(testPositionId) != "" || GetIntentIdForPosition(testPositionId) != testIntent)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: removing prediction lineage cleared unrelated intent lineage");
+    }
+    UpsertPredictionPositionMap(testPositionId, testPrediction);
+    RemoveIntentPositionMap(testPositionId);
+    if(GetIntentIdForPosition(testPositionId) != "" || GetPredictionIdForPosition(testPositionId) != testPrediction)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: removing intent lineage cleared unrelated prediction lineage");
+    }
     RemovePredictionPositionMap(testPositionId);
     if(GetPredictionIdForPosition(testPositionId) != "")
     {
         ok = false;
-        NNDiagLog("Self-test failed: position->prediction map remove mismatch");
+        NNDiagLog("Self-test failed: position->prediction map final cleanup mismatch");
     }
 
     NNDiagLog(ok ? "Self-test passed" : "Self-test failed");

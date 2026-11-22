@@ -42,6 +42,7 @@
 #include "../../Core/Risk/UnprotectedPositionTracker.mqh"
 #include "../../Core/Utils/ErrorHandling.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
+#include "../../Core/Utils/IntentTrace.mqh"
 #include "../../Core/Utils/LogMacros.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/Instruments.mqh"
@@ -3334,8 +3335,9 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
         ulong positionIds[];
         double profits[];
         string predictionIds[];
+        string intentIds[];
 
-        int closedCount = m_attributionManager.GetPendingCloseProfits(positionIds, profits, predictionIds);
+        int closedCount = m_attributionManager.GetPendingCloseProfits(positionIds, profits, predictionIds, intentIds);
         if(closedCount <= 0)
             return;
 
@@ -3344,6 +3346,14 @@ void ReleaseNeuralNetPrediction(const string symbol, const string predictionId)
             // Every row is consumed, linked to a prediction or not: a row left behind is re-read
             // on each cycle forever, and an indicator trade has no consumer at all.
             m_attributionManager.ConsumePendingCloseProfit(positionIds[i]);
+
+            PrintFormat("[INTENT-OUTCOME] intent_id=%s | stage=POSITION_CLOSED | outcome=REALIZED | position_id=%I64u | net_profit=%.2f | matched=%s",
+                        intentIds[i] == "" ? "UNTRACKED" : intentIds[i],
+                        positionIds[i], profits[i], intentIds[i] == "" ? "false" : "true");
+            if(intentIds[i] != "")
+                CIntentTrace::LogStage(intentIds[i], "", "POSITION_CLOSED", "REALIZED",
+                                       StringFormat("position_id=%I64u net_profit=%.2f", positionIds[i], profits[i]));
+            m_attributionManager.RemoveIntentPositionMap(positionIds[i]);
 
             string predId = predictionIds[i];
             if(predId == "")
@@ -3717,7 +3727,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         }
 
         if(!canOpenNewTrades)
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, m_enterpriseManagerSymbols[i],
+                                   "ENTRY_GATE", "REJECT", "entry_disabled_or_risk_halt");
             continue;
+        }
 
         // Top of the funnel. Until this had no writer, so signals_generated printed 0 in
         // every journal while a later stage counted 1, and every [CONVERSION-RATES] percentage that
@@ -3729,6 +3743,9 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // rather than at the send because a held slot must not reserve risk no position will ever take.
         if(sendsThisCycle >= cycleSendCap || eaPositions + sendsThisCycle >= m_config.maxPositionsTotal)
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, m_enterpriseManagerSymbols[i],
+                                   "ENTRY_GATE", "REJECT",
+                                   (sendsThisCycle >= cycleSendCap) ? "cycle_send_cap" : "position_total_cap");
             if(TimeCurrent() - s_lastGateLog >= 15)
             {
                 s_lastGateLog = TimeCurrent();
@@ -3742,7 +3759,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         string symbol = m_enterpriseManagerSymbols[i];
         CEnterpriseStrategyManager* manager = m_enterpriseManagers[i];
-        if(manager == NULL) continue;
+        if(manager == NULL)
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "strategy_manager_unavailable");
+            continue;
+        }
 
         // Batch 272: the symbol health monitor used to print "disabling trading" for every symbol
         // and nothing read it. This is the reader. A frozen feed cannot fill an order, but it can
@@ -3751,6 +3772,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // strategy.
         if(!m_symbolHealth.IsHealthy(symbol))
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "symbol_feed_unhealthy");
             static datetime s_lastFeedHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastFeedHoldLog >= 60)
@@ -3776,6 +3798,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         if(!SymbolInfoTick(symbol, quoteCheck) ||
            (quoteCheck.bid <= 0.0 && quoteCheck.ask <= 0.0))
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "quote_unavailable");
             static datetime s_lastNoQuoteLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastNoQuoteLog >= 300)
@@ -3793,6 +3816,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         // symbol-scoped; this is the reader, and it is off unless InpSymbolLossStreakLimit > 0.
         if(manager.IsSymbolStreakBlocked())
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "symbol_loss_streak_hold");
             static datetime s_lastStreakHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastStreakHoldLog >= 60)
@@ -3815,6 +3839,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
         const double volScale = VolReg_RiskScale(symbol);
         if(volScale == 0.0)
         {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "ENTRY_GATE", "REJECT", "extreme_volatility_compression");
             static datetime s_lastVolHoldLog = 0;
             m_heartbeat.IncNoSignalCount();
             if(TimeCurrent() - s_lastVolHoldLog >= 60)
@@ -3836,6 +3861,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 newBarSignals[i].confluence, EVAL_MODE_NEW_BAR, newBarSignals[i].decisionContext,
                 ++m_scanCycleSequence, cycleCorrId);
 
+        CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "POST_CONSENSUS",
+                               validation.passed ? "ACCEPT" : "REJECT",
+                               validation.passed ? "validated" :
+                               ((validation.vetoReason == "") ? "validator_rejected" : validation.vetoReason));
+
         if(!validation.passed)
         {
             m_heartbeat.IncValidatorRejects();
@@ -3851,8 +3881,17 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
                 newBarSignals[i].confluence, newBarSignals[i].decisionContext,
-                manager, m_scanCycleSequence, candidate, m_config.useStrategyStops, cycleCorrId, symbolStreakScale))
+                manager, m_scanCycleSequence, candidate, m_config.useStrategyStops, cycleCorrId, symbolStreakScale,
+                newBarSignals[i].intentId))
+        {
+            CIntentTrace::LogStage(newBarSignals[i].intentId, symbol, "CANDIDATE_BUILD", "REJECT",
+                                   candidate.failureReason == "" ? "unspecified_candidate_rejection" : candidate.failureReason);
                 continue;
+        }
+        CIntentTrace::LogStage(candidate.intentId, symbol, "CANDIDATE_BUILD", "ACCEPT",
+                               StringFormat("risk_pct=%.3f lot=%.4f reservation=%s",
+                                            candidate.riskPercent, candidate.lotSize,
+                                            candidate.virtualReservationOwnerTag));
         candidateBuilt = true;
         candidatesBuilt++;
 
@@ -3873,14 +3912,22 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
         if(!authority.allowed)
         {
+            CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY", "REJECT",
+                                   authority.reason == "" ? "authority_denied" : authority.reason);
             m_unifiedRiskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
             continue;
         }
+        CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY", "ACCEPT",
+                               authority.reason == "" ? "authorized" : authority.reason);
 
         // this multiplier sets the shipped lot. It is shrink-only, and a lot that drops under the
         // broker minimum is refused loudly rather than rounded back up, so no normalization undoes the gate.
         if(!m_candidateBuilder.ScaleLotByLiveAuthority(candidate, authority.riskMultiplier, cycleCorrId))
+        {
+            CIntentTrace::LogStage(candidate.intentId, symbol, "LIVE_AUTHORITY_SIZING", "REJECT",
+                                   "scaled_lot_not_tradeable");
             continue;
+        }
 
 
                 // Reserve the neural-net observation this send will be labelled against, and put the
@@ -3892,7 +3939,13 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 bool nnLabelBound = false;
 
                 // Only a real send arms the min-seconds-between-trades cooldown.
+                CIntentTrace::LogStage(candidate.intentId, symbol, "EXECUTION", "SUBMITTED",
+                                       StringFormat("requested_lot=%.4f", candidate.lotSize));
                 CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
+                CIntentTrace::LogStage(candidate.intentId, symbol, "EXECUTION",
+                                       execResult.executed ? "ACCEPTED" : "REJECTED",
+                                       execResult.executed ? "trade_manager_accepted" :
+                                       ((execResult.reason == "") ? "execution_failed" : execResult.reason));
                 if(execResult.executed)
                 {
                     // Only a fill consumes the cycle budget: a refused or deduped send creates no exposure.
@@ -3914,6 +3967,9 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                         long provPosId = HistoryDealGetInteger(execResult.dealTicket, DEAL_POSITION_ID);
                         if(provPosId > 0)
                         {
+                            m_attributionManager.UpsertIntentPositionMap((ulong)provPosId, candidate.intentId);
+                            CIntentTrace::LogStage(candidate.intentId, symbol, "POSITION_LINK", "BOUND",
+                                                   StringFormat("position_id=%I64d", provPosId));
                             RecordExecutedTradeProvenance((ulong)provPosId, i,
                                                           candidate.contributorSummary, strategyIndices);
                             if(m_enterpriseManagers[i] != NULL)

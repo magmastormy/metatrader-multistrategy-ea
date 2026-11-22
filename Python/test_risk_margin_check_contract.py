@@ -114,6 +114,25 @@ class RiskMarginCheckContractTests(unittest.TestCase):
         self.assertIn("GetDynamicSlippage(localSymbol)", close_body)
         self.assertIn("m_lastTradeResult = closeResult", close_body)
 
+    def test_candidate_lot_is_step_valid_before_final_risk_gate(self):
+        source = (ROOT / 'Core' / 'Orchestration' / 'CandidateBuilder.mqh').read_text(encoding='utf-8')
+        body = function_body(source, 'bool BuildCandidate(')
+        self.assertIn('SYMBOL_VOLUME_MIN', body)
+        self.assertIn('SYMBOL_VOLUME_MAX', body)
+        self.assertIn('SYMBOL_VOLUME_STEP', body)
+        self.assertIn('MathIsValidNumber(volumeStep) && volumeStep > 0.0', body)
+        self.assertIn('brokerMaxLot >= brokerMinLot', body)
+        normalize = body.index('CTradeMgrPricing::NormalizeVolume(symbol, lotSize)')
+        risk = body.index('CalculateTradeRisk(symbol, candidate.lotSize')
+        request = body.index('tradeReq.lotSize = candidate.lotSize')
+        final_gate = body.index('ValidateTradeRequest(tradeReq, ' + chr(34) + 'final-lot' + chr(34))
+        self.assertLess(normalize, risk)
+        self.assertLess(risk, request)
+        self.assertLess(request, final_gate)
+        self.assertIn('if(normalizedLot < lotSize)', body)
+        self.assertIn('lotSize = normalizedLot;', body)
+        self.assertIn('normalizedLot > lotSize', body)
+
     def test_grid_close_failure_retains_ownership_and_blocks_new_levels(self):
         close_all = function_body(self.grid_engine, "bool CloseAllGrids(")
         manage = function_body(self.grid_engine, "void ManageGridPositions(")

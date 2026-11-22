@@ -5,6 +5,7 @@
 #property version "2.00"
 
 #include "Core\Utils\Enums.mqh"
+#include "Core\Utils\IntentTrace.mqh"
 #include "Core\AI\AIFeatureVectorBuilder.mqh"
 #include "IndicatorManager.mqh"
 
@@ -653,8 +654,11 @@ bool ExportSymbolTrainingData(const int fileHandle,
 
             if(g_contexts[ctxIdx].strategyManager != NULL)
             {
+                string trainingIntentId = CIntentTrace::BuildId(g_contexts[ctxIdx].symbol, rates[i].time,
+                                                                 InpExportTimeframe, EVAL_MODE_NEW_BAR,
+                                                                 "TRAINING");
                 ENUM_TRADE_SIGNAL sig = g_contexts[ctxIdx].strategyManager.GetConsensusSignalForSymbolWithConfluenceMode(
-                    g_contexts[ctxIdx].symbol, consensusConf, confluence, EVAL_MODE_NEW_BAR);
+                    g_contexts[ctxIdx].symbol, consensusConf, confluence, EVAL_MODE_NEW_BAR, trainingIntentId);
                 consensusSignal = (int)sig;
 
                 SConsensusDecisionContext decCtx;

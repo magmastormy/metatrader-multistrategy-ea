@@ -346,7 +346,8 @@ public:
                              ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
                              bool liveVotingEnabled = false);
     
-    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
+    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence,
+                                                                    ENUM_SIGNAL_EVAL_MODE evalMode, const string intentId);
 
     // Single-voter confidence floor, forwarded to the consensus core. The orchestrator sets it once at
     // init from its own config so the value is settable without editing a #define and rebuilding.
@@ -608,9 +609,11 @@ int CEnterpriseStrategyManager::GetEnforcedMinVoters(const bool intrabar) const
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
                                                                                               double &confidence,
                                                                                               int &confluence,
-                                                                                              ENUM_SIGNAL_EVAL_MODE evalMode)
+                                                                                              ENUM_SIGNAL_EVAL_MODE evalMode,
+                                                                                              const string intentId)
 {
-    return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
+    return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(
+        symbol, confidence, confluence, evalMode, intentId);
 }
 
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])

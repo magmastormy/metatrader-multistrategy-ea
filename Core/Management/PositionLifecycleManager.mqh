@@ -10,6 +10,7 @@
 
 #include "..\Utils\EAClock.mqh"
 #include "..\Utils\Enums.mqh"
+#include "..\Utils\IntentTrace.mqh"
 #include "..\Trading\TradeManager.mqh"
 #include "..\Management\EnterpriseStrategyManager.mqh"
 #include "..\Cache\ConsensusCache.mqh"
@@ -259,7 +260,12 @@ public:
             ENUM_TRADE_SIGNAL currentSignal;
             if(!m_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence))
             {
-                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
+                datetime lifecycleEventTime = TimeCurrent();
+                string lifecycleIntentId = CIntentTrace::BuildId(sym, lifecycleEventTime,
+                                                                  (ENUM_TIMEFRAMES)Period(), EVAL_MODE_INTRABAR,
+                                                                  "LIFECYCLE");
+                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(
+                    sym, confidence, confluence, EVAL_MODE_INTRABAR, lifecycleIntentId);
                 m_consensusCache.Store(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence);
             }
 

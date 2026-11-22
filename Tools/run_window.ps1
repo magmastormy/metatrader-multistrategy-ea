@@ -83,6 +83,19 @@ if ($expectedSamples -le 0 -or $windowMinutes -ne $expectedSamples) {
     throw "INI window must have a positive whole-minute duration: $fromDate .. $toDate"
 }
 
+try {
+    $agentListeners = @(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction Stop)
+} catch {
+    throw "Unable to verify MetaTrader tester-agent port 3000 availability: $($_.Exception.Message)"
+}
+if ($agentListeners.Count -gt 0) {
+    $ownerNames = foreach ($ownerId in ($agentListeners.OwningProcess | Sort-Object -Unique)) {
+        $ownerProcess = Get-Process -Id $ownerId -ErrorAction SilentlyContinue
+        if ($ownerProcess) { "$($ownerProcess.ProcessName) (PID $ownerId)" } else { "PID $ownerId" }
+    }
+    throw "MetaTrader local tester-agent port 3000 is occupied by $($ownerNames -join ', '); refusing to reset state or launch a backtest."
+}
+
 $offset = (Get-Item $testerLog).Length
 $termOffset = (Get-Item $termLog).Length
 $initialTesterLog = $testerLog
@@ -196,13 +209,14 @@ foreach ($ln in $lines) {
         $samples.Add([pscustomobject]@{ time=$simTime; balance=$balance })
     }
 }
-$expectedStart = $windowStart
-if ($samples.Count -ne $expectedSamples -or $samples[0].time -ne $expectedStart) {
+$firstSampleEnd = $windowStart.AddMinutes(1)
+if ($samples.Count -ne $expectedSamples -or $samples[0].time -lt $windowStart -or $samples[0].time -ge $firstSampleEnd) {
     $actualStart = if ($samples.Count -gt 0) { $samples[0].time.ToString('yyyy.MM.dd HH:mm:ss') } else { 'none' }
-    throw "Invalid measurement window: expected $expectedSamples heartbeat samples from $($expectedStart.ToString('yyyy.MM.dd HH:mm:ss')); found $($samples.Count) starting $actualStart"
+    throw "Invalid measurement window: expected $expectedSamples heartbeat samples with the first sample inside $($windowStart.ToString('yyyy.MM.dd HH:mm')); found $($samples.Count) starting $actualStart"
 }
 for ($i = 1; $i -lt $samples.Count; $i++) {
-    if ($samples[$i].time -ne $samples[$i - 1].time.AddMinutes(1)) {
+    $expectedTime = $windowStart.AddMinutes($i)
+    if ($samples[$i].time -ne $expectedTime) {
         throw "Invalid measurement window: heartbeat gap or duplicate at $($samples[$i].time.ToString('yyyy.MM.dd HH:mm:ss'))"
     }
 }

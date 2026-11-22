@@ -477,7 +477,8 @@ public:
                      const double stopLossPips,
                      const double takeProfitPips,
                      const string comment = "",
-                     const uint magicNumber = 0);
+                     const uint magicNumber = 0,
+                     const string intentId = "");
 
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
     bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
@@ -640,7 +641,7 @@ public:
                            const double volume, const double requestedPrice,
                            const double stopLossPips,
                            const double takeProfitPips,
-                           const string comment);
+                           const string comment, const string intentId = "");
 
     void UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin);
 
@@ -1178,7 +1179,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                                       const double volume, const double requestedPrice,
                                       const double stopLossPips,
                                       const double takeProfitPips,
-                                      const string comment)
+                                      const string comment,
+                                      const string intentId)
 {
     if(symbolName == "" || volume <= 0)
     {
@@ -1415,21 +1417,25 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
             if(m_lastExecutionReceipt.partialFill)
             {
-                PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u",
+                PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u | intent_id=%s",
                             symbolName,
                             volume,
                             m_lastExecutionReceipt.filledVolume,
-                            m_lastExecutionReceipt.retcode);
+                            m_lastExecutionReceipt.retcode,
+                            intentId == "" ? "UNTRACKED" : intentId);
             }
 
-            PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d",
+            PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d | order=%I64u | deal=%I64u | intent_id=%s",
                         symbolName,
                         m_lastExecutionReceipt.accepted ? "true" : "false",
                         volume,
                         m_lastExecutionReceipt.filledVolume,
                         m_lastExecutionReceipt.averagePrice,
                         m_lastExecutionReceipt.retcode,
-                        m_lastExecutionReceipt.retryCount);
+                        m_lastExecutionReceipt.retryCount,
+                        m_lastExecutionReceipt.orderTicket,
+                        m_lastExecutionReceipt.dealTicket,
+                        intentId == "" ? "UNTRACKED" : intentId);
             PrintFormat("[EXECUTION-TELEMETRY] %s | requested_price=%.5f | fill_price=%.5f | slippage_points=%.1f | latency_ms=%I64u | submit_time=%s",
                         symbolName,
                         m_lastExecutionReceipt.requestedPrice,
@@ -1839,7 +1845,8 @@ bool CTradeManager::OpenPosition(const string symbol,
                                 const double stopLossPips,
                                 const double takeProfitPips,
                                 const string comment,
-                                const uint magicNumber)
+                                const uint magicNumber,
+                                const string intentId)
 {
     double normalizedVolume = NormalizeVolume(symbol, volume);
     if(normalizedVolume <= 0.0)
@@ -1859,7 +1866,8 @@ bool CTradeManager::OpenPosition(const string symbol,
     // left the real send on the pool stamped with the bare base magic, so every strategy shipped an identical magic.
     m_pendingExplicitMagic = (ulong)magicNumber;
 
-    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips,
+                                       takeProfitPips, comment, intentId);
 
     if(executed)
     {
