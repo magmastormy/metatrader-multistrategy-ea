@@ -1,5 +1,5 @@
-// The SPositionState registry: broker tickets to strategy metadata, prediction IDs and AI snapshots. Bodies
-// copied verbatim from CPositionManager, zero behaviour change.
+// One bounded in-memory slot per position; lineage maps are not restart-persistent.
+// The state store owns broker tickets, prediction IDs, intent IDs, and AI snapshots.
 // SPositionState stays a TOP-LEVEL struct so every translation unit that includes PositionManager.mqh keeps
 // seeing it, and it must stay declared after Core/Trading/TradeManager.mqh - include order there guarantees it.
 #property strict
@@ -22,6 +22,7 @@ struct SPositionState
     int clusterCode;
     string strategyRole;
     string predictionId;        // Prediction ID associated with position
+    string intentId;            // Consensus decision ID associated with position
     datetime aiPredictionTime;
     ENUM_TRADE_SIGNAL aiPredictionSignal;
 
@@ -37,6 +38,7 @@ struct SPositionState
         clusterCode = 0;
         strategyRole = "";
         predictionId = "";
+        intentId = "";
         aiPredictionTime = 0;
         aiPredictionSignal = TRADE_SIGNAL_NONE;
     }
@@ -68,13 +70,26 @@ private:
         return m_positionStateCount++;
     }
 
-    //--- Shift-down erase, shared by the prediction-id and AI-prediction maps, which remove the same slot.
+    //--- Shift-down erase after every runtime map associated with the position is empty.
     void EraseAt(const int idx)
     {
         for(int i = idx; i < m_positionStateCount - 1; i++)
             m_positionStates[i] = m_positionStates[i + 1];
         m_positionStateCount--;
         ArrayResize(m_positionStates, m_positionStateCount);
+    }
+
+    void EraseIfEmpty(const int idx)
+    {
+        if(idx < 0 || idx >= m_positionStateCount)
+            return;
+
+        SPositionState state = m_positionStates[idx];
+        if(state.symbol == "" && state.volume == 0.0 && state.price == 0.0 &&
+           state.slPips == 0.0 && state.tpPips == 0.0 && state.clusterCode == 0 &&
+           state.strategyRole == "" && state.predictionId == "" && state.intentId == "" &&
+           state.aiPredictionTime <= 0 && state.aiPredictionSignal == TRADE_SIGNAL_NONE)
+            EraseAt(idx);
     }
 
 public:
@@ -124,12 +139,47 @@ public:
         return m_positionStates[idx].predictionId;
     }
 
+    void UpsertPositionIntentId(const ulong positionId, const string intentId)
+    {
+        if(positionId == 0 || intentId == "")
+            return;
+
+        int idx = FindPositionStateIndex(positionId);
+        if(idx >= 0)
+        {
+            m_positionStates[idx].intentId = intentId;
+            return;
+        }
+
+        const int slot = AcquireSlot();
+        m_positionStates[slot].positionId = positionId;
+        m_positionStates[slot].intentId = intentId;
+    }
+
+    string GetPositionIntentId(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0 || idx >= m_positionStateCount)
+            return "";
+        return m_positionStates[idx].intentId;
+    }
+
+    void RemovePositionIntentId(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0)
+            return;
+        m_positionStates[idx].intentId = "";
+        EraseIfEmpty(idx);
+    }
+
     void RemovePositionPrediction(const ulong positionId)
     {
         int idx = FindPositionStateIndex(positionId);
         if(idx < 0)
             return;
-        EraseAt(idx);
+        m_positionStates[idx].predictionId = "";
+        EraseIfEmpty(idx);
     }
 
     void UpsertPositionAIPrediction(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
@@ -172,7 +222,9 @@ public:
         int idx = FindPositionStateIndex(positionId);
         if(idx < 0)
             return;
-        EraseAt(idx);
+        m_positionStates[idx].aiPredictionTime = 0;
+        m_positionStates[idx].aiPredictionSignal = TRADE_SIGNAL_NONE;
+        EraseIfEmpty(idx);
     }
 
     void RegisterPositionState(const ulong positionId, const string symbol, ENUM_ORDER_TYPE orderType,

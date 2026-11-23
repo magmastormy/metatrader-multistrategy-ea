@@ -6,7 +6,7 @@
 # - Fixed off-by-one event sampling (CUSUM events now correctly aligned)
 # - Added purged train/val/test splits (no overlapping label leakage)
 # - Replaced StandardScaler with RobustScaler (fat-tail resistant)
-# - Scaler now saved with versioned binary header (MT5-safe)
+# - Scaler uses the feature-count-prefixed binary layout read by the MT5 pipeline
 # - Vectorized & Numba-accelerated triple-barrier, CUSUM, and uniqueness weights
 # - CPCV runs **before** final model selection (no data leakage)
 # - Realistic forward returns using `open[i+1]` entry price
@@ -23,15 +23,22 @@
 # ==============================================
 # 1. Setup and Dependencies
 # ==============================================
+import os
 import subprocess
 import sys
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-    "torch>=2.1.0", "numpy>=1.24.0", "pandas>=2.0.0", "scipy>=1.11.0", "scikit-learn>=1.3.0"])
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-    "onnx>=1.15.0", "onnxruntime>=1.17.0", "lightgbm>=4.3.0", "onnxmltools>=1.12.0"])
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-    "hmmlearn>=0.3.0", "einops>=0.7.0", "optuna>=3.6.0", "matplotlib>=3.7.0", "tqdm", "numba"])
-print('✅ All dependencies installed successfully!')
+
+def install_dependencies():
+    packages = [
+        "torch>=2.1.0", "numpy>=1.24.0", "pandas>=2.0.0", "scipy>=1.11.0",
+        "scikit-learn>=1.3.0", "onnx>=1.15.0", "onnxruntime>=1.17.0",
+        "lightgbm>=4.3.0", "onnxmltools>=1.12.0", "hmmlearn>=0.3.0",
+        "einops>=0.7.0", "optuna>=3.6.0", "matplotlib>=3.7.0", "tqdm", "numba"
+    ]
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + packages)
+    print("All dependencies installed successfully")
+
+if __name__ == "__main__" and os.environ.get("MQL5_V2_INSTALL_DEPENDENCIES") == "1":
+    install_dependencies()
 
 # %%
 # Mount Google Drive
@@ -66,7 +73,7 @@ from scipy.stats import spearmanr
 from tqdm import tqdm
 import struct
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Sequence
+from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from datetime import datetime
 import pickle
@@ -133,7 +140,7 @@ if CSV_PATH is None:
     raise FileNotFoundError(f'No training data found. Upload CSV to {DATA_DIR}')
 
 MODEL_OUTPUT = os.path.join(MODELS_DIR, 'best_model.onnx')
-SCALER_OUTPUT = os.path.join(MODELS_DIR, 'scaler_v2.bin')
+SCALER_OUTPUT = os.path.join(MODELS_DIR, 'scaler.bin')
 
 print(f'📋 Configuration:')
 for k, v in vars(CFG).items():
@@ -177,26 +184,21 @@ class TradingDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx], self.weights[idx], self.returns[idx]
 
-def save_scaler_v2(scaler: RobustScaler, output_path: str):
-    """Versioned binary scaler for MT5 with magic header."""
+def _safe_lag(x: np.ndarray, periods: int, fill_value: float = 0.0) -> np.ndarray:
+    """Safe lag without np.roll wrap-around."""
+    return pd.Series(x, dtype=np.float64).shift(periods, fill_value=fill_value).to_numpy(dtype=np.float64)
+
+def save_scaler_to_bin(scaler: RobustScaler, output_path: str):
+    """Write center and scale in the feature-count-prefixed MT5 binary format."""
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     n = len(scaler.center_)
     with output.open('wb') as f:
-        f.write(b'SCL2')                       # magic
-        f.write(struct.pack('<i', 1))           # version
-        f.write(struct.pack('<i', n))          # num features
+        f.write(struct.pack('<i', n))
         f.write(struct.pack(f'<{n}d', *scaler.center_))
         f.write(struct.pack(f'<{n}d', *scaler.scale_))
 
-# @@VENDOR-SLOT core_atr_labels
-def compute_atr(
-    high: np.ndarray,
-    low: np.ndarray,
-    close: np.ndarray,
-    period: int = 14,
-    backfill_first_period: bool = True,
-) -> np.ndarray:
+def compute_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14):
     tr = np.maximum(
         high[1:] - low[1:],
         np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])),
@@ -206,46 +208,47 @@ def compute_atr(
         atr[period] = tr[:period].mean()
         for i in range(period + 1, len(close)):
             atr[i] = (atr[i - 1] * (period - 1) + tr[i - 1]) / period
-    if backfill_first_period:
-        # Fill the warm-up bars so downstream ratios never divide by a literal 0.
-        atr[:period] = tr[:period].mean() if len(tr) >= period else tr.mean()
+    # Backfill first period bars with simple mean to avoid zeros
+    atr[:period] = tr[:period].mean() if len(tr) >= period else tr.mean()
     return atr
 
-
-def _triple_barrier_labels_py(
-    close: np.ndarray,
-    high: np.ndarray,
-    low: np.ndarray,
-    atr: np.ndarray,
-    k: float,
-    vertical_bars: int,
-) -> np.ndarray:
+def triple_barrier_labels_with_ends(close: np.ndarray, high: np.ndarray, low: np.ndarray,
+                                    atr: np.ndarray, k: float = 1.5, vertical_bars: int = 20):
+    if vertical_bars < 1:
+        raise ValueError('vertical_bars must be positive')
     n = len(close)
     labels = np.zeros(n, dtype=np.int8)
-    for i in range(n - vertical_bars):
+    end_bars = np.minimum(np.arange(n, dtype=np.int32) + vertical_bars, max(0, n - 1))
+    for i in range(max(0, n - vertical_bars)):
         if atr[i] <= 0:
             continue
         upper = close[i] + k * atr[i]
         lower = close[i] - k * atr[i]
         for j in range(i + 1, min(i + vertical_bars + 1, n)):
-            # Stop is checked first: when one bar touches both barriers, the
-            # conservative outcome is the loss.
             if low[j] <= lower:
                 labels[i] = -1
+                end_bars[i] = j
                 break
             if high[j] >= upper:
                 labels[i] = 1
+                end_bars[i] = j
                 break
-    return labels
+    return labels, end_bars
 
+def triple_barrier_labels(close: np.ndarray, high: np.ndarray, low: np.ndarray,
+                          atr: np.ndarray, k: float = 1.5, vertical_bars: int = 20):
+    return triple_barrier_labels_with_ends(close, high, low, atr, k, vertical_bars)[0]
 
 if HAS_NUMBA:
-
     @njit
     def _triple_barrier_numba(close, high, low, atr, k, vertical_bars):
         n = len(close)
         labels = np.zeros(n, dtype=np.int8)
-        for i in range(n - vertical_bars):
+        end_bars = np.arange(n, dtype=np.int32) + vertical_bars
+        for i in range(n):
+            if end_bars[i] >= n:
+                end_bars[i] = n - 1
+        for i in range(max(0, n - vertical_bars)):
             if atr[i] <= 0.0:
                 continue
             upper = close[i] + k * atr[i]
@@ -253,63 +256,40 @@ if HAS_NUMBA:
             for j in range(i + 1, min(i + vertical_bars + 1, n)):
                 if low[j] <= lower:
                     labels[i] = -1
+                    end_bars[i] = j
                     break
                 if high[j] >= upper:
                     labels[i] = 1
+                    end_bars[i] = j
                     break
-        return labels
+        return labels, end_bars
 
-    def triple_barrier_labels(
-        close: np.ndarray,
-        high: np.ndarray,
-        low: np.ndarray,
-        atr: np.ndarray,
-        k: float = 1.5,
-        vertical_bars: int = 20,
-    ) -> np.ndarray:
+    def triple_barrier_labels_with_ends(close, high, low, atr, k=1.5, vertical_bars=20):
+        if vertical_bars < 1:
+            raise ValueError('vertical_bars must be positive')
         return _triple_barrier_numba(close, high, low, atr, k, vertical_bars)
 
-else:
+    def triple_barrier_labels(close, high, low, atr, k=1.5, vertical_bars=20):
+        return triple_barrier_labels_with_ends(close, high, low, atr, k, vertical_bars)[0]
 
-    def triple_barrier_labels(
-        close: np.ndarray,
-        high: np.ndarray,
-        low: np.ndarray,
-        atr: np.ndarray,
-        k: float = 1.5,
-        vertical_bars: int = 20,
-    ) -> np.ndarray:
-        return _triple_barrier_labels_py(close, high, low, atr, k, vertical_bars)
-# @@VENDOR-SLOT-END core_atr_labels
-
-# @@VENDOR-SLOT core_weights
-def _compute_uniqueness_weights_py(
-    event_indices: Sequence[int],
-    vertical_bars: int,
-    total_bars: int,
-) -> np.ndarray:
+def compute_uniqueness_weights(event_indices: List[int], vertical_bars: int, total_bars: int):
     event_indices = np.asarray(event_indices, dtype=np.int32)
     if len(event_indices) == 0:
         return np.zeros(0, dtype=np.float32)
-
     concurrency = np.zeros(total_bars, dtype=np.float32)
     for idx in event_indices:
         end = min(int(idx) + vertical_bars, total_bars)
-        concurrency[int(idx) : end] += 1.0
-
+        concurrency[int(idx):end] += 1.0
     raw_weights = np.zeros(len(event_indices), dtype=np.float32)
     for i, idx in enumerate(event_indices):
         end = min(int(idx) + vertical_bars, total_bars)
-        raw_weights[i] = np.mean(1.0 / np.maximum(concurrency[int(idx) : end], 1e-9))
-
+        raw_weights[i] = np.mean(1.0 / np.maximum(concurrency[int(idx):end], 1e-9))
     total = raw_weights.sum()
     if total > 1e-9:
         raw_weights = raw_weights / total * len(event_indices)
     return raw_weights
 
-
 if HAS_NUMBA:
-
     @njit
     def _uniq_weights_numba(event_indices, vertical_bars, total_bars):
         concurrency = np.zeros(total_bars, dtype=np.float32)
@@ -332,25 +312,11 @@ if HAS_NUMBA:
             weights = weights / total * len(event_indices)
         return weights
 
-    def compute_uniqueness_weights(
-        event_indices: Sequence[int],
-        vertical_bars: int,
-        total_bars: int,
-    ) -> np.ndarray:
+    def compute_uniqueness_weights(event_indices, vertical_bars, total_bars):
         arr = np.asarray(event_indices, dtype=np.int32)
         if len(arr) == 0:
             return np.zeros(0, dtype=np.float32)
         return _uniq_weights_numba(arr, vertical_bars, total_bars)
-
-else:
-
-    def compute_uniqueness_weights(
-        event_indices: Sequence[int],
-        vertical_bars: int,
-        total_bars: int,
-    ) -> np.ndarray:
-        return _compute_uniqueness_weights_py(event_indices, vertical_bars, total_bars)
-# @@VENDOR-SLOT-END core_weights
 
 def compute_forward_returns(open_: np.ndarray, event_indices: List[int], holding_bars: int = 10):
     """Realistic forward returns: enter at next open, exit after holding_bars."""
@@ -364,12 +330,9 @@ def compute_forward_returns(open_: np.ndarray, event_indices: List[int], holding
         returns[i] = (exit_price - entry) / max(entry, 1e-10)
     return returns
 
-# @@VENDOR-SLOT core_cusum
-def _cusum_filter_py(
-    close: np.ndarray,
-    threshold_multiplier: float,
-    atr: np.ndarray,
-) -> List[int]:
+def cusum_filter(close: np.ndarray, threshold_multiplier: float = 1.0, atr: Optional[np.ndarray] = None):
+    if atr is None:
+        atr = np.ones(len(close), dtype=np.float64)
     events: List[int] = []
     s_pos, s_neg = 0.0, 0.0
     for i in range(1, len(close)):
@@ -385,9 +348,7 @@ def _cusum_filter_py(
             s_neg = 0.0
     return events
 
-
 if HAS_NUMBA:
-
     @njit
     def _cusum_numba(close, threshold_multiplier, atr):
         events = []
@@ -405,34 +366,12 @@ if HAS_NUMBA:
                 s_neg = 0.0
         return events
 
-    def cusum_filter(
-        close: np.ndarray,
-        threshold_multiplier: float = 1.0,
-        atr: Optional[np.ndarray] = None,
-    ) -> List[int]:
+    def cusum_filter(close, threshold_multiplier=1.0, atr=None):
         if atr is None:
             atr = np.ones(len(close), dtype=np.float64)
         return _cusum_numba(close, threshold_multiplier, atr)
 
-else:
-
-    def cusum_filter(
-        close: np.ndarray,
-        threshold_multiplier: float = 1.0,
-        atr: Optional[np.ndarray] = None,
-    ) -> List[int]:
-        if atr is None:
-            atr = np.ones(len(close), dtype=np.float64)
-        return _cusum_filter_py(close, threshold_multiplier, atr)
-# @@VENDOR-SLOT-END core_cusum
-
-# @@VENDOR-SLOT core_features
-def _safe_lag(x: np.ndarray, periods: int, fill_value: float = 0.0) -> np.ndarray:
-    """Safe lag without np.roll wrap-around."""
-    return pd.Series(x, dtype=np.float64).shift(periods, fill_value=fill_value).to_numpy(dtype=np.float64)
-
-
-def _ema(x: np.ndarray, period: int) -> np.ndarray:
+def _ema(x: np.ndarray, period: int):
     alpha = 2.0 / (period + 1)
     result = np.empty_like(x, dtype=np.float64)
     result[0] = x[0]
@@ -440,93 +379,63 @@ def _ema(x: np.ndarray, period: int) -> np.ndarray:
         result[i] = alpha * x[i] + (1 - alpha) * result[i - 1]
     return result
 
-
-def _sma(x: np.ndarray, period: int) -> np.ndarray:
+def _sma(x: np.ndarray, period: int):
     return pd.Series(x).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64)
 
-
-def _rsi(close: np.ndarray, period: int) -> np.ndarray:
+def _rsi(close: np.ndarray, period: int):
     delta = np.diff(close, prepend=close[0]).astype(np.float64)
     avg_gain = _ema(np.maximum(delta, 0.0), period)
     avg_loss = _ema(np.maximum(-delta, 0.0), period)
     rs = avg_gain / (avg_loss + 1e-9)
     return (100.0 - 100.0 / (1.0 + rs)) / 100.0
 
-
-def _bb_pct_b(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
+def _bb_pct_b(close: np.ndarray, period: int = 20, mult: float = 2.0):
     mid = _sma(close, period)
     std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).to_numpy(dtype=np.float64)
     upper = mid + mult * std
     lower = mid - mult * std
     return (close - lower) / (upper - lower + 1e-9)
 
-
-def _bb_width(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
+def _bb_width(close: np.ndarray, period: int = 20, mult: float = 2.0):
     mid = _sma(close, period)
     std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).to_numpy(dtype=np.float64)
     return (2 * mult * std) / (mid + 1e-9)
 
-
-def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int = 9) -> np.ndarray:
+def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int = 9):
     macd = _ema(close, fast) - _ema(close, slow)
     signal = _ema(macd, sig)
     hist = macd - signal
-    atr = compute_atr(
-        np.maximum(close, np.roll(close, 1)),
-        np.minimum(close, np.roll(close, 1)),
-        close,
-        14,
-    )
+    previous_close = _safe_lag(close, 1, fill_value=float(close[0]) if len(close) else 0.0)
+    atr = compute_atr(np.maximum(close, previous_close), np.minimum(close, previous_close), close, 14)
     return hist / (atr + 1e-9)
 
-
-def _rolling_zscore(x: np.ndarray, period: int) -> np.ndarray:
+def _rolling_zscore(x: np.ndarray, period: int):
     series = pd.Series(x.astype(np.float64))
     mean = series.rolling(period, min_periods=2).mean()
     std = series.rolling(period, min_periods=2).std(ddof=0)
     return ((series - mean) / (std + 1e-9)).fillna(0.0).to_numpy(dtype=np.float64)
 
-
-def _cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+def _cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14):
     tp = (high + low + close) / 3.0
     sma = _sma(tp, period)
     tp_series = pd.Series(tp)
-    mad = (
-        tp_series.rolling(period, min_periods=1)
-        .apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
-        .fillna(1e-9)
-        .to_numpy(dtype=np.float64)
-    )
+    mad = tp_series.rolling(period, min_periods=1).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True).fillna(1e-9).to_numpy(dtype=np.float64)
     return (tp - sma) / (0.015 * mad + 1e-9) / 200.0
 
-
-def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14) -> np.ndarray:
+def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14):
     log_hl = np.log((high + 1e-9) / (low + 1e-9)) ** 2
     factor = 1.0 / (4.0 * np.log(2))
-    return np.sqrt(
-        pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64)
-    )
+    return np.sqrt(pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64))
 
-
-def build_base_feature_matrix(
-    open_: np.ndarray,
-    high: np.ndarray,
-    low: np.ndarray,
-    close: np.ndarray,
-    volume: np.ndarray,
-) -> np.ndarray:
-    """The 57-column base feature matrix shared by every pipeline.
-
-    Uses ``_safe_lag`` (no ``np.roll`` wrap-around) for all lagged features;
-    calendar slots 18-21 are zero placeholders filled by
-    ``add_calendar_features``.
-    """
+def build_feature_matrix(open_: np.ndarray, high: np.ndarray, low: np.ndarray,
+                         close: np.ndarray, volume: np.ndarray):
     n = len(close)
     log_ret = np.concatenate([[0.0], np.log(close[1:] / (close[:-1] + 1e-12))])
     atr14 = compute_atr(high, low, close, 14)
     atr50 = compute_atr(high, low, close, 50)
     atr5 = compute_atr(high, low, close, 5)
 
+    # Safe lags — no wrap-around
     lag_ret_1 = _safe_lag(log_ret, 1)
     lag_ret_5 = _safe_lag(log_ret, 5)
     lag_ret_10 = _safe_lag(log_ret, 10)
@@ -565,10 +474,10 @@ def build_base_feature_matrix(
         atr14 / (atr50 + 1e-9),
         _parkinson_vol(high, low, 14),
         volume / (_sma(volume.astype(np.float64), 20) + 1e-9),
-        np.zeros(n, dtype=np.float64),  # 18: calendar sin(dow) - injected later
-        np.zeros(n, dtype=np.float64),  # 19: calendar cos(dow)
-        np.zeros(n, dtype=np.float64),  # 20: calendar sin(hod)
-        np.zeros(n, dtype=np.float64),  # 21: calendar cos(hod)
+        np.zeros(n),   # 18: calendar sin(dow) — injected later
+        np.zeros(n),   # 19: calendar cos(dow)
+        np.zeros(n),   # 20: calendar sin(hod)
+        np.zeros(n),   # 21: calendar cos(hod)
         lag_ret_1,
         lag_ret_5,
         lag_ret_20,
@@ -602,87 +511,85 @@ def build_base_feature_matrix(
         (close - _ema(close, 100)) / (atr50 + 1e-9),
         _rolling_zscore(volume.astype(np.float64), 50),
         atr50 / (atr14 + 1e-9),
-        np.zeros(n, dtype=np.float64),  # 55: placeholder
-        np.ones(n, dtype=np.float64),   # 56: bias feature
+        np.zeros(n),   # 55: placeholder
+        np.ones(n),    # 56: bias feature
     ]
     features = np.column_stack(cols).astype(np.float32)
     return np.nan_to_num(features, nan=0.0, posinf=3.0, neginf=-3.0)
 
-
-def exported_feature_columns(frame: pd.DataFrame) -> List[str]:
-    feature_cols = [col for col in frame.columns if col.startswith("feature_")]
-
-    def sort_key(name: str) -> int:
+def exported_feature_columns(frame: pd.DataFrame):
+    feature_cols = [col for col in frame.columns if col.startswith('feature_')]
+    def sort_key(name: str):
         try:
-            return int(name.split("_")[1])
+            return int(name.split('_')[1])
         except (IndexError, ValueError):
-            return 10**9
-
+            return 10 ** 9
     return sorted(feature_cols, key=sort_key)
 
-
-def add_calendar_features(features: np.ndarray, timestamps: pd.DatetimeIndex) -> np.ndarray:
-    """Overwrite calendar slots 18-21 from timestamps."""
+def add_calendar_features(features: np.ndarray, timestamps: pd.DatetimeIndex):
+    """Always overwrite calendar slots 18-21 from timestamps."""
     dow = timestamps.dayofweek.values / 6.0
     hod = timestamps.hour.values / 23.0
-    features[:, 18] = np.sin(2 * np.pi * dow)
-    features[:, 19] = np.cos(2 * np.pi * dow)
-    features[:, 20] = np.sin(2 * np.pi * hod)
-    features[:, 21] = np.cos(2 * np.pi * hod)
+    features[:, 18] = np.sin(2 * np.pi * dow).astype(np.float32)
+    features[:, 19] = np.cos(2 * np.pi * dow).astype(np.float32)
+    features[:, 20] = np.sin(2 * np.pi * hod).astype(np.float32)
+    features[:, 21] = np.cos(2 * np.pi * hod).astype(np.float32)
     return features
-# @@VENDOR-SLOT-END core_features
-
-# mql5_v2 has no family/asset-class extras; the 57-col base matrix is the full feature set.
-build_feature_matrix = build_base_feature_matrix
 
 def prepare_sequences(features: np.ndarray, labels: np.ndarray, weights: np.ndarray,
                       returns: np.ndarray, timestamps: np.ndarray,
-                      seq_len: int, sample_indices: List[int], vertical_bars: int = 0):
-    X, y, w, r, ts, le = [], [], [], [], [], []
-    n_bars = len(timestamps)
+                      seq_len: int, sample_indices: List[int], label_end_indices: List[int]):
+    if not (len(sample_indices) == len(label_end_indices) == len(weights) == len(returns)):
+        raise ValueError('sample indices, label ends, weights, and returns must align')
+    X, y, w, r, ts, end_ts = [], [], [], [], [], []
     for idx, sample_idx in enumerate(sample_indices):
         if sample_idx < seq_len:
             continue
         end = int(sample_idx)
+        label_end_index = int(label_end_indices[idx])
+        if label_end_index < end or label_end_index >= len(timestamps):
+            raise ValueError('invalid label end index')
         X.append(features[end - seq_len:end])
         y.append(int(labels[end]) + 1)   # map -1→0, 0→1, 1→2
         w.append(float(weights[idx]))
         r.append(float(returns[idx]))
         ts.append(timestamps[end - 1])
-        # Label at bar `end` resolves over bars end+1..end+vertical_bars.
-        le.append(timestamps[min(end + vertical_bars, n_bars - 1)])
+        end_ts.append(timestamps[label_end_index])
     return (
         np.asarray(X, dtype=np.float32),
         np.asarray(y, dtype=np.int64),
         np.asarray(w, dtype=np.float32),
         np.asarray(r, dtype=np.float32),
         np.asarray(ts),
-        np.asarray(le),
+        np.asarray(end_ts),
     )
 
 def _split_arrays_purged(X: np.ndarray, y: np.ndarray, weights: np.ndarray,
-                         returns: np.ndarray, timestamps: np.ndarray,
-                         label_ends: np.ndarray,
-                         label_bars: np.ndarray,
+                         returns: np.ndarray, timestamps: np.ndarray, label_end_timestamps: np.ndarray,
+                         label_bars: np.ndarray, label_end_bars: np.ndarray,
                          train_ratio: float, val_ratio: float,
-                         vertical_bars: int, embargo: int):
+                         embargo: int):
     n = len(X)
     if n < 48:
         raise ValueError('Not enough samples to split safely.')
+    if not all(len(array) == n for array in
+               (y, weights, returns, timestamps, label_end_timestamps, label_bars, label_end_bars)):
+        raise ValueError('split arrays and label intervals must align')
+    if np.any(label_end_bars < label_bars):
+        raise ValueError('label end bars cannot precede sample bars')
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
     train_end = max(24, min(train_end, n - 24))
     val_end = max(train_end + 12, min(val_end, n - 12 - embargo))
-    # A sample's label resolves at label_bar + vertical_bars; keep it only if that
-    # horizon ends before the first bar of the next segment.
     idx = np.arange(n)
-    horizon_end = label_bars + vertical_bars
-    train_sel = idx[(idx < train_end) & (horizon_end < label_bars[train_end])]
-    val_sel = idx[(idx >= train_end) & (idx < val_end) & (horizon_end < label_bars[val_end])]
-    test_sel = idx[val_end:n - embargo]
+    train_sel = idx[(idx < train_end) & (label_end_bars < label_bars[train_end])]
+    val_sel = idx[(idx >= train_end) & (idx < val_end) & (label_end_bars < label_bars[val_end])]
+    test_sel = idx[val_end:]
+    if not len(train_sel) or not len(val_sel) or not len(test_sel):
+        raise ValueError('Purging left an empty train, validation, or test split')
 
     def take(sel):
-        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_ends[sel])
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_end_timestamps[sel])
 
     return take(train_sel), take(val_sel), take(test_sel)
 
@@ -745,7 +652,7 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
         # Always inject fresh calendar features from timestamps
         features = add_calendar_features(features, pd.DatetimeIndex(sym_df['date']))
         atr = compute_atr(high, low, close, 14)
-        labels = triple_barrier_labels(close, high, low, atr, k=k, vertical_bars=vertical_bars)
+        labels, label_end_bars = triple_barrier_labels_with_ends(close, high, low, atr, k=k, vertical_bars=vertical_bars)
         events = np.asarray(cusum_filter(close, threshold_multiplier=1.0, atr=atr), dtype=np.int32)
         # Filter events: must have enough history and room for forward label
         label_indices = np.asarray([idx for idx in events if idx >= seq_len and idx < len(close) - vertical_bars], dtype=np.int32)
@@ -754,14 +661,16 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
         weights = compute_uniqueness_weights(label_indices, vertical_bars, len(close))
         returns = compute_forward_returns(open_, label_indices, holding_bars=vertical_bars)
         timestamps = sym_df['date'].to_numpy()
-        X, y, w, r, ts, le = prepare_sequences(features, labels, weights, returns, timestamps,
-                                           seq_len=seq_len, sample_indices=label_indices,
-                                           vertical_bars=vertical_bars)
+        sample_label_end_bars = label_end_bars[label_indices]
+        X, y, w, r, ts, label_end_ts = prepare_sequences(
+            features, labels, weights, returns, timestamps, seq_len=seq_len,
+            sample_indices=label_indices, label_end_indices=sample_label_end_bars)
         if len(X) < 48:
             continue
-        kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
-        train, val, test = _split_arrays_purged(X, y, w, r, ts, le, kept_label_bars, train_ratio, val_ratio,
-                                                vertical_bars, embargo)
+        kept_label_bars = label_indices.astype(np.int64) - 1
+        train, val, test = _split_arrays_purged(
+            X, y, w, r, ts, label_end_ts, kept_label_bars, sample_label_end_bars,
+            train_ratio, val_ratio, embargo)
         train_parts.append(train)
         val_parts.append(val)
         test_parts.append(test)
@@ -776,9 +685,9 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
 
 def _scale_splits(train: Tuple[np.ndarray, ...], val: Tuple[np.ndarray, ...],
                   test: Tuple[np.ndarray, ...], scaler_output: Optional[str] = None):
-    X_tr, y_tr, w_tr, r_tr, ts_tr, le_tr = train
-    X_va, y_va, w_va, r_va, ts_va, le_va = val
-    X_te, y_te, w_te, r_te, ts_te, le_te = test
+    X_tr, y_tr, w_tr, r_tr, ts_tr, end_ts_tr = train
+    X_va, y_va, w_va, r_va, ts_va, end_ts_va = val
+    X_te, y_te, w_te, r_te, ts_te, end_ts_te = test
     scaler = RobustScaler(quantile_range=(5.0, 95.0))
     B, T, F = X_tr.shape
     # Scale per-feature across all timesteps (preserves temporal structure)
@@ -788,11 +697,11 @@ def _scale_splits(train: Tuple[np.ndarray, ...], val: Tuple[np.ndarray, ...],
         scaled = scaler.transform(flat)
         return scaled.reshape(len(X), T, F).astype(np.float32)
     if scaler_output:
-        save_scaler_v2(scaler, scaler_output)
+        save_scaler_to_bin(scaler, scaler_output)
     return (
-        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, le_tr),
-        (transform(X_va), y_va, w_va, r_va, ts_va, le_va),
-        (transform(X_te), y_te, w_te, r_te, ts_te, le_te),
+        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, end_ts_tr),
+        (transform(X_va), y_va, w_va, r_va, ts_va, end_ts_va),
+        (transform(X_te), y_te, w_te, r_te, ts_te, end_ts_te),
         scaler,
     )
 
@@ -957,101 +866,85 @@ def compute_turbulence(current_returns: np.ndarray, historical_returns: np.ndarr
 # 7. CPCV Validation — Proper Implementation
 # ==============================================
 
-def _to_ns(values):
-    return np.asarray(pd.to_datetime(pd.Series(values)).astype('int64') // 10 ** 9, dtype=np.int64) * 10 ** 9
-
-
-# @@VENDOR-SLOT core_cpcv
-def purge_embargo(
-    train_idx: np.ndarray,
-    test_idx: np.ndarray,
-    starts_ns: np.ndarray,
-    horizon_ns: int,
-    embargo_ns: int = 0,
-    ends_ns: Optional[np.ndarray] = None,
-) -> np.ndarray:
-    """Drop training samples whose label span overlaps any test span.
-
-    When ``ends_ns`` (actual per-sample label-end timestamps) is provided, overlap is
-    tested on the true spans [start, end]; otherwise each span is approximated as
-    [start, start + horizon_ns].
-    """
-    if ends_ns is None:
-        ends_ns = starts_ns + horizon_ns
-    order = np.argsort(starts_ns[test_idx])
-    test_starts = starts_ns[test_idx][order]
-    test_ends = ends_ns[test_idx][order]
-    # prefix maximum of test ends: a train span can only overlap a test whose start
-    # precedes the train end, and among those the largest test end decides overlap.
-    prefix_max_end = np.maximum.accumulate(test_ends)
-
-    s = starts_ns[train_idx]
-    e = ends_ns[train_idx]
-    hi = np.searchsorted(test_starts, e + embargo_ns, side="right") - 1
-    overlaps = np.zeros(len(train_idx), dtype=bool)
-    valid = hi >= 0
-    overlaps[valid] = prefix_max_end[np.clip(hi[valid], 0, len(prefix_max_end) - 1)] >= s[valid] - embargo_ns
+def purge_embargo(train_idx, test_idx, starts_ns, label_ends_ns, embargo_ns=0):
+    if starts_ns.ndim != 1 or label_ends_ns.ndim != 1 or starts_ns.shape != label_ends_ns.shape:
+        raise ValueError('sample timestamps and label ends must be aligned one-dimensional arrays')
+    if embargo_ns < 0:
+        raise ValueError('embargo_ns cannot be negative')
+    if np.any(label_ends_ns < starts_ns):
+        raise ValueError('label end timestamps cannot precede sample timestamps')
+    if len(test_idx) == 0 or len(train_idx) == 0:
+        return train_idx.copy()
+    test_starts, test_ends = starts_ns[test_idx], label_ends_ns[test_idx]
+    order = np.argsort(test_starts, kind='stable')
+    sorted_starts = test_starts[order]
+    prefix_max_ends = np.maximum.accumulate(test_ends[order])
+    train_starts, train_ends = starts_ns[train_idx], label_ends_ns[train_idx]
+    candidates = np.searchsorted(sorted_starts, train_ends + embargo_ns, side='right')
+    prior_test_ends = prefix_max_ends[np.maximum(candidates - 1, 0)]
+    overlaps = (candidates > 0) & (prior_test_ends >= train_starts - embargo_ns)
     return train_idx[~overlaps]
 
-
-def cpcv_folds(
-    starts_ns: np.ndarray,
-    horizon_ns: int,
-    n_splits: int = 6,
-    n_test: int = 2,
-    embargo_ns: int = 0,
-    ends_ns: Optional[np.ndarray] = None,
-) -> List[Tuple[np.ndarray, np.ndarray]]:
-    from itertools import combinations
-
-    n = len(starts_ns)
-    groups = np.array_split(np.arange(n), n_splits)
-    folds: List[Tuple[np.ndarray, np.ndarray]] = []
+def cpcv_folds(starts_ns, label_ends_ns, n_splits=6, n_test=2, embargo_ns=0):
+    if starts_ns.ndim != 1 or label_ends_ns.ndim != 1 or starts_ns.shape != label_ends_ns.shape:
+        raise ValueError('sample timestamps and label ends must be aligned one-dimensional arrays')
+    if n_splits < 2 or n_test < 1 or n_test >= n_splits:
+        raise ValueError('invalid CPCV split counts')
+    if np.any(label_ends_ns < starts_ns):
+        raise ValueError('label end timestamps cannot precede sample timestamps')
+    unique_starts = np.unique(starts_ns)
+    if len(unique_starts) < n_splits:
+        raise ValueError('not enough unique timestamps for CPCV')
+    row_time_groups = np.searchsorted(unique_starts, starts_ns)
+    time_groups = np.array_split(np.arange(len(unique_starts)), n_splits)
+    groups = [np.flatnonzero((row_time_groups >= group[0]) & (row_time_groups <= group[-1]))
+              for group in time_groups]
+    folds = []
     for test_groups in combinations(range(n_splits), n_test):
-        test_idx = np.concatenate([groups[i] for i in test_groups])
-        train_idx = np.concatenate([groups[i] for i in range(n_splits) if i not in test_groups])
-        train_idx = purge_embargo(train_idx, test_idx, starts_ns, horizon_ns, embargo_ns, ends_ns)
+        test_idx = np.sort(np.concatenate([groups[i] for i in test_groups]))
+        train_idx = np.sort(np.concatenate([groups[i] for i in range(n_splits) if i not in test_groups]))
+        train_idx = purge_embargo(train_idx, test_idx, starts_ns, label_ends_ns, embargo_ns)
+        if len(train_idx) == 0 or len(test_idx) == 0:
+            raise ValueError('CPCV purging produced an empty train or test fold')
         folds.append((train_idx, test_idx))
     return folds
 
-
-def psr(sharpe_ratios: np.ndarray, sr_ref: float = 0.0) -> float:
+def psr(sharpe_ratios, sr_ref=0.0):
     from scipy.stats import norm
-
     mu = sharpe_ratios.mean()
     sig = sharpe_ratios.std(ddof=1) + 1e-9
     z = (mu - sr_ref) / sig * np.sqrt(len(sharpe_ratios))
     return float(norm.cdf(z))
-
-
-def label_horizon_ns(timestamps: np.ndarray, vertical_bars: int) -> int:
-    ts = np.unique(np.asarray(timestamps, dtype="datetime64[ns]").astype(np.int64))
-    diffs = np.diff(ts)
-    diffs = diffs[diffs > 0]
-    if len(diffs) == 0:
-        raise ValueError("Cannot infer bar spacing from timestamps for CPCV purging.")
-    return int(np.median(diffs)) * int(vertical_bars)
-# @@VENDOR-SLOT-END core_cpcv
 
 def apply_costs(gross_returns, cost_bps=1.0):
     """Subtract round-trip cost in return space."""
     cost = 2.0 * cost_bps / 10000.0
     return gross_returns - cost
 
-def run_cpcv(model_factory, X, y, bar_returns, timestamps, label_ends,
+def run_cpcv(model_factory, X, y, bar_returns, timestamps, label_end_timestamps,
              n_splits=6, annualization=252.0,
              cost_bps=1.0, epochs=20, batch_size=64, device='cpu'):
     """Proper CPCV: trains a fresh model from scratch on each fold."""
-    starts_ns = _to_ns(timestamps)
-    ends_ns = _to_ns(label_ends)
-    # Canonical signature: horizon_ns is unused because ends_ns (true label-end
-    # timestamps) is always provided here.
-    folds = cpcv_folds(starts_ns, horizon_ns=0, n_splits=n_splits, ends_ns=ends_ns)
+    starts = np.asarray(timestamps, dtype='datetime64[ns]')
+    label_ends = np.asarray(label_end_timestamps, dtype='datetime64[ns]')
+    if np.isnat(starts).any() or np.isnat(label_ends).any():
+        raise ValueError('CPCV timestamps cannot contain NaT')
+    starts_ns, label_ends_ns = starts.astype(np.int64), label_ends.astype(np.int64)
+    if not (len(X) == len(y) == len(bar_returns) == len(starts_ns) == len(label_ends_ns)):
+        raise ValueError('CPCV features, labels, returns, and intervals must align')
+    if np.any(label_ends_ns < starts_ns):
+        raise ValueError('label end timestamps cannot precede sample timestamps')
+    folds = cpcv_folds(starts_ns, label_ends_ns, n_splits=n_splits)
     sharpes = []
     for fold_idx, (train_idx, test_idx) in enumerate(folds):
         print(f'  CPCV fold {fold_idx + 1}/{len(folds)} ...')
         X_train, y_train = X[train_idx], y[train_idx]
         X_test, y_test = X[test_idx], y[test_idx]
+        feature_count = X.shape[-1]
+        fold_scaler = RobustScaler(quantile_range=(5.0, 95.0))
+        fold_scaler.fit(X_train.reshape(-1, feature_count))
+        X_train = fold_scaler.transform(X_train.reshape(-1, feature_count)).reshape(X_train.shape).astype(np.float32)
+        X_test = fold_scaler.transform(X_test.reshape(-1, feature_count)).reshape(X_test.shape).astype(np.float32)
         r_test = bar_returns[test_idx]
         # Build datasets
         train_ds = TradingDataset(X_train, y_train)
@@ -1164,14 +1057,13 @@ def instantiate_models(model_name, seq_len, n_feat, dropout=0.20):
 def build_loader(split, batch_size, shuffle):
     return DataLoader(TradingDataset(*split[:4]), batch_size=batch_size, shuffle=shuffle, drop_last=False)
 
-def train_candidate(name, model, train_split, val_split, test_split, metadata,
+def train_candidate(name, model, train_split, val_split, metadata,
                     epochs=60, batch_size=64, lr=3e-4, weight_decay=1e-4,
                     device=None, logs_dir=None, accum_steps=1, patience=20):
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     train_loader = build_loader(train_split, batch_size, shuffle=True)
     val_loader = build_loader(val_split, batch_size, shuffle=False)
-    test_loader = build_loader(test_split, batch_size, shuffle=False)
     y_train = train_split[1]
     counts = np.bincount(y_train, minlength=3)
     # Effective number weighting
@@ -1235,25 +1127,23 @@ def train_candidate(name, model, train_split, val_split, test_split, metadata,
 
     if best_state is not None:
         model.load_state_dict(best_state)
-    test_ic = compute_ic(model, test_loader, device)
 
     if log_file_path:
         with open(log_file_path, 'a', encoding='utf-8') as f:
             f.write(f'\n=== Final Results ===\n')
             f.write(f'Best Val IC: {best_val_ic:.6f}\n')
-            f.write(f'Test IC: {test_ic:.6f}\n')
             f.write(f'End: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
         print(f'  Logs saved to: {log_file_path}')
 
-    print(f'  Final: Val IC {best_val_ic:.4f}, Test IC {test_ic:.4f}')
-    return best_val_ic, test_ic, model, train_losses, val_ics
+    print(f'  Final validation IC: {best_val_ic:.4f}')
+    return best_val_ic, model, train_losses, val_ics
 
 # %%
 # ==============================================
 # 9. LightGBM Training
 # ==============================================
 
-def train_lightgbm(train_split, val_split, test_split, metadata, output_path, cost_bps=1.0):
+def train_lightgbm(train_split, val_split, metadata, output_path, cost_bps=1.0):
     try:
         import lightgbm as lgb
     except ImportError:
@@ -1263,8 +1153,7 @@ def train_lightgbm(train_split, val_split, test_split, metadata, output_path, co
     print('\n--- Training LightGBM ---')
     X_tr = train_split[0].reshape(len(train_split[0]), -1)
     X_va = val_split[0].reshape(len(val_split[0]), -1)
-    X_te = test_split[0].reshape(len(test_split[0]), -1)
-    y_tr, y_va, y_te = train_split[1], val_split[1], test_split[1]
+    y_tr, y_va = train_split[1], val_split[1]
 
     model = lgb.train(
         {
@@ -1291,9 +1180,9 @@ def train_lightgbm(train_split, val_split, test_split, metadata, output_path, co
     with open(pkl_output, 'wb') as f:
         pickle.dump(model, f)
 
-    preds = model.predict(X_te)
-    test_ic, _ = spearmanr(preds[:, 2] - preds[:, 0], test_split[3])
-    print(f'  Final: Test IC {test_ic:.4f}')
+    preds = model.predict(X_va)
+    val_ic, _ = spearmanr(preds[:, 2] - preds[:, 0], val_split[3])
+    print(f'  Final: Validation IC {val_ic:.4f}')
 
     try:
         import onnxmltools
@@ -1308,7 +1197,7 @@ def train_lightgbm(train_split, val_split, test_split, metadata, output_path, co
     except ImportError:
         print('  onnxmltools not installed, skipping ONNX export')
 
-    return model, test_ic, preds
+    return model, val_ic, preds
 
 # %%
 # ==============================================
@@ -1422,15 +1311,28 @@ print('✅ Visualization tools ready!')
 
 print('\n📥 Loading and preprocessing data...')
 
-train_split, val_split, test_split, metadata = build_scaled_dataset_splits(
-    CSV_PATH,
+raw_frame = load_csv_robust(CSV_PATH)
+raw_train_split, raw_val_split, raw_test_split, annualization = build_dataset_splits(
+    raw_frame,
     seq_len=CFG.SEQ_LEN,
     k=CFG.K,
     vertical_bars=CFG.VERTICAL_BARS,
     train_ratio=0.70,
     val_ratio=0.15,
     embargo=CFG.EMBARGO,
-    scaler_output=SCALER_OUTPUT,
+)
+train_split, val_split, test_split, _ = _scale_splits(
+    raw_train_split, raw_val_split, raw_test_split, scaler_output=SCALER_OUTPUT
+)
+metadata = PipelineMetadata(
+    seq_len=CFG.SEQ_LEN,
+    n_features=train_split[0].shape[2],
+    train_size=len(train_split[0]),
+    val_size=len(val_split[0]),
+    test_size=len(test_split[0]),
+    annualization=annualization,
+    scaler_path=SCALER_OUTPUT,
+    cost_bps=CFG.COST_BPS,
 )
 
 print(f'✅ Data loaded successfully!')
@@ -1465,20 +1367,16 @@ print(f'  Using device: {device}')
 
 best_name = ''
 best_val_ic = -1e9
-best_test_ic = -1e9
 best_model = None
-best_train_losses = None
-best_val_ics = None
 model_results = []
 
 for name, model in candidates.items():
     print(f'\n--- Training {name.upper()} ---')
-    val_ic, test_ic, trained_model, train_losses, val_ics = train_candidate(
+    val_ic, trained_model, train_losses, val_ics = train_candidate(
         name=name,
         model=model,
         train_split=train_split,
         val_split=val_split,
-        test_split=test_split,
         metadata=metadata,
         epochs=CFG.EPOCHS,
         batch_size=CFG.BATCH_SIZE,
@@ -1492,7 +1390,6 @@ for name, model in candidates.items():
     model_results.append({
         'name': name,
         'val_ic': val_ic,
-        'test_ic': test_ic,
         'model': trained_model,
         'train_losses': train_losses,
         'val_ics': val_ics,
@@ -1505,21 +1402,22 @@ for name, model in candidates.items():
     if val_ic > best_val_ic:
         best_name = name
         best_val_ic = val_ic
-        best_test_ic = test_ic
         best_model = trained_model
-        best_train_losses = train_losses
-        best_val_ics = val_ics
 
 print('\n' + '=' * 60)
 print('MODEL TRAINING RESULTS SUMMARY')
 print('=' * 60)
-print(f'{"Model":<<12} {"Val IC":<<10} {"Test IC":<<10}')
+print(f'{"Model":<<12} {"Val IC":<<10}')
 print('-' * 60)
 for result in model_results:
     best_mark = ' 🏆' if result['name'] == best_name else ''
-    print(f'{result["name"]:<12} {result["val_ic"]:<10.4f} {result["test_ic"]:<10.4f}{best_mark}')
+    print(f'{result["name"]:<12} {result["val_ic"]:<10.4f}{best_mark}')
 print('=' * 60)
-print(f'\n🏆 Best Architecture by Val IC: {best_name} (Val IC: {best_val_ic:.4f}, Test IC: {best_test_ic:.4f})')
+print(f'\n🏆 Best Architecture by Val IC: {best_name} (Val IC: {best_val_ic:.4f})')
+
+test_loader = build_loader(test_split, batch_size=CFG.BATCH_SIZE, shuffle=False)
+best_test_ic = compute_ic(best_model, test_loader, device)
+print(f'One-time holdout result for selected model: {best_test_ic:.4f}')
 
 # %%
 # Stage 2: CPCV on training data for the best architecture (unbiased robustness check)
@@ -1532,11 +1430,11 @@ model_factory = lambda: instantiate_models(
 
 cpcv_result = run_cpcv(
     model_factory=model_factory,
-    X=train_split[0],
-    y=train_split[1],
-    bar_returns=train_split[3],
-    timestamps=train_split[4],
-    label_ends=train_split[5],
+    X=raw_train_split[0],
+    y=raw_train_split[1],
+    bar_returns=raw_train_split[3],
+    timestamps=raw_train_split[4],
+    label_end_timestamps=raw_train_split[5],
     n_splits=CFG.CPCV_SPLITS,
     annualization=metadata.annualization,
     cost_bps=CFG.COST_BPS,
@@ -1551,36 +1449,10 @@ plot_cpcv_results(
 )
 
 # %%
-# Stage 3: Retrain best model on train+val for final export
-print('\n🚀 Stage 3: Final training on train+val for production export...')
-
-def concat_splits(a, b):
-    return tuple(np.concatenate([a[i], b[i]], axis=0) for i in range(5))
-
-train_val_split = concat_splits(train_split, val_split)
-
-final_val_ic, final_test_ic, final_model, final_losses, final_val_ics = train_candidate(
-    name=f'{best_name}_final',
-    model=instantiate_models(best_name, metadata.seq_len, metadata.n_features, dropout=CFG.DROPOUT)[best_name],
-    train_split=train_val_split,
-    val_split=val_split,   # monitor early stopping on val
-    test_split=test_split,
-    metadata=metadata,
-    epochs=CFG.EPOCHS,
-    batch_size=CFG.BATCH_SIZE,
-    lr=CFG.LR,
-    weight_decay=CFG.WEIGHT_DECAY,
-    device=device,
-    logs_dir=LOGS_DIR,
-    accum_steps=CFG.GRAD_ACCUM_STEPS,
-    patience=CFG.EARLY_STOP_PATIENCE,
-)
-
-plot_training_curves(
-    final_losses, final_val_ics,
-    title=f'{best_name.upper()} Final Training (Train+Val)',
-    save_path=os.path.join(CHARTS_DIR, f'{best_name}_final_training.png'),
-)
+# Stage 3: export the validation-selected checkpoint without refitting on validation.
+print('\n🚀 Stage 3: Exporting the validation-selected training-only checkpoint...')
+final_test_ic = best_test_ic
+final_model = best_model
 
 # Export final ONNX
 print('\n📤 Exporting final model to ONNX...')
@@ -1593,18 +1465,19 @@ print(f'  Scaler saved to: {SCALER_OUTPUT}')
 print('\n' + '=' * 50)
 print('DEPLOYMENT GATE CHECK')
 print('=' * 50)
-print(f'Final Test IC: {final_test_ic:.4f} (min required: {CFG.MIN_IC_THRESHOLD})')
+print(f'Validation IC: {best_val_ic:.4f} (min required: {CFG.MIN_IC_THRESHOLD})')
+print(f'Holdout Test IC (report only): {final_test_ic:.4f}')
 print(f'CPCV P10 Sharpe: {cpcv_result["p10_sr"]:.4f} (must be > 0)')
 print(f'CPCV PSR: {cpcv_result["psr"]:.3f}')
 print('=' * 50)
 
-deploy_ok = (final_test_ic >= CFG.MIN_IC_THRESHOLD) and cpcv_result['deploy_gate']
+deploy_ok = (best_val_ic >= CFG.MIN_IC_THRESHOLD) and cpcv_result['deploy_gate']
 if deploy_ok:
     print('✅ READY FOR DEPLOYMENT')
 else:
     print('❌ DEPLOYMENT FAILED — do not push to MetaTrader')
-    if final_test_ic < CFG.MIN_IC_THRESHOLD:
-        print(f'   → Test IC {final_test_ic:.4f} below threshold {CFG.MIN_IC_THRESHOLD}')
+    if best_val_ic < CFG.MIN_IC_THRESHOLD:
+        print(f'   → Validation IC {best_val_ic:.4f} below threshold {CFG.MIN_IC_THRESHOLD}')
     if not cpcv_result['deploy_gate']:
         print(f'   → CPCV 10th percentile Sharpe is negative')
 print('=' * 50)
@@ -1613,8 +1486,8 @@ print('=' * 50)
 # Stage 4: LightGBM baseline
 print('\n🌲 Stage 4: Training LightGBM baseline...')
 
-lgb_model, lgb_test_ic, lgb_preds = train_lightgbm(
-    train_split, val_split, test_split, metadata,
+lgb_model, lgb_val_ic, lgb_preds = train_lightgbm(
+    train_split, val_split, metadata,
     output_path=os.path.join(MODELS_DIR, 'lgbm_model.onnx'),
     cost_bps=CFG.COST_BPS,
 )
@@ -1624,7 +1497,7 @@ if lgb_model is not None:
         lgb_model,
         save_path=os.path.join(CHARTS_DIR, 'feature_importance.png'),
     )
-    print(f'\nLightGBM Test IC: {lgb_test_ic:.4f}')
+    print(f'\nLightGBM Validation IC: {lgb_val_ic:.4f}')
 
 # %%
 # Stage 5: Regime & Turbulence Demo
@@ -1634,13 +1507,13 @@ train_rets = train_split[3]
 regime_detector = RegimeDetector(n_states=2, lookback=500)
 regime_detector.fit(train_rets)
 
-recent_rets = test_split[3][-20:]
+recent_rets = val_split[3][-20:]
 current_regime = regime_detector.predict(recent_rets)
 print(f'Current Market Regime: {current_regime}')
 
 if len(train_rets) > 100:
     historical_rets = train_rets[-200:].reshape(-1, 1)
-    current_returns_sample = test_split[3][-5:].reshape(-1, 1)
+    current_returns_sample = val_split[3][-5:].reshape(-1, 1)
     turbulence = compute_turbulence(current_returns_sample.mean(axis=0), historical_rets)
     print(f'Turbulence Score: {turbulence:.4f} (Threshold: {TURBULENCE_THRESHOLD})')
     print(f'Turbulence Alert: {"⚠️ HIGH" if turbulence > TURBULENCE_THRESHOLD else "✅ NORMAL"}')
@@ -1663,18 +1536,18 @@ print(f'  Logs:       {LOGS_DIR}')
 # 3. Adjust `CFG` hyperparameters in Section 3 as needed
 #
 # ### Outputs:
-# - **Models**: `Multi-Mt5/models/best_model.onnx` (versioned scaler at `scaler_v2.bin`)
+# - **Models**: `Multi-Mt5/models/best_model.onnx` and `scaler.bin`
 # - **Charts**: `Multi-Mt5/charts/`
 # - **Logs**: `Multi-Mt5/logs/`
 #
 # ### Deployment Checklist:
-# - [ ] Deployment gate passes (Test IC ≥ 0.03, CPCV P10 Sharpe > 0)
-# - [ ] Scaler binary version matches MT5 parser (magic `SCL2`, version `1`)
+# - [ ] Validation IC ≥ 0.03 and development-only CPCV P10 Sharpe > 0
+# - [ ] Scaler feature count matches the deployed ONNX input contract
 # - [ ] Regime is not "chop" or turbulence is not HIGH
 # - [ ] LightGBM IC is within 20% of neural model (sanity check)
 #
 # ### Notes:
-# - This notebook uses **RobustScaler** (not StandardScaler) — update MT5 parser if migrating from v1
+# - This notebook uses **RobustScaler** (center and scale); the binary layout is shared with the MT5 loader
 # - Calendar features are **always recomputed** from timestamps to ensure correctness
 # - Forward returns now use **next-open entry** for realistic backtesting
 # - CPCV is run **before** final export to avoid data leakage

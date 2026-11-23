@@ -36,7 +36,7 @@ struct SStructuralPoint
     double   strength;
     bool     isValid;
     bool     isBroken;
-
+    
     SStructuralPoint() : time(0), price(0), barIndex(0), isHigh(false),
                         strength(0), isValid(false), isBroken(false) {}
 };
@@ -84,7 +84,7 @@ struct STFStructure
     bool isBearish;
     bool isConsolidating;
     double strength;
-
+    
     STFStructure() : timeframe(PERIOD_CURRENT), isBullish(false), isBearish(false),
                     isConsolidating(true), strength(0) {}
 };
@@ -94,54 +94,54 @@ class CMarketStructureAnalyzer
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-
+    
     SStructuralPoint    m_highs[];
     SStructuralPoint    m_lows[];
     int                 m_highCount;
     int                 m_lowCount;
-
+    
     SMarketStructure    m_structure;
-
+    
     STFStructure        m_htf;
     STFStructure        m_mtf;
     STFStructure        m_ltf;
-
+    
     int                 m_swingStrength;
-
+    
     int                 m_atrHandle;
     int                 m_htfAtrHandle;
     int                 m_ltfAtrHandle;
-
+    
     void                FindStructuralPoints(int lookback);
     bool                HasMomentum();
     bool                HasVolume();
     ENUM_TIMEFRAMES     GetHigherTF(ENUM_TIMEFRAMES tf);
     ENUM_TIMEFRAMES     GetLowerTF(ENUM_TIMEFRAMES tf);
     void                AnalyzeStructure(STFStructure &tfStruct);
-
+    
 public:
                         CMarketStructureAnalyzer();
                        ~CMarketStructureAnalyzer();
-
+    
     double              GetATR(int period);
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, int swingStrength = 3);
     void                Update();
-
+    
     bool                IdentifyISP(bool &isBullish);
-
+    
     bool                ConfirmTrend(bool isBullish);
-
+    
     ENUM_BMS_TYPE       DetectBMS();
     bool                HasStructureBreak();
     bool                HasBMS(int maxBarsAgo = 5);
-
+    
     void                UpdateMultiplexStructure();
     bool                IsValidMultiplexSetup(ENUM_TRADE_SIGNAL &signal);
     bool                IsHTFAligned(bool bullish);
     bool                IsCISD(const ENUM_POSITION_TYPE direction, const int barShift = 1);
     bool                HasRecentBullishCISD(const int maxBarsAgo = 3);
     bool                HasRecentBearishCISD(const int maxBarsAgo = 3);
-
+    
     SMarketStructure    GetStructure() const { return m_structure; }
     bool                IsBullish() const { return m_structure.isBullishStructure; }
     bool                IsBearish() const { return m_structure.isBearishStructure; }
@@ -155,7 +155,7 @@ public:
     bool WasLastBreakBOS()   const { return m_structure.lastBreakWasBOS; }
     int  GetCHoCHCount()     const { return m_structure.chochCount; }
     int  GetBOSCount()       const { return m_structure.bosCount; }
-
+    
     int                 GetSwingHighCount() const { return m_highCount; }
     int                 GetSwingLowCount() const { return m_lowCount; }
     bool                GetLastSwingHigh(SStructuralPoint &swing);
@@ -194,9 +194,9 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_swingStrength = swingStrength;
-
+    
     m_structure = SMarketStructure();
-
+    
     // CIndicatorManager owns these handles and releases them
     CIndicatorManager* indManager = CIndicatorManager::Instance();
     if(indManager != NULL)
@@ -205,7 +205,7 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
         m_htfAtrHandle = indManager.GetATRHandle(m_symbol, GetHigherTF(m_timeframe), 14);
         m_ltfAtrHandle = indManager.GetATRHandle(m_symbol, GetLowerTF(m_timeframe), 14);
     }
-
+    
     return true;
 }
 
@@ -214,7 +214,7 @@ void CMarketStructureAnalyzer::Update()
     // Warmup guard: fewer than 100 calculated bars means the indicator has no usable history
     if(m_atrHandle != INVALID_HANDLE && BarsCalculated(m_atrHandle) < 100) return;
     if(m_htfAtrHandle != INVALID_HANDLE && BarsCalculated(m_htfAtrHandle) < 100) return;
-
+    
     FindStructuralPoints(100);
     DetectBMS();
     UpdateMultiplexStructure();
@@ -226,20 +226,20 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
     m_lowCount = 0;
     ArrayResize(m_highs, 0);
     ArrayResize(m_lows, 0);
-
+    
     double high[], low[];
     datetime time[];
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
-
+    
     // Start at shift 1: the forming bar would repaint swing points.
     if(CopyHigh(m_symbol, m_timeframe, 1, lookback, high) <= 0) return;
     if(CopyLow(m_symbol, m_timeframe, 1, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 1, lookback, time) <= 0) return;
-
+    
     int str = m_swingStrength;
-
+    
     // A swing high must be strictly higher than m_swingStrength bars on both sides
     for(int i = str; i < lookback - str; i++)
     {
@@ -252,7 +252,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
                 break;
             }
         }
-
+        
         if(isSwingHigh)
         {
             ArrayResize(m_highs, m_highCount + 1);
@@ -264,7 +264,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
             m_highCount++;
         }
     }
-
+    
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingLow = true;
@@ -276,7 +276,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
                 break;
             }
         }
-
+        
         if(isSwingLow)
         {
             ArrayResize(m_lows, m_lowCount + 1);
@@ -288,14 +288,14 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
             m_lowCount++;
         }
     }
-
+    
     // m_highs/m_lows fill newest-first (as-series scan), so [0] is the current swing
     if(m_highCount >= 2)
     {
         m_structure.currentHigh = m_highs[0].price;
         m_structure.previousHigh = m_highs[1].price;
     }
-
+    
     if(m_lowCount >= 2)
     {
         m_structure.currentLow = m_lows[0].price;
@@ -307,50 +307,63 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
 bool CMarketStructureAnalyzer::IdentifyISP(bool &isBullish)
 {
     double atr = GetATR(14);
-    double consolidationThreshold = atr * 0.30;
+    if(!MathIsValidNumber(atr) || atr <= 0.0 || Bars(m_symbol, m_timeframe) < 22)
+        return false;
 
+    double consolidationThreshold = atr * 0.30;
+    
     int consolidationBars = 0;
     double consolidationHigh = 0;
     double consolidationLow = DBL_MAX;
-
-    for(int i = 1; i <= 20; i++)
+    
+    for(int i = 2; i <= 21; i++)
     {
+        if(iTime(m_symbol, m_timeframe, i) == 0)
+            return false;
+
         double high = iHigh(m_symbol, m_timeframe, i);
         double low = iLow(m_symbol, m_timeframe, i);
-
+        if(!MathIsValidNumber(high) || !MathIsValidNumber(low) || high < low)
+            return false;
+        
         if(consolidationHigh == 0) consolidationHigh = high;
         if(consolidationLow == DBL_MAX) consolidationLow = low;
-
+        
         consolidationHigh = MathMax(consolidationHigh, high);
         consolidationLow = MathMin(consolidationLow, low);
-
+        
         double range = consolidationHigh - consolidationLow;
         if(range < consolidationThreshold)
             consolidationBars++;
         else
             break;
     }
-
+    
     if(consolidationBars < 5)
+        return false;
+    
+    if(iTime(m_symbol, m_timeframe, 1) == 0)
         return false;
 
     double currentHigh = iHigh(m_symbol, m_timeframe, 1);
     double currentLow = iLow(m_symbol, m_timeframe, 1);
-
+    if(!MathIsValidNumber(currentHigh) || !MathIsValidNumber(currentLow) || currentHigh < currentLow)
+        return false;
+    
     if(currentHigh > consolidationHigh)
     {
         isBullish = true;
         m_structure.currentHigh = currentHigh;
         return true;
     }
-
+    
     if(currentLow < consolidationLow)
     {
         isBullish = false;
         m_structure.currentLow = currentLow;
         return true;
     }
-
+    
     return false;
 }
 
@@ -360,7 +373,7 @@ bool CMarketStructureAnalyzer::ConfirmTrend(bool isBullish)
     {
         bool newHigh = (m_structure.currentHigh > m_structure.previousHigh);
         bool higherLow = (m_structure.currentLow > m_structure.previousLow);
-
+        
         if(newHigh && higherLow)
         {
             m_structure.isBullishStructure = true;
@@ -375,7 +388,7 @@ bool CMarketStructureAnalyzer::ConfirmTrend(bool isBullish)
     {
         bool newLow = (m_structure.currentLow < m_structure.previousLow);
         bool lowerHigh = (m_structure.currentHigh < m_structure.previousHigh);
-
+        
         if(newLow && lowerHigh)
         {
             m_structure.isBearishStructure = true;
@@ -386,7 +399,7 @@ bool CMarketStructureAnalyzer::ConfirmTrend(bool isBullish)
             return true;
         }
     }
-
+    
     return false;
 }
 
@@ -394,7 +407,7 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
 {
     if(!HasStructureBreak())
         return BMS_NONE;
-
+    
     // Classify by PeriodSeconds: a raw enum-range compare left H2..H12 out of every
     // branch, so those charts returned BMS_NONE forever.
     int tfSeconds = PeriodSeconds(m_timeframe);
@@ -431,11 +444,6 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
 {
     // Shift 1 only: classifying breaks off the forming bar flipped the flags tick-by-tick.
     double close = iClose(m_symbol, m_timeframe, 1);
-    // A break is an event, not a state: while price stays beyond the level every later close
-    // re-fired this function, re-stamping lastBMSTime and inflating bosCount/chochCount/
-    // consecutiveBMS, so HasBMS(n) stayed true for the whole extended move. Require the
-    // previous closed bar (shift 2) to have been inside the level for this to count as new.
-    double closePrev = iClose(m_symbol, m_timeframe, 2);
     m_structure.lastBreakType = STRUCT_BREAK_NONE;
     m_structure.lastBreakWasCHoCH = false;
     m_structure.lastBreakWasBOS   = false;
@@ -443,7 +451,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     if(m_structure.isBullishStructure)
     {
         // Bullish: BOS = close above currentHigh, CHoCH = close below previousLow
-        if(close > m_structure.currentHigh && (closePrev <= 0 || closePrev <= m_structure.currentHigh))
+        if(close > m_structure.currentHigh)
         {
             m_structure.lastBreakType   = STRUCT_BREAK_BOS;
             m_structure.lastBreakWasBOS = true;
@@ -455,7 +463,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
             return true;
         }
 
-        if(close < m_structure.previousLow && (closePrev <= 0 || closePrev >= m_structure.previousLow))
+        if(close < m_structure.previousLow)
         {
             m_structure.lastBreakType     = STRUCT_BREAK_CHOCH;
             m_structure.lastBreakWasCHoCH = true;
@@ -470,7 +478,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     else if(m_structure.isBearishStructure)
     {
         // Bearish: BOS = close below currentLow, CHoCH = close above previousHigh
-        if(close < m_structure.currentLow && (closePrev <= 0 || closePrev >= m_structure.currentLow))
+        if(close < m_structure.currentLow)
         {
             m_structure.lastBreakType   = STRUCT_BREAK_BOS;
             m_structure.lastBreakWasBOS = true;
@@ -482,7 +490,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
             return true;
         }
 
-        if(close > m_structure.previousHigh && (closePrev <= 0 || closePrev <= m_structure.previousHigh))
+        if(close > m_structure.previousHigh)
         {
             m_structure.lastBreakType     = STRUCT_BREAK_CHOCH;
             m_structure.lastBreakWasCHoCH = true;
@@ -496,7 +504,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     else
     {
         // Consolidating — any breakout is treated as CHoCH (new structure forming)
-        if(close > m_structure.currentHigh && (closePrev <= 0 || closePrev <= m_structure.currentHigh))
+        if(close > m_structure.currentHigh)
         {
             m_structure.isBullishStructure  = true;
             m_structure.isConsolidating     = false;
@@ -507,7 +515,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
             m_structure.lastChochTime       = TimeCurrent();
             return true;
         }
-        if(close < m_structure.currentLow && (closePrev <= 0 || closePrev >= m_structure.currentLow))
+        if(close < m_structure.currentLow)
         {
             m_structure.isBearishStructure  = true;
             m_structure.isConsolidating     = false;
@@ -528,7 +536,7 @@ bool CMarketStructureAnalyzer::HasBMS(int maxBarsAgo)
 {
     if(m_structure.lastBMSType == BMS_NONE)
         return false;
-
+    
     datetime thresholdTime = iTime(m_symbol, m_timeframe, maxBarsAgo);
     return (m_structure.lastBMSTime >= thresholdTime);
 }
@@ -539,21 +547,21 @@ bool CMarketStructureAnalyzer::HasMomentum()
     ArraySetAsSeries(rates, true);
     if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) != 3)
         return false;
-
+    
     for(int i = 0; i < 2; i++)
     {
         double body = MathAbs(rates[i].close - rates[i].open);
         double range = rates[i].high - rates[i].low;
-
+        
         if(range > 0 && body >= range * 0.70)
             return true;
     }
-
+    
     if(rates[0].close > rates[1].close && rates[1].close > rates[2].close)
         return true;
     if(rates[0].close < rates[1].close && rates[1].close < rates[2].close)
         return true;
-
+    
     return false;
 }
 
@@ -563,7 +571,7 @@ bool CMarketStructureAnalyzer::HasVolume()
     long vol1 = iVolume(m_symbol, m_timeframe, 1);
     long avgVol = 0;
     int validBars = 0;
-
+    
     for(int i = 2; i < 22; i++)
     {
         long vol = iVolume(m_symbol, m_timeframe, i);
@@ -575,7 +583,7 @@ bool CMarketStructureAnalyzer::HasVolume()
     }
     if(validBars > 0)
         avgVol /= validBars;
-
+    
     return (vol0 > avgVol * 1.5 || vol1 > avgVol * 1.5);
 }
 
@@ -589,18 +597,16 @@ double CMarketStructureAnalyzer::GetATR(int period)
         if(indManager != NULL)
             handle = indManager.GetATRHandle(m_symbol, m_timeframe, period);
     }
-
+    
     if(handle == INVALID_HANDLE) return 0;
-
+    
     double value[];
     ArraySetAsSeries(value, true);
-    // Shift 1: the forming bar's ATR is still settling and reads low just after a bar opens;
-    // every other ATR consumer in the book uses the last closed bar.
-    if(CopyBuffer(handle, 0, 1, 1, value) > 0)
+    if(CopyBuffer(handle, 0, 0, 1, value) > 0)
     {
         return value[0];
     }
-
+    
     return 0;
 }
 
@@ -609,7 +615,7 @@ void CMarketStructureAnalyzer::UpdateMultiplexStructure()
     m_htf.timeframe = GetHigherTF(m_timeframe);
     m_mtf.timeframe = m_timeframe;
     m_ltf.timeframe = GetLowerTF(m_timeframe);
-
+    
     AnalyzeStructure(m_htf);
     AnalyzeStructure(m_mtf);
     AnalyzeStructure(m_ltf);
@@ -653,15 +659,15 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(close, true);
-
-    if(CopyHigh(m_symbol, tfStruct.timeframe, 0, 50, high) <= 0) return;
-    if(CopyLow(m_symbol, tfStruct.timeframe, 0, 50, low) <= 0) return;
-    if(CopyClose(m_symbol, tfStruct.timeframe, 0, 50, close) <= 0) return;
-
+    
+    if(CopyHigh(m_symbol, tfStruct.timeframe, 1, 50, high) <= 0) return;
+    if(CopyLow(m_symbol, tfStruct.timeframe, 1, 50, low) <= 0) return;
+    if(CopyClose(m_symbol, tfStruct.timeframe, 1, 50, close) <= 0) return;
+    
     // Swing = beyond both neighbours one and two bars either side; only the first two count
     int swingHigh1 = -1, swingHigh2 = -1;
     int swingLow1 = -1, swingLow2 = -1;
-
+    
     for(int i = 2; i < 48; i++)
     {
         if(high[i] > high[i-1] && high[i] > high[i+1] &&
@@ -671,7 +677,7 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
             else if(swingHigh2 == -1) { swingHigh2 = i; break; }
         }
     }
-
+    
     for(int i = 2; i < 48; i++)
     {
         if(low[i] < low[i-1] && low[i] < low[i+1] &&
@@ -681,19 +687,19 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
             else if(swingLow2 == -1) { swingLow2 = i; break; }
         }
     }
-
+    
     // Bullish needs a higher high AND a higher low; bearish the mirror image
     tfStruct.isBullish = false;
     tfStruct.isBearish = false;
     tfStruct.isConsolidating = true;
-
+    
     if(swingHigh1 >= 0 && swingHigh2 >= 0 && swingLow1 >= 0 && swingLow2 >= 0)
     {
         bool higherHigh = (high[swingHigh1] > high[swingHigh2]);
         bool higherLow = (low[swingLow1] > low[swingLow2]);
         bool lowerHigh = (high[swingHigh1] < high[swingHigh2]);
         bool lowerLow = (low[swingLow1] < low[swingLow2]);
-
+        
         if(higherHigh && higherLow)
         {
             tfStruct.isBullish = true;
@@ -712,27 +718,27 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
 bool CMarketStructureAnalyzer::IsValidMultiplexSetup(ENUM_TRADE_SIGNAL &signal)
 {
     UpdateMultiplexStructure();
-
+    
     // HTF and LTF must agree; the MTF is computed but not consulted here
     if(m_htf.isBullish && m_ltf.isBullish)
     {
         signal = TRADE_SIGNAL_BUY;
         return true;
     }
-
+    
     if(m_htf.isBearish && m_ltf.isBearish)
     {
         signal = TRADE_SIGNAL_SELL;
         return true;
     }
-
+    
     return false;
 }
 
 bool CMarketStructureAnalyzer::IsHTFAligned(bool bullish)
 {
     UpdateMultiplexStructure();
-
+    
     if(bullish)
         return m_htf.isBullish;
     else
@@ -827,9 +833,9 @@ bool CMarketStructureAnalyzer::DetectFastCHOCH()
 
 bool CMarketStructureAnalyzer::DetectFastCHOCH(bool &bullishBreak)
 {
-    bullishBreak = false;
     // Closed bar only: the forming-bar close flip-flopped this bonus tick-by-tick
     // inside FVGScalper and AsianRangeBreak confidence scores.
+    bullishBreak = false;
     double close1 = iClose(m_symbol, m_timeframe, 1);
     if(close1 <= 0) return false;
 

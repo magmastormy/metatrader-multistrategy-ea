@@ -9,6 +9,7 @@
 #include "../../Core/Cache/ConsensusCache.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
+#include "../../Core/Utils/IntentTrace.mqh"
 
 class CSignalGenerator
 {
@@ -47,7 +48,9 @@ public:
         bool valid;
         string vetoReason;
 
-        SSignalResult() : signal(TRADE_SIGNAL_NONE), confidence(0), confluence(0), valid(false) {}
+        string intentId;
+        
+        SSignalResult() : signal(TRADE_SIGNAL_NONE), confidence(0), confluence(0), valid(false), intentId("") {}
     };
 
     CSignalGenerator() : m_managerCount(0), m_consensusCache(NULL),
@@ -348,21 +351,26 @@ public:
             // New-bar mode: evaluate a symbol at most once per bar of its chart timeframe. Without
             // this gate the 1s cadence re-evaluates unchanged bars and dormancy blacklists quiet
             // symbols within seconds.
+            datetime decisionBarTime = iTime(symbol, (ENUM_TIMEFRAMES)Period(), 0);
             if(evalMode == EVAL_MODE_NEW_BAR)
             {
-                datetime barTime = iTime(symbol, (ENUM_TIMEFRAMES)Period(), 0);
-                if(barTime <= 0 || barTime == m_lastEvalBar[managerIdx]) return;
-                m_lastEvalBar[managerIdx] = barTime;
+                if(decisionBarTime <= 0 || decisionBarTime == m_lastEvalBar[managerIdx]) return;
+                m_lastEvalBar[managerIdx] = decisionBarTime;
             }
             evaluationsUsed++;
+
+            string intentId = CIntentTrace::BuildId(symbol, decisionBarTime,
+                                                     (ENUM_TIMEFRAMES)Period(), evalMode);
 
             double confidence = 0.0;
             int confluence = 0;
 
-            ENUM_TRADE_SIGNAL signal = manager.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
+            ENUM_TRADE_SIGNAL signal = manager.GetConsensusSignalForSymbolWithConfluenceMode(
+                symbol, confidence, confluence, evalMode, intentId);
 
             if(signal == TRADE_SIGNAL_NONE)
             {
+                CIntentTrace::LogStage(intentId, symbol, "CONSENSUS", "REJECT", "no_actionable_consensus");
                 RecordDormancyWarning(symbol);
                 return;
             }
@@ -379,6 +387,7 @@ public:
             results[managerIdx].decisionContext = ctx;
             results[managerIdx].valid = true;
             results[managerIdx].vetoReason = "";
+            results[managerIdx].intentId = intentId;
             signalsGenerated++;
         }
 

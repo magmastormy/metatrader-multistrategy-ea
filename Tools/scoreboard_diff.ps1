@@ -1,12 +1,12 @@
 <#+
 .SYNOPSIS
-    Diff two per-window strategy scoreboards and attribute the P&L difference to individual rows.
+    Compare per-window strategy scoreboard activity and health fields.
 
 .DESCRIPTION
-    strategy_scoreboard.csv is the only per-strategy record the EA writes: one row per symbol+strategy with
-    trade count, wins, average profit and health. Two arms of a single-variable A/B on the same cold window
-    therefore differ trade by trade, and this prints which rows the arms disagree about, sorted by the change
-    in trade count and in wins, so a P&L delta can be read as "these rows traded more, these rows got worse".
+    strategy_scoreboard.csv contains symbol+strategy activity and health fields, not clean causal dollar P&L.
+    This reports row-level changes in trade counts, wins, average profit and health; multi-contributor outcomes
+    cannot be assigned to one strategy from these rows. Use position-keyed singleton outcomes and paired cold-
+    window A/Bs before making strategy-level removal decisions.
 
 .PARAMETER Base
     Scoreboard CSV of the control arm.
@@ -29,14 +29,13 @@ function Read-Sb([string]$path) {
     foreach ($ln in ($lines | Select-Object -Skip 1)) {
         if (-not $ln.Trim()) { continue }
         $q = $ln -split ';'
-        if ($q.Count -lt 11) { continue }
+        if ($q.Count -lt 10) { continue }
         $key = "$($q[0])|$($q[1])"
         $rows[$key] = [pscustomobject]@{
             sym = $q[0]; name = $q[1]
             trades = [int]$q[2]; success = [int]$q[3]; fail = [int]$q[4]; wins = [int]$q[5]
             avg = 0.0
             health = 0.0
-            parked = ($q[10].Trim() -ne '0' -and $q[10].Trim() -ne '')
         }
         $rows[$key].avg = [double]::Parse($q[8], [Globalization.CultureInfo]::InvariantCulture)
         $rows[$key].health = [double]::Parse($q[9], [Globalization.CultureInfo]::InvariantCulture)
@@ -47,25 +46,26 @@ function Read-Sb([string]$path) {
 $A = Read-Sb $Base
 $B = Read-Sb $Variant
 
+Write-Output 'NOTE: scoreboard deltas are activity/health diagnostics, not causal per-strategy P&L.'
+
 $all = @()
 foreach ($k in ($A.Keys + $B.Keys | Sort-Object -Unique)) {
     $x = $A[$k]; $y = $B[$k]
-    if ($null -eq $x) { $x = [pscustomobject]@{ sym=($k -split '\|')[0]; name=($k -split '\|')[1]; trades=0; wins=0; avg=0.0; health=0.0; parked=$false } }
-    if ($null -eq $y) { $y = [pscustomobject]@{ sym=($k -split '\|')[0]; name=($k -split '\|')[1]; trades=0; wins=0; avg=0.0; health=0.0; parked=$false } }
+    if ($null -eq $x) { $x = [pscustomobject]@{ sym=($k -split '\|')[0]; name=($k -split '\|')[1]; trades=0; wins=0; avg=0.0; health=0.0 } }
+    if ($null -eq $y) { $y = [pscustomobject]@{ sym=($k -split '\|')[0]; name=($k -split '\|')[1]; trades=0; wins=0; avg=0.0; health=0.0 } }
     $all += [pscustomobject]@{
         sym=$x.sym; name=$x.name
         tA=$x.trades; tB=$y.trades; dT=$y.trades - $x.trades
         wA=$x.wins;   wB=$y.wins;   dW=$y.wins - $x.wins
         aA=$x.avg;    aB=$y.avg;    dAvg=[math]::Round($y.avg - $x.avg, 2)
         hA=[math]::Round($x.health,2); hB=[math]::Round($y.health,2)
-        pA=$x.parked; pB=$y.parked
     }
 }
 
 $rowsA = $all | Where-Object { $_.tA -gt 0 }
 $rowsB = $all | Where-Object { $_.tB -gt 0 }
-"base   : with trades $($rowsA.Count) | total trades $(($rowsA | Measure-Object tA -Sum).Sum) | wins $(($rowsA | Measure-Object wA -Sum).Sum) | parked $(($rowsA | Where-Object pA).Count)"
-"variant: with trades $($rowsB.Count) | total trades $(($rowsB | Measure-Object tB -Sum).Sum) | wins $(($rowsB | Measure-Object wB -Sum).Sum) | parked $(($rowsB | Where-Object pB).Count)"
+"base   : with trades $($rowsA.Count) | total trades $(($rowsA | Measure-Object tA -Sum).Sum) | wins $(($rowsA | Measure-Object wA -Sum).Sum)"
+"variant: with trades $($rowsB.Count) | total trades $(($rowsB | Measure-Object tB -Sum).Sum) | wins $(($rowsB | Measure-Object wB -Sum).Sum)"
 ""
 "--- rows whose trade count moved most ---"
 $all | Where-Object { $_.dT -ne 0 } | Sort-Object { [math]::Abs($_.dT) } -Descending | Select-Object -First $Top |
@@ -75,12 +75,6 @@ $all | Where-Object { $_.dT -ne 0 } | Sort-Object { [math]::Abs($_.dT) } -Descen
 "--- rows whose win count moved most ---"
 $all | Where-Object { $_.dW -ne 0 } | Sort-Object { [math]::Abs($_.dW) } -Descending | Select-Object -First $Top |
     ForEach-Object { "  wins {0,3} -> {1,3}  ({2,4})  trades {3,4} -> {4,4}  avg {5,8:N2} -> {6,8:N2}  {7} {8}" -f $_.wA,$_.wB,$_.dW,$_.tA,$_.tB,$_.aA,$_.aB,$_.sym,$_.name }
-
-""
-"--- rows that only the variant parked / only the base parked ---"
-foreach ($r in ($all | Where-Object { $_.pA -ne $_.pB })) {
-    "  parked {0,5} -> {1,5}  health {2} -> {3}  {4} {5}" -f $_.pA,$_.pB,$_.hA,$_.hB,$_.sym,$_.name
-}
 
 ""
 "--- aggregate by strategy name ---"

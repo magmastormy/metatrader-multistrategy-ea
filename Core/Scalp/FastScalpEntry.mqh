@@ -1,7 +1,7 @@
 // Owns the scalp entry path extracted from CFastScalpEngine: entry gates, risk gating, lot finalization, send.
 // Methods are `static` and mutable engine state (cooldown stamp, risk budget, trackers) arrives by reference, so
 // side effects and their ordering match the inline original. The pre-trade CUnifiedRiskManager validation here
-// is AGENTS.md Invariant #1; the partial-fill risk scaling keeps its behaviour.
+// is AGENTS.md Invariant #1; the partial-fill risk scaling keeps its L10-015 behaviour.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_ENTRY_MQH
@@ -15,31 +15,33 @@
 #include "FastScalpFilters.mqh"
 #include "FastScalpSizing.mqh"
 #include "FastScalpPositionTracker.mqh"
-#include "FastScalpRiskBudget.mqh"
 #include "FastScalpAsyncTracker.mqh"
 
-// Forward declaration for AI adapter â€?only ever NULL-checked here
+// Forward declaration for AI adapter (L10-018) -only ever NULL-checked here
 class CAIAdapter;
 
-// CFastScalpEntry â€?stateless scalp entry gating + execution
+// CFastScalpEntry -stateless scalp entry gating + execution
 class CFastScalpEntry
 {
 public:
 // Pre-signal entry gates: cooldown, max positions, risk budget
    static bool PassesEntryGates(const SScalpConfig &config,
                                 datetime lastScalpTime,
-                                double usedScalpRiskPct)
+                                double usedScalpRiskPct,
+                                double candidateRiskPct,
+                                const long expectedMagic)
    {
       datetime now = TimeCurrent();
       ulong elapsedMs = (ulong)((now - lastScalpTime) * 1000);
       if(lastScalpTime > 0 && elapsedMs < (ulong)config.scalpCooldownMs)
          return false;
 
-      int scalpCount = CFastScalpPositionTracker::CountScalpPositions();
+      int scalpCount = CFastScalpPositionTracker::CountScalpPositions(expectedMagic);
       if(scalpCount >= config.maxScalpPositions)
          return false;
 
-      if(usedScalpRiskPct >= config.scalpRiskPct)
+      if(!(candidateRiskPct > 0.0) || candidateRiskPct != candidateRiskPct || candidateRiskPct >= 1e308 ||
+         usedScalpRiskPct + candidateRiskPct > config.scalpRiskPct)
          return false;
 
       return true;
@@ -54,7 +56,11 @@ public:
                                      const SScalpConfig &config,
                                      CUnifiedRiskManager* riskManager)
    {
-      if(riskManager != NULL && riskManager.IsInitialized())
+      if(riskManager == NULL || !riskManager.IsInitialized())
+      {
+         PrintFormat("[SCALP-REJECTED] %s | reason=UnifiedRiskManager unavailable | confidence=%.2f", symbol, confidence);
+         return false;
+      }
       {
          ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
          STradeValidationRequest request;
@@ -101,7 +107,7 @@ public:
       double symbolMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
       if(lotSize < symbolMinLot)
       {
-         PrintFormat("[SCALP-LOT-MIN] %s | capped lot %.2f < min lot %.2f â€?skipping scalp signal",
+         PrintFormat("[SCALP-LOT-MIN] %s | capped lot %.2f < min lot %.2f -skipping scalp signal",
                      symbol, lotSize, symbolMinLot);
          return false;
       }
@@ -119,11 +125,17 @@ public:
                        CAIAdapter* aiAdapter,
                        CFastScalpAsyncTracker &asyncTracker,
                        CFastScalpPositionTracker &positionTracker,
-                       CFastScalpRiskBudget &riskBudget,
                        datetime &lastScalpTime)
    {
-      if(tradeManager == NULL)
+       if(tradeManager == NULL || riskManager == NULL || !riskManager.IsInitialized())
          return false;
+
+       double riskPerTrade = riskManager.GetActiveRiskPerTradePercent();
+       if(!(riskPerTrade > 0.0) || riskPerTrade != riskPerTrade || riskPerTrade >= 1e308)
+       {
+          PrintFormat("[SCALP-REJECTED] %s | invalid active risk reservation %.6f%%", symbol, riskPerTrade);
+          return false;
+       }
 
       ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
@@ -159,12 +171,18 @@ public:
       // the margin cap. FinalizeLotSize can only shrink or refuse, so re-validating here approved the
       // same trade a second time and took a second virtual reservation for it.
 
-      // AI-VOTE logging. Unreachable today: the only Initialize call site
+      // L10-018: AI-VOTE logging. Unreachable today: the only Initialize call site
       // (EAOrchestrator.mqh:1162) leaves the optional aiAdapter defaulted to NULL.
       if(aiAdapter != NULL)
       {
          PrintFormat("[AI-VOTE] symbol=%s strategy=FastScalp vote=%s",
                      symbol, signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
+      }
+
+      if(!asyncTracker.CanTrackNewOrder())
+      {
+         PrintFormat("[SCALP-REJECTED] %s | unresolved-order tracker capacity reached", symbol);
+         return false;
       }
 
       //--- Async mode: use TradeManager's SendTradeAsync (which includes preflight)
@@ -176,7 +194,7 @@ public:
          ulong magic = (ulong)((long)magicNumber + MAGIC_ENGINE_FAST_SCALP);
          bool sent = tradeManager.SendTradeAsync(orderType, symbol, lotSize,
                                                   entryPrice, sl, tp,
-                                                  magic, 5000);
+                                                  magic, 5000, riskPerTrade);
          if(!sent)
          {
             PrintFormat("[SCALP-ASYNC-FAILED] %s | %s | lot=%.2f",
@@ -186,19 +204,22 @@ public:
             return false;
          }
 
-         // (T-10): the request we just submitted was appended at the END
+         // Batch 152 (T-10): the request we just submitted was appended at the END
          // of the pending array - index 0 is the oldest, possibly unrelated entry.
          int lastPendingIdx = tradeManager.GetPendingAsyncCount() - 1;
-         asyncTracker.OnAsyncOrderSent(lastPendingIdx >= 0 ?
-                          tradeManager.GetPendingAsyncTicket(lastPendingIdx) : 0,
-                          symbol, direction, lotSize, entryPrice, sl, tp);
+         ulong orderTicket = lastPendingIdx >= 0 ? tradeManager.GetPendingAsyncTicket(lastPendingIdx) : 0;
+         bool tracked = asyncTracker.OnAsyncOrderSent(orderTicket,
+                                                       symbol, direction, lotSize, entryPrice, sl, tp,
+                                                       riskPerTrade);
 
          lastScalpTime = TimeCurrent();
 
-         // Track risk usage optimistically (will adjust on confirmation)
-         double riskPerTrade = riskManager != NULL ?
-                               riskManager.GetActiveRiskPerTradePercent() : 1.0;
-         riskBudget.Add(riskPerTrade);
+         if(!tracked)
+         {
+            asyncTracker.MarkUntrackedRiskReservation(riskPerTrade, orderTicket, symbol, TimeCurrent());
+            PrintFormat("[SCALP-ASYNC-TRACKING-FAILURE] order=%I64u | %s | risk gate now fails closed",
+                        orderTicket, symbol);
+         }
 
          PrintFormat("[SCALP-ASYNC-SENT] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f",
                      symbol,
@@ -227,10 +248,7 @@ public:
       {
          lastScalpTime = TimeCurrent();
 
-         double riskPerTrade = riskManager != NULL ?
-                               riskManager.GetActiveRiskPerTradePercent() : 1.0;
-
-         // Check for partial fill and scale risk budget
+         // L10-015: Scale the unresolved reservation for any partial fill.
          STradeExecutionReceipt receipt;
          tradeManager.GetLastExecutionReceipt(receipt);
          double fillRatio = 1.0;
@@ -244,16 +262,12 @@ public:
                              symbol, receipt.requestedVolume, receipt.filledVolume, fillRatio, riskPerTrade);
              }
          }
-
-         riskBudget.Add(riskPerTrade);
-
-         // Register the position for tick-level management
-         // Tracker slots are keyed by position ticket; GetLastTicket() is the order ticket, and the
-         // sync pass dropped such a slot and freed its risk budget while the position was still open.
+         // Register the position for tick-level management.
          ulong ticket = 0;
          double filledVolume = 0.0;
          bool positionVisible =
              CTradeMgrPreflight::FindFreshPositionForSend(symbol, orderType, lotSize, ticket, filledVolume, "SCALP");
+         ulong orderTicket = tradeManager.GetLastTicket();
 
          double filledEntryPrice = tradeManager.GetLastRequestedPrice();
          double filledPoint = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -282,8 +296,21 @@ public:
                oneRPrice = filledEntryPrice - config.scalpSLPips * filledPoint;
          }
 
-         if(positionVisible)
-            positionTracker.RegisterScalpPosition(ticket, symbol, filledEntryPrice, filledSL, filledTP, oneRPrice);
+         if(positionVisible && !positionTracker.RegisterScalpPosition(ticket, symbol, filledEntryPrice, filledSL, filledTP, oneRPrice))
+             PrintFormat("[SCALP-TRACKING-FAILURE] position=%I64u | %s | broker-derived risk remains counted", ticket, symbol);
+
+         if(!positionVisible)
+         {
+            int direction = (orderType == ORDER_TYPE_BUY) ? 1 : -1;
+            bool tracked = asyncTracker.OnAsyncOrderSent(orderTicket, symbol, direction, lotSize,
+                                                          entryPrice, sl, tp, riskPerTrade);
+            if(!tracked)
+            {
+               asyncTracker.MarkUntrackedRiskReservation(riskPerTrade, orderTicket, symbol, TimeCurrent());
+               PrintFormat("[SCALP-TRACKING-FAILURE] order=%I64u | %s | unresolved risk held fail-closed",
+                           orderTicket, symbol);
+            }
+         }
 
          PrintFormat("[SCALP-ENTRY] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | ticket=%I64u%s",
                      symbol,

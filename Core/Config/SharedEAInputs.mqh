@@ -3,21 +3,21 @@
 //
 // Mode-specific inputs (different defaults or unique to one EA) remain in each
 // EA file:
-// AI master toggles: InpEnableAIMode, InpEnableNeuralNetwork, InpEnableTransformer,
-// InpEnableEnsemble, InpEnableOnnxAI, InpEnablePythonBridgeAI,
-// InpPythonBridgeMode
-// Risk: InpMaxRiskPerTrade, InpMaxDailyRisk, InpMaxPortfolioRisk,
-// InpDailyLossLimitPercent
-// Lot rounding: InpAllowMinLotRoundUp, InpMinLotRiskMultiplier
-// Momentum scalping: InpEnableMomentumScalping
-// Strategy set: InpUseCuratedStrategySet
-// New-strategy toggles: InpEnableKalmanMR, InpEnableChangepointDetect,
-// InpEnableFourStateRegime, InpEnableVolTargeting,
-// InpEnableLiquiditySweep, InpEnableRangeCompression
-// Testing EA only: InpCompleteTestProfile, InpTestProfileOverrideAll,
-// InpIncludeDeadCodeInProfiles
-// Autonomous EA only: InpBasketEquityStopEnabled, InpBasketEquityStopDrawdownPct,
-// InpBasketEquityStopCloseOnBreach
+//   AI master toggles:  InpEnableAIMode, InpEnableNeuralNetwork, InpEnableTransformer,
+//                       InpEnableEnsemble, InpEnableOnnxAI, InpEnablePythonBridgeAI,
+//                       InpPythonBridgeMode
+//   Risk:               InpMaxRiskPerTrade, InpMaxDailyRisk, InpMaxPortfolioRisk,
+//                       InpDailyLossLimitPercent
+//   Lot rounding:       InpAllowMinLotRoundUp, InpMinLotRiskMultiplier
+//   Momentum scalping:  InpEnableMomentumScalping
+//   Strategy set:       InpUseCuratedStrategySet
+//   Batch 114 strategies: InpEnableKalmanMR, InpEnableChangepointDetect,
+//                       InpEnableFourStateRegime, InpEnableVolTargeting,
+//                       InpEnableLiquiditySweep, InpEnableRangeCompression
+//   Testing EA only:    InpCompleteTestProfile, InpTestProfileOverrideAll,
+//                       InpIncludeDeadCodeInProfiles
+//   Autonomous EA only: InpBasketEquityStopEnabled, InpBasketEquityStopDrawdownPct,
+//                       InpBasketEquityStopCloseOnBreach
 //
 // Everything below is identical in both EAs and is mapped into SOrchestratorConfig
 // by PopulateSharedOrchestratorConfig().
@@ -31,7 +31,7 @@
 
 input group "Identity & EA Mode";
 input long     InpMagicNumber = 123456;
-input int      InpConfigVersion = 109;  // Config version for migration tracking
+input int      InpConfigVersion = 109;  // L7-005: Config version for migration tracking
 input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
 input bool     InpStrictEAMode = false;
 
@@ -60,15 +60,13 @@ input double   InpPortfolioRiskStopFallbackPoints = 100.0;
 
 input group "Portfolio & Position Limits";
 input int      InpMaxPositionsTotal = 15;
-input int      InpMaxPositionsTotalMin = 3;
 input int      InpMaxPositionsPerSymbol = 5;
-input int      InpMaxPositionsPerSymbolMin = 1;
 input int      InpMaxTradeSendsPerCycle = 3;
 input int      InpMinSecondsBetweenTrades = 10;
 input int      InpMaxPositionsSameBase = 3;
 
 input group "Symbol Universe & Liquidity";
-// The two Volatility indices are removed from the factory universe.
+// Batch 292: the two Volatility indices are removed from the factory universe.
 // Measured on five paired cold 7-day windows (Volatility 75 Index M15, Model=1, deposit 10,000,
 // InpQuorumProfile=1, InpMinLiveVoters=1, scalp engine off, every run cold):
 //   09.01-09.08  +5.945% vs +3.811%   +2.13 pp
@@ -81,10 +79,10 @@ input group "Symbol Universe & Liquidity";
 // The full-universe arm's losses were five closes of Volatility 75 Index (-116.53 in the 10.06 window);
 // the gain is dominated by Crash 1000 (up to +1,848.83 on 85 closes in one week), which is why the arm's
 // sd is larger than the full universe's while its worst window is smaller. Restore the two indices by
-// naming them here or in InpSymbolsToTrade; note InpAutoAddChartSymbol re-injects the chart symbol.
-// Three more rows are out - EURUSD, USDJPY and XAUUSD - because they lost in every window in
+// naming them here or in InpSymbolsToTrade; the chart symbol is never added implicitly.
+// Batch 297: three more rows are out - EURUSD, USDJPY and XAUUSD - because they lost in every window in
 // which they traded, and the daily risk budget was being spent on them instead of on Crash 1000.
-// Measured on five paired cold 7-day windows against the eleven-symbol arm above, same binary,
+// Measured on five paired cold 7-day windows against the eleven-symbol arm above, same Batch 293 binary,
 // same windows, all four state files cleared before every launch:
 //   08.01-08.08  +1.630% vs -3.583%   +5.21 pp
 //   08.08-08.15  +7.276% vs +7.177%   +0.10 pp
@@ -97,9 +95,8 @@ input group "Symbol Universe & Liquidity";
 // within 0.26 pp. The argument for shipping is dominance, not t: better mean, less than half the sd and a
 // worst window that is +1.63% instead of -3.58% on the same five windows and the same binary. Three of
 // five pairings are flat, so the removed rows only ever mattered when they were losing.
-// Restore any row by naming it here; note InpAutoAddChartSymbol still re-injects the chart symbol.
+// Restore any row by naming it here. The chart symbol is never added implicitly.
 input string   InpSymbolsToTrade = "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD";
-input bool     InpAutoAddChartSymbol = true;       // Auto-add chart symbol to universe if missing
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
 input bool     InpSymbolEnableVolumeCheck = true;
@@ -187,7 +184,7 @@ input double   InpWeightICTStructureShift = 1.6;
 
 input group "Regime, Skew & Family Weighting";
 input bool     InpEnableSessionWeights = true;
-input int      InpSessionDSTOffsetHours = 0;  // DST offset for session weights (-12 to +12)
+input int      InpSessionDSTOffsetHours = 0;  // L7-022: DST offset for session weights (-12 to +12)
 input bool     InpEnableSkewStepAnalyzer = true;
 input bool     InpEnableFamilyWeightMatrix = true;
 input int      InpSkewStepBufferSize = 200;
@@ -198,7 +195,7 @@ input double   InpSkewStepLargeThreshold = 0.5;
 input group "Consensus & Quorum";
 input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
 input double   InpQuorumThreshold = 0.60;
-// Measured default: 1, not 2. Six cold windows on one instrument gave the one-voter arm mean +0.46%
+// Measured default (Batch 288): 1, not 2. Six cold windows on one instrument gave the one-voter arm mean +0.46%
 // (stdev 0.92 pp, 3 wins of 6) against the committee's mean -1.31% (4 losses of 4), paired delta +1.80 pp with
 // t = 2.6 at n = 4, p about 0.08 and never worse than 0.11 pp. Rejections fall from 2,054-2,819 per window to
 // 139-227. This is the only single-variable setting in this repository with multi-window evidence; it is a
@@ -222,7 +219,7 @@ input double   InpSingleVoterFloor = 0.70;
 input group "Per-Symbol Loss Streak";
 input int      InpSymbolLossStreakLimit = 0;     // consecutive losing closes on one symbol that stand it down; 0 = off
 input int      InpSymbolLossStreakCooldownMin = 60; // how long that symbol is held after the limit is hit
-// The sizing half of the same idea: holding a row was measured to be a reallocation rule:
+// The sizing half of the same idea (Batch 287). Batch 286 measured that HOLDING a row is a reallocation rule:
 // the slot and the risk budget pass to the next symbol, which took a +0.983% window down to -3.767%. This instead
 // shrinks the risk fraction for a symbol in a losing run and leaves the entry free. 1.0 = off. The number to
 // judge it by is cross-window stdev versus mean, not mean alone.
@@ -238,7 +235,7 @@ input int      InpPythonBridgeReconnectBackoffMs = 2000;
 
 input group "AI/ML - External LLM";
 input bool     InpEnableExternalLLM = false;
-input string   InpExternalLLMEndpoint = "";
+input string   InpExternalLLMEndpoint = "http://localhost:11434";
 
 input group "AI/ML - Tuning";
 input double   InpAIConfidenceThreshold = 0.70;
@@ -252,8 +249,8 @@ input bool     InpEnableNNPseudoLabeling = true;
 input int      InpNNPseudoLabelBarsAhead = 10;
 input int      InpNNSampleIntervalSeconds = 15;
 input int      InpNNCheckpointEveryLabeled = 3;
-input bool     InpEnableNNAttributionDiagnostics = true;   // the setter is wired now; true is what every build has printed
-input bool     InpRunNNAttributionSelfTest = false;        // callable now; runs the prediction-comment and map round trip at init
+input bool     InpEnableNNAttributionDiagnostics = true;   // Batch 238: the setter is wired now; true is what every build has printed
+input bool     InpRunNNAttributionSelfTest = false;        // Batch 238: callable now; runs the prediction-comment and map round trip at init
 
 input group "AI/ML - Authority & Live Gating";
 input bool     InpEnableLiveAuthorityGate = false;
@@ -275,21 +272,10 @@ input bool     InpIntrabarDynamicQuorumEnabled = true;
 input int      InpMaxSignalEvaluationsPerCycle = 8;
 input int      InpReadinessReuseTtlSeconds = 60;
 
-input group "Intrabar Eligibility Policies";
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
 
 input group "Pipeline, Spread & Crisis Filters";
 input bool     InpUseSignalPipeline = true;
-input bool     InpPipelineEngineRegistry = false;  // binds the shared engines to the pipeline's five filters (tightens entries)
+input bool     InpPipelineEngineRegistry = false;  // opt-in: enables engine-backed filters; validate veto impact first
 input double   InpPipelineMinConfidence = 0.55;
 input double   InpPipelineIntrabarConfidenceCap = 0.05;
 input bool     InpPipelineEnableRegimeCostGate = true;
@@ -300,8 +286,6 @@ input double   InpAtrCrisisRatioThreshold = 5.0;
 input double   InpAtrCrisisRatioThresholdSynthetic = 15.0;
 input double   InpAtrCrisisRatioThresholdVolatility = 10.0;
 input double   InpAtrCrisisRatioThresholdDefault = 8.0;
-input double   InpAtrCrisisCeilingSynthetic = 2.5;
-input double   InpAtrCrisisCeilingForex = 2.0;
 
 input double   InpHardSpreadCutoffPoints = 200.0;
 input int      InpDeadlockAttributionIntervalSec = 60;
@@ -311,13 +295,9 @@ input int      InpMomentumScalpCooldownSeconds = 20;
 input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5;
 input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5;
 
-input group "Signal Validator (Quality Gates)";
-input int      InpValidatorNewBarMinConfluence = 1;
+input group "Signal Validator (Enforced Quality Gates)";
 input double   InpValidatorNewBarMinQuality = 0.68;
-input double   InpValidatorNewBarMinConfidence = 0.55;
-input int      InpValidatorIntrabarMinConfluence = 1;
 input double   InpValidatorIntrabarMinQuality = 0.70;
-input double   InpValidatorIntrabarMinConfidence = 0.60;
 
 input group "Execution & Orders";
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
@@ -356,14 +336,14 @@ input double   InpLossGuardDailyLossCircuitBreakerPct = 50.0;    // of InpMaxDai
 input double   InpLossGuardPositionLossLimitPct = 75.0;          // close at this fraction of the position's own SL distance
 
 input group "Emergency & Unprotected Remediation";
-input bool     InpEmergencyFlattenAllAccountPositions = false; // true = emergency flatten may close positions this EA did not open (manual trades / other EAs). Off by default.
+input bool     InpEmergencyFlattenAllAccountPositions = false; // true = emergency flatten may close positions this EA did not open (manual trades / other EAs). Off by default (Batch 168).
 input int      InpUnprotectedRemediationIntervalSec = 15;
 input int      InpUnprotectedMaxRestoreAttempts = 3;
 input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
 input int      InpSyntheticSpikePauseSeconds = 30;
 
 input group "Scalp Engine";
-// OFF by factory default. Measured on the prior build, Volatility 75 Index M15,
+// OFF by factory default since Batch 291. Measured on the Batch 290 build, Volatility 75 Index M15,
 // Model=1, deposit 10,000, InpQuorumProfile=1, InpMinLiveVoters=1, every window cold:
 //   scalp ON  2026.09.01-09.08: -258.77 (-2.588%), 2,265 fills
 //   scalp OFF same build/window: +381.07 (+3.811%),   270 fills   (one input changed, no recompile)
@@ -375,7 +355,7 @@ input bool     InpEnableScalpEngine = false;
 input bool     InpScalpAsyncMode = false;
 input uint     InpScalpMaxLatencyMs = 500;
 // Comma-separated symbols the fast-scalp engine may trade; "" = every symbol in the universe.
-// Measured: with the per-symbol stop and every symbol allowed, the window
+// Measured (Batch 290): with the Batch 289 per-symbol stop and every symbol allowed, the window
 // 2026.09.01-09.08 returned -258.77 (-2.588%) on 2,265 fills, against +98.29 (+0.983%) on 849 fills
 // when only Step Index and XAUUSD could pass the old 60/90-point cost gate. The stop geometry is
 // arithmetic; symbol coverage is the variable that changed the book.
@@ -412,8 +392,6 @@ input group "Dashboard";
 input bool     InpDashboardEnabled = true;
 input string   InpDashboardEndpoint = "http://127.0.0.1:8765";
 input int      InpDashboardPushIntervalSec = 5;
-input string   InpDashboardApiKey = "";
-input bool     InpDashboardControlEnabled = false;
 
 input group "Signal Filters";
 input double   InpMinTrendStrength = 50.0;
@@ -437,7 +415,7 @@ input int      InpDailyHaltCooldownMinutes = 30;
 input group "Logging";
 input int      InpLogLevel = 1;
 input int      InpLogVerbosity = 3;  // 0=SILENT, 1=ERRORS_ONLY, 2=WARNING, 3=NORMAL, 4=VERBOSE, 5=DEBUG
-input bool     InpLogDerivFamilyDetection = true;  // Enable logging for Deriv family detection
+input bool     InpLogDerivFamilyDetection = true;  // L7-013: Enable logging for Deriv family detection
 
 //=== Shared config builder: maps all shared inputs into SOrchestratorConfig ===
 // Mode-specific fields (InpMaxRiskPerTrade, InpEnableAIMode, etc.) are set by
@@ -447,7 +425,7 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
 {
     // General
     config.magicNumber = InpMagicNumber;
-    config.configVersion = InpConfigVersion;  // Config version for migration tracking
+    config.configVersion = InpConfigVersion;  // L7-005: Config version for migration tracking
     config.lotSize = InpLotSize;
     config.useEnhancedRisk = InpUseEnhancedRisk;
     config.maxDrawdown = InpMaxDrawdown;
@@ -460,9 +438,7 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.symbolsToTrade = InpSymbolsToTrade;
     config.minSecondsBetweenTrades = InpMinSecondsBetweenTrades;
     config.maxPositionsTotal = InpMaxPositionsTotal;
-    config.maxPositionsTotalMin = InpMaxPositionsTotalMin;
     config.maxPositionsPerSymbol = InpMaxPositionsPerSymbol;
-    config.maxPositionsPerSymbolMin = InpMaxPositionsPerSymbolMin;
     config.maxTradeSendsPerCycle = InpMaxTradeSendsPerCycle;
 
     // Strategy selection (from shared inputs directly)
@@ -492,7 +468,7 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.adxAllowNoTrendTrading = InpAdxTradeOnNoTrend;
     config.useSymbolClassProfiles = InpUseSymbolClassProfiles;
 
-    //
+    // Batch 114
     config.kalmanLambda = InpKalmanLambda;
     config.cpdHazardThreshold = InpCPDHazardThreshold;
     config.targetVol = InpTargetVol;
@@ -559,8 +535,6 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.dashboardEnabled = InpDashboardEnabled;
     config.dashboardEndpoint = InpDashboardEndpoint;
     config.dashboardPushIntervalSec = InpDashboardPushIntervalSec;
-    config.dashboardApiKey = InpDashboardApiKey;
-    config.dashboardControlEnabled = InpDashboardControlEnabled;
 
     config.enableLiveAuthorityGate = InpEnableLiveAuthorityGate;
     config.allowHybridAIStandalone = InpAllowHybridAIStandalone;
@@ -592,24 +566,12 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.atrCrisisRatioThresholdSynthetic = InpAtrCrisisRatioThresholdSynthetic;
     config.atrCrisisRatioThresholdVolatility = InpAtrCrisisRatioThresholdVolatility;
     config.atrCrisisRatioThresholdDefault = InpAtrCrisisRatioThresholdDefault;
-    config.atrCrisisCeilingSynthetic = InpAtrCrisisCeilingSynthetic;
-    config.atrCrisisCeilingForex = InpAtrCrisisCeilingForex;
     config.hardSpreadCutoffPoints = InpHardSpreadCutoffPoints;
     config.deadlockAttributionIntervalSec = InpDeadlockAttributionIntervalSec;
     config.heartbeatInterval = InpHeartbeatInterval;
     config.momentumScalpCooldownSeconds = InpMomentumScalpCooldownSeconds;
     config.momentumScalpTimeframe = InpMomentumScalpTimeframe;
     config.candlestickIntrabarTimeframe = InpCandlestickIntrabarTimeframe;
-    config.intrabarEligibilityMomentum = InpIntrabarEligibilityMomentum;
-    config.intrabarEligibilityTrend = InpIntrabarEligibilityTrend;
-    config.intrabarEligibilitySupportResistance = InpIntrabarEligibilitySupportResistance;
-    config.intrabarEligibilityCandlestick = InpIntrabarEligibilityCandlestick;
-    config.intrabarEligibilityMeanReversion = InpIntrabarEligibilityMeanReversion;
-    config.intrabarEligibilityVolatilityBreakout = InpIntrabarEligibilityVolatilityBreakout;
-    config.intrabarEligibilityNeuralNetworkAI = InpIntrabarEligibilityNeuralNetworkAI;
-    config.intrabarEligibilityTransformerAI = InpIntrabarEligibilityTransformerAI;
-    config.intrabarEligibilityEnsembleAI = InpIntrabarEligibilityEnsembleAI;
-    config.intrabarEligibilityOnnxAI = InpIntrabarEligibilityOnnxAI;
     config.maxSignalEvaluationsPerCycle = InpMaxSignalEvaluationsPerCycle;
     config.readinessReuseTtlSeconds = InpReadinessReuseTtlSeconds;
     config.enableNNOnlineTraining = InpEnableNNOnlineTraining;
@@ -620,12 +582,8 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.nnCheckpointEveryLabeled = InpNNCheckpointEveryLabeled;
 
     // Signal validator
-    config.validatorNewBarMinConfluence = InpValidatorNewBarMinConfluence;
     config.validatorNewBarMinQuality = InpValidatorNewBarMinQuality;
-    config.validatorNewBarMinConfidence = InpValidatorNewBarMinConfidence;
-    config.validatorIntrabarMinConfluence = InpValidatorIntrabarMinConfluence;
     config.validatorIntrabarMinQuality = InpValidatorIntrabarMinQuality;
-    config.validatorIntrabarMinConfidence = InpValidatorIntrabarMinConfidence;
 
     // Execution safety
     config.orderFillingMode = InpOrderFillingMode;
@@ -730,19 +688,16 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.profitTrailFactor = InpProfitTrailFactor;
     config.dailyHaltCooldownMinutes = InpDailyHaltCooldownMinutes;
 
-    // Symbol Validation
+    // Symbol Validation (L7-003)
     config.symbolMaxSpreadPoints = InpSymbolMaxSpreadPoints;
     config.symbolMinDailyVolumeLots = InpSymbolMinDailyVolumeLots;
     config.symbolEnableVolumeCheck = InpSymbolEnableVolumeCheck;
 
     config.logLevel = InpLogLevel;
     config.logVerbosity = InpLogVerbosity;
-    config.logDerivFamilyDetection = InpLogDerivFamilyDetection;  //
+    config.logDerivFamilyDetection = InpLogDerivFamilyDetection;  // L7-013
 
-    // Symbol Universe
-    config.autoAddChartSymbol = InpAutoAddChartSymbol;
-
-    //
+    // Batch 99
     config.equityCurveEmaPeriod = InpEquityCurveEmaPeriod;
     config.equityCurveReductionFactor = InpEquityCurveReductionFactor;
     config.kellyFraction = InpKellyFraction;
@@ -759,13 +714,13 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.riskValidationMinAccountBalance = InpRiskValidationMinAccountBalance;
     config.portfolioRiskStopFallbackPoints = InpPortfolioRiskStopFallbackPoints;
 
-    // Skew Step Analyzer
+    // Skew Step Analyzer (L7-023)
     config.skewStepBufferSize = InpSkewStepBufferSize;
     config.skewStepCalmThreshold = InpSkewStepCalmThreshold;
     config.skewStepSmallThreshold = InpSkewStepSmallThreshold;
     config.skewStepLargeThreshold = InpSkewStepLargeThreshold;
 
-    // Session Weight Manager
+    // Session Weight Manager (L7-022)
     config.sessionDSTOffsetHours = InpSessionDSTOffsetHours;
 }
 

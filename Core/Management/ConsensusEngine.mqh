@@ -74,7 +74,8 @@ public:
     // SignalGenerator, PositionLifecycleManager and TrainingDataExporter.
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence,
                                                                     int &confluence,
-                                                                    ENUM_SIGNAL_EVAL_MODE evalMode);
+                                                                    ENUM_SIGNAL_EVAL_MODE evalMode,
+                                                                    const string intentId);
 
     void SyncEnabledWithRegistry();
 
@@ -89,7 +90,7 @@ public:
 
 private:
     ENUM_TRADE_SIGNAL EvaluateConsensusInternal(const string symbol, double &confidence, int &confluence,
-                                                ENUM_SIGNAL_EVAL_MODE evalMode);
+                                                ENUM_SIGNAL_EVAL_MODE evalMode, const string intentId);
     void CalculateEffectiveQuorumParamsInternal(
         const string symbol,
         const int activeLiveStrategies,
@@ -116,7 +117,8 @@ private:
 ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
                                                                                   double &confidence,
                                                                                   int &confluence,
-                                                                                  ENUM_SIGNAL_EVAL_MODE evalMode)
+                                                                                  ENUM_SIGNAL_EVAL_MODE evalMode,
+                                                                                  const string intentId)
 {
     if(m_src == NULL)
     {
@@ -133,7 +135,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMod
     // checkbox switch consensus off entirely, with no journal line to say so.
     if(m_src.IsManagerInitialized())
     {
-        result = EvaluateConsensusInternal(symbol, confidence, confluence, evalMode);
+        result = EvaluateConsensusInternal(symbol, confidence, confluence, evalMode, intentId);
     }
     else
     {
@@ -165,7 +167,7 @@ void CConsensusEngine::SyncEnabledWithRegistry()
     {
         string entryName = m_src.GetStrategyName(i);
         bool registryActive = strategyRegistry.IsStrategyActive(entryName);
-        bool shouldEnable = registryActive && !m_src.IsStrategyTemporarilyDisabled(i);
+        bool shouldEnable = registryActive;
         if(shouldEnable != m_src.IsStrategyEnabled(i))
         {
             m_src.SetStrategyEnabledFlag(i, shouldEnable);
@@ -474,12 +476,13 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
 }
 
 ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbol, double &confidence, int &confluence,
-                                                              ENUM_SIGNAL_EVAL_MODE evalMode)
+                                                              ENUM_SIGNAL_EVAL_MODE evalMode, const string intentId)
 {
     ulong startTime = GetMicrosecondCount();
 
     confidence = 0.0;
     confluence = 0;
+    string intentTag = (intentId == "") ? "UNTRACKED" : intentId;
 
     // Reset first: a stale context (signal, quality, class) must not leak into the validator.
     SConsensusDecisionContext emptyDecisionContext;
@@ -504,7 +507,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(activeLiveStrategies == 0)
     {
-        PrintFormat("[CONSENSUS-ABSTAIN] %s | No live voting strategies", symbol);
+        PrintFormat("[CONSENSUS-ABSTAIN] %s | No live voting strategies | intent_id=%s", symbol, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -690,7 +693,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(buyVotes == 0 && sellVotes == 0)
     {
-        PrintFormat("[CONSENSUS-ABSTAIN] %s | All strategies abstained or filtered out", symbol);
+        PrintFormat("[CONSENSUS-ABSTAIN] %s | All strategies abstained or filtered out | intent_id=%s", symbol, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -706,9 +709,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(!readyWeightMet)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Ready weight ratio %.2f < min %.2f | regime=%s",
+        PrintFormat("[CONSENSUS-REJECT] %s | Ready weight ratio %.2f < min %.2f | regime=%s | intent_id=%s",
                     symbol, readyWeightRatio, m_src.GetMinReadyWeightRatio(),
-                    regimeSnapshotConfirmed ? "confirmed" : "UNCONFIRMED(stand-aside 0.30 caps ratio at 0.36)");
+                    regimeSnapshotConfirmed ? "confirmed" : "UNCONFIRMED(stand-aside 0.30 caps ratio at 0.36)", intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -760,8 +763,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(winningVotes < effectiveMinVoters)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Winning votes %d < minVoters %d",
-                    symbol, winningVotes, effectiveMinVoters);
+        PrintFormat("[CONSENSUS-REJECT] %s | Winning votes %d < minVoters %d | intent_id=%s",
+                    symbol, winningVotes, effectiveMinVoters, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -772,8 +775,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     // the book at zero trades on scores 0.649 and 0.657 while naming a "confidence" floor.
     if(winningVotes == 1 && winningConviction < m_singleVoterFloor)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | single voter confidence %.3f < singleVoterFloor %.2f (needs a second agreeing vote)",
-                    symbol, winningConviction, m_singleVoterFloor);
+        PrintFormat("[CONSENSUS-REJECT] %s | single voter confidence %.3f < singleVoterFloor %.2f (needs a second agreeing vote) | intent_id=%s",
+                    symbol, winningConviction, m_singleVoterFloor, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -783,8 +786,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(supportRatio < supportFloor)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Support ratio %.2f < floor %.2f",
-                    symbol, supportRatio, supportFloor);
+        PrintFormat("[CONSENSUS-REJECT] %s | Support ratio %.2f < floor %.2f | intent_id=%s",
+                    symbol, supportRatio, supportFloor, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -795,8 +798,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(quorumRatio < winningQuorum)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Quorum ratio %.2f < threshold %.2f",
-                    symbol, quorumRatio, winningQuorum);
+        PrintFormat("[CONSENSUS-REJECT] %s | Quorum ratio %.2f < threshold %.2f | intent_id=%s",
+                    symbol, quorumRatio, winningQuorum, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -814,8 +817,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         double effectiveDeadband = MathMax(askedDeadband, finestDissent);
         if(conflictRatio > effectiveDeadband)
         {
-            PrintFormat("[CONSENSUS-VETOED] %s | Conflict ratio %.2f > deadband %.2f | votes %d-%d",
-                        symbol, conflictRatio, effectiveDeadband, winningVotes, losingVotes);
+            PrintFormat("[CONSENSUS-VETOED] %s | Conflict ratio %.2f > deadband %.2f | votes %d-%d | intent_id=%s",
+                        symbol, conflictRatio, effectiveDeadband, winningVotes, losingVotes, intentTag);
             return TRADE_SIGNAL_NONE;
         }
         if(effectiveDeadband > askedDeadband && TimeCurrent() - m_lastDeadbandFloorLog >= 300)
@@ -829,8 +832,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     double winningQuality = (consensusSignal == TRADE_SIGNAL_BUY) ? buyDirectionalQuality : sellDirectionalQuality;
     if(winningQuality < effectiveQualityThreshold)
     {
-        PrintFormat("[CONSENSUS-REJECT] %s | Quality %.2f < threshold %.2f",
-                    symbol, winningQuality, effectiveQualityThreshold);
+        PrintFormat("[CONSENSUS-REJECT] %s | Quality %.2f < threshold %.2f | intent_id=%s",
+                    symbol, winningQuality, effectiveQualityThreshold, intentTag);
         return TRADE_SIGNAL_NONE;
     }
 
@@ -843,9 +846,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         decisionClass = "SPARSE_INTRABAR";
     }
 
-    PrintFormat("[CONSENSUS-DECISION] %s | %s | class=%s | conf=%.2f | confluence=%d | votes=%d/%d | support=%.2f | quorum=%.2f/%.2f",
+    PrintFormat("[CONSENSUS-DECISION] %s | %s | class=%s | conf=%.2f | confluence=%d | votes=%d/%d | support=%.2f | quorum=%.2f/%.2f | intent_id=%s",
                 symbol, EnumToString(consensusSignal), decisionClass, confidence, confluence,
-                buyVotes, sellVotes, supportRatio, quorumRatio, winningQuorum);
+                buyVotes, sellVotes, supportRatio, quorumRatio, winningQuorum, intentTag);
 
     // Publish the winning voters. Attribution, AI-authority outcome learning, the candidate's
     // role/cluster tags and per-strategy health all read this context, and until now none of

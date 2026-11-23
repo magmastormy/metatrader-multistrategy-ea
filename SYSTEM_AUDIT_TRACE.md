@@ -1,10 +1,23 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-10-26
-- Last Architecture Sync: 2026-10-26
+- Last Updated: 2026-11-20
+- Last Architecture Sync: 2026-11-20
 - Scope: End-to-end lifecycle and logic traces
- - Current Batch: 262
+- Current State: Batch 298 remains the latest historical measured comparison; this dirty working tree has not been recompiled or paired-backtested
+
+## Current Working-Tree Trace (2026-11-20)
+
+- A signal passes consensus validation, candidate construction, live-authority resolution, authority-based lot scaling, and the unified pre-execution risk check before `CTradeManager` owns the send.
+- Virtual risk reservations are counted once; the candidate's own provisional reservation is not added twice during its exposure check.
+- Position contributor sets are unioned across fills before close scoring; only exact single-contributor outcomes update per-strategy counters and bounded health scores. Mixed and unattributed outcomes are excluded. Hard auto-parking and its periodic re-enable sweep have been removed; the remaining health-score weight modifier is not dollar-expectancy evidence.
+- `InpSymbolsToTrade` is the exact universe; no chart-symbol injection occurs. Live reload applies supported risk keys only and explicitly logs unsupported strategy changes as ignored.
+- The default math-engine registry is unbound, so its engine-backed pipeline stages pass through; per-strategy intrabar-eligibility metadata was removed; active Momentum/Candlestick timeframe overrides remain.
+- The ensemble adapter reports inference-only operation; the dashboard reports scalp telemetry as unavailable instead of presenting fabricated zero counts.
+- Dashboard attention weights, regime transition probabilities, and inferred gate states are unavailable until the EA publishes those values; synthetic demo state is disabled in production builds.
+- Safe-mode partial-position tracking had no registration path and was removed rather than presented as an active position safeguard.
+- All eight MetaTrader targets compiled with zero errors and zero warnings. No performance claim is made for this source state until paired cold-window backtests complete.
+- Dated findings below preserve prior states; use this current trace when an older entry conflicts with current behavior.
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -570,7 +583,7 @@ Default minimum R:R of 2.0; MEAN_REVERSION_CLUSTER uses 1.5 (the earlier "1:5" w
 - AI topology has no `[AI-TOPOLOGY]` line: `[AI-MODE]` states ONNX availability and retries, `[ENGINE-STATUS]` names engines with no tick caller, and `[AI-VOTE]` is the participation evidence.
 - Emit `[RUNTIME-FINGERPRINT]` with requested and effective EA mode so active logs can distinguish `AI_ONLY` mode filtering from real indicator/hybrid underperformance.
 - Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
-- Load ONNX scaler parameters from Common files when available so runtime normalization stays aligned with Python training.
+- Load and validate the paired ONNX scaler at pipeline initialization; missing or wrong-width parameters prevent inference rather than passing unscaled features.
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols at startup (`[SYMBOL-UNIVERSE]`, `[SYMBOL-VALIDATION]`). An `[ACCOUNT-CAPACITY]` affordability dump was never built; a symbol that cannot be sized inside the cap refuses as `[RISK-GATE-REJECT] ... reason=compliant_lot_below_min` when the trade is attempted.
 - Reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles.
@@ -2788,3 +2801,18 @@ and it is the reason three findings exist. Read it as UTF-16LE (`iconv -f UTF-16
 - **Decision path.** `CPostConsensusValidator::CheckExogenousFilters` is unchanged; it was vetoing on an ATR(14) that was a daily value. `CRiskValidationPipeline::ValidatePortfolioRisk` now passes `request.stopLossPips` to `CPortfolioRiskManager::IsTradeAllowed`. `CCorrelationEngine` slots start `CORR_ENGINE_UNKNOWN`. `VolReg_RiskScale` returns 0.5 or 1.0 (or -1.0 for no model), never 0.0, so the `[VOL-GATE] entry held` branch in `EAOrchestrator` is unreachable.
 - **Fast scalp.** `CFastScalpEngine::BuildSymbolConfig(symbol, atrM1, cfg)` is the single place a scalp stop is priced: max(1.5 x ATR(14,M1), 4 x spread, 1.5 x stop level), target at the configured TP:SL ratio. `ShouldEnterScalp` stores it; `ExecuteScalpTrade` refuses to send without it. `CFastScalpExit` derives breakeven (0.6R, 0.1R buffer) and trail (0.6R) from each position's recorded 1R. Entry holds added: one open scalp per symbol, 180 s per-symbol rest (`SCALP_SYMBOL_REENTRY_SECONDS`).
 - **Lifecycle.** `CEAOrchestrator::Shutdown()` writes the strategy scoreboard and the crash-recovery risk state before any teardown, because the terminal terminated OnDeinit before reaching them.
+
+## 2026-11-20 Follow-up: Fast-Scalp Budget and Python Bridge
+
+- **Fast-scalp budget source:** `CFastScalpEngine::ShouldEnterScalp` syncs position tracking and rebuilds the budget from matching-magic broker positions and active orders before comparing candidate risk. `CFastScalpRiskBudget` uses OrderCalcProfit at each position/order stop and rejects unknown exposure rather than assigning zero. Async order reservations are skipped only when the exact expected magic/symbol order or linked position already appears in that broker-derived total. Accepted sends that cannot be tracked saturate the admission budget closed.
+- **Recovery boundary:** the async executor writes a PREPARED record with reserved risk before sending and appends ticket, fill, quarantine, failure, and resolution lifecycle events. Replay consolidates by request ID within the EA magic range; FastScalp restores matching reservations before admission and never resends. Missing-ticket or malformed/unreadable journal cases hold the budget fail-closed. The journal is account-common and unbounded; safe compaction and terminal-backed restart/late-fill tests remain open.
+- **Python bridge:** `CPyBridgeRequests::Predict` no longer calls /health before /predict; successful HTTP prediction responses update health. `CPythonBridgeAIStrategyAdapter` uses monotonic ticks for cache freshness and attempt backoff, so repeated failures do not trigger a WebRequest on every timer event. The prediction call is still synchronous in OnTimer() and the configured HTTP timeout can stall the terminal event loop.
+- **Evidence boundary:** source/reference checks and whitespace validation do not establish MQL compilation, broker restart behavior, late-fill behavior, or nonblocking responsiveness. Those require MetaEditor and terminal-backed tests.
+
+## Current Entry-Cap Review (2026-11-19)
+
+- `ValidateExposure()` counts open EA-owned positions and other live reservations for both per-symbol and total position caps. It excludes the candidate's own reservation, avoiding self-counting while preserving capacity across candidates awaiting execution or position visibility.
+- The `FastScalpAsyncTracker` raw send is a `TRADE_ACTION_REMOVE` cancellation, not an entry. The separate raw pending-order sender had no placement caller in the repository; it and its unused API/config were removed rather than left as a latent bypass.
+- Pyramiding remains dormant: its state defaults disabled and no code calls `ConfigurePyramiding()`. The existing zero-stop add is rejected by the trade manager; any future activation still requires explicit unified-risk validation.
+- The main candidate and live fast-scalp market routes pass the unified risk gate. ATR, grid, and spike send functions also validate there but remain parked outside the tick loop.
+- **Verification:** all eight MetaTrader targets compile with 0 errors and 0 warnings; `git diff --check` passes. No live run or backtest was performed, so this is a source/build correctness result, not a performance claim.

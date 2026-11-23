@@ -136,7 +136,7 @@ private:
             return c;
         }
 
-    // I2: Compounding tier presets â€?used by CCompoundingTierManager
+    // I2: Compounding tier presets -used by CCompoundingTierManager
     static STierConfig GetMicroAggressiveConfig()
     {
         STierConfig c;
@@ -295,7 +295,7 @@ private:
                             double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0,
                             double inputDailyLossLimit = 0.0)
     {
-        // Tier values are defaults, but user input params serve as floors â€?
+        // Tier values are defaults, but user input params serve as floors -
         // the effective value is the higher of tier preset and user input.
         double effectiveDaily     = (inputDailyFloor > 0.0)     ? MathMax(m_config.dailyRiskPct, inputDailyFloor)     : m_config.dailyRiskPct;
         double effectivePortfolio = (inputPortfolioFloor > 0.0) ? MathMax(m_config.portfolioRiskPct, inputPortfolioFloor) : m_config.portfolioRiskPct;
@@ -304,7 +304,7 @@ private:
 
         // Floor cap: if effective value exceeds 2x the tier preset, cap at 2x tier preset.
         // This prevents floor values from overriding tier-defined risk constraints
-        // (e.g., daily 5%â†?0%, portfolio 15%â†?0%, riskPerTrade 1%â†?0%).
+        // (e.g., daily 5%->0%, portfolio 15%->0%, riskPerTrade 1%->0%).
         double dailyCap     = m_config.dailyRiskPct * 2.0;
         double portfolioCap = m_config.portfolioRiskPct * 2.0;
         double ddWarningCap = m_config.ddWarningPct * 2.0;
@@ -347,29 +347,24 @@ private:
                                                                effectiveDailyLossLimit,
                                                                m_config.maxRiskPerTradeOverride);
 
-        PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% (tier=%.1f floor=%.1f) | portfolio=%.1f%% (tier=%.1f floor=%.1f) | ddWarn=%.1f%% | ddCrit=%.1f%%",
-                    m_config.riskPerTradePct,
-                    effectiveDaily, m_config.dailyRiskPct, inputDailyFloor,
-                    effectivePortfolio, m_config.portfolioRiskPct, inputPortfolioFloor,
-                    effectiveDdWarning, effectiveDdCritical);
+        SUnifiedRiskConfig appliedRisk;
+        riskManager.CopyRiskConfig(appliedRisk);
+        PrintFormat("[RISK-TIER] Applied | tier=%d | tierRequestPerTrade=%.2f%% tierMaxRequest=%.2f%% | effectivePerTrade=%.2f%% effectiveMax=%.2f%% | dailyCandidate=%.2f%% inputFloor=%.2f%% effectiveDaily=%.2f%% | portfolioCandidate=%.2f%% inputFloor=%.2f%% effectivePortfolio=%.2f%%",
+                    (int)m_tier, m_config.riskPerTradePct, m_config.maxRiskPerTradeOverride,
+                    appliedRisk.baseRiskPerTradePercent, appliedRisk.maxRiskPerTradePercent,
+                    effectiveDaily, inputDailyFloor, appliedRisk.maxDailyRiskPercent,
+                    effectivePortfolio, inputPortfolioFloor, appliedRisk.maxPortfolioRiskPercent);
     }
 
 // Apply tier parameters to CPositionSizer
 // Blueprint 10.4: riskPercent uses 0-100 scale
-// Input floor: if >0, tier risk percent cannot go below this floor
-    void ApplyToPositionSizer(CPositionSizer &sizer, double inputRiskFloor = 0.0)
+// Input ceiling: tier sizing may lower the configured risk, but never exceed it.
+    void ApplyToPositionSizer(CPositionSizer &sizer, double inputRiskCeiling = 0.0)
     {
         SPositionSizingParams params = sizer.GetParameters();
-        double effectiveRisk = (inputRiskFloor > 0.0) ? MathMax(m_config.riskPerTradePct, inputRiskFloor) : m_config.riskPerTradePct;
-
-        // Floor cap: if effective risk exceeds 2x the tier preset, cap at 2x tier preset
-        double riskCap = m_config.riskPerTradePct * 2.0;
-        if(effectiveRisk > riskCap)
-        {
-            PrintFormat("[RISK-TIER-FLOOR-CAP] riskPerTrade capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
-                        effectiveRisk, riskCap, m_config.riskPerTradePct, riskCap);
-            effectiveRisk = riskCap;
-        }
+        double effectiveRisk = m_config.riskPerTradePct;
+        if(inputRiskCeiling > 0.0)
+            effectiveRisk = MathMin(effectiveRisk, inputRiskCeiling);
 
         params.riskPercent = effectiveRisk;  // Blueprint 10.4: 0-100 scale
 
@@ -379,8 +374,8 @@ private:
         }
         else
         {
-            PrintFormat("[RISK-TIER] Applied to PositionSizer | riskPercent=%.1f%% (tier=%.1f floor=%.1f)",
-                        effectiveRisk, m_config.riskPerTradePct, inputRiskFloor);
+            PrintFormat("[RISK-TIER] PositionSizer | requestedRisk=%.2f%% | effectiveRisk=%.2f%% | inputCeiling=%.2f%%",
+                        m_config.riskPerTradePct, effectiveRisk, inputRiskCeiling);
         }
     }
 
@@ -388,7 +383,7 @@ private:
 // Store tier params as static defaults for callers
     void ApplyToTradeManager(CTradeManager &tradeMgr)
     {
-        // Store tier params as static defaults â€?callers read via GetBreakevenBufferPts/GetTrailingDistancePts
+        // Store tier params as static defaults -callers read via GetBreakevenBufferPts/GetTrailingDistancePts
         PrintFormat("[RISK-TIER] TradeManager tier params applied | breakeven=%.0f pts | trailing=%.0f pts",
                     m_config.breakevenBufferPts, m_config.trailingDistancePts);
     }
@@ -461,15 +456,8 @@ private:
         sm.minConfidence        = m_config.minConfidence;     // From tier config (0.70)
         sm.minVoters            = m_config.minVoters;         // From tier config (3)
         sm.minQuorumThreshold   = 0.65;
-        sm.minConfluence        = 0.60;
-        sm.tradeOnlyKillZones   = true;
-        sm.avoidNewsEvents      = true;
-        sm.newsAvoidanceMinutes = 30;
         sm.noStacking           = true;
-        sm.requireBreakevenFirst = true;
         sm.maxSpreadATRRatio    = m_config.maxSpreadATRRatio; // From tier config (0.15)
-        sm.breakevenTriggerR    = 0.5;
-        sm.partialProfitTaking  = true;
         return sm;
     }
 

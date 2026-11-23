@@ -167,7 +167,37 @@ All Python files parse; `data_pipeline.build_dataset_splits` smoke-tested
 end-to-end; `stacker_fit_indices` verified against synthetic metadata.
 No MQL5 changes this batch - no recompile needed. Not performance-measured.
 
-## [Unreleased] - 2026-11-14
+## [Unreleased] - 2026-11-19
+
+### Risk correctness and evidence-based cleanup (not performance-tested)
+
+- Specialized fast-scalp, spike-hunter, and grid-recovery entries fail closed when risk authority is unavailable; grid risk validation now sits at the send boundary. ATR, spike, and grid entries reconcile reservations to accepted fill volume and release them on definite send failure. ATR scalp entries use the initialized unified risk manager and shared CTradeManager execution/receipt path rather than raw CTrade sends.
+
+- Removed the unconsumed per-strategy intrabar-eligibility inputs, policy enum/registry metadata, and two helper headers; retained active Momentum/Candlestick timeframe overrides without changing entry cadence or voting thresholds.
+
+- Removed the always-allow `CandidateBuilder` authority stub; `CLiveAuthorityResolver` remains the sole live authority gate.
+- Removed unimplemented safe-mode news/session fields and false-return gate, plus the partial-position tracker with no registration callers; startup now states that session/news filters are unavailable.
+- Scalp telemetry now declares itself unavailable, and the dashboard hides fabricated zero metrics. The ensemble adapter reports inference-only status and logs unsupported training/temperature requests.
+- Removed three dashboard panels that invented transformer attention, HMM transition probabilities, or pipeline-gate outcomes. Missing telemetry now says unavailable; synthetic demo data is dev-only, and the local architecture selector is labeled as a preview.
+- Removed the no-op uncertainty deinitializer, ten orphaned MQL headers across the runtime and training trees (nine runtime headers plus `ModelComparer.mqh`), and the unused root Node manifest/empty lockfile. The dashboard's own package manifest and remaining model-training modules stay.
+- Removed chart-symbol auto-injection so `InpSymbolsToTrade` is authoritative even with stale tester presets; removed validator confidence/confluence inputs that had no gate, and removed the unreachable spike-validator stub. The shipped live-overrides sample now contains only fields the risk reloader applies.
+- Removed the no-op institutional-governance hook, duplicate health monitor, heuristic auto-parking/re-enable path, and its periodic sweep. Singleton-attributed closes still update bounded health scores that can modify vote weight; mixed/unattributed closes remain excluded. No hard strategy-removal decision or causal dollar-expectancy claim is made.
+- Live risk overrides now update the risk manager's operator envelope before tier application; tier values cannot restore a prior, higher live cap. The cold-window harness requires explicit, non-overlapping INIs and excludes failed runs from its distribution; the obsolete repeat-one-window script with an external default path is removed.
+- The lifecycle loss guard now receives the tier-effective daily-risk budget at startup and after live risk changes, rather than retaining a stale startup ceiling.
+- Live risk-file edits now recalculate only when the effective operator envelope or supported sizing policy changes; strategy-only/no-op edits preserve adaptive risk state. Startup-selected risk tier is no longer parsed as a live override, and compounding restores its current saved tier after a genuine envelope change.
+- Removed a dead candidate-builder risk fallback that could not override the risk manager's zero-risk veto; dynamic risk-tier changes are now explicitly startup-only rather than pretending to refresh tier policy.
+- Removed the EA chart-event callbacks that mistook graphical-object property edits for input changes and could replay stale input risk values into the live manager.
+- Per-strategy attribution unions contributors across every fill for a position, so netting-account add-ons cannot overwrite mixed ownership and become singleton P&L evidence. Multi-contributor and unattributed dollars remain unassigned; the report shows the exact single-contributor dollar subset and its coverage among priced closes, without presenting it as a strategy-removal verdict.
+- Portfolio and exposure checks exclude the candidate's own provisional reservation before adding final trade risk. Full-position close attribution now aggregates all position deals, including profit, swap, commission, and fee, before updating a singleton contributor.
+- Reservation exclusion now uses the candidate owner tag instead of subtracting a risk amount; other pending reservations also bind the per-symbol budget, whose open-position risk scan no longer holds a 60-second cache.
+- The opt-in symbol-budget lot cap uses the same owner-excluded risk view, so open risk and other reservations are counted once without counting its own provisional reservation.
+- CandidateBuilder now enforces the minimum-lot permission and uplift ceiling after both drawdown and momentum scaling; removed two position-limit minimum inputs and their unused config copies.
+- Portfolio position-risk scans fail closed for unpriceable positions instead of treating them as zero risk; removed the stale exposure cache and unused per-symbol cache fields.
+- Runtime configuration output no longer invents confidence/confluence floors; unsupported strategy-setting warnings appear only when such keys are actually present in the live override file.
+- The README now states that the default allows one live voter and that registry-backed pipeline filters are opt-in; current architecture notes distinguish those filters from independent confidence and time/session checks.
+- Pipeline math engines and indicator handles now initialize only when the explicit registry flag is enabled, avoiding dormant per-symbol engine allocation under the disabled default.
+- No trading thresholds or filter defaults were changed by this cleanup. The current working tree still requires paired cold-window backtests.
+- Verification: all eight MetaTrader targets compile with 0 errors and 0 warnings. The dashboard production build passes with a Vite advisory that its largest JavaScript chunk is 595 kB (176.97 kB gzip); no trading-performance claim is made.
 
 ### Remaining-work second batch (2026-11-23, compile-verified, NOT yet backtest-measured)
 
@@ -477,7 +507,7 @@ Trimmed arm: mean **+7.734%**, sample sd **6.74 pp**, **t 2.57**, worst window *
 
 **Default verified, not assumed** - the Batch 288 lesson applied: `Tools\backtest_b292_defaultcheck.ini` omits `InpSymbolsToTrade` entirely and the tester `.set` was parked as `MultiStrategyAutonomousEA.set.parked_b292` before the run. Result: 10,000.00 -> **11,817.57**, **+1,817.57 (+18.176%)**, min 10,000.00 / max 11,822.65, 314 receipts, `[SCALP-SIGNAL-REJECT]` **0** (scalper-off default also in force). That is the trim arm's 11,817.63 to within six cents, so the compiled default is exactly the measured arm and no `.set` inheritance is in play. MT5 recreated the `.set` afterwards, as always.
 
-**Known deviation, documented not fixed:** `InpAutoAddChartSymbol = true` re-injects the chart symbol, so a trimmed run still takes 2-4 `Volatility 75` closes (the chart is V75 by harness convention). The universe input is therefore "priority list plus chart symbol", not an absolute exclusion. If absolute exclusion is wanted, that input has to be turned off - not changed here, because every measured window above ran with it on.
+**Historical deviation in this batch's binary (fixed in later source, not yet re-measured):** `InpAutoAddChartSymbol = true` re-injected the chart symbol, so a trimmed run took 2-4 `Volatility 75` closes (the chart is V75 by harness convention). The universe acted as a priority list plus chart symbol; the auto-add input and path have since been removed.
 
 **Verification:** `sync_files.ps1` then `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> **`OVERALL SUCCESS` - 0 errors, 0 total warnings** on all eight programs (`MultiStrategyAutonomousEA.mq5` 108,509 ms, `MultiStrategyTestingEA.mq5` 101,634 ms, `TrainingDataExporter.mq5` 35,780 ms). New inis: `Tools\backtest_b291_novol_w1.ini`, `_novol_w2.ini`, `Tools\backtest_b292_defaultcheck.ini`. Archived scoreboards: `scoreboard_b291_novol_20260901-20260908.csv`, `_20260908-20260915.csv`, `scoreboard_b292_default_20260901-20260908.csv`.
 
@@ -969,13 +999,13 @@ Combined: about 193,500 of the 237,954 measured lines (81%) came from those two 
 
 **3. Scan cost is now a reading, not a grep.** The EA already measured every cycle (`GenerateAndProcessSignals_Total_us`) and wrote one journal line per cycle, 15,876 lines per session for a number nothing aggregated. `CHeartbeatTelemetry` gained `m_scanUsTotal/m_scanUsMax/m_scanCostSamples`, `IncScanCost(us)`, `GetScanCostAvgUs()`, `GetScanCostMaxUs()`, `GetScanCostSamples()` and `ResetScanCost()`; `EAOrchestrator` feeds it at the point the elapsed time is already computed and prints **one** `[SCAN-COST] cycles=%I64u | avgUs=%I64u | maxUs=%I64u` per heartbeat, then resets. This is how "is the system fast?" becomes a number: average cycle cost and worst cycle since the last heartbeat, without a 15k-line search.
 
-**4. The roster now remembers which strategies earn: `Core/Management/StrategyScoreboard.mqh`.** The per-strategy counters (trades / successes / failures / wins / consecutive streaks / average profit / health score / park-until) lived only in memory, so **every restart reset every row to the 0.55 prior and un-parked everything**: the pruning loop in `CStrategyPerformanceHealth` could never accumulate the one fact that decides profitability, which rows actually carry the book. New class `CStrategyScoreboard` with `Save(managers[], count)` and `Load(managers[], count)`:
+**4. Historical scoreboard implementation (simplified in 2026-11): `Core/Management/StrategyScoreboard.mqh`.** The then-current per-strategy counters (trades / successes / failures / wins / consecutive streaks / average profit / health score / park-until) lived only in memory, so every restart reset the values. The current scoreboard persists counters and health only; hard auto-parking and its persisted deadline have been removed. The original class provided `Save(managers[], count)` and `Load(managers[], count)`:
 
 - Keyed by **symbol + strategy name**, because the roster is per symbol (11 managers own 11 rosters); keying by name alone would have collapsed eleven symbols into whichever manager saved last.
 - Written every **300 s** from the heartbeat block and once more in teardown *before* `ReleaseEnterpriseManagers()` (the managers own the counters); restored after `SyncEnabledWithRegistry()` so rows exist when the values land.
 - File: `MQL5\Files\strategy_scoreboard.csv` (header plus one line per row), which doubles as the operator's scoreboard: sort by `avgProfit` to see which rows carry the book.
 - Prints `[SCOREBOARD] saved N rows`, `[SCOREBOARD] restored N rows | parked=N | unmatched=N`, or `[SCOREBOARD] no saved state ... starting from defaults` on a first run. All three are exercised by different states, so a silent file cannot look like a clean save.
-- Scope stated in the header: counters and park flags only. Strategy **weights** are adjusted at runtime by `CConsensusWeightingConfig` and are deliberately not restored, because writing them back would make an operator's dialog weight override lose to a stale file.
+- Historical scope: counters and park flags only. Current scoreboard rows contain counters and health only; strategy **weights** remain runtime values and are not restored.
 
 **Verification.** `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 600` → **`OVERALL SUCCESS — 0 errors, 0 total warnings`** on all eight programs (61.3 s main EA, 60.3 s Testing EA, 19.0 s exporter, four MQH tools 1.4-3.7 s). `test_headers.ps1 -AllInOne` → **PASS 326/326, 0 errors, 0 warnings** (326 = 325 existing headers plus the new scoreboard header). `test_headers.ps1 -Each` → **314 passed / 8 requires-owner / 0 broken** of 322 standalone (4 companions skipped; 313/8/0 of 321 before this batch, the new header passes alone). Not runtime-observed: the newest journal is 2026-10-23, so neither the collapsed `[AI-FEEDBACK]` write rate, the first `[SCAN-COST]` line, nor a restored `[SCOREBOARD]` row set has been seen running.
 
@@ -5401,6 +5431,20 @@ Findings were re-verified against source before editing, and two earlier claims 
 - **Runtime log evidence is still outstanding** for Batches 168–170 (AGENTS.md §5.2 is compile + static review). First live session should confirm: `[MAGIC-AUTHORITY]` coverage lines, `[RISK-MINLOT]` clamped-to-3.0 line once at init, `[INIT] ... dailyRiskBudget=`, `[VOLUME-PROXY]` per symbol, `[STOPS REJECTED]` rare rather than constant, and no scalp position being closed by both authorities.
 - Left open deliberately, by size of risk: engines still send outside `CTradeManager` (no fill verification / dedup / journal there); the ATR-scalp offset 7000 collides with `ASSET_FOREX` and grid's family config inherits profiler offsets, which corrupts cluster and per-symbol attribution *if* those dormant engines are ever wired; walk-forward validation (Batch 167) is not wired into live gating, so no strategy in the live roster has an out-of-sample edge proof; `CSymbolHealthMonitor::IsHealthy`, `MonitorMarginHealth` and `CEquityCurveManager` are still written but unread; `IsHedgingAllowed` returns true without checking the account's margin mode.
 
+## 2026-11-19 — Exposure Caps Include In-Flight Reservations
+
+- Per-symbol and total position caps now count open EA-owned positions plus outstanding virtual reservations; the current candidate's own reservation is excluded so it is neither double-counted nor lost from concurrent capacity accounting.
+- Removed the unreferenced fast-scalp pending-order sender, its stale enabled/TTL settings, and its no-op orchestration polling. The async tracker send is cancellation-only.
+- Closed remaining-work item 15 for reachable entry paths. Lifecycle pyramiding is still disabled/unconfigured and remains out of scope until its add path gets unified-risk validation and a valid stop.
+- This supersedes the preceding historical note that engine entries still bypass `CTradeManager`: the ATR, grid, spike, and live fast-scalp market senders now route through it. The remaining raw send calls belong to the shared async executor or order cancellation.
+- Verification: all eight MetaTrader targets compile with 0 errors and 0 warnings; `git diff --check` passes. No live run or backtest was performed.
+
+## 2026-11-21 — Full Sync and Compile
+
+- Anchored `sync_and_compile.ps1` to `$PSScriptRoot`; the previous hard-coded `D:\TraeProjects\metatrader-multistrategy-ea` path pointed at a separate clean `main` checkout rather than the active Tempo worktree.
+- The first full build found and fixed invalid C++ pointer syntax in `FastScalpEngine.mqh` and a missing `CDashBridgeTransport::LogState` definition.
+- Final `-All -KeepLog -MaxCompileWaitSec 900` run: all eight root programs compiled with **0 errors / 0 warnings**. SHA-256 checks confirmed the fixed headers match the MT5 mirror.
+- No live/demo run or backtest was performed.
 ## Audit round - execution-side price references and family classification
 
 #### Fixed - bid/ask execution-side measurement

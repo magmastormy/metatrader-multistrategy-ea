@@ -10,6 +10,7 @@
 
 #include "..\Utils\EAClock.mqh"
 #include "..\Utils\Enums.mqh"
+#include "..\Utils\IntentTrace.mqh"
 #include "..\Trading\TradeManager.mqh"
 #include "..\Management\EnterpriseStrategyManager.mqh"
 #include "..\Cache\ConsensusCache.mqh"
@@ -265,7 +266,12 @@ public:
             bool haveDecisionContext = false;
             if(!m_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence, decisionCluster))
             {
-                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
+                datetime lifecycleEventTime = TimeCurrent();
+                string lifecycleIntentId = CIntentTrace::BuildId(sym, lifecycleEventTime,
+                                                                  (ENUM_TIMEFRAMES)Period(), EVAL_MODE_INTRABAR,
+                                                                  "LIFECYCLE");
+                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(
+                    sym, confidence, confluence, EVAL_MODE_INTRABAR, lifecycleIntentId);
                 SConsensusDecisionContext freshContext;
                 if(manager.GetLastDecisionContext(freshContext))
                 {
@@ -449,12 +455,6 @@ public:
                                               m_trailingStepPoints,
                                               m_useATRTrailing,
                                               m_atrMultiplier);
-        }
-
-        // Safe mode partial profit taking for swing positions
-        if(m_riskTierManager.GetCurrentTier() == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
-        {
-            m_safeMode.ManageSafeModePositions(m_tradeManager);
         }
 
         m_lastManageTimeMs = nowMs;

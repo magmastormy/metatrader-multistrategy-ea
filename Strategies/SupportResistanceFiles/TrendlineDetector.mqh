@@ -22,7 +22,7 @@ struct SSwingPoint
     double   price;
     int      barIndex;
     bool     isHigh;
-
+    
     SSwingPoint() : time(0), price(0), barIndex(0), isHigh(false) {}
 };
 
@@ -66,23 +66,23 @@ class CTrendlineDetector
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-
+    
     SSwingPoint         m_swingHighs[];
     SSwingPoint         m_swingLows[];
     int                 m_swingHighCount;
     int                 m_swingLowCount;
-
+    
     STrendline          m_trendlines[];
     int                 m_trendlineCount;
     int                 m_maxTrendlines;
-
+    
     int                 m_swingStrength;
     double              m_tolerancePips;
-
+    
     void                FindSwingPoints(int lookback);
     void                FindSupportTrendlines();
     void                FindResistanceTrendlines();
-
+    
     double              GetATR(int period = 14);
     bool                IsValidSlopeAngle(double slopeDegrees, bool isSupport);
     int                 CountTouches(SSwingPoint &p1, SSwingPoint &p2, double slope,
@@ -93,30 +93,30 @@ private:
     void                UpdateRecency();
     int                 FindBestLineIndex(bool isSupport);
     double              NormalizeSlope(double slope);  // converts to degrees
-
+    
     double              CalculateTrendlineStrength(STrendline &tl);
-
+    
 public:
                         CTrendlineDetector();
                        ~CTrendlineDetector();
-
+    
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   int swingStrength = 3, double tolerancePips = 10);
-
+    
     void                DetectTrendlines(int lookback = 100);
     void                Update();
-
+    
     int                 GetTrendlineCount() const { return m_trendlineCount; }
     bool                GetTrendline(int index, STrendline &trendline);
     int                 FindActiveTrendlineAtPrice(double price);
-
+    
     int                 FindBestSupportLine()    { return FindBestLineIndex(true); }
     int                 FindBestResistanceLine() { return FindBestLineIndex(false); }
     bool                GetBestSupport(STrendline &tl);
     bool                GetBestResistance(STrendline &tl);
-
+    
     double              ProjectTrendline(STrendline &trendline, datetime targetTime);
-
+    
     bool                IsAtTrendline(double price, int &touchedLineIndex);
     bool                IsTrendlineBroken(STrendline &trendline);
 };
@@ -150,7 +150,7 @@ bool CTrendlineDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     m_timeframe = timeframe;
     m_swingStrength = swingStrength;
     m_tolerancePips = tolerancePips;
-
+    
     return true;
 }
 
@@ -158,11 +158,11 @@ void CTrendlineDetector::DetectTrendlines(int lookback)
 {
     m_trendlineCount = 0;
     ArrayResize(m_trendlines, 0);
-
+    
     FindSwingPoints(lookback);
-
+    
     FindSupportTrendlines();
-
+    
     FindResistanceTrendlines();
 }
 
@@ -186,21 +186,21 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
     m_swingLowCount = 0;
     ArrayResize(m_swingHighs, 0);
     ArrayResize(m_swingLows, 0);
-
+    
     double high[], low[];
     datetime time[];
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
-
-    if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
-    if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
+    
+    if(CopyHigh(m_symbol, m_timeframe, 1, lookback, high) <= 0) return;
+    if(CopyLow(m_symbol, m_timeframe, 1, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
-
+    
     int str = m_swingStrength;
     double atr = GetATR(14);
     double minSwingSize = atr * 0.30;
-
+    
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingHigh = true;
@@ -212,7 +212,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 break;
             }
         }
-
+        
         if(isSwingHigh)
         {
             double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
@@ -221,13 +221,13 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 ArrayResize(m_swingHighs, m_swingHighCount + 1);
                 m_swingHighs[m_swingHighCount].time = time[i];
                 m_swingHighs[m_swingHighCount].price = high[i];
-                m_swingHighs[m_swingHighCount].barIndex = i;
+                m_swingHighs[m_swingHighCount].barIndex = i + 1;
                 m_swingHighs[m_swingHighCount].isHigh = true;
                 m_swingHighCount++;
             }
         }
     }
-
+    
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingLow = true;
@@ -239,7 +239,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 break;
             }
         }
-
+        
         if(isSwingLow)
         {
             double neighborAvgLow = (low[i-1] + low[i+1]) / 2.0;
@@ -248,13 +248,13 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
                 ArrayResize(m_swingLows, m_swingLowCount + 1);
                 m_swingLows[m_swingLowCount].time = time[i];
                 m_swingLows[m_swingLowCount].price = low[i];
-                m_swingLows[m_swingLowCount].barIndex = i;
+                m_swingLows[m_swingLowCount].barIndex = i + 1;
                 m_swingLows[m_swingLowCount].isHigh = false;
                 m_swingLowCount++;
             }
         }
     }
-
+    
     // Remove swings that are too close together (< m_swingStrength * 2 bars apart)
     // Keep the highest high / lowest low in each cluster
     for(int i = 0; i < m_swingHighCount - 1; i++)
@@ -277,7 +277,7 @@ void CTrendlineDetector::FindSwingPoints(int lookback)
             }
         }
     }
-
+    
     for(int i = 0; i < m_swingLowCount - 1; i++)
     {
         for(int j = i + 1; j < m_swingLowCount; j++)
@@ -499,7 +499,8 @@ int CTrendlineDetector::CountTouches(SSwingPoint &p1, SSwingPoint &p2, double sl
 
     // Also test beyond P2 (newest side): the line must continue to hold after the second anchor.
     int checkBars = MathMin(20, p2.barIndex - 1);
-    for(int i = p2.barIndex - 1; i >= MathMax(0, p2.barIndex - checkBars); i--)
+    int oldestClosedShift = MathMax(1, p2.barIndex - checkBars);
+    for(int i = p2.barIndex - 1; i >= oldestClosedShift; i--)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime == 0) break;
@@ -736,7 +737,7 @@ bool CTrendlineDetector::GetTrendline(int index, STrendline &trendline)
 {
     if(index < 0 || index >= m_trendlineCount)
         return false;
-
+    
     trendline = m_trendlines[index];
     return true;
 }
@@ -750,21 +751,21 @@ bool CTrendlineDetector::IsAtTrendline(double price, int &touchedLineIndex)
 {
     double tolerance = m_tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     datetime localTime = TimeCurrent();
-
+    
     for(int i = 0; i < m_trendlineCount; i++)
     {
         if(m_trendlines[i].isBroken || !m_trendlines[i].isValid)
             continue;
-
+        
         double projectedPrice = ProjectTrendline(m_trendlines[i], localTime);
-
+        
         if(MathAbs(price - projectedPrice) < tolerance)
         {
             touchedLineIndex = i;
             return true;
         }
     }
-
+    
     return false;
 }
 

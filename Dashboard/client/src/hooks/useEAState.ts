@@ -2,10 +2,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { EAState, LogEntry, WSMessage } from '../types/ea-state';
 import { useWebSocket } from './useWebSocket';
 
-// Opt-in demo mode: append ?demo to the URL to render the dashboard with
-// synthetic data (no EA / WebSocket required). Never active in production.
+// Opt-in development demo: append ?demo to render synthetic data without an EA connection.
 const DEMO =
-  typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('demo');
+  import.meta.env.DEV && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('demo');
 
 interface AlertEntry {
   id: number;
@@ -66,10 +65,10 @@ function genDemoState(tick: number): EAState {
       },
       regime: { current: tick % 6 === 0 ? 'VOLAT' : 'RANGE', trend_prob: 0.3, range_prob: 0.45, volatile_prob: 0.18, spike_prob: 0.07 },
       meta_labeler: { features: 24, cooldown: 5, early_stop_patience: 10, recent_win_rate: 0.63, recent_avg_confidence: 0.61, samples_since_train: 42 },
-      features_total: 65,
+      features_total: 70,
     },
     strategies,
-    scalp: { active: true, open_positions: 2, max_positions: 5, total_entries: 38, total_rejections: 11 },
+    scalp: { available: true, active: true, open_positions: 2, max_positions: 5, total_entries: 38, total_rejections: 11 },
     heartbeat: {
       scans: 1520 + tick * 2, signals_generated: 412 + tick, signals_validated: 388 + tick,
       trades_opened: 37, shadow_trades: 124, spike_events: 9,
@@ -103,9 +102,8 @@ export function useEAState(): {
   isConnected: boolean;
   connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
   reconnect: () => void;
-  sendCommand: (command: string, params?: Record<string, unknown>) => void;
 } {
-  const { lastMessage, isConnected: wsConnected, status: wsStatus, send, reconnect } = useWebSocket();
+  const { lastMessage, isConnected: wsConnected, status: wsStatus, reconnect } = useWebSocket();
   const [state, setState] = useState<EAState | null>(DEMO ? genDemoState(0) : null);
   const [logs, setLogs] = useState<LogEntry[]>(DEMO ? genDemoLogs() : []);
   const [alerts, setAlerts] = useState<AlertEntry[]>([]);
@@ -164,10 +162,5 @@ export function useEAState(): {
     return () => clearInterval(id);
   }, []);
 
-  const sendCommand = useCallback((command: string, params?: Record<string, unknown>) => {
-    if (DEMO) { addAlert(`[demo] ${command}${params ? ' ' + JSON.stringify(params) : ''}`); return; }
-    send({ command, ...params });
-  }, [send, addAlert]);
-
-  return { state, logs, alerts, isConnected: DEMO ? true : wsConnected, connectionStatus: DEMO ? 'connected' : wsStatus, reconnect, sendCommand };
+  return { state, logs, alerts, isConnected: DEMO ? true : wsConnected, connectionStatus: DEMO ? 'connected' : wsStatus, reconnect };
 }

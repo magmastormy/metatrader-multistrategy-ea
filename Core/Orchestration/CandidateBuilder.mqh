@@ -13,13 +13,15 @@
 #include "../../Core/Engines/SessionWeightManager.mqh"
 #include "../../Core/Engines/SkewStepAnalyzer.mqh"
 #include "../../Core/Utils/Enums.mqh"
-#include "../../Core/AI/VolatilityRegimeModel.mqh"   // sizes risk from predicted volatility regime
+#include "../../Core/AI/VolatilityRegimeModel.mqh"   // Batch 278: sizes risk from predicted volatility regime
 #include "../../Core/Utils/JsonLogger.mqh"
 #include "../../Core/Utils/Instruments.mqh"
 
 struct STradeCandidate
 {
     string symbol;
+    string intentId;
+    string failureReason;
     ENUM_ORDER_TYPE orderType;
     double entryPrice;
     double stopLossPips;
@@ -34,6 +36,7 @@ struct STradeCandidate
     string strategyCluster;
     string contributorSummary;
     string clusterCode;
+    string virtualReservationOwnerTag;
     datetime requestTime;
     double qualityScore;
     double convictionScore;
@@ -46,11 +49,12 @@ struct STradeCandidate
     bool hasNeuralNetContributor;
     bool hasIndicatorContributor;
     int indicatorContributorCount;
-    string predictionId;  // For linking trade outcome to NN training
-
-    STradeCandidate() : symbol(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
+    string predictionId;  // For linking trade outcome to NN training (L11-014)
+    
+    STradeCandidate() : symbol(""), intentId(""), failureReason(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
                        takeProfitPips(0), lotSize(0), riskPercent(0), confidence(0),
-                       confluence(0), qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
+                       confluence(0), virtualReservationOwnerTag(""),
+                       qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
                        costScore(0),
                        hasAIContributor(false), hasONNXContributor(false),
                        hasNeuralNetContributor(false),
@@ -66,25 +70,23 @@ private:
     CTradeManager*              m_tradeManager;
     CPerformanceAnalytics*      m_performanceAnalytics;
     CDerivAssetProfiler*        m_derivProfiler;
-
+    
     // Stored from Initialize(); no method in this class reads any of these five.
     CRiskTierManager*           m_riskTierManager;
     CCompoundingTierManager*    m_compoundingTierManager;
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;
     CSessionWeightManager*      m_sessionWeightManager;
     CSkewStepAnalyzer*          m_skewStepAnalyzer;
-
+    
     double                      m_minRRDefault;
     double                      m_minRRMeanReversion;
-    double                      m_maxRiskPerTrade;
     double                      m_maxSpreadToTpRatio;
-    double                      m_minLotRiskMultiplier;
     double                      m_aiDrawdownSizingLimit;
     bool                        m_antiMartingaleEnabled;
     int                         m_maxPositionsPerSymbol;
-
+    
     double                      m_minRRByCluster[];
-
+    
         int                         m_hybridGateRelaxAfterCycles;
         double                      m_aiStandaloneMinConfidence;
         double                      m_aiStandaloneRelaxedConfidence;
@@ -94,7 +96,7 @@ private:
         string                      m_symbolHybridGateRelaxedKeys[];
         bool                        m_symbolHybridGateRelaxedValues[];
         int                         m_symbolHybridGateRelaxedCount;
-
+    
     bool ContributorsIncludeIndicator(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
@@ -102,7 +104,7 @@ private:
                 return true;
         return false;
     }
-
+    
     int CountIndicatorContributors(const string &contributors[])
     {
         int count = 0;
@@ -200,12 +202,26 @@ private:
         return 1;
     }
 
+    void ReleaseCandidateReservation(STradeCandidate &candidate)
+    {
+        if(candidate.virtualReservationOwnerTag == "" || m_riskManager == NULL)
+            return;
+        m_riskManager.ReleaseVirtualPosition(candidate.virtualReservationOwnerTag);
+        candidate.virtualReservationOwnerTag = "";
+    }
+
+    bool RejectCandidate(STradeCandidate &candidate, const string reason)
+    {
+        candidate.failureReason = reason;
+        return false;
+    }
+
 public:
-    CCandidateBuilder() :
+    CCandidateBuilder() : 
             m_riskManager(NULL), m_positionSizer(NULL), m_tradeManager(NULL),
             m_performanceAnalytics(NULL), m_derivProfiler(NULL),
-            m_minRRDefault(2.0), m_minRRMeanReversion(1.5), m_maxRiskPerTrade(5.0),
-            m_maxSpreadToTpRatio(0.15), m_minLotRiskMultiplier(1.5),
+            m_minRRDefault(2.0), m_minRRMeanReversion(1.5),
+            m_maxSpreadToTpRatio(0.15),
             m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
             m_maxPositionsPerSymbol(0),
             m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
@@ -218,7 +234,7 @@ public:
             ArrayResize(m_minRRByCluster, 10);
             ArrayInitialize(m_minRRByCluster, 2.0);
             m_minRRByCluster[MEAN_REVERSION_CLUSTER] = 1.5;
-
+        
             ArrayResize(m_symbolCyclesSinceIndicator, 50);
             ArrayResize(m_symbolCyclesSinceIndicatorValues, 50);
             for(int _i = 0; _i < 50; _i++)
@@ -235,8 +251,8 @@ public:
                 m_symbolHybridGateRelaxedValues[_j] = false;
             }
         }
-
-
+    
+    
     // Shrink-only against the approved lot: the authority ladder tops out at 1.0 and the PROVEN_AI
     // promotion floor is capped at 0.75, so nothing here sizes a candidate larger.
     // Floors to SYMBOL_VOLUME_STEP by hand because CPositionSizer::NormalizeVolume clamps UP to
@@ -246,13 +262,17 @@ public:
         string symbol = candidate.symbol;
         double baseLot = candidate.lotSize;
         if(baseLot <= 0.0)
+        {
+            ReleaseCandidateReservation(candidate);
             return false;
+        }
 
         if(riskMult >= 1.0)
             return true;
 
         if(riskMult <= 0.0)
         {
+            ReleaseCandidateReservation(candidate);
             NoteAuthorityBlock(symbol);
             m_authorityBlockedTotal++;
             PrintFormat("[AUTHORITY-REJECT] %s | live-authority multiplier arrived as %.4f, which is not a valid scale | trade refused rather than sent unscaled | reason=%s",
@@ -270,6 +290,7 @@ public:
 
         if(scaled < minLot)
         {
+            ReleaseCandidateReservation(candidate);
             // Rounding UP to the broker minimum was built here and then measured away: the multipliers
             // that reach this branch are far below 1 (bootstrapMult 0.50 times drawdown/session factors;
             // the logged cases carried mult ~0.004 against base 0.01), so the ladder was asking for
@@ -302,6 +323,8 @@ public:
             // follow the shrunk lot or the daily budget is charged for risk never taken.
             candidate.riskPercent = newRiskPct;
             candidate.lotSize = scaled;
+            if(candidate.virtualReservationOwnerTag != "" && m_riskManager != NULL)
+                m_riskManager.UpdateVirtualPositionRisk(candidate.virtualReservationOwnerTag, scaled, newRiskPct);
         }
         return true;
     }
@@ -316,7 +339,7 @@ public:
         m_performanceAnalytics = perf;
         m_derivProfiler = derivProf;
     }
-
+    
     bool Initialize(CPositionSizer* sizer, CUnifiedRiskManager* risk,
                     CRiskTierManager* riskTierMgr, CCompoundingTierManager* compoundingTierMgr,
                     CFamilyStrategyWeightMatrix* familyWeightMatrix,
@@ -332,17 +355,15 @@ public:
         m_skewStepAnalyzer = skewStepAnalyzer;
         return true;
     }
-
-    void Configure(double minRRDefault, double minRRMeanRev, double maxRiskPerTrade,
-                   double maxSpreadTpRatio, double minLotRiskMult, double aiDDSizingLimit,
+    
+     void Configure(double minRRDefault, double minRRMeanRev,
+                    double maxSpreadTpRatio, double aiDDSizingLimit,
                    bool antiMartingale, int maxPosPerSymbol,
                    int hybridRelaxCycles, double aiStandaloneConf, double aiRelaxedConf)
     {
         m_minRRDefault = minRRDefault;
         m_minRRMeanReversion = minRRMeanRev;
-        m_maxRiskPerTrade = maxRiskPerTrade;
         m_maxSpreadToTpRatio = maxSpreadTpRatio;
-        m_minLotRiskMultiplier = minLotRiskMult;
         m_aiDrawdownSizingLimit = aiDDSizingLimit;
         m_antiMartingaleEnabled = antiMartingale;
         m_maxPositionsPerSymbol = maxPosPerSymbol;
@@ -357,18 +378,21 @@ public:
     {
         return GetHybridGateRelaxed(symbol) ? m_aiStandaloneRelaxedConfidence : m_aiStandaloneMinConfidence;
     }
-
+    
         // `useStrategyStops` is a parameter rather than a read of `::InpUseStrategyStops`: an input only
-        // exists in the program, so reading it here made this header uncompilable outside a.mq5 and
+        // exists in the program, so reading it here made this header uncompilable outside a .mq5 and
         // dragged two other orchestration headers into the same dependency. The EA passes its input in.
         bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
                             int confluence, const SConsensusDecisionContext& ctx,
                             CEnterpriseStrategyManager* manager, ulong scanCycleId,
                             STradeCandidate &candidate, bool useStrategyStops = true,
-                            const string corrId = "", double symbolStreakScale = 1.0)
+                            const string corrId = "", double symbolStreakScale = 1.0,
+                            const string intentId = "")
     {
-        if(signal == TRADE_SIGNAL_NONE) return false;
-
+        candidate.intentId = intentId;
+        candidate.failureReason = "";
+        if(signal == TRADE_SIGNAL_NONE) return RejectCandidate(candidate, "no_consensus_signal");
+        
         candidate.symbol = symbol;
         candidate.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
         candidate.confidence = confidence;
@@ -378,23 +402,23 @@ public:
         candidate.contextScore = ctx.contextScore;
         candidate.costScore = ctx.costScore;
         candidate.requestTime = TimeCurrent();
-
+        
         string roleTag = "PRIMARY_ALPHA", clusterTag = "NONE", clusterCode = "N", contribSummary = "";
         string contributorsList[];
         manager.GetLastSignalExecutionContext(roleTag, clusterTag, clusterCode, contribSummary);
         manager.GetLastSignalContributors(contributorsList);
-
+        
         candidate.strategyRole = roleTag;
         candidate.strategyCluster = clusterTag;
         candidate.clusterCode = clusterCode;
         candidate.contributorSummary = contribSummary;
-
+        
         candidate.hasAIContributor = ContributorsIncludeAI(contributorsList);
         candidate.hasONNXContributor = ContributorsIncludeONNX(contributorsList);
         candidate.hasNeuralNetContributor = ContributorsIncludeNeuralNet(contributorsList);
         candidate.hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
         candidate.indicatorContributorCount = CountIndicatorContributors(contributorsList);
-
+        
                         int cyclesSinceIndicator = GetCyclesSinceIndicatorSignal(symbol);
                         bool hybridGateRelaxed = GetHybridGateRelaxed(symbol);
 
@@ -404,7 +428,7 @@ public:
                                                     {
                                                         if(corrId != "")
                                                         {
-                                                            CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate restored - indicator signal detected", "HYBRID_GATE_RESTORED", symbol, corrId,
+                                                            CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate restored - indicator signal detected", "HYBRID_GATE_RESTORED", symbol, corrId, 
                                                                 "{\"threshold\":" + DoubleToString(m_aiStandaloneMinConfidence, 3) + "}");
                                                         }
                                                         PrintFormat("[HYBRID-GATE-RESTORED] %s | Indicator signal detected, AI threshold restored to %.3f",
@@ -418,13 +442,13 @@ public:
                                                     SetHybridGateRelaxed(symbol, true);
                                                     if(corrId != "")
                                                     {
-                                                        CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate relaxed - no indicator signals", "HYBRID_GATE_RELAXED", symbol, corrId,
+                                                        CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate relaxed - no indicator signals", "HYBRID_GATE_RELAXED", symbol, corrId, 
                                                             "{\"cycles\":" + IntegerToString(cyclesSinceIndicator) + ",\"threshold_from\":" + DoubleToString(m_aiStandaloneMinConfidence, 3) + ",\"threshold_to\":" + DoubleToString(m_aiStandaloneRelaxedConfidence, 3) + "}");
                                                     }
                                                     PrintFormat("[HYBRID-GATE-RELAXED] %s | No indicator signals for %d cycles, AI threshold %.3f -> %.3f",
                                                                 symbol, cyclesSinceIndicator, m_aiStandaloneMinConfidence, m_aiStandaloneRelaxedConfidence);
                                                 }
-
+        
                 if(!candidate.hasIndicatorContributor)
                 {
                     IncrementCyclesSinceIndicatorSignal(symbol);
@@ -432,42 +456,38 @@ public:
 
         // Mode admission (INDICATOR_ONLY / AI_ONLY vetoes) is CLiveAuthorityResolver's, run by
         // EAOrchestrator after BuildCandidate returns.
-
-        candidate.entryPrice = (signal == TRADE_SIGNAL_BUY)
-            ? SymbolInfoDouble(symbol, SYMBOL_ASK)
+        
+        candidate.entryPrice = (signal == TRADE_SIGNAL_BUY) 
+            ? SymbolInfoDouble(symbol, SYMBOL_ASK) 
             : SymbolInfoDouble(symbol, SYMBOL_BID);
-
+        
         if(candidate.entryPrice <= 0)
-            return false;
-
+            return RejectCandidate(candidate, "entry_price_unavailable");
+        
         // useStrategyStops (EA default true) prefers the strategy's designed SL/TP, quoted in pips.
         double propSL = 0.0, propTP = 0.0;
         bool useStratStops = useStrategyStops && manager.GetConsensusProposedStops(signal, propSL, propTP);
         if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
-            return false;
-
+            return RejectCandidate(candidate, "stop_calculation_failed");
+        
         if(!CheckExecutionCost(symbol, candidate))
-            return false;
-
+            return RejectCandidate(candidate, "execution_cost_gate");
+        
         if(!CheckAccountCapacity(symbol, candidate))
-            return false;
-
+            return RejectCandidate(candidate, "account_capacity_gate");
+        
         double requestedRisk = m_riskManager.GetActiveRiskPerTradePercent();
-        if(requestedRisk <= 0) requestedRisk = m_maxRiskPerTrade;
-
+        
         double proposedRisk = m_riskManager.GetRecommendedRiskPerTradePercent(requestedRisk);
         if(proposedRisk <= 0)
         {
             PrintFormat("[CANDIDATE-BUILDER] %s | risk capped to 0", symbol);
-            return false;
+            return RejectCandidate(candidate, "risk_budget_zero");
         }
-
-        if(!ResolveLiveAuthority(symbol, candidate, proposedRisk))
-            return false;
-
+        
         if(!CheckSymbolPositionLimit(symbol, candidate))
-            return false;
-
+            return RejectCandidate(candidate, "symbol_position_limit");
+        
         STradeValidationRequest tradeReq;
         tradeReq.symbol = symbol;
         tradeReq.orderType = candidate.orderType;
@@ -482,13 +502,13 @@ public:
         tradeReq.contributorContext = contribSummary;
         tradeReq.clusterCode = clusterCode;
         tradeReq.requestTime = TimeCurrent();
-
+        
         // The gate runs once, after the lot is final (below): each approval keeps a virtual
         // reservation until its TTL, so a second call would double-count portfolio risk.
-        // the second reader of VolReg_RiskScale. Risk is scaled before the sizer
+        // Batch 278: the second reader of VolReg_RiskScale. Risk is scaled before the sizer
         // runs so the lot and the booked riskPercent stay the same number - scaling the lot
         // afterwards would leave candidate.riskPercent describing a trade that does not
-        // exist (shape). The per-trade cap and the daily budget below still
+        // exist (the Batch 251 shape). The per-trade cap and the daily budget below still
         // clamp whatever this produces, and an unknown model (-1.0) changes nothing.
                 const double volScale = VolReg_RiskScale(symbol);
                 if(volScale > 0.0 && volScale < 1.0)
@@ -505,10 +525,10 @@ public:
                     proposedRisk = scaledRisk;
                 }
 
-                // per-symbol loss-streak sizing. The caller (EAOrchestrator) passes a scale below 1.0 when
+                // Batch 287: per-symbol loss-streak sizing. The caller (EAOrchestrator) passes a scale below 1.0 when
                 // this symbol is in a losing run. Applied to the risk fraction BEFORE the sizer, exactly like the
                 // volatility band above and for the same reason: the lot and the booked riskPercent must stay one
-                // number. Unlike a held entry, this keeps the slot usable - measured that refusing the row
+                // number. Unlike a held entry, this keeps the slot usable - Batch 286 measured that refusing the row
                 // hands its risk budget to the next symbol and moved a window from +0.983% to -3.767%.
                 if(symbolStreakScale > 0.0 && symbolStreakScale < 1.0 && proposedRisk > 0.0)
                 {
@@ -523,11 +543,11 @@ public:
                     proposedRisk = scaledRisk;
                 }
 
-                double lotSize = m_positionSizer.CalculatePositionSizeWithRisk(symbol,
-                                                                                candidate.stopLossPips,
-                                                                                proposedRisk,
+                double lotSize = m_positionSizer.CalculatePositionSizeWithRisk(symbol, 
+                                                                                candidate.stopLossPips, 
+                                                                                proposedRisk, 
                                                                                 candidate.confidence);
-
+        
                 double remainingDailyRisk = m_riskManager.GetRemainingDailyRiskPercent();
                 if(lotSize > 0 && remainingDailyRisk > 0 && proposedRisk > 0)
                 {
@@ -535,25 +555,59 @@ public:
                                                                     candidate.stopLossPips, proposedRisk,
                                                                     remainingDailyRisk, 0.30);
                 }
-
+        
         if(lotSize <= 0)
         {
             PrintFormat("[CANDIDATE-BUILDER] %s | position sizer returned 0 lot", symbol);
-            return false;
+            return RejectCandidate(candidate, "position_sizer_zero_lot");
         }
-
+        
         // VPIN reaches size through CVPINLotModifier (registered in the sizer chain) and vetoes
         // through CPostConsensusValidator; skew step, full margin and safe mode have no size hook.
-        lotSize = ApplyDrawdownScaling(symbol, lotSize, proposedRisk);
+        lotSize = ApplyDrawdownScaling(symbol, lotSize);
         if(lotSize <= 0.0)
-            return false;
+            return RejectCandidate(candidate, "drawdown_scaling_zero_lot");
         lotSize = ApplyMomentumScaling(symbol, lotSize);
-        // This round-up re-adds risk; the re-gate below clamps the lot back to the per-trade cap,
-        // or refuses when no compliant lot exists above the broker minimum.
         double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double brokerMaxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+        double volumeStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        bool volumeSpecValid = MathIsValidNumber(brokerMinLot) && brokerMinLot > 0.0 &&
+                          MathIsValidNumber(brokerMaxLot) && brokerMaxLot >= brokerMinLot &&
+                          MathIsValidNumber(volumeStep) && volumeStep > 0.0;
+        if(!volumeSpecValid)
+        {
+            return RejectCandidate(candidate, "broker_volume_spec_unavailable");
+        }
         if(lotSize < brokerMinLot)
+        {
+            if(lotSize <= 0.0)
+                return RejectCandidate(candidate, "nonpositive_lot_before_floor");
+            SPositionSizingParams sizingParams = m_positionSizer.GetParameters();
+            double uplift = brokerMinLot / lotSize;
+            if(!sizingParams.allowMinLotRoundUp)
+            {
+                PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_below_min_roundup_disabled | lot=%.4f | broker_min=%.4f",
+                            symbol, lotSize, brokerMinLot);
+                return RejectCandidate(candidate, "minimum_lot_roundup_disabled");
+            }
+            if(uplift > sizingParams.minLotRiskMultiplier)
+            {
+                PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_floor_risk_multiplier | lot=%.4f | broker_min=%.4f | uplift=%.2fx > cap=%.2fx",
+                            symbol, lotSize, brokerMinLot, uplift, sizingParams.minLotRiskMultiplier);
+                return RejectCandidate(candidate, "minimum_lot_risk_multiplier");
+            }
+            PrintFormat("[RISK-LOT-FLOOR] %s | lot %.4f -> %.4f | uplift=%.2fx <= cap=%.2fx",
+                        symbol, lotSize, brokerMinLot, uplift, sizingParams.minLotRiskMultiplier);
             lotSize = brokerMinLot;
-
+        }
+        
+        double normalizedLot = CTradeMgrPricing::NormalizeVolume(symbol, lotSize);
+        if(!MathIsValidNumber(normalizedLot) || normalizedLot <= 0.0)
+            return RejectCandidate(candidate, "volume_normalization_failed");
+        if(normalizedLot < brokerMinLot || normalizedLot > brokerMaxLot || normalizedLot > lotSize)
+            return RejectCandidate(candidate, "normalized_volume_out_of_bounds");
+        if(normalizedLot < lotSize)
+            lotSize = normalizedLot;
         candidate.lotSize = lotSize;
 
         // Per-trade cap clamp: the lot here is the product of the modifiers above, so it is checked
@@ -568,7 +622,7 @@ public:
         {
             PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable | lot=%.4f | stop=%.1f pips | the stop cannot be priced, so the risk cannot be capped",
                         symbol, candidate.lotSize, candidate.stopLossPips);
-            return false;
+            return RejectCandidate(candidate, "risk_unmeasurable");
         }
         double riskDenom = CRiskMath::GetRiskDenominator();
         double finalRiskPct = (riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
@@ -577,7 +631,7 @@ public:
         {
             // Kill-switch: risk is disabled for this symbol — do not trade.
             PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_disabled | cap=%.2f%%", symbol, riskCap);
-            return false;
+            return RejectCandidate(candidate, "risk_cap_disabled");
         }
         if(finalRiskPct > riskCap)
         {
@@ -598,7 +652,7 @@ public:
                     StringFormat("Lot needed to meet cap %.4f < broker min %.4f at risk %.3f%% vs cap %.3f%%",
                                  compliantLot, brokerMinLot, finalRiskPct, riskCap),
                     compliantLot, brokerMinLot, corrId);
-                return false;
+                return RejectCandidate(candidate, "risk_cap_requires_below_minimum_lot");
             }
             PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.4f -> %.4f | risk=%.3f%% -> cap=%.3f%%",
                         symbol, lotSize, compliantLot, finalRiskPct, riskCap);
@@ -622,8 +676,9 @@ public:
                 StringFormat("Lot %.4f at %.3f%% rejected: %s",
                              candidate.lotSize, candidate.riskPercent, riskResult.message),
                 candidate.lotSize, candidate.riskPercent, corrId);
-            return false;
+            return RejectCandidate(candidate, riskResult.message);
         }
+        candidate.virtualReservationOwnerTag = riskResult.virtualReservationOwnerTag;
 
         // Shrink-only adoption: the pipeline can raise adjustedLotSize to the broker minimum, and
         // taking that back would ship more than the sizing above decided.
@@ -635,21 +690,23 @@ public:
                 : riskResult.adjustedLotSize;
             if(adoptedLot < brokerMinLot)
             {
+                ReleaseCandidateReservation(candidate);
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=adjusted_lot_below_min | adjusted=%.4f | broker_min=%.4f | %s",
                             symbol, adoptedLot, brokerMinLot, riskResult.message);
                 CJsonLogger::LogRiskEvent("RiskGateReject", symbol, "ADJUSTED_LOT_BELOW_MIN",
                     StringFormat("Risk manager asked for %.4f, below broker min %.4f: %s",
                                  adoptedLot, brokerMinLot, riskResult.message),
                  adoptedLot, brokerMinLot, corrId);
-                return false;
+                return RejectCandidate(candidate, "adjusted_lot_below_minimum");
             }
             double adoptedRisk = m_riskManager.CalculateTradeRisk(symbol, adoptedLot, candidate.stopLossPips);
             // An adopted lot that the broker cannot price is refused, not booked at the previous percentage.
             if(adoptedRisk <= 0.0)
             {
+                ReleaseCandidateReservation(candidate);
                 PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_unmeasurable_after_adjust | lot=%.4f | %s",
                             symbol, adoptedLot, riskResult.message);
-                return false;
+                return RejectCandidate(candidate, "adjusted_risk_unmeasurable");
             }
             double adoptedPct = (riskDenom > 0.0) ? (adoptedRisk / riskDenom) * 100.0 : candidate.riskPercent;
             PrintFormat("[RISK-GATE-ADJUST] %s | lot=%.4f -> %.4f | risk=%.3f%% -> %.3f%% | %s",
@@ -657,34 +714,34 @@ public:
             candidate.lotSize = adoptedLot;
             candidate.riskPercent = adoptedPct;
         }
-
+        
         candidate.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
                                            roleTag, clusterTag, contribSummary,
                                            ctx.convictionScore, ctx.readinessScore, ctx.contextScore, ctx.costScore);
-
+        
 
         return true;
     }
-
-
+    
+    
     bool CalculateStops(const string symbol, ENUM_TRADE_SIGNAL signal, STradeCandidate &candidate,
                         const SConsensusDecisionContext& ctx,
                         bool useStrategyStops = false, double proposedSL = 0.0, double proposedTP = 0.0)
     {
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(point <= 0) point = 0.00001;
-
+        
         bool isSynthetic = IsSyntheticIndexSymbolName(symbol);
 
         // minRR is resolved first because every stop branch below applies it.
         double minRR = m_minRRDefault;
         if(ctx.dominantCluster == MEAN_REVERSION_CLUSTER)
             minRR = m_minRRMeanReversion;
-
+        
         // ATR14 on the current chart timeframe, through CIndicatorManager's shared handle cache.
         // A zero (no cache, no data) leaves the fixed band below in charge, as before.
         double atrValue = CTradeMgrPricing::CalculateATR(symbol, PERIOD_CURRENT, 14);
-
+        
         double stopLossPips = 0;
         double takeProfitPips = 0;
 
@@ -713,7 +770,7 @@ public:
             stopLossPips = MathMax(fallbackByStopLevel, fallbackByPrice);
             takeProfitPips = stopLossPips * minRR;
         }
-
+        
         // GetMinimumStopDistance() answers in price units, so it is divided by point before it is
         // compared with STOPS_LEVEL; unconverted it was ~1e5 times too small and silently lost the
         // broker's spread-folded minimum. With no trade manager the raw STOPS_LEVEL points are used.
@@ -721,12 +778,12 @@ public:
         double brokerMinPoints = (m_tradeManager != NULL)
                                      ? m_tradeManager.GetMinimumStopDistance(symbol) / point
                                      : (double)stopLevelPts;
-
+        
         double spreadPoints = 0;
         MqlTick tick;
         if(SymbolInfoTick(symbol, tick) && tick.ask > tick.bid && point > 0)
             spreadPoints = (tick.ask - tick.bid) / point;
-
+        
         double minSlPips = MathMax((double)MathMax(brokerMinPoints, stopLevelPts) * 1.50,
                                    MathMax(spreadPoints * 3.0, 8.0));
         double priceCapPips = (candidate.entryPrice * (isSynthetic ? 0.010 : 0.003)) / point;
@@ -737,7 +794,7 @@ public:
         double atrPips = (point > 0.0) ? atrValue / point : 0.0;
         double maxSlPips = (atrPips > 0.0) ? MathMax(priceCapPips, 3.0 * atrPips) : priceCapPips;
         if(maxSlPips < minSlPips) maxSlPips = minSlPips;
-
+        
         double intendedSlPips = stopLossPips;
         stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
         // minRR floors the R:R of the stop actually taken; as MathMin it capped every wider strategy TP at
@@ -751,21 +808,21 @@ public:
             PrintFormat("[CANDIDATE-BUILDER] %s | stop pinned to floor | designed=%.1f floor=%.1f spread=%.1f | tp=%.1f costRatio=%.3f limit=%.3f",
                         symbol, intendedSlPips, minSlPips, spreadPoints, takeProfitPips,
                         spreadPoints / takeProfitPips, m_maxSpreadToTpRatio);
-
+        
         candidate.stopLossPips = stopLossPips;
         candidate.takeProfitPips = takeProfitPips;
-
+        
         return true;
     }
-
+    
     bool CheckExecutionCost(const string symbol, const STradeCandidate &candidate)
     {
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(point <= 0) return true;
-
+        
         MqlTick tick;
         if(!SymbolInfoTick(symbol, tick) || tick.ask <= tick.bid) return true;
-
+        
         double spreadPoints = (tick.ask - tick.bid) / point;
         if(spreadPoints > 0 && candidate.takeProfitPips > 0)
         {
@@ -779,17 +836,17 @@ public:
         }
         return true;
     }
-
+    
     bool CheckAccountCapacity(const string symbol, const STradeCandidate &candidate)
     {
         // Smoke check at the broker minimum: candidate.lotSize is not decided until after this call,
         // and the risk pipeline's own margin step now sees the final lot.
         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         double marginRequired = 0;
-
+        
         if(!OrderCalcMargin(candidate.orderType, symbol, minLot, candidate.entryPrice, marginRequired))
             marginRequired = candidate.entryPrice * minLot / 100.0;
-
+        
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
         if(freeMargin < marginRequired)
         {
@@ -799,19 +856,11 @@ public:
         }
         return true;
     }
-
-    bool ResolveLiveAuthority(const string symbol, STradeCandidate &candidate, double &proposedRisk)
-    {
-        // Stub: always authorizes at 1.0 and returns true, so it gates nothing. EAOrchestrator
-        // overwrites liveAuthorityReason from CLiveAuthorityResolver after BuildCandidate returns.
-        candidate.liveAuthorityReason = "AUTHORIZED";
-        return true;
-    }
-
+    
     bool CheckSymbolPositionLimit(const string symbol, const STradeCandidate &candidate)
     {
         if(m_maxPositionsPerSymbol <= 0) return true;
-
+        
         int existingCount = 0;
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
@@ -821,7 +870,7 @@ public:
             if(PositionGetString(POSITION_SYMBOL) == symbol && (m_tradeManager != NULL && m_tradeManager.IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))))
                 existingCount++;
         }
-
+        
         if(existingCount >= m_maxPositionsPerSymbol)
         {
             PrintFormat("[CANDIDATE-BUILDER] %s | per-symbol limit reached: %d >= %d",
@@ -830,15 +879,15 @@ public:
         }
         return true;
     }
-
-    double ApplyDrawdownScaling(const string symbol, double lotSize, double proposedRisk)
+    
+    double ApplyDrawdownScaling(const string symbol, double lotSize)
     {
         if(!m_antiMartingaleEnabled) return lotSize;
 
         // Peak equity is the risk circuit breaker's high-water mark, not ACCOUNT_EQUITY.
         double peakEquity = (m_riskManager != NULL) ? m_riskManager.GetPeakEquity() : 0.0;
         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-
+        
         if(peakEquity > 0 && m_aiDrawdownSizingLimit > 0)
         {
             double dd = (peakEquity - currentEquity) / peakEquity;
@@ -846,25 +895,7 @@ public:
             {
                 double mult = MathMax(0.10, MathMin(1.0, 1.0 - (dd / MathMax(0.01, m_aiDrawdownSizingLimit))));
                 double newLot = lotSize * mult;
-
-                double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-                if(newLot < brokerMinLot && lotSize > brokerMinLot)
-                {
-                    // Measure the round-up the way the risk pipeline does: the factor the shipped lot
-                    // exceeds the intended one. brokerMinLot / lotSize is below 1.0 here by construction,
-                    // so comparing that against a multiplier ceiling could never fail, and any shrink
-                    // that under-shot the minimum was silently replaced by a full-minimum lot.
-                    double uplift = brokerMinLot / newLot;
-                    if(uplift > m_minLotRiskMultiplier)
-                    {
-                        PrintFormat("[RISK-GATE-REJECT] %s | reason=drawdown_lot_below_min | intended=%.4f | broker_min=%.4f | uplift=%.1fx > %.1fx ceiling",
-                                    symbol, newLot, brokerMinLot, uplift, m_minLotRiskMultiplier);
-                        return 0.0;
-                    }
-                    mult = MathMax(mult, brokerMinLot / lotSize);
-                    newLot = lotSize * mult;
-                }
-
+                
                 PrintFormat("[RISK-ADAPT] %s | dd=%.3f mult=%.3f lot=%.2f->%.2f",
                             symbol, dd, mult, lotSize, newLot);
                 return newLot;
@@ -872,29 +903,29 @@ public:
         }
         return lotSize;
     }
-
+    
     double ApplyMomentumScaling(const string symbol, double lotSize)
     {
         if(m_performanceAnalytics == NULL) return lotSize;
-
+        
         double momentumScale = m_performanceAnalytics.CalculateMomentumScale();
         if(MathAbs(momentumScale - 1.0) > 0.001)
         {
-            double newLot = MathMax(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), lotSize * momentumScale);
+            double newLot = lotSize * momentumScale;
             PrintFormat("[MOMENTUM-SCALE] %s | scale=%.2f | lot=%.2f->%.2f",
                         symbol, momentumScale, lotSize, newLot);
             return newLot;
         }
         return lotSize;
     }
-
+    
     bool ContributorsIncludeAI(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)
             if(CatalogContributorIsAI(contributors[i])) return true;
         return false;
     }
-
+    
     bool ContributorsIncludeONNX(const string &contributors[])
     {
         for(int i = 0; i < ArraySize(contributors); i++)

@@ -105,46 +105,30 @@ public:
             if(!HasTakenPartial(ticket) && halfVol >= minVol && halfVol < volume &&
                GlobalVariableSet(LatchName(ticket), (double)TimeCurrent()) != 0)
             {
-               if(!trade.PositionClosePartial(ticket, halfVol))
+               bool requestAccepted = trade.PositionClosePartial(ticket, halfVol);
+               uint retcode = trade.ResultRetcode();
+               bool fillRetcode = (retcode == TRADE_RETCODE_DONE ||
+                                   retcode == TRADE_RETCODE_DONE_PARTIAL);
+               bool positionStillOpen = PositionSelectByTicket(ticket);
+               double remainingVolume = positionStillOpen ? PositionGetDouble(POSITION_VOLUME) : 0.0;
+               double volumeTolerance = MathMax(stepVol * 0.5, 1e-8);
+               bool volumeReduced = positionStillOpen && remainingVolume < volume - volumeTolerance;
+
+               if(!volumeReduced)
                {
                   GlobalVariableDel(LatchName(ticket));
                   PrintFormat("[ATR-SCALP-PARTIAL-FAILED] %s | ticket=%I64u | retcode=%u",
-                              symbol, ticket, trade.ResultRetcode());
+                              symbol, ticket, retcode);
                }
                else
                {
-                  // CTrade returning true only means the request was accepted. Verify the
-                  // retcode and the post-send volume before treating the partial as done.
-                  uint rc = trade.ResultRetcode();
-                  if(rc != TRADE_RETCODE_DONE && rc != TRADE_RETCODE_DONE_PARTIAL)
-                  {
-                     GlobalVariableDel(LatchName(ticket));
-                     PrintFormat("[ATR-SCALP-PARTIAL-REJECTED] %s | ticket=%I64u | retcode=%u",
-                                 symbol, ticket, rc);
-                  }
+                  double closedVolume = volume - remainingVolume;
+                  if(!fillRetcode || !requestAccepted)
+                     PrintFormat("[ATR-SCALP-PARTIAL-RETCODE-MISMATCH] %s | ticket=%I64u | accepted=%s | retcode=%u | volume_reduced=%.2f",
+                                 symbol, ticket, requestAccepted ? "true" : "false", retcode, closedVolume);
                   else
-                  {
-                     double remaining = 0.0;
-                     bool haveVolume = PositionSelectByTicket(ticket);
-                     if(haveVolume)
-                        remaining = PositionGetDouble(POSITION_VOLUME);
-                     double expected = NormalizeDouble(volume - halfVol, 2);
-                     double tol = stepVol * 1.5;
-                     if(haveVolume && remaining >= volume - tol)
-                     {
-                        // Nothing was closed: safe to release the latch and retry next tick.
-                        GlobalVariableDel(LatchName(ticket));
-                        PrintFormat("[ATR-SCALP-PARTIAL-NOFILL] %s | ticket=%I64u | retcode=%u | vol=%.2f",
-                                    symbol, ticket, rc, remaining);
-                     }
-                     else if(!haveVolume || MathAbs(remaining - expected) <= tol || remaining < volume - tol)
-                     {
-                        // Volume reduced (fully or partially) or the position is already gone.
-                        // Keep the latch: retrying could over-close the remainder.
-                        PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f | retcode=%u | remaining=%.2f",
-                                    symbol, ticket, halfVol, profitPoints, slDistancePoints, rc, remaining);
-                     }
-                  }
+                     PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
+                                 symbol, ticket, closedVolume, profitPoints, slDistancePoints);
                }
             }
          }

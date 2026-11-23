@@ -1,6 +1,5 @@
-// Owns the tick-level scalp exit management: 1R partial close, breakeven, tight trailing, tracker reconciliation and risk-budget release.
-// All methods are `static`; every piece of mutable state lives in
-// the tracker / budget objects passed in by reference.
+// Owns tick-level scalp exits and position-tracker synchronization.
+// Position-management state is kept in the supplied tracker.
 // IMPORTANT — original in-place semantics preserved:
 // Section 3 (trailing) reads `breakevenSet` after section 2 may have just set it, so the local snapshot is mirrored (state.breakevenSet = true) at the same moment the tracker slot is marked - reproducing the original read-after-write exactly.
 #property strict
@@ -9,41 +8,22 @@
 #define CORE_SCALP_FAST_SCALP_EXIT_MQH
 
 #include "../Trading/TradeManager.mqh"
-#include "../Risk/UnifiedRiskManager.mqh"
 #include "FastScalpTypes.mqh"
 #include "FastScalpPositionTracker.mqh"
-#include "FastScalpRiskBudget.mqh"
 
 class CFastScalpExit
 {
 public:
-// Was CFastScalpEngine::FreeScalpRiskBudget() — the tracker scan is
-// done here, the arithmetic lives in CFastScalpRiskBudget.
-   static void FreeScalpRiskBudget(ulong ticket,
-                                   CFastScalpPositionTracker &tracker,
-                                   CFastScalpRiskBudget &budget,
-                                   CUnifiedRiskManager* riskManager)
-   {
-      int idx = tracker.FindScalpPositionState(ticket);
-      bool found = (idx >= 0);
-      SScalpPositionState state;
-      if(found)
-         tracker.GetState(idx, state);
-      budget.FreeForTicket(ticket, found, state, riskManager);
-   }
-
 // Sync tracked scalp positions with actual open positions
    static void SyncScalpPositionTracking(CFastScalpPositionTracker &tracker,
-                                         CFastScalpRiskBudget &budget,
-                                         CUnifiedRiskManager* riskManager)
+                                         const long expectedMagic)
    {
       // Remove tracked positions that no longer exist or are no longer scalp
       for(int i = tracker.Count() - 1; i >= 0; i--)
       {
          ulong ticket = tracker.TicketAt(i);
-         if(!PositionSelectByTicket(ticket) || !CFastScalpPositionTracker::IsScalpPosition(ticket))
+         if(!PositionSelectByTicket(ticket) || !CFastScalpPositionTracker::IsScalpPosition(ticket, expectedMagic))
          {
-            FreeScalpRiskBudget(ticket, tracker, budget, riskManager);
             tracker.RemoveScalpPosition(ticket);
          }
       }
@@ -55,6 +35,7 @@ public:
          ulong ticket = PositionGetTicket(i);
          if(ticket <= 0) continue;
          if(!PositionSelectByTicket(ticket)) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != expectedMagic) continue;
 
          string comment = PositionGetString(POSITION_COMMENT);
          // Prefix test: as a substring, "SCALP" also matched "ATR-SCALP",
@@ -91,12 +72,11 @@ public:
 // Quick profit lock, tight trailing, partial close
 // NOT throttled to 1 second like swing trailing
    static void ManageScalpPositions(CFastScalpPositionTracker &tracker,
-                                    CFastScalpRiskBudget &budget,
                                     CTradeManager* tradeManager,
-                                    CUnifiedRiskManager* riskManager,
-                                    const SScalpConfig &config)
+                                    const SScalpConfig &config,
+                                    const long expectedMagic)
    {
-      SyncScalpPositionTracking(tracker, budget, riskManager);
+      SyncScalpPositionTracking(tracker, expectedMagic);
 
       for(int i = tracker.Count() - 1; i >= 0; i--)
       {
@@ -108,8 +88,6 @@ public:
 
          if(!PositionSelectByTicket(ticket))
          {
-            // Position closed — remove from tracking and free risk budget
-            FreeScalpRiskBudget(state.ticket, tracker, budget, riskManager);
             tracker.RemoveScalpPosition(ticket);
             continue;
          }

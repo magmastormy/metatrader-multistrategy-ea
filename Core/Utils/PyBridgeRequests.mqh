@@ -53,32 +53,24 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
                                                  const string asset_class_name)
 {
    SPythonBridgeResponse result;
-
+   
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized())
    {
       result.success = false;
       result.error_message = "Python bridge disabled";
       return result;
    }
-
-   if(!health.CheckHealth(transport))
-   {
-      result.success = false;
-      result.error_message = "Python bridge not available";
-      return result;
-   }
-
+   
    string json = CPyBridgeProtocol::BuildPredictRequest(features, features_size, mode,
                                                         family_id, symbol,
                                                         asset_class, asset_class_name);
-
+   
    string response;
    string requestUrl = transport.GetEndpoint() + "/predict";
    if(transport.SendHttpRequest("POST", requestUrl, json, response))
    {
+      health.MarkSuccessfulResponse(transport, TimeCurrent());
       result = CPyBridgeProtocol::ParsePredictionResponse(response);
-      if(result.success)
-         health.MarkHeartbeat(TimeCurrent());
    }
    else
    {
@@ -86,7 +78,7 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
       result.error_message = "Failed to send prediction request";
       transport.SetState(PYTHON_BRIDGE_DISCONNECTED);
    }
-
+   
    return result;
 }
 
@@ -123,18 +115,18 @@ bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized() || !transport.IsConnected())
       return false;
-
+   
    string response;
    string corrUrl = transport.GetEndpoint() + "/correlation_matrix";
-
+   
    if(!transport.SendHttpRequest("GET", corrUrl, "", response))
    {
       transport.SetLastError("Failed to fetch correlation matrix");
       transport.IncrementErrorCount();
       return false;
    }
-
-   // Expected format: {"symbols": ["Vol75", "Vol100",...], "matrix": [[1.0, 0.85,...],...]}
+   
+   // Expected format: {"symbols": ["Vol75", "Vol100", ...], "matrix": [[1.0, 0.85, ...], ...]}
    if(StringFind(response, "\"matrix\"") != -1)
    {
       int symPos = StringFind(response, "\"symbols\"");
@@ -170,10 +162,10 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
    {
       return 0.0;
    }
-
+   
    string response;
    string corrUrl = transport.GetEndpoint() + "/correlation?symbol1=" + symbol1 + "&symbol2=" + symbol2;
-
+   
    if(transport.SendHttpRequest("GET", corrUrl, "", response))
    {
       // Parse JSON response {"correlation": 0.85}
@@ -189,7 +181,7 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
       if(StringFind(response, "\"error\"") != -1)
          PrintFormat("[PYTHON-BRIDGE] Pair correlation error for %s/%s", symbol1, symbol2);
    }
-
+   
    return 0.0;
 }
 
@@ -202,10 +194,10 @@ bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
       correlation = 0.0;
       return false;
    }
-
+   
    string response;
    string bestPairUrl = transport.GetEndpoint() + "/best_pair?symbol=" + symbol;
-
+   
    if(transport.SendHttpRequest("GET", bestPairUrl, "", response))
    {
       // Parse JSON response {"best_pair": "Vol100", "correlation": 0.92}
@@ -233,7 +225,7 @@ bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
       if(StringFind(response, "\"error\"") != -1)
          PrintFormat("[PYTHON-BRIDGE] Best pair error for %s", symbol);
    }
-
+   
    bestPair = "";
    correlation = 0.0;
    return false;

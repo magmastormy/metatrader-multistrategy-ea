@@ -1,16 +1,13 @@
 // Per-strategy performance scoreboard, persisted across restarts.
 //
-// Why this exists: the roster's per-strategy counters (trades / wins / failures / consecutive streaks /
-// average profit / health score / park-until) live only in memory, so every restart reset every row to
-// the 0.55 prior and un-parked everything. The auto-pruning loop in CStrategyPerformanceHealth
-// therefore restarted from zero on each attach, which means the system could never accumulate the one
-// piece of knowledge that decides whether it makes money: which rows actually earn.
+// Why this exists: per-strategy counters (trades / wins / failures / consecutive streaks / average outcome /
+// health score) otherwise reset on every restart.
 //
 // Keying: the roster is per SYMBOL (11 managers own 11 rosters), so the file is keyed by
 // symbol+strategy, not by strategy name alone. Writing name only would have collapsed eleven symbols'
 // counters into whichever manager saved last.
 //
-// Scope, stated: counters and the park flag only. Strategy weights are adjusted at runtime by
+// Scope: counters only. Strategy weights are adjusted at runtime by
 // CConsensusWeightingConfig and are NOT restored here - writing them back would make an operator's
 // dialog weight override lose to a stale file. strategy_scoreboard.csv is also the operator's
 // scoreboard: sort by avgProfit to see which rows carry the book.
@@ -47,8 +44,7 @@ private:
                 + IntegerToString(mgr.GetStrategyConsecutiveWins(i)) + ";"
                 + IntegerToString(mgr.GetStrategyConsecutiveLosses(i)) + ";"
                 + DoubleToString(mgr.GetStrategyAvgProfit(i), 6) + ";"
-                + DoubleToString(mgr.GetStrategyHealthScore(i), 6) + ";"
-                + IntegerToString((long)mgr.GetStrategyDisabledUntil(i)) + "\r\n";
+                + DoubleToString(mgr.GetStrategyHealthScore(i), 6) + "\r\n";
             FileWriteString(handle, line);
             rows++;
         }
@@ -66,7 +62,7 @@ public:
             return false;
         }
 
-        FileWriteString(handle, "symbol;name;trades;success;fail;wins;consecW;consecL;avgProfit;health;disabledUntil\r\n");
+        FileWriteString(handle, "symbol;name;trades;success;fail;wins;consecW;consecL;avgProfit;health\r\n");
 
         int rows = 0;
         for(int m = 0; m < managerCount; m++)
@@ -98,8 +94,8 @@ public:
             FileReadString(handle); // header
 
         int restored = 0;
-        int parked = 0;
         int unmatched = 0;
+        int ignoredLegacyParkFields = 0;
         while(!FileIsEnding(handle))
         {
             string line = FileReadString(handle);
@@ -108,8 +104,10 @@ public:
 
             string parts[];
             int fields = StringSplit(line, ';', parts);
-            if(fields < 11)
+            if(fields < 10)
                 continue;
+            if(fields > 10)
+                ignoredLegacyParkFields++;
 
             string symbol = parts[0];
             string name   = parts[1];
@@ -145,19 +143,12 @@ public:
             target.SetStrategyAvgProfit(idx,         StringToDouble(parts[8]));
             target.SetStrategyHealthScore(idx,       StringToDouble(parts[9]));
 
-            datetime until = (datetime)StringToInteger(parts[10]);
-            target.SetStrategyDisabledUntil(idx, until);
-            bool stillParked = (until > TimeCurrent());
-            target.SetStrategyTemporarilyDisabled(idx, stillParked);
-            if(stillParked)
-                parked++;
-
             restored++;
         }
 
         FileClose(handle);
-        PrintFormat("[SCOREBOARD] restored %d rows | parked=%d | unmatched=%d | file=%s",
-                    restored, parked, unmatched, FileName());
+        PrintFormat("[SCOREBOARD] restored %d rows | legacyParkFieldsIgnored=%d | unmatched=%d | file=%s",
+                    restored, ignoredLegacyParkFields, unmatched, FileName());
         return restored;
     }
 };

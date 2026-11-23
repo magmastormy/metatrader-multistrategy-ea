@@ -14,9 +14,7 @@
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
-#include "../Trading/TradeMgrPreflight.mqh"
 #include "../Trading/TradeManager.mqh"
-#include <Trade\Trade.mqh>
 
 #include "ATRScalpTypes.mqh"
 
@@ -36,12 +34,13 @@ public:
       m_baseMagic(0),
       m_positionSizer(NULL),
       m_riskManager(NULL),
+      m_tradeManager(NULL),
       m_totalTradesOpened(0)
    {
    }
 
    void Configure(int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager,
-                  CTradeManager *pTradeManager = NULL)
+                  CTradeManager *pTradeManager)
    {
       m_baseMagic     = baseMagic;
       m_positionSizer = pSizer;
@@ -56,6 +55,17 @@ public:
    {
       string symbol = state.symbol;
       double atr = state.currentATR;
+
+      if(m_riskManager == NULL || !m_riskManager.IsInitialized())
+      {
+         PrintFormat("[ATR-SCALP] UnifiedRiskManager unavailable - refusing entry | symbol=%s", symbol);
+         return false;
+      }
+      if(m_tradeManager == NULL)
+      {
+         PrintFormat("[ATR-SCALP] TradeManager unavailable - refusing entry | symbol=%s", symbol);
+         return false;
+      }
 
       if(atr <= 0.0)
       {
@@ -88,16 +98,12 @@ public:
 
       double slPips = slDistance / point;
 
-      if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
+      if(m_positionSizer == NULL || !m_positionSizer.IsInitialized())
       {
-         lotSize = m_positionSizer.CalculatePositionSize(
-                     symbol, slPips, 0.65);
+         PrintFormat("[ATR-SCALP] PositionSizer unavailable - refusing entry | symbol=%s", symbol);
+         return false;
       }
-      else
-      {
-         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-         lotSize = (minLot > 0.0) ? minLot : MIN_LOT_SIZE;
-      }
+      lotSize = m_positionSizer.CalculatePositionSize(symbol, slPips, 0.65);
 
       if(lotSize <= 0.0)
       {
@@ -143,7 +149,7 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Pre-send stop validation: NormalizeAndValidateStops applies the broker minimum stop distance, sized-stop widening rejection and take-profit-must-clear-spread tests before the order reaches CTradeManager.
+      // Validate normalized stops before routing the request through TradeManager.
       string scalpStopError = "";
       if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, scalpStopError))
       {
@@ -151,80 +157,56 @@ public:
          return false;
       }
 
+      slPips = MathAbs(entryPrice - sl) / point;
+      double tpPips = MathAbs(tp - entryPrice) / point;
+
       // Band only: base + 7000 + symbolIndex collided with ASSET_FOREX's consensus magic for that slot, and the position already names its symbol.
       int magic = m_baseMagic + config.magicOffset;
 
-      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
-      if(m_riskManager != NULL)
+      STradeValidationRequest riskReq;
+      ZeroMemory(riskReq);
+      riskReq.symbol       = symbol;
+      riskReq.orderType    = orderType;
+      riskReq.lotSize      = lotSize;
+      riskReq.stopLossPips = slPips;
+      riskReq.confidence   = 0.7;
+      riskReq.strategy     = "ATR-SCALP";
+      riskReq.requestTime  = TimeCurrent();
+
+      SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "atr-scalp-pretrade");
+      if(!riskResult.approved)
       {
-         STradeValidationRequest riskReq;
-         ZeroMemory(riskReq);
-         riskReq.symbol       = symbol;
-         riskReq.orderType    = orderType;
-         riskReq.lotSize      = lotSize;
-         riskReq.stopLossPips = slPips;
-         riskReq.confidence   = 0.7;
-         riskReq.strategy     = "ATR-SCALP";
-         riskReq.requestTime  = TimeCurrent();
-
-         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "atr-scalp-pretrade");
-         if(!riskResult.approved)
-         {
-            PrintFormat("[ATR-SCALP] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.message);
-            return false;
-         }
-
-         // Shrink-only and logged: the pipeline can raise adjustedLotSize to SYMBOL_VOLUME_MIN, and
-         // adopting that would ship more than this engine's own sizing decided.
-         if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
-         {
-            PrintFormat("[ATR-SCALP-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
-                        symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
-            lotSize = riskResult.adjustedLotSize;
-         }
-      }
-
-      if(m_tradeManager == NULL)
-      {
-         PrintFormat("[ATR-SCALP-FAILED] %s | no CTradeManager configured - entry refused", symbol);
+         PrintFormat("[ATR-SCALP] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.message);
          return false;
       }
 
-      bool result = false;
-      string dirStr = (direction == 1) ? "BUY" : "SELL";
-
-      // Route through CTradeManager so the send reaches the confirmation queue,
-      // per-symbol trade objects, execution-quality metrics and journal that the
-      // raw CTrade path bypassed. OpenPosition takes stop distances in points
-      // (measured from the fill price), so the ATR-derived absolute stops become
-      // point distances off the pre-send quote.
-      double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
-      double slDistPoints = (pointSize > 0.0) ? MathAbs(entryPrice - sl) / pointSize : 0.0;
-      double tpDistPoints = (pointSize > 0.0) ? MathAbs(entryPrice - tp) / pointSize : 0.0;
-      result = m_tradeManager.OpenPosition(symbol, orderType, lotSize, entryPrice,
-                                           slDistPoints, tpDistPoints,
-                                           "ATR-SCALP|" + dirStr, (uint)magic);
-
-      uint retcode = m_tradeManager.GetLastRetcode();
-
-      // Sends now go through CTradeManager, which runs its own confirmation queue;
-      // a DONE_PARTIAL retcode
-      // arrives here as result == false while a position exists, and the caller would
-      // re-fire the same scalp on the next scan - duplicating exposure the engine
-      // believes it never opened. Confirm from the position before declaring failure.
-      if(!result)
+      double validatedLotSize = (riskResult.adjustedLotSize > 0.0) ? riskResult.adjustedLotSize : lotSize;
+      if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
       {
-         ulong confirmTicket = 0;
-         double confirmVolume = 0.0;
-         if(CTradeMgrPreflight::FindFreshPositionForSend(symbol,
-                (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-                lotSize, confirmTicket, confirmVolume, "ATR-SCALP"))
-         {
-            PrintFormat("[ATR-SCALP] FILL CONFIRMED BY POSITION | Symbol=%s | Direction=%s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u | not resent",
-                        symbol, dirStr, confirmTicket, confirmVolume, lotSize, retcode);
-            result = true;
-         }
+         PrintFormat("[ATR-SCALP-RISK-ADJUSTED] %s | lot=%.2f -> %.2f | reason=%s",
+                     symbol, lotSize, riskResult.adjustedLotSize, riskResult.message);
+         lotSize = riskResult.adjustedLotSize;
       }
+      if(riskResult.virtualReservationOwnerTag != "")
+         m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                 lotSize,
+                                                 riskResult.riskPercent * lotSize / validatedLotSize);
+
+      string dirStr = (direction == 1) ? "BUY" : "SELL";
+      bool result = m_tradeManager.OpenPosition(symbol, orderType, lotSize, entryPrice,
+                                                slPips, tpPips, "ATR-SCALP|" + dirStr,
+                                                (uint)magic);
+      STradeExecutionReceipt receipt;
+      m_tradeManager.GetLastExecutionReceipt(receipt);
+      if(receipt.accepted && riskResult.virtualReservationOwnerTag != "")
+      {
+         double filledLotSize = receipt.filledVolume > 0.0 ? receipt.filledVolume : lotSize;
+         m_riskManager.UpdateVirtualPositionRisk(riskResult.virtualReservationOwnerTag,
+                                                 filledLotSize,
+                                                 riskResult.riskPercent * filledLotSize / validatedLotSize);
+      }
+      else if(!result && !receipt.accepted)
+         m_riskManager.ReleaseVirtualPosition(riskResult.virtualReservationOwnerTag);
 
       if(result)
       {
@@ -232,12 +214,16 @@ public:
          m_totalTradesOpened++;
 
          PrintFormat("[ATR-SCALP] Symbol=%s Direction=%s Lot=%.2f SL=%.5f TP=%.5f ATR=%.5f magic=%d",
-                     symbol, dirStr, lotSize, sl, tp, atr, magic);
+                     symbol, dirStr,
+                     receipt.filledVolume > 0.0 ? receipt.filledVolume : lotSize,
+                     receipt.stopLoss > 0.0 ? receipt.stopLoss : sl,
+                     receipt.takeProfit > 0.0 ? receipt.takeProfit : tp,
+                     atr, magic);
       }
       else
       {
          PrintFormat("[ATR-SCALP-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
-                     symbol, dirStr, lotSize, retcode);
+                     symbol, dirStr, lotSize, receipt.retcode);
       }
 
       return result;

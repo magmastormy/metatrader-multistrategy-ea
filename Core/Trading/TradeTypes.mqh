@@ -55,8 +55,20 @@ struct STradeExecutionReceipt
 };
 
 // Async trade request tracking
+enum ENUM_ASYNC_JOURNAL_STATE
+{
+    ASYNC_JOURNAL_PREPARED = 0,
+    ASYNC_JOURNAL_PENDING = 1,
+    ASYNC_JOURNAL_QUARANTINED = 2,
+    ASYNC_JOURNAL_FAILED = 3,
+    ASYNC_JOURNAL_RESOLVED = 4
+};
+
 struct SAsyncTradeRequest
 {
+    string requestId;       // Stable identifier shared by every journal event for this submission
+    double riskReservedPct; // Exact risk reservation supplied before async submission
+    ENUM_ASYNC_JOURNAL_STATE journalState;
     ulong ticket;           // Order ticket assigned by broker
     string symbol;          // Trading symbol
     ENUM_ORDER_TYPE orderType;  // Order type (BUY/SELL)
@@ -83,10 +95,14 @@ struct SAsyncTradeRequest
     double filledVolume;    // Sum of deal volumes seen for this order
     double filledValue;     // Sum of deal price*volume, for the average fill price
 
-    SAsyncTradeRequest() : ticket(0), orderType(ORDER_TYPE_BUY), lot(0), price(0),
+    SAsyncTradeRequest() : riskReservedPct(0.0), journalState(ASYNC_JOURNAL_PREPARED),
+                           ticket(0), orderType(ORDER_TYPE_BUY), lot(0), price(0),
                            sl(0), tp(0), magic(0), submitTime(0), timeoutMs(DEFAULT_ASYNC_TIMEOUT_MS),
                            confirmed(false), expired(false), retryCount(0), persisted(false), persistedTime(0),
-                           filledVolume(0), filledValue(0) {}
+                           filledVolume(0), filledValue(0)
+    {
+        requestId = "";
+    }
 };
 
 // Smart order routing parameters

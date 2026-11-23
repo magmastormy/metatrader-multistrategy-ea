@@ -245,7 +245,7 @@ public:
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
          return false;
 
-      // Equity floor check - don't activate grid if equity below floor
+      // L10-003: Equity floor check - don't activate grid if equity below floor
       if(!CGridRecoveryDrawdown::PassesActivationEquityFloor(m_config.equityFloorPercent))
          return false;
 
@@ -281,7 +281,7 @@ public:
          double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
          entryPrice = (direction == 1) ? ask : bid;
 
-         // Record initial equity when grid is first activated
+         // L10-003: Record initial equity when grid is first activated
          m_symbolStates[idx].initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
          PrintFormat("[GRID-RECOVERY] Grid activated for %s | initialEquity=%.2f | floor=%.1f%%",
                      symbol, m_symbolStates[idx].initialEquity, m_config.equityFloorPercent);
@@ -303,7 +303,7 @@ public:
             entryPrice = prevEntry + gridSpacing;   // SELL grid: higher entries
       }
 
-      // Equity floor check - stop grid if equity dropped below floor
+      // L10-003: Equity floor check - stop grid if equity dropped below floor
       if(!CGridRecoveryDrawdown::PassesLevelEquityFloor(m_symbolStates[idx].initialEquity, m_config.equityFloorPercent, level))
          return false;
 
@@ -334,7 +334,7 @@ public:
 
       double lotSize = CalculateGridLot(level, baseLot);
 
-      // Cap cumulative lot multiplier to prevent unbounded martingale risk
+      // L10-003: Cap cumulative lot multiplier to prevent unbounded martingale risk
       double cumulativeLotRatio = 0.0;
       if(!CGridRecoveryLevels::PassesCumulativeLotCap(m_config, level, baseLot, cumulativeLotRatio))
          return false;
@@ -379,14 +379,10 @@ public:
       }
       int magic = m_baseMagic + m_config.magicOffset + level;
 
-      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
-      if(!m_execution.PassesRiskValidation(symbol, orderType, lotSize, slDistance, level))
-         return false;
-
-      // AI-VOTE logging
+      // L10-018: AI-VOTE logging
       m_execution.LogAIVote(symbol, direction);
 
-      // Execute with dynamic slippage from TradeManager if available
+      // L10-014: Execute with dynamic slippage from TradeManager if available
       ulong resultTicket = 0;
       bool result = m_execution.ExecuteEntry(symbol, direction, level, lotSize, entryPrice, sl, tp, magic, resultTicket);
 
@@ -417,6 +413,22 @@ public:
 
       if(atr <= 0.0 || direction == 0)
          return;
+
+      for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
+      {
+         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket > 0)
+            continue;
+
+         int expectedMagic = m_baseMagic + m_config.magicOffset + l;
+         ulong resolvedTicket = m_execution.FindLevelPositionTicket(symbol, expectedMagic);
+         if(resolvedTicket == 0)
+         {
+            PrintFormat("[GRID-RECOVERY] POSITION RECONCILIATION PENDING | %s L%d | blocking additional entries until the position ticket resolves",
+                        symbol, l);
+            return;
+         }
+         m_symbolStates[idx].levels[l].ticket = resolvedTicket;
+      }
 
       // Check drawdown limit
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
@@ -497,13 +509,29 @@ public:
 
       for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
       {
-         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket == 0)
+         if(!m_symbolStates[idx].levels[l].isActive)
             continue;
+
+         if(m_symbolStates[idx].levels[l].ticket == 0)
+         {
+            int expectedMagic = m_baseMagic + m_config.magicOffset + l;
+            m_symbolStates[idx].levels[l].ticket = m_execution.FindLevelPositionTicket(symbol, expectedMagic);
+            if(m_symbolStates[idx].levels[l].ticket == 0)
+            {
+               allClosed = false;
+               PrintFormat("[GRID-RECOVERY] CLOSE DEFERRED | %s L%d | position ticket unresolved; ownership and risk state retained",
+                           symbol, l);
+               continue;
+            }
+         }
 
          if(PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
          {
             if(!m_execution.ClosePositionTicket(symbol, l, m_symbolStates[idx].levels[l].ticket))
+            {
                allClosed = false;
+               continue;
+            }
             else
                closedCount++;
          }
@@ -512,10 +540,13 @@ public:
          m_symbolStates[idx].levels[l].ticket = 0;
       }
 
-      m_symbolStates[idx].activeLevelCount = 0;
-      m_symbolStates[idx].direction = 0;
-      m_symbolStates[idx].totalGridRisk = 0.0;
-      m_metrics.RecordGridClosed();
+      if(allClosed)
+      {
+         m_symbolStates[idx].activeLevelCount = 0;
+         m_symbolStates[idx].direction = 0;
+         m_symbolStates[idx].totalGridRisk = 0.0;
+         m_metrics.RecordGridClosed();
+      }
 
       PrintFormat("[GRID-RECOVERY] Closed grid for %s | closed=%d | allClosed=%s",
                   symbol, closedCount, allClosed ? "true" : "false");

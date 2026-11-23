@@ -5,19 +5,6 @@
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
 
-// Post-consensus gate constants (item-19 sweep): the ATR warn band is log-only by
-// design - the ATR-derived stop already shrinks the lot, so vetoing here would
-// double-count volatility. The class floors are minimum directional-quality
-// scores per consensus decision class.
-#define PCV_ATR_WARN_RATIO          1.5
-#define PCV_CLASS_FLOOR_FULL_QUORUM   0.40
-#define PCV_CLASS_FLOOR_FULL_QUORUM_DISC 0.9
-#define PCV_CLASS_FLOOR_SPARSE       0.45
-#define PCV_CLASS_FLOOR_SPARSE_DISC  0.85
-#define PCV_CLASS_FLOOR_MARGINAL      0.65
-#define PCV_CLASS_FLOOR_SOLO_INTRABAR 0.70
-#define PCV_CLASS_FLOOR_SOLO_NORMAL   0.65
-
 #include "../Utils/Enums.mqh"                     // ENUM_TRADE_SIGNAL, SConsensusDecisionContext
 #include "../Utils/JsonLogger.mqh"
 #include "../Pipeline/UnifiedSignalPipeline.mqh"  // CUnifiedSignalPipeline::ApplySpreadFilter
@@ -66,13 +53,10 @@ private:
     double m_validatorIntrabarMinQuality;
     double m_validatorNewBarMinQuality;
     double m_hardSpreadCutoffPoints;
-    bool   m_spikeHunterEnabled;
     bool   m_enableOFIProxy;
     bool   m_enableVPINFilter;
     double m_baseSpreadATRRatio;
     double m_syntheticSpreadATRRatio;
-    double m_atrCrisisCeilingSynthetic;
-    double m_atrCrisisCeilingForex;
 
 public:
     CPostConsensusValidator() : m_src(NULL),
@@ -81,13 +65,10 @@ public:
                                 // [BUGFIX] Cutoff tracks the configured max entry spread (InpMaxEntrySpreadPoints=15000):
                                 // synthetic indices spread 1,727-11,140 pts, so the old 1000-pt default vetoed every one.
                                 m_hardSpreadCutoffPoints(15000.0),
-                                m_spikeHunterEnabled(false),
                                 m_enableOFIProxy(false),
                                 m_enableVPINFilter(false),
                                 m_baseSpreadATRRatio(VALIDATOR_BASE_SPREAD_ATR_RATIO),
-                                m_syntheticSpreadATRRatio(VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO),
-                                m_atrCrisisCeilingSynthetic(2.5),
-                                m_atrCrisisCeilingForex(2.0) {}
+                                m_syntheticSpreadATRRatio(VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO) {}
 
     void SetSource(const CEnterpriseStrategyManager* src) { m_src = src; }
 
@@ -112,9 +93,8 @@ public:
     double GetAdaptiveQualityThreshold(const SConsensusDecisionContext& ctx, ENUM_SIGNAL_EVAL_MODE evalMode);
 
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
-                            bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
-                            double baseSpreadATRRatio, double syntheticSpreadATRRatio,
-                            double atrCrisisCeilingSynthetic = 2.5, double atrCrisisCeilingForex = 2.0);
+                            bool enableOFI, bool enableVPIN,
+                            double baseSpreadATRRatio, double syntheticSpreadATRRatio);
 };
 
 SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string symbol,
@@ -188,11 +168,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         result.passed = false;
         result.vetoReason = "vpin_toxicity";
         return result;
-    }
-
-    if(m_spikeHunterEnabled)
-    {
-        // No-op: the spike monitor is not reachable from the validator.
     }
 
     // Full-margin circuit breaker and safe-mode kill zone are enforced at higher levels.
@@ -285,7 +260,7 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
         // true here made the configured crisis ceiling a log line that traded anyway.
         return false;
     }
-    else if(result.atrRatio > PCV_ATR_WARN_RATIO)
+    else if(result.atrRatio > 1.5)
     {
         // No lot consumer: the ATR-derived stop already widens with this ratio, so fixed-fractional
         // sizing shrinks the lot by roughly the same factor. Scaling it again here would double-count.
@@ -442,9 +417,9 @@ double CPostConsensusValidator::GetATRCrisisThreshold(const string symbol)
 {
     if(IsSyntheticSymbolForValidation(symbol))
     {
-        return m_atrCrisisCeilingSynthetic;
+        return 2.5;
     }
-    return m_atrCrisisCeilingForex; // ATR14/ATR50 crisis ceiling
+    return 2.0; // ATR14/ATR50 crisis ceiling: 2.5 synthetic, 2.0 forex
 }
 
 bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol)
@@ -481,16 +456,16 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
         // made the comparison self-referential: 0.9*q is always below q, so those two arms could only
         // ever reject below the hard-coded constants and InpValidator*MinQuality was inert for them.
         case CONSENSUS_DECISION_FULL_QUORUM:
-            return MathMax(PCV_CLASS_FLOOR_FULL_QUORUM, baseThreshold * PCV_CLASS_FLOOR_FULL_QUORUM_DISC);
+            return MathMax(0.40, baseThreshold * 0.9);
 
         case CONSENSUS_DECISION_SPARSE_INTRABAR:
-            return MathMax(PCV_CLASS_FLOOR_SPARSE, baseThreshold * PCV_CLASS_FLOOR_SPARSE_DISC);
+            return MathMax(0.45, baseThreshold * 0.85);
 
         case CONSENSUS_DECISION_MARGINAL_ADMIT:
-            return PCV_CLASS_FLOOR_MARGINAL;
+            return 0.65;
 
         case CONSENSUS_DECISION_SOLO_FALLBACK:
-            return (evalMode == EVAL_MODE_INTRABAR) ? PCV_CLASS_FLOOR_SOLO_INTRABAR : PCV_CLASS_FLOOR_SOLO_NORMAL;
+            return (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
 
         default:
             return baseThreshold;
@@ -500,27 +475,19 @@ double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDeci
 void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
                                                  double newBarMinQuality,
                                                  double hardSpreadCutoff,
-                                                 bool spikeHunterEnabled,
                                                  bool enableOFI,
                                                  bool enableVPIN,
                                                  double baseSpreadATRRatio,
-                                                 double syntheticSpreadATRRatio,
-                                                 double atrCrisisCeilingSynthetic,
-                                                 double atrCrisisCeilingForex)
+                                                 double syntheticSpreadATRRatio)
 {
     m_validatorIntrabarMinQuality = MathMax(0.0, MathMin(1.0, intrabarMinQuality));
     m_validatorNewBarMinQuality = MathMax(0.0, MathMin(1.0, newBarMinQuality));
     // [BUGFIX] Floor of 1000 pts keeps a stale/small config from disarming the cutoff; larger settings pass through.
     m_hardSpreadCutoffPoints = MathMax(hardSpreadCutoff, 1000.0);
-    m_spikeHunterEnabled = spikeHunterEnabled;
     m_enableOFIProxy = enableOFI;
     m_enableVPINFilter = enableVPIN;
     m_baseSpreadATRRatio = baseSpreadATRRatio;
     m_syntheticSpreadATRRatio = syntheticSpreadATRRatio;
-    if(atrCrisisCeilingSynthetic > 0.0)
-        m_atrCrisisCeilingSynthetic = atrCrisisCeilingSynthetic;
-    if(atrCrisisCeilingForex > 0.0)
-        m_atrCrisisCeilingForex = atrCrisisCeilingForex;
 }
 
 #endif // POST_CONSENSUS_VALIDATOR_MQH

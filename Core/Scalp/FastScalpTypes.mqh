@@ -21,8 +21,6 @@ struct SScalpConfig
    double   rsiOversold;             // RSI oversold level (25)
    double   maxSpreadATRRatio;       // Reject if spread > 30% ATR (0.30)
    double   momentumBurstATRRatio;   // Bar body > 80% ATR (0.80)
-   bool     usePendingOrders;        // Use pending limit orders (true)
-   int      pendingOrderTTL;         // Pending order TTL in seconds (120)
    bool     partialCloseEnabled;     // Close 50% at 1R profit (true)
    int      breakevenProfitPoints;   // Points profit to trigger BE (10)
    int      breakevenBufferPoints;   // Buffer past entry for BE (5)
@@ -43,40 +41,10 @@ struct SScalpConfig
       rsiOversold             = 25.0;
       maxSpreadATRRatio       = 0.30;
       momentumBurstATRRatio   = 0.80;
-      usePendingOrders        = true;
-      pendingOrderTTL         = 20;
       partialCloseEnabled     = true;
       breakevenProfitPoints   = 10;
       breakevenBufferPoints   = 5;
       trailingDistancePoints  = 15;
-   }
-};
-
-struct SPendingScalpOrder
-{
-   ulong    ticket;
-   string   symbol;
-   ENUM_ORDER_TYPE orderType;
-   double   lotSize;
-   double   entryPrice;
-   double   stopLoss;
-   double   takeProfit;
-   datetime placedAt;
-   bool     isActive;
-
-   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
-   // count of the string member.
-   void Reset()
-   {
-      ticket     = 0;
-      symbol     = "";
-      orderType  = ORDER_TYPE_BUY;
-      lotSize    = 0.0;
-      entryPrice = 0.0;
-      stopLoss   = 0.0;
-      takeProfit = 0.0;
-      placedAt   = 0;
-      isActive   = false;
    }
 };
 
@@ -90,11 +58,14 @@ struct SScalpPendingAsync
    double   entryPrice;       // Expected entry price
    double   stopLoss;         // SL price
    double   takeProfit;       // TP price
+   datetime submitTime;       // Broker-history lower bound for reconciliation
    uint     sendTimestampMs;  // GetTickCount at send time
+   double   riskReservedPct;  // Exact scalp budget consumed for this order
    bool     confirmed;        // Whether deal was confirmed
    bool     expired;          // Whether order expired
+   ulong    representedPositionTicket;
 
-   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
    // count of the string member.
    void Reset()
    {
@@ -105,9 +76,12 @@ struct SScalpPendingAsync
       entryPrice      = 0.0;
       stopLoss        = 0.0;
       takeProfit      = 0.0;
+      submitTime      = 0;
       sendTimestampMs = 0;
+      riskReservedPct = 0.0;
       confirmed       = false;
       expired         = false;
+      representedPositionTicket = 0;
    }
 };
 
@@ -124,10 +98,13 @@ struct SScalpReservedBudgetLedger
    double   entryPrice;         // Expected entry price
    double   stopLoss;           // SL price
    double   takeProfit;         // TP price
+   datetime submitTime;         // Broker-history lower bound for reconciliation
    uint     sendTimestampMs;    // GetTickCount at send time
    uint     quarantinedAtMs;    // GetTickCount when moved to the ledger
    double   riskReservedPct;    // risk budget reserved for this ticket
+   bool     confirmed;          // At least one fill event was registered
    bool     released;           // budget already released
+   ulong    representedPositionTicket;
 
    // Field-wise reset - ZeroMemory corrupts the reference count of the string member.
    void Reset()
@@ -139,10 +116,13 @@ struct SScalpReservedBudgetLedger
       entryPrice      = 0.0;
       stopLoss        = 0.0;
       takeProfit      = 0.0;
+      submitTime      = 0;
       sendTimestampMs = 0;
       quarantinedAtMs = 0;
       riskReservedPct = 0.0;
+      confirmed       = false;
       released        = false;
+      representedPositionTicket = 0;
    }
 };
 
@@ -158,7 +138,7 @@ struct SScalpPositionState
    double   originalTP;
    double   oneRProfitPrice;   // Price at 1R profit (for partial close)
 
-   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
    // count of the string member.
    void Reset()
    {

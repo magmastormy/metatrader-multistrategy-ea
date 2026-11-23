@@ -591,13 +591,6 @@ class SignalServer:
 
                     self.last_heartbeat = datetime.now(timezone.utc)
 
-                    if message.get("type") == "heartbeat":
-                        self.socket.send_json({
-                            "status": "ok",
-                            "ts": datetime.now(timezone.utc).isoformat()
-                        })
-                        continue
-
                     payload = np.asarray(message["features"], dtype=np.float32)
                     mode = message.get("mode", "ensemble")
                     family_id = message.get("family_id", -1)

@@ -395,8 +395,7 @@ private:
     }
 
     void AdaptToPerformance() {
-        // Parking and re-enabling is the orchestrator's 60 s governance sweep, not this loop: the
-        // accuracy reading those gates tested never had a writer here.
+        // Runtime health scores may adjust vote weight; strategy parking is not automatic.
         for(int m = 0; m < m_managerCount; m++) {
             if(m_managers[m] == NULL) continue;
             m_managers[m].UpdateStrategyWeights();

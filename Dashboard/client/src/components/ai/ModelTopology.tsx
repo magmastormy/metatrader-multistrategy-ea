@@ -17,10 +17,10 @@ interface ModelArch {
 const ARCHITECTURES: Record<string, ModelArch> = {
   'Neural Net (MLP)': {
     name: 'Neural Net (MLP)',
-    totalParams: 65 * 32 + 32 * 16 + 16 * 8 + 8 * 3 + 32 + 16 + 8 + 3,
+    totalParams: 70 * 32 + 32 * 16 + 16 * 8 + 8 * 3 + 32 + 16 + 8 + 3,
     layers: [
-      { name: 'Input', type: 'Dense', size: 65, params: 0 },
-      { name: 'Hidden 1', type: 'Dense', size: 32, activation: 'ReLU', params: 65 * 32 + 32 },
+      { name: 'Input', type: 'Dense', size: 70, params: 0 },
+      { name: 'Hidden 1', type: 'Dense', size: 32, activation: 'ReLU', params: 70 * 32 + 32 },
       { name: 'Hidden 2', type: 'Dense', size: 16, activation: 'ReLU', params: 32 * 16 + 16 },
       { name: 'Hidden 3', type: 'Dense', size: 8, activation: 'ReLU', params: 16 * 8 + 8 },
       { name: 'Output', type: 'Dense', size: 3, activation: 'Softmax', params: 8 * 3 + 3 },

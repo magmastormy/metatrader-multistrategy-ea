@@ -33,21 +33,17 @@ public:
                       ~CDashboardBridge();
 
    bool              Initialize(const string &endpoint, bool enabled = true,
-                                bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000,
-                                const string apiKey = "");
+                                 int pushIntervalSec = 5,
+                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000);
    void              Shutdown();
 
     bool              PushState();
-    bool              PollCommands();
-    void              SetCommandHandler(IDashCommandHandler *handler) { m_transport.SetCommandHandler(handler); }
 
         void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
                                                int tradesOpened, int spikeEvents);
 
     bool              IsEnabled() const { return m_transport.IsEnabled(); }
     bool              IsConnected() const { return m_transport.IsConnected(); }
-    bool              IsControlEnabled() const { return m_transport.IsControlEnabled(); }
     int               GetPushCount() const { return m_transport.GetPushCount(); }
     int               GetSuccessCount() const { return m_transport.GetSuccessCount(); }
     int               GetErrorCount() const { return m_transport.GetErrorCount(); }
@@ -91,12 +87,11 @@ CDashboardBridge::~CDashboardBridge()
 }
 
 bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
-                                   bool controlEnabled, int pushIntervalSec,
-                                   int requestTimeoutMs, int pushTimeoutMs,
-                                   const string apiKey)
+                                   int pushIntervalSec,
+                                   int requestTimeoutMs, int pushTimeoutMs)
 {
-   return m_transport.Initialize(endpoint, enabled, controlEnabled, pushIntervalSec,
-                                 requestTimeoutMs, pushTimeoutMs, apiKey);
+   return m_transport.Initialize(endpoint, enabled, pushIntervalSec,
+                                 requestTimeoutMs, pushTimeoutMs);
 }
 
 void CDashboardBridge::Shutdown()
@@ -113,11 +108,6 @@ bool CDashboardBridge::PushState()
       return false;
    string stateJson = CDashBridgePanels::BuildStateJson(m_protocol, m_health);
    return m_transport.FinishPush(stateJson);
-}
-
-bool CDashboardBridge::PollCommands()
-{
-   return m_transport.PollCommands();
 }
 
 void CDashboardBridge::SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,

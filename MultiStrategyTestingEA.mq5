@@ -12,18 +12,12 @@
 // Global variable definitions (declared extern in OrchestratorFwd)
 #include "Core/Orchestration/GlobalDefs.mqh"
 
-// Production logging & tracing. Both managers are DEFINED here to resolve the
-// `extern` globals declared in their respective headers (pulled in transitively
-// via EAOrchestrator.mqh). The Main EA defines the same two globals at
-// MultiStrategyAutonomousEA.mq5:21-22. Without these definitions the Testing EA
-// fails to link with error 370: unresolved extern variable
-// ('g_structLog' / 'g_corrIdManager').
+// Production logging. The structured logger is defined here to resolve its
+// extern declaration pulled in transitively via EAOrchestrator.mqh.
 #include "Core/Utils/StructuredLogger.mqh"
-#include "Core/Utils/CorrelationId.mqh"
 #include "Core/Config/SharedEAInputs.mqh"
 
 CStructuredLogger     g_structLog;
-CCorrelationIdManager g_corrIdManager;
 
 // Global shutdown flag to prevent OnTimer accessing resources during deinit
 bool g_shuttingDown;
@@ -411,9 +405,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.symbolsToTrade = InpSymbolsToTrade;
     config.minSecondsBetweenTrades = InpMinSecondsBetweenTrades;
     config.maxPositionsTotal = InpMaxPositionsTotal;
-    config.maxPositionsTotalMin = InpMaxPositionsTotalMin;
     config.maxPositionsPerSymbol = InpMaxPositionsPerSymbol;
-    config.maxPositionsPerSymbolMin = InpMaxPositionsPerSymbolMin;
     config.maxTradeSendsPerCycle = InpMaxTradeSendsPerCycle;
 
     // Strategy Selection - OVERRIDDEN BY TEST PROFILE if enabled
@@ -579,7 +571,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.dashboardEnabled = InpDashboardEnabled;
     config.dashboardEndpoint = InpDashboardEndpoint;
     config.dashboardPushIntervalSec = InpDashboardPushIntervalSec;
-    config.dashboardControlEnabled = InpDashboardControlEnabled;
 
     config.enableLiveAuthorityGate = InpEnableLiveAuthorityGate;
     config.allowHybridAIStandalone = InpAllowHybridAIStandalone;
@@ -618,16 +609,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.momentumScalpCooldownSeconds = InpMomentumScalpCooldownSeconds;
     config.momentumScalpTimeframe = InpMomentumScalpTimeframe;
     config.candlestickIntrabarTimeframe = InpCandlestickIntrabarTimeframe;
-    config.intrabarEligibilityMomentum = InpIntrabarEligibilityMomentum;
-    config.intrabarEligibilityTrend = InpIntrabarEligibilityTrend;
-    config.intrabarEligibilitySupportResistance = InpIntrabarEligibilitySupportResistance;
-    config.intrabarEligibilityCandlestick = InpIntrabarEligibilityCandlestick;
-    config.intrabarEligibilityMeanReversion = InpIntrabarEligibilityMeanReversion;
-    config.intrabarEligibilityVolatilityBreakout = InpIntrabarEligibilityVolatilityBreakout;
-    config.intrabarEligibilityNeuralNetworkAI = InpIntrabarEligibilityNeuralNetworkAI;
-    config.intrabarEligibilityTransformerAI = InpIntrabarEligibilityTransformerAI;
-    config.intrabarEligibilityEnsembleAI = InpIntrabarEligibilityEnsembleAI;
-    config.intrabarEligibilityOnnxAI = InpIntrabarEligibilityOnnxAI;
     config.maxSignalEvaluationsPerCycle = InpMaxSignalEvaluationsPerCycle;
     config.readinessReuseTtlSeconds = InpReadinessReuseTtlSeconds;
     config.enableNNOnlineTraining = InpEnableNNOnlineTraining;
@@ -638,12 +619,8 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.nnCheckpointEveryLabeled = InpNNCheckpointEveryLabeled;
 
     // Signal Validator
-    config.validatorNewBarMinConfluence = InpValidatorNewBarMinConfluence;
     config.validatorNewBarMinQuality = InpValidatorNewBarMinQuality;
-    config.validatorNewBarMinConfidence = InpValidatorNewBarMinConfidence;
-    config.validatorIntrabarMinConfluence = InpValidatorIntrabarMinConfluence;
     config.validatorIntrabarMinQuality = InpValidatorIntrabarMinQuality;
-    config.validatorIntrabarMinConfidence = InpValidatorIntrabarMinConfidence;
 
     // Execution Safety
     config.orderFillingMode = InpOrderFillingMode;
@@ -778,7 +755,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
 
 
     // Symbol Universe
-    config.autoAddChartSymbol = InpAutoAddChartSymbol;
 
     //
     config.equityCurveEmaPeriod = InpEquityCurveEmaPeriod;
@@ -964,28 +940,6 @@ void OnTick()
     if(g_orchestrator != NULL && g_orchestrator.GetSystemInitialized())
     {
         g_orchestrator.OnTick();
-    }
-}
-
-// Chart Event Handler
-void OnChartEvent(const int id,
-                  const long &lparam,
-                  const double &dparam,
-                  const string &sparam)
-{
-    if(id == CHARTEVENT_OBJECT_CHANGE)
-    {
-        PrintFormat("[EA-CHART-EVENT] Input parameter changed: object=%s", sparam);
-        if(g_orchestrator != NULL && g_orchestrator.GetSystemInitialized())
-        {
-            g_orchestrator.UpdateRiskParametersFromInputs(
-                InpMaxRiskPerTrade, InpMaxDailyRisk, InpMaxPortfolioRisk,
-                InpMaxDrawdown, InpDailyLossLimitPercent,
-                InpAllowMinLotRoundUp, InpMinLotRiskMultiplier,
-                InpScaleLotToSymbolBudget,
-                InpEnableCompoundingTiers, InpRiskTier
-            );
-        }
     }
 }
 

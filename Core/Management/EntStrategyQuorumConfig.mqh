@@ -12,10 +12,7 @@
 class CEntStrategyQuorumConfig
 {
 private:
-    // Health monitor configuration (mirrored for fallback when m_healthMonitor == NULL)
-    double m_minWinRateThreshold;
-    int    m_maxConsecutiveLosses_Limit;
-    int    m_rollingWindowSize;
+
 
     // Consensus configuration (mirrored for internal consensus logic)
     int    m_minQuorum;
@@ -47,10 +44,6 @@ public:
     CEntStrategyQuorumConfig();
 
     //--- read half (consumed by CConsensusEngine through the manager) ---
-    double GetMinWinRateThreshold() const              { return m_minWinRateThreshold; }
-    int    GetMaxConsecutiveLossesLimit() const        { return m_maxConsecutiveLosses_Limit; }
-    int    GetRollingWindowSize() const                { return m_rollingWindowSize; }
-
     int    GetMinQuorum() const                        { return m_minQuorum; }
     int    GetIntrabarMinQuorum() const                { return m_intrabarMinQuorum; }
     bool   IsIntrabarDynamicQuorumEnabled() const      { return m_intrabarDynamicQuorumEnabled; }
@@ -83,8 +76,6 @@ public:
     void SetConflictDeadband(const double deadband);
     void SetMinReadyWeightRatio(const double ratio);
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
-    void SetOrchestratorMode(double minWinRate, int maxLosses);
-
     //--- written by CEnterpriseStrategyManager::SetPipelineFilters().
     //--- The clamp is the original inline expression, unchanged.
     void CachePipelineMinConfidence(const double minConfidence);
@@ -93,9 +84,6 @@ public:
 // Constructor - defaults relocated verbatim from the manager's
 // constructor initialiser list (including the PROFIT-xx notes).
 CEntStrategyQuorumConfig::CEntStrategyQuorumConfig() :
-    m_minWinRateThreshold(0.40),
-    m_maxConsecutiveLosses_Limit(5),
-    m_rollingWindowSize(20),
     m_minQuorum(1),
     m_intrabarMinQuorum(1),
     m_intrabarDynamicQuorumEnabled(true),
@@ -155,15 +143,6 @@ void CEntStrategyQuorumConfig::SetSupportFloors(const double newBarFloor, const 
 {
     m_supportFloorNewBar = MathMax(0.0, MathMin(1.0, newBarFloor));
     m_supportFloorIntrabar = MathMax(0.0, MathMin(1.0, intrabarFloor));
-}
-
-void CEntStrategyQuorumConfig::SetOrchestratorMode(double minWinRate, int maxLosses)
-{
-    m_minWinRateThreshold = MathMax(0.0, MathMin(1.0, minWinRate));
-    m_maxConsecutiveLosses_Limit = MathMax(1, maxLosses);
-    PrintFormat("[EnterpriseStrategyManager] Adaptation thresholds updated | MinWinRate=%.2f | MaxConsecutiveLosses=%d",
-                m_minWinRateThreshold,
-                m_maxConsecutiveLosses_Limit);
 }
 
 void CEntStrategyQuorumConfig::CachePipelineMinConfidence(const double minConfidence)

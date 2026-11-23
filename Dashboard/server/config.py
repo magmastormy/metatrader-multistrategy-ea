@@ -23,10 +23,6 @@ RISK_HISTORY_SIZE = 2880
 LOG_BUFFER_SIZE = 1000
 ALERT_BUFFER_SIZE = 50
 
-# Command settings
-COMMAND_TIMEOUT_SEC = 300    # Commands expire after 5 minutes
-COMMAND_PURGE_INTERVAL = 60 # Purge expired commands every 60s
-
 # Log tailer settings
 LOG_DIR = ""                 # Empty = auto-detect from MT5 terminal
 LOG_POLL_INTERVAL = 0.5      # Fallback polling interval (seconds)

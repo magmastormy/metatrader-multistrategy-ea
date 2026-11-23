@@ -187,13 +187,6 @@ enum ENUM_VOLATILITY_DIRECTION
     VOL_CONTRACTING = -1        // ATR contracting - squeeze forming
 };
 
-enum ENUM_INTRABAR_POLICY
-{
-    INTRABAR_POLICY_OFF = 0,
-    INTRABAR_POLICY_PROBE = 1,
-    INTRABAR_POLICY_LIVE = 2
-};
-
 enum ENUM_CONSENSUS_DECISION_CLASS
 {
     CONSENSUS_DECISION_NONE = 0,
@@ -440,6 +433,7 @@ struct SValidationResult
 {
     bool approved;                 // Whether the signal is approved
     string message;                // Validation message
+    string virtualReservationOwnerTag;
     double adjustedLotSize;
     double riskPercent;
     double portfolioRisk;
@@ -462,6 +456,7 @@ struct SValidationResult
     SValidationResult() :
         approved(false),
         message(""),
+        virtualReservationOwnerTag(""),
         adjustedLotSize(0.0),
         riskPercent(0.0),
         portfolioRisk(0.0),
@@ -484,6 +479,7 @@ struct SValidationResult
     SValidationResult(const SValidationResult &other) :
         approved(other.approved),
         message(other.message),
+        virtualReservationOwnerTag(other.virtualReservationOwnerTag),
         adjustedLotSize(other.adjustedLotSize),
         riskPercent(other.riskPercent),
         portfolioRisk(other.portfolioRisk),
@@ -507,6 +503,7 @@ struct SValidationResult
     {
         approved = other.approved;
         message = other.message;
+        virtualReservationOwnerTag = other.virtualReservationOwnerTag;
         adjustedLotSize = other.adjustedLotSize;
         riskPercent = other.riskPercent;
         portfolioRisk = other.portfolioRisk;

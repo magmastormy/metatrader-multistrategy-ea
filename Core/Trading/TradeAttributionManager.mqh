@@ -2,7 +2,7 @@
 // Copyright 2025, Aggressive Trading Systems
 // https://www.aggressivetrading.com
 // Encapsulates trade-comment building, prediction/position mapping, AI pending-request tracking and NN diagnostics; all state is in-memory arrays that do not survive a restart.
-// Closed-deal attribution feeds strategy performance (CStrategyMgrTradeFeedback: UpdatePerformance + health monitor) and NN online training, so it is not cosmetic-only.
+// Closed-deal attribution supports exact-singleton strategy feedback; shared outcomes are not apportioned, and full position results also feed the NN label queue.
 #property copyright "Copyright 2025, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -99,6 +99,10 @@ public:
     string GetPredictionIdForPosition(const ulong positionId);
     void   RemovePredictionPositionMap(const ulong positionId);
 
+    void   UpsertIntentPositionMap(const ulong positionId, const string intentId);
+    string GetIntentIdForPosition(const ulong positionId);
+    void   RemoveIntentPositionMap(const ulong positionId);
+
     //--- AI prediction position mapping: same delegation; a NULL m_positionManager makes every read return its empty default, which looks like "no attribution".
     int    FindAIPredictionPositionIndex(const ulong positionId);
     void   UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal);
@@ -113,9 +117,9 @@ public:
     int    FindPendingCloseProfitIndex(const ulong positionId);
     void   AccumulatePendingCloseProfit(const ulong positionId, const double netProfit);
     double ConsumePendingCloseProfit(const ulong positionId);
-
+    
     // Read by EAOrchestrator's ProcessClosedPositionsForNNTraining; rows whose prediction id comes back empty are skipped there.
-    int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
+    int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[], string &intentIds[]);
 
     void   RecordPositionAttribution(const ulong dealTicket, const string symbol, const ENUM_ORDER_TYPE orderType,
                                      const double volume, const double price, const double stopLossPips,
@@ -294,6 +298,24 @@ void CTradeAttributionManager::RemovePredictionPositionMap(const ulong positionI
     m_positionManager.RemovePredictionPositionMap(positionId);
 }
 
+void CTradeAttributionManager::UpsertIntentPositionMap(const ulong positionId, const string intentId)
+{
+    if(m_positionManager == NULL) return;
+    m_positionManager.UpsertIntentPositionMap(positionId, intentId);
+}
+
+string CTradeAttributionManager::GetIntentIdForPosition(const ulong positionId)
+{
+    if(m_positionManager == NULL) return "";
+    return m_positionManager.GetIntentIdForPosition(positionId);
+}
+
+void CTradeAttributionManager::RemoveIntentPositionMap(const ulong positionId)
+{
+    if(m_positionManager == NULL) return;
+    m_positionManager.RemoveIntentPositionMap(positionId);
+}
+
 int CTradeAttributionManager::FindAIPredictionPositionIndex(const ulong positionId)
 {
     if(m_positionManager == NULL) return -1;
@@ -457,16 +479,18 @@ double CTradeAttributionManager::ConsumePendingCloseProfit(const ulong positionI
     return accumulated;
 }
 
-int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
+int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[],
+                                                     string &predictionIds[], string &intentIds[])
 {
 int count = ArraySize(m_pendingClosePositionIds);
 if(count == 0)
     return 0;
-
+    
 ArrayResize(positionIds, count);
 ArrayResize(profits, count);
 ArrayResize(predictionIds, count);
-
+ArrayResize(intentIds, count);
+    
 for(int i = 0; i < count; i++)
 {
     positionIds[i] = m_pendingClosePositionIds[i];
@@ -478,8 +502,9 @@ for(int i = 0; i < count; i++)
     predictionIds[i] = GetPredictionIdForPosition(m_pendingClosePositionIds[i]);
     if(predictionIds[i] == "" && PositionSelectByTicket(m_pendingClosePositionIds[i]))
         predictionIds[i] = ExtractPredictionIdFromComment(PositionGetString(POSITION_COMMENT));
+    intentIds[i] = GetIntentIdForPosition(m_pendingClosePositionIds[i]);
 }
-
+    
 return count;
 }
 
@@ -529,7 +554,7 @@ void CTradeAttributionManager::SplitContributors(const string csv, string &contr
 {
     ArrayResize(contributors, 0);
     if(csv == "") return;
-
+    
     int start = 0;
     int pos = StringFind(csv, ",", start);
     while(pos >= 0)
@@ -550,8 +575,34 @@ void CTradeAttributionManager::SplitContributors(const string csv, string &contr
 void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId, const string &contributors[])
 {
     int index = FindAttributionIndexByPositionId(positionId);
-    string csv = JoinContributors(contributors);
+    string combined[];
+    if(index >= 0)
+        SplitContributors(m_attributionContributorCsv[index], combined);
 
+    for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
+    {
+        string contributor = contributors[contributorIdx];
+        if(contributor == "")
+            continue;
+
+        bool alreadyPresent = false;
+        for(int existingIdx = 0; existingIdx < ArraySize(combined); existingIdx++)
+        {
+            if(combined[existingIdx] == contributor)
+            {
+                alreadyPresent = true;
+                break;
+            }
+        }
+        if(!alreadyPresent)
+        {
+            int newSize = ArraySize(combined) + 1;
+            ArrayResize(combined, newSize);
+            combined[newSize - 1] = contributor;
+        }
+    }
+
+    string csv = JoinContributors(combined);
     if(index >= 0)
     {
         m_attributionContributorCsv[index] = csv;
@@ -565,15 +616,14 @@ void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId,
         m_attributionContributorCsv[newSize - 1] = csv;
     }
 }
-
 bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, string &contributors[])
 {
     int index = FindAttributionIndexByPositionId(positionId);
     if(index < 0)
         return false;
-
+    
     SplitContributors(m_attributionContributorCsv[index], contributors);
-
+    
     int count = ArraySize(m_attributionPositionIds);
     for(int i = index; i < count - 1; i++)
     {
@@ -582,7 +632,7 @@ bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, st
     }
     ArrayResize(m_attributionPositionIds, count - 1);
     ArrayResize(m_attributionContributorCsv, count - 1);
-
+    
     return true;
 }
 
@@ -639,11 +689,31 @@ bool CTradeAttributionManager::RunNNAttributionSelfTest()
         ok = false;
         NNDiagLog("Self-test failed: position->prediction map upsert/get mismatch");
     }
+    const string testIntent = "INT-15-1790000000-N-EURUSD";
+    UpsertIntentPositionMap(testPositionId, testIntent);
+    if(GetIntentIdForPosition(testPositionId) != testIntent)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: position->intent map upsert/get mismatch");
+    }
+    RemovePredictionPositionMap(testPositionId);
+    if(GetPredictionIdForPosition(testPositionId) != "" || GetIntentIdForPosition(testPositionId) != testIntent)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: removing prediction lineage cleared unrelated intent lineage");
+    }
+    UpsertPredictionPositionMap(testPositionId, testPrediction);
+    RemoveIntentPositionMap(testPositionId);
+    if(GetIntentIdForPosition(testPositionId) != "" || GetPredictionIdForPosition(testPositionId) != testPrediction)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: removing intent lineage cleared unrelated prediction lineage");
+    }
     RemovePredictionPositionMap(testPositionId);
     if(GetPredictionIdForPosition(testPositionId) != "")
     {
         ok = false;
-        NNDiagLog("Self-test failed: position->prediction map remove mismatch");
+        NNDiagLog("Self-test failed: position->prediction map final cleanup mismatch");
     }
 
     NNDiagLog(ok ? "Self-test passed" : "Self-test failed");
@@ -675,7 +745,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
     if(positionId > 0)
     {
         // Bounded store: a position that never closes must not grow the map forever.
-        if(ArraySize(m_attributionPositionIds) >= 512)
+        if(ArraySize(m_attributionPositionIds) >= 512 && FindAttributionIndexByPositionId(positionId) < 0)
         {
             int dropCount = ArraySize(m_attributionPositionIds);
             for(int i = 0; i < dropCount - 1; i++)
@@ -689,7 +759,7 @@ void CTradeAttributionManager::RecordPositionAttribution(
         UpsertPositionAttribution(positionId, contributors);
         if(m_enableNNDiagnostics)
             PrintFormat("[TRADE-ATTRIBUTION] stored position=%I64u | contributors=%s",
-                        positionId, JoinContributors(contributors));
+                        positionId, m_attributionContributorCsv[FindAttributionIndexByPositionId(positionId)]);
     }
     else if(m_enableNNDiagnostics)
     {

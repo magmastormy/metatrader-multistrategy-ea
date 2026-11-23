@@ -32,118 +32,45 @@ public:
 // message prints the ceiling in force.
 
     //--- Free-margin headroom + post-trade margin-level check, behind CRiskValidationPipeline::ValidateMarginRequirements.
-    //--- marginDelta is the change in account margin if the order fills: on netting accounts a
-    //--- same-symbol position is re-sized (or closed/reversed) by the order, so the delta is
-    //--- margin(after) - margin(before) and can be negative when the order frees exposure.
-    //--- Hedging accounts take the full order margin (same-symbol hedge discounts are
-    //--- broker-specific, so the conservative full add stands).
-    bool CheckFreeMarginAndLevel(const string symbol,
-                                 const ENUM_ORDER_TYPE orderType,
-                                 const double lotSize,
-                                 const double marginRequired,
-                                 const bool isHedging,
+    bool CheckFreeMarginAndLevel(const double projectedFreeMargin,
+                                 const double projectedMarginLevel,
                                  string &message) const
     {
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-
-        double marginDelta = marginRequired;
-        if(!isHedging)
+        if(!MathIsValidNumber(projectedFreeMargin) || projectedFreeMargin < 0.0 ||
+           !MathIsValidNumber(projectedMarginLevel) || projectedMarginLevel < 0.0 ||
+           !MathIsValidNumber(freeMargin) || freeMargin <= 0.0)
         {
-            ENUM_POSITION_TYPE reqPosType = (orderType == ORDER_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-            double existingVolume = 0.0;
-            ENUM_POSITION_TYPE existingType = POSITION_TYPE_BUY;
-            // Netting accounts carry at most one position per symbol; scan all positions
-            // because account margin is global regardless of which EA opened it.
-            int totalPositions = PositionsTotal();
-            for(int i = 0; i < totalPositions; i++)
-            {
-                ulong ticket = PositionGetTicket(i);
-                if(ticket <= 0) continue;
-                if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
-                existingVolume = PositionGetDouble(POSITION_VOLUME);
-                existingType   = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-                break;
-            }
-
-            if(existingVolume > 0.0)
-            {
-                double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(symbol, SYMBOL_ASK)
-                                                            : SymbolInfoDouble(symbol, SYMBOL_BID);
-                if(price <= 0.0)
-                    price = SymbolInfoDouble(symbol, SYMBOL_BID);
-
-                ENUM_ORDER_TYPE beforeType = (existingType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                double marginBefore = 0.0, marginAfter = 0.0;
-                bool okBefore = (price > 0.0) && OrderCalcMargin(beforeType, symbol, existingVolume, price, marginBefore);
-
-                double afterVolume = 0.0;
-                ENUM_ORDER_TYPE afterType = orderType;
-                if(existingType == reqPosType)
-                {
-                    afterVolume = existingVolume + lotSize;
-                }
-                else
-                {
-                    double diff = lotSize - existingVolume;
-                    if(diff > 0.0)
-                    {
-                        // Reversal: residual flips to the request direction.
-                        afterVolume = diff;
-                        afterType = orderType;
-                    }
-                    else if(diff < 0.0)
-                    {
-                        // Partial close: residual stays in the existing direction.
-                        afterVolume = -diff;
-                        afterType = beforeType;
-                    }
-                    // diff == 0.0: the order flattens the position, afterVolume stays 0.
-                }
-                bool okAfter = true;
-                if(afterVolume > 0.0)
-                    okAfter = (price > 0.0) && OrderCalcMargin(afterType, symbol, afterVolume, price, marginAfter);
-
-                if(okBefore && okAfter)
-                    marginDelta = marginAfter - marginBefore;
-                else
-                {
-                    // Fail closed: an unresolvable margin must not pass the affordability check.
-                    message = StringFormat("Unable to calculate net margin delta for %s", symbol);
-                    return false;
-                }
-            }
+            message = "Invalid broker margin projection";
+            return false;
         }
 
-        if(marginDelta > freeMargin * m_maxFreeMarginUsage)
+        double minimumProjectedFreeMargin = freeMargin * (1.0 - m_maxFreeMarginUsage);
+        if(projectedFreeMargin < minimumProjectedFreeMargin)
         {
-            message = StringFormat("Insufficient margin: delta %.2f, available %.2f (threshold: %.0f%%) [mode: %s]",
-                                 marginDelta, freeMargin, m_maxFreeMarginUsage * 100.0,
-                                 isHedging ? "hedging" : "netting");
+            message = StringFormat("Insufficient projected free margin: %.2f, minimum %.2f (max usage: %.0f%%)",
+                                 projectedFreeMargin, minimumProjectedFreeMargin, m_maxFreeMarginUsage * 100.0);
             return false;
         }
 
         double currentMarginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-        if(currentMarginLevel > 0 && currentMarginLevel < m_minMarginLevel)
+        if(!MathIsValidNumber(currentMarginLevel) || currentMarginLevel < 0.0)
+        {
+            message = "Invalid current margin level";
+            return false;
+        }
+        if(currentMarginLevel > 0.0 && currentMarginLevel < m_minMarginLevel)
         {
             message = StringFormat("Margin level too low: %.2f%% (threshold: %.0f%%)",
                                  currentMarginLevel, m_minMarginLevel);
             return false;
         }
 
-        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-        double currentMargin = AccountInfoDouble(ACCOUNT_MARGIN);
-        double projectedMargin = currentMargin + marginDelta;
-        if(projectedMargin < 0.0)
-            projectedMargin = 0.0;
-        if(projectedMargin > 0.0)
+        if(projectedMarginLevel > 0.0 && projectedMarginLevel < m_minMarginLevel)
         {
-            double projectedLevel = equity / projectedMargin * 100.0;
-            if(projectedLevel < m_minMarginLevel)
-            {
-                message = StringFormat("Projected post-trade margin level %.2f%% below threshold %.0f%% [mode: %s]",
-                                     projectedLevel, m_minMarginLevel, isHedging ? "hedging" : "netting");
-                return false;
-            }
+            message = StringFormat("Projected post-trade margin level %.2f%% below threshold %.0f%%",
+                                 projectedMarginLevel, m_minMarginLevel);
+            return false;
         }
 
         return true;

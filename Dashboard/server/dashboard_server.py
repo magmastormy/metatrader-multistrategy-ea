@@ -5,31 +5,12 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-from .config import SERVER_HOST, SERVER_PORT, CORS_ORIGINS, COMMAND_PURGE_INTERVAL, API_TOKEN
+from .config import SERVER_HOST, SERVER_PORT, CORS_ORIGINS
 from .state_manager import StateManager
 
 logger = logging.getLogger("dashboard")
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-
-class StatePushBody(BaseModel):
-    """EA state push payload — flexible to accept any JSON."""
-    model_config = {"extra": "allow"}
-
-class CommandBody(BaseModel):
-    type: str
-    params: dict = {}
-
-class AckBody(BaseModel):
-    result: str = "ok"
-    detail: str = ""
-
 
 # ---------------------------------------------------------------------------
 # App + state
@@ -40,40 +21,23 @@ app = FastAPI(title="EA Command Center", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 state_manager = StateManager()
 
-
-async def require_api_key(request: Request):
-    """Require X-Api-Key on EA write/control routes when EA_DASHBOARD_TOKEN is set."""
-    if not API_TOKEN:
-        return
-    if request.headers.get("x-api-key") != API_TOKEN:
-        raise HTTPException(status_code=401, detail="missing or invalid API key")
-
 # WebSocket client tracking
 _ws_clients: set[WebSocket] = set()
 _ws_lock = asyncio.Lock()
 
 
-# ---------------------------------------------------------------------------
-# Background: purge expired commands
-# ---------------------------------------------------------------------------
-
-async def _purge_expired_commands() -> None:
-    """Periodically purge expired commands."""
-    while True:
-        await asyncio.sleep(COMMAND_PURGE_INTERVAL)
-        await state_manager.get_pending_commands()  # side-effect: purges expired
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    asyncio.create_task(_purge_expired_commands())
+def _is_allowed_origin(origin: Optional[str]) -> bool:
+    if origin is None:
+        return True
+    normalized_origin = origin.rstrip("/")
+    return any(normalized_origin == allowed.rstrip("/") for allowed in CORS_ORIGINS)
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +62,12 @@ async def _broadcast(message: dict) -> None:
 # REST endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/state", dependencies=[Depends(require_api_key)])
+@app.post("/state")
 async def receive_state(request: Request):
     """Receive EA state push."""
+    if not _is_allowed_origin(request.headers.get("origin")):
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
     raw = await request.body()
     if not raw:
         logger.warning("Empty state push received")
@@ -189,38 +156,15 @@ async def get_alerts(limit: int = 50):
 
 
 # ---------------------------------------------------------------------------
-# Control endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/api/control/command", dependencies=[Depends(require_api_key)])
-async def queue_command(body: CommandBody):
-    cmd_id = await state_manager.add_command(body.type, body.params)
-    return {"id": cmd_id, "type": body.type, "params": body.params}
-
-
-@app.get("/api/control/commands", dependencies=[Depends(require_api_key)])
-async def get_pending_commands():
-    commands = await state_manager.get_pending_commands()
-    return {"commands": commands}
-
-
-@app.post("/api/control/ack/{cmd_id}", dependencies=[Depends(require_api_key)])
-async def ack_command(cmd_id: str, body: Optional[AckBody] = None):
-    found = await state_manager.acknowledge_command(cmd_id)
-    if not found:
-        raise HTTPException(status_code=404, detail="Command not found")
-    result = body.result if body else "ok"
-    if result != "ok":
-        print(f"[CONTROL] Command {cmd_id} acked with error: {body.detail if body else ''}")
-    return {"status": "acknowledged", "result": result}
-
-
-# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    if not _is_allowed_origin(ws.headers.get("origin")):
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     async with _ws_lock:
         _ws_clients.add(ws)
@@ -232,29 +176,11 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            raw = await ws.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-
-            msg_type = msg.get("type")
-
-            if msg_type == "command":
-                cmd_type = msg.get("data", {}).get("type", "")
-                cmd_params = msg.get("data", {}).get("params", {})
-                cmd_id = await state_manager.add_command(cmd_type, cmd_params)
-                await ws.send_text(json.dumps({
-                    "type": "command_queued",
-                    "data": {"id": cmd_id, "type": cmd_type, "params": cmd_params},
-                }))
-
-            elif msg_type == "subscribe":
-                # Future: channel-based subscription filtering
-                pass
-
-            elif msg_type == "unsubscribe":
-                pass
+            await ws.receive_text()
+            await ws.send_text(json.dumps({
+                "type": "error",
+                "data": {"message": "The dashboard is read-only; trading commands are not supported."},
+            }))
 
     except WebSocketDisconnect:
         pass

@@ -59,8 +59,7 @@ struct SStrategyDefinition
     ENUM_CATALOG_AI       aiKind;               // which AI adapter (CAT_AI_NONE for indicators)
     string                factoryName;          // CStrategyFactory key (AI rows only)
     int                   siIndex;              // enable-flag slot (ENUM_STRATEGY_INDEX); -1 = always on
-    int                   siPolicyIndex;        // intrabar-policy slot (own StrategyConfigBuilder row); -1 = use fixedPolicy
-    ENUM_INTRABAR_POLICY  fixedPolicy;          // used when the active policy slot < 0
+    int                   siTimeframeConfigIndex;
     double                weight;               // registration weight (indicator rows)
     double                aiFallbackWeight;     // AI weight when registry lookup fails (<0 = multiplier)
     ENUM_STRATEGY_TIER    tier;
@@ -116,8 +115,7 @@ void CatalogAdd(const string name,
                 const ENUM_CATALOG_AI aiKind,
                 const string factoryName,
                 const int siIndex,
-                const int siPolicyIndex,
-                const ENUM_INTRABAR_POLICY fixedPolicy,
+                const int siTimeframeConfigIndex,
                 const double weight,
                 const double aiFallbackWeight,
                 const ENUM_STRATEGY_TIER tier,
@@ -150,8 +148,7 @@ void CatalogAdd(const string name,
     g_strategyCatalog[i].aiKind               = aiKind;
     g_strategyCatalog[i].factoryName          = factoryName;
     g_strategyCatalog[i].siIndex              = siIndex;
-    g_strategyCatalog[i].siPolicyIndex        = siPolicyIndex;
-    g_strategyCatalog[i].fixedPolicy          = fixedPolicy;
+    g_strategyCatalog[i].siTimeframeConfigIndex = siTimeframeConfigIndex;
     g_strategyCatalog[i].weight               = weight;
     g_strategyCatalog[i].aiFallbackWeight     = aiFallbackWeight;
     g_strategyCatalog[i].tier                 = tier;
@@ -178,43 +175,42 @@ void BuildStrategyCatalog()
     // siIndex is the ENABLE-FLAG SLOT and must be the SI_ constant, because BuildStrategyFlags,
     // BuildStrategyFlagsForSymbol and the config switch all address flags[] by that enum value. Rows
     // carrying sequential integers instead read a neighbour's switch (or fall outside flags[]).
-    CatalogAdd("Momentum",              CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MOMENTUM,              0,  INTRABAR_POLICY_OFF, 1.0, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_Momentum, STRATEGY_MOMENTUM);
-    CatalogAdd("Trend",                 CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TREND,                 1,  INTRABAR_POLICY_OFF, 1.2, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_Trend, STRATEGY_TREND);
-    CatalogAdd("Support/Resistance",    CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_SUPPORT_RESISTANCE,    4,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true, false, "", "", CatCreate_SupportResistance, STRATEGY_SUPPORT_RESISTANCE);
-    CatalogAdd("Candlestick",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_CANDLESTICK,           6,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, false, "", "", CatCreate_Candlestick, STRATEGY_CANDLESTICK);
-    CatalogAdd("Mean Reversion",        CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MEAN_REVERSION,        7,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true, false, "", "", CatCreate_MeanReversion, STRATEGY_MEAN_REVERSION);
-    CatalogAdd("Volatility Breakout",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_VOLATILITY_BREAKOUT,  8,  INTRABAR_POLICY_OFF, 2.0, -1.0, STRATEGY_TIER_1, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_VolatilityBreakout, STRATEGY_VOLATILITY_BREAKOUT);
-    CatalogAdd("Statistical Arbitrage", CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_STATISTICAL_ARBITRAGE, 9,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false,  true, "", "", CatCreate_StatisticalArbitrage, STRATEGY_STATISTICAL_ARBITRAGE);
-    CatalogAdd("FVG Scalper",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_FVG_SCALPER,          10,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_FVGScalper, STRATEGY_FVG_SCALPER);
-    CatalogAdd("Turtle Soup",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TURTLE_SOUP,          11,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_TurtleSoup, STRATEGY_TURTLE_SOUP);
-    CatalogAdd("Breaker Block",         CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_BREAKER_BLOCK,        12,  INTRABAR_POLICY_OFF, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_BreakerBlock, STRATEGY_BREAKER_BLOCK);
-    CatalogAdd("NY Open Gap",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_NY_OPEN_GAP,          13,  INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_NYOpenGap, STRATEGY_NY_OPEN_GAP);
-    CatalogAdd("Asian Range Break",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ASIAN_RANGE_BREAK,    14,  INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_AsianRangeBreak, STRATEGY_ASIAN_RANGE_BREAK);
-    // siPolicyIndex must be the row's OWN StrategyConfigBuilder slot: two rows sharing a slot inherit the same policy.
-    CatalogAdd("Liquidity Sweep",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_LIQUIDITY_SWEEP,     17,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_LiquiditySweep, STRATEGY_LIQUIDITY_SWEEP);
-    CatalogAdd("Range Compression",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RANGE_COMPRESSION,   18,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_RangeCompression, STRATEGY_RANGE_COMPRESSION);
-    // Two rows added with the slot values the SI_ enum already reserves for them; policy slot -1 so
-    // they use fixedPolicy and keep the chart timeframe instead of borrowing another row's policy.
-    CatalogAdd("Donchian Breakout",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DONCHIAN_BREAKOUT,    -1,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_DonchianBreakout, STRATEGY_VOLATILITY_BREAKOUT);
-    CatalogAdd("RSI2 Pullback",         CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RSI2_PULLBACK,        -1,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_RSI2Pullback, STRATEGY_SUPPORT_RESISTANCE);
+    CatalogAdd("Momentum",              CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MOMENTUM,              0, 1.0, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_Momentum, STRATEGY_MOMENTUM);
+    CatalogAdd("Trend",                 CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TREND,                 1, 1.2, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_Trend, STRATEGY_TREND);
+    CatalogAdd("Support/Resistance",    CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_SUPPORT_RESISTANCE,    4, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true, false, "", "", CatCreate_SupportResistance, STRATEGY_SUPPORT_RESISTANCE);
+    CatalogAdd("Candlestick",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_CANDLESTICK,           6, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, false, "", "", CatCreate_Candlestick, STRATEGY_CANDLESTICK);
+    CatalogAdd("Mean Reversion",        CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MEAN_REVERSION,        7, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true, false, "", "", CatCreate_MeanReversion, STRATEGY_MEAN_REVERSION);
+    CatalogAdd("Volatility Breakout",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_VOLATILITY_BREAKOUT,  8, 2.0, -1.0, STRATEGY_TIER_1, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_VolatilityBreakout, STRATEGY_VOLATILITY_BREAKOUT);
+    CatalogAdd("Statistical Arbitrage", CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_STATISTICAL_ARBITRAGE, 9, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false,  true, "", "", CatCreate_StatisticalArbitrage, STRATEGY_STATISTICAL_ARBITRAGE);
+    CatalogAdd("FVG Scalper",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_FVG_SCALPER,          10, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_FVGScalper, STRATEGY_FVG_SCALPER);
+    CatalogAdd("Turtle Soup",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TURTLE_SOUP,          11, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_TurtleSoup, STRATEGY_TURTLE_SOUP);
+    CatalogAdd("Breaker Block",         CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_BREAKER_BLOCK,        12, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_BreakerBlock, STRATEGY_BREAKER_BLOCK);
+    CatalogAdd("NY Open Gap",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_NY_OPEN_GAP,          13, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_NYOpenGap, STRATEGY_NY_OPEN_GAP);
+    CatalogAdd("Asian Range Break",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ASIAN_RANGE_BREAK,    14, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_AsianRangeBreak, STRATEGY_ASIAN_RANGE_BREAK);
+    // Rows with a timeframe override name its StrategyConfigBuilder slot.
+    CatalogAdd("Liquidity Sweep",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_LIQUIDITY_SWEEP,     17, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, true, false, "", "", CatCreate_LiquiditySweep, STRATEGY_LIQUIDITY_SWEEP);
+    CatalogAdd("Range Compression",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RANGE_COMPRESSION,   18, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, true, false, "", "", CatCreate_RangeCompression, STRATEGY_RANGE_COMPRESSION);
+    // These strategies keep the manager's base timeframe.
+    CatalogAdd("Donchian Breakout",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DONCHIAN_BREAKOUT,    -1, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_DonchianBreakout, STRATEGY_VOLATILITY_BREAKOUT);
+    CatalogAdd("RSI2 Pullback",         CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RSI2_PULLBACK,        -1, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_RSI2Pullback, STRATEGY_SUPPORT_RESISTANCE);
     // The pair on the same level, one trading the break and one its failure. They cannot both fire on
     // the same bar: the break row needs a close beyond the level, the fade row a bar that went beyond
     // it and closed back inside.
-    CatalogAdd("Daily Level Breakout",  CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DAILY_LEVEL_BREAKOUT, -1,  INTRABAR_POLICY_OFF, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_DailyLevelBreakout, STRATEGY_VOLATILITY_BREAKOUT);
-    CatalogAdd("Daily Level Fade",      CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DAILY_LEVEL_FADE,     -1,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_DailyLevelFade, STRATEGY_SUPPORT_RESISTANCE);
-    CatalogAdd("EMA Ribbon Pullback",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_EMA_RIBBON,           -1,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_EMARibbon, STRATEGY_TREND);
-    CatalogAdd("Gap Continuation",      CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_GAP_CONTINUATION,     -1,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_GapContinuation, STRATEGY_MOMENTUM);
-    CatalogAdd("Opening Range Breakout", CAT_KIND_INDICATOR, CAT_AI_NONE, "", SI_OPENING_RANGE_BREAKOUT, -1, INTRABAR_POLICY_OFF, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,        true, false, false, "", "", CatCreate_OpeningRangeBreakout, STRATEGY_VOLATILITY_BREAKOUT);
-    CatalogAdd("ICT Session Gap",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ICT_SESSION_GAP,      -1,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_ICTSessionGap, STRATEGY_SUPPORT_RESISTANCE);
-    CatalogAdd("ICT Structure Shift",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ICT_STRUCTURE_SHIFT,  -1,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_ICTStructureShift, STRATEGY_SUPPORT_RESISTANCE);
+    CatalogAdd("Daily Level Breakout",  CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DAILY_LEVEL_BREAKOUT, -1, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_DailyLevelBreakout, STRATEGY_VOLATILITY_BREAKOUT);
+    CatalogAdd("Daily Level Fade",      CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_DAILY_LEVEL_FADE,     -1, 1.5, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_DailyLevelFade, STRATEGY_SUPPORT_RESISTANCE);
+    CatalogAdd("EMA Ribbon Pullback",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_EMA_RIBBON,           -1, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_EMARibbon, STRATEGY_TREND);
+    CatalogAdd("Gap Continuation",      CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_GAP_CONTINUATION,     -1, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_GapContinuation, STRATEGY_MOMENTUM);
+    CatalogAdd("Opening Range Breakout", CAT_KIND_INDICATOR, CAT_AI_NONE, "", SI_OPENING_RANGE_BREAKOUT, -1, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,        true, false, false, "", "", CatCreate_OpeningRangeBreakout, STRATEGY_VOLATILITY_BREAKOUT);
+    CatalogAdd("ICT Session Gap",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ICT_SESSION_GAP,      -1, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, false, "", "", CatCreate_ICTSessionGap, STRATEGY_SUPPORT_RESISTANCE);
+    CatalogAdd("ICT Structure Shift",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ICT_STRUCTURE_SHIFT,  -1, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_ICTStructureShift, STRATEGY_SUPPORT_RESISTANCE);
 
     //--- 5 AI adapters: created by CStrategyFactory and registered by the orchestrator, not by AutoRegisterStrategies ---
-    // Both slots are -1, so AI rows always resolve to fixedPolicy = LIVE.
-    CatalogAdd("Neural Network AI", CAT_KIND_AI, CAT_AI_NEURAL_NET,    "Neural Network AI", -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "nn_adapter_register_failed",            NULL, -1);
-    CatalogAdd("Transformer AI",    CAT_KIND_AI, CAT_AI_TRANSFORMER,   "Transformer AI",    -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "transformer_adapter_register_failed",   NULL, -1);
-    CatalogAdd("Ensemble AI",       CAT_KIND_AI, CAT_AI_ENSEMBLE,      "Ensemble AI",       -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "ensemble_adapter_register_failed",      NULL, -1);
-    CatalogAdd("ONNX AI",           CAT_KIND_AI, CAT_AI_ONNX,          "ONNX AI",           -1, -1, INTRABAR_POLICY_LIVE, 0.0,  2.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "onnx_adapter_register_failed",          NULL, -1);
-    CatalogAdd("Python Bridge AI",  CAT_KIND_AI, CAT_AI_PYTHON_BRIDGE, "Python Bridge AI",  -1, -1, INTRABAR_POLICY_LIVE, 0.0,  1.5, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "python_bridge_adapter_register_failed", NULL, -1);
+    //    AI rows keep the manager's base timeframe.
+    CatalogAdd("Neural Network AI", CAT_KIND_AI, CAT_AI_NEURAL_NET,    "Neural Network AI", -1, -1, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "nn_adapter_register_failed",            NULL, -1);
+    CatalogAdd("Transformer AI",    CAT_KIND_AI, CAT_AI_TRANSFORMER,   "Transformer AI",    -1, -1, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "transformer_adapter_register_failed",   NULL, -1);
+    CatalogAdd("Ensemble AI",       CAT_KIND_AI, CAT_AI_ENSEMBLE,      "Ensemble AI",       -1, -1, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "ensemble_adapter_register_failed",      NULL, -1);
+    CatalogAdd("ONNX AI",           CAT_KIND_AI, CAT_AI_ONNX,          "ONNX AI",           -1, -1, 0.0,  2.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "onnx_adapter_register_failed",          NULL, -1);
+    CatalogAdd("Python Bridge AI",  CAT_KIND_AI, CAT_AI_PYTHON_BRIDGE, "Python Bridge AI",  -1, -1, 0.0,  1.5, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "python_bridge_adapter_register_failed", NULL, -1);
 
     g_strategyCatalogBuilt = true;
 }
@@ -280,12 +276,12 @@ void CatalogApplyConfigWeight(const int siIndex, const double weight)
     PrintFormat("[CATALOG] weight input for siIndex %d has no indicator row - the value reaches nothing", siIndex);
 }
 
-// Policy slot (siPolicyIndex); -1 = the row falls back to its fixedPolicy.
-int CatalogPolicySlot(const int i)
+// Timeframe config slot; -1 = use the catalog timeframe.
+int CatalogTimeframeConfigSlot(const int i)
 {
     if(i < 0 || i >= g_strategyCatalogCount)
         return -1;
-    return g_strategyCatalog[i].siPolicyIndex;
+    return g_strategyCatalog[i].siTimeframeConfigIndex;
 }
 
 // Contributor strings come from CStrategyMgrRoster::GetStrategyName(), which is the row name, so a
@@ -329,10 +325,10 @@ void CatalogLogIndexAudit()
     {
         if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
             continue;
-        PrintFormat("[CATALOG-AUDIT] %s enable_slot=%d policy_slot=%d",
+        PrintFormat("[CATALOG-AUDIT] %s enable_slot=%d timeframe_config_slot=%d",
                     g_strategyCatalog[i].name,
                     g_strategyCatalog[i].siIndex,
-                    g_strategyCatalog[i].siPolicyIndex);
+                    g_strategyCatalog[i].siTimeframeConfigIndex);
     }
 }
 

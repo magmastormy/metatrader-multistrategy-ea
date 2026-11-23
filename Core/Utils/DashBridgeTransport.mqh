@@ -1,8 +1,8 @@
-// Connection lifecycle + HTTP transport + push/poll orchestration
+// Connection lifecycle + HTTP state-push transport
 // for the dashboard bridge. Owns the endpoint, enable flags,
 // timeouts, push/poll timestamps, push counters, connection state,
 // last error and the error-log throttle.
-// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
+// Extracted from DashboardBridge.mqh
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -12,40 +12,23 @@
 #define CORE_DASHBRIDGE_TRANSPORT_MQH
 
 // Dashboard Bridge Transport / Connection State
-
-// Commands the transport will route to a registered handler. Anything else is
-// rejected with an error ack so it cannot retry-loop forever.
-#define DASH_CMD_PAUSE            "pause"
-#define DASH_CMD_RESUME           "resume"
-#define DASH_CMD_EMERGENCY_STOP   "emergency_stop"
-
-class IDashCommandHandler
-{
-public:
-   virtual bool ExecuteCommand(const string &cmdType) { return false; }
-};
-
 class CDashBridgeTransport
 {
 private:
    string              m_endpoint;          // Server endpoint (http://host:port)
    bool                m_enabled;           // Whether dashboard push is enabled
-   bool                m_controlEnabled;    // Whether control channel is enabled
    int                 m_pushInterval;      // Push interval in seconds
    int                 m_requestTimeout;
-   int                 m_pushTimeout;       // Push-specific timeout (ms) —
+   int                 m_pushTimeout;       // Push-specific timeout (ms) — Issue #34
    datetime            m_lastPushTime;      // Last successful state push
-   datetime            m_lastPollTime;      // Last command poll time
    bool                m_pushInProgress;    // Guard against stacked pushes
    int                 m_pushCount;         // Total pushes sent
    int                 m_pushSuccessCount;
    int                 m_pushErrorCount;    // Failed pushes
    bool                m_connected;         // Whether server is reachable
-   string              m_apiKey;            // Optional X-Api-Key token for authenticated servers
    string              m_lastError;         // Last error message
    datetime            m_lastErrorLogTime;  // Throttle error logs
    bool                m_initialized;       // Initialized flag
-   IDashCommandHandler *m_commandHandler;   // Executes whitelisted control commands
    int                 m_consecutiveFailures; // Pushes that failed since the last success
    datetime            m_retryAfter;        // Pushes are refused until this time (backoff)
 
@@ -55,28 +38,24 @@ private:
                                        int timeoutMs = -1);
    void                LogState(string message, bool isError = false);
    bool                ShouldLogError();
-   bool                HandleDashboardCommand(const string &cmdType);
 
 public:
                      CDashBridgeTransport();
 
    // Lifecycle
    bool              Initialize(const string &endpoint, bool enabled = true,
-                                bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000,
-                                const string apiKey = "");
+                                 int pushIntervalSec = 5,
+                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000);
    void              Shutdown();
 
    // Operations — BeginPush() must succeed before the payload is built so
    // that the original guard ordering (and its side effects) is preserved.
    bool              BeginPush();
    bool              FinishPush(const string &json);
-   bool              PollCommands();
 
    // Getters
    bool              IsEnabled() const { return m_enabled; }
    bool              IsConnected() const { return m_connected; }
-   bool              IsControlEnabled() const { return m_controlEnabled; }
    bool              IsInitialized() const { return m_initialized; }
    int               GetPushCount() const { return m_pushCount; }
    int               GetSuccessCount() const { return m_pushSuccessCount; }
@@ -84,19 +63,16 @@ public:
    datetime          GetLastPushTime() const { return m_lastPushTime; }
 
    void              SetEnabled(bool enabled) { m_enabled = enabled; }
-   void              SetCommandHandler(IDashCommandHandler *handler) { m_commandHandler = handler; }
 };
 
 CDashBridgeTransport::CDashBridgeTransport()
 {
    m_endpoint = "http://127.0.0.1:8765";
    m_enabled = true;
-   m_controlEnabled = false;
    m_pushInterval = 5;
    m_requestTimeout = 1000;
-   m_pushTimeout = 5000;  // Default 5s push timeout
+   m_pushTimeout = 5000;  // Default 5s push timeout (Issue #34)
    m_lastPushTime = 0;
-   m_lastPollTime = 0;
    m_pushCount = 0;
    m_pushSuccessCount = 0;
    m_pushErrorCount = 0;
@@ -104,21 +80,17 @@ CDashBridgeTransport::CDashBridgeTransport()
    m_lastError = "";
    m_lastErrorLogTime = 0;
    m_initialized = false;
-   m_commandHandler = NULL;
    m_pushInProgress = false;
    m_consecutiveFailures = 0;
    m_retryAfter = 0;
 }
 
 bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
-                                      bool controlEnabled, int pushIntervalSec,
-                                      int requestTimeoutMs, int pushTimeoutMs,
-                                      const string apiKey)
+                                      int pushIntervalSec,
+                                      int requestTimeoutMs, int pushTimeoutMs)
 {
    m_endpoint = endpoint;
-   m_apiKey = apiKey;
    m_enabled = enabled;
-   m_controlEnabled = controlEnabled;
    m_pushInterval = pushIntervalSec;
    m_requestTimeout = requestTimeoutMs;
    m_pushTimeout = pushTimeoutMs;
@@ -173,12 +145,10 @@ void CDashBridgeTransport::Shutdown()
       m_initialized = false;
       m_connected = false;
       m_enabled = false;
-      m_controlEnabled = false;
       m_pushInterval = 0;
       m_requestTimeout = 0;
       m_pushTimeout = 0;
       m_lastPushTime = 0;
-      m_lastPollTime = 0;
       m_pushCount = 0;
       m_pushSuccessCount = 0;
       m_pushErrorCount = 0;
@@ -196,8 +166,6 @@ bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &u
       return false;
 
    string headers = "Content-Type: application/json\r\n";
-   if(m_apiKey != "")
-      headers += "X-Api-Key: " + m_apiKey + "\r\n";
    uchar request_array[];
    uchar response_array[];
    string response_headers;
@@ -210,7 +178,7 @@ bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &u
    }
 
    // Use push timeout for POST (state push), request timeout for GET (health, commands)
-   int effectiveTimeout = (timeoutMs > 0) ? timeoutMs :
+   int effectiveTimeout = (timeoutMs > 0) ? timeoutMs : 
                           ((method == "POST") ? m_pushTimeout : m_requestTimeout);
 
    int res = WebRequest(method, url, headers, effectiveTimeout,
@@ -307,109 +275,10 @@ bool CDashBridgeTransport::FinishPush(const string &json)
    }
 }
 
-// Poll for pending control commands
-bool CDashBridgeTransport::PollCommands()
-{
-   if(!m_initialized || !m_enabled || !m_controlEnabled)
-      return false;
-
-   // Rate limit polling to every 2 seconds minimum
-   datetime now = TimeCurrent();
-   if(m_lastPollTime != 0 && (now - m_lastPollTime) < 2)
-      return false;
-
-   string response;
-   string cmdUrl = m_endpoint + "/api/control/commands";
-
-   if(SendHttpRequest("GET", cmdUrl, "", response))
-   {
-      m_lastPollTime = now;
-
-      // Parse commands from JSON response
-      if(StringFind(response, "\"commands\"") != -1 && StringFind(response, "[]") == -1)
-      {
-         // Extract command entries - bounded to each command object
-         int searchPos = 0;
-         while(true)
-         {
-            int cmdStart = StringFind(response, "\"id\":", searchPos);
-            if(cmdStart == -1) break;
-
-            int cmdEnd = StringFind(response, "}", cmdStart);
-            if(cmdEnd == -1) break;
-
-            // Extract command id (bounded to current command object)
-            int idStart = cmdStart + 5;
-            string cmdId = "";
-            int q1 = StringFind(response, "\"", idStart);
-            if(q1 != -1 && q1 < cmdEnd)
-            {
-               int q2 = StringFind(response, "\"", q1 + 1);
-               if(q2 != -1 && q2 < cmdEnd)
-                  cmdId = StringSubstr(response, q1 + 1, q2 - q1 - 1);
-            }
-
-            // Extract command type (bounded to current command object)
-            int typePos = StringFind(response, "\"type\":", cmdStart);
-            string cmdType = "";
-            if(typePos != -1 && typePos < cmdEnd)
-            {
-               int tq1 = StringFind(response, "\"", typePos + 7);
-               int tq2 = StringFind(response, "\"", tq1 + 1);
-               if(tq1 != -1 && tq2 != -1 && tq2 < cmdEnd)
-                  cmdType = StringSubstr(response, tq1 + 1, tq2 - tq1 - 1);
-            }
-
-            if(cmdId != "" && cmdType != "")
-            {
-               PrintFormat("[DASHBOARD-CMD] Received command: id=%s type=%s", cmdId, cmdType);
-
-               // Route command to orchestrator handlers
-               bool handled = HandleDashboardCommand(cmdType);
-               if(!handled)
-               {
-                  PrintFormat("[DASHBOARD-CMD] Rejected command type: %s", cmdType);
-               }
-
-               // Acknowledge with the execution result; an unhandled command is
-               // acked as an error so the server clears it instead of re-delivering.
-               string ackUrl = m_endpoint + "/api/control/ack/" + cmdId;
-               string ackBody = handled ? "{\"result\":\"ok\"}"
-                                        : "{\"result\":\"error\",\"detail\":\"unhandled or failed command\"}";
-               string ackResponse;
-               SendHttpRequest("POST", ackUrl, ackBody, ackResponse, m_pushTimeout);
-            }
-
-            searchPos = cmdEnd + 1;
-            if(searchPos >= StringLen(response)) break;
-         }
-      }
-      return true;
-   }
-
-   return false;
-}
-
 void CDashBridgeTransport::LogState(string message, bool isError)
 {
    string prefix = isError ? "[DASHBOARD-BRIDGE-ERROR] " : "[DASHBOARD-BRIDGE] ";
    Print(prefix + message);
-}
-
-// Route dashboard commands to the registered handler. Only the whitelisted
-// command types are forwarded; everything else is rejected so the caller can
-// ack it with an error result instead of retrying forever.
-bool CDashBridgeTransport::HandleDashboardCommand(const string &cmdType)
-{
-   if(cmdType != DASH_CMD_PAUSE && cmdType != DASH_CMD_RESUME &&
-      cmdType != DASH_CMD_EMERGENCY_STOP)
-      return false;
-   if(m_commandHandler == NULL)
-   {
-      PrintFormat("[DASHBOARD-CMD] No command handler registered, rejecting: %s", cmdType);
-      return false;
-   }
-   return m_commandHandler.ExecuteCommand(cmdType);
 }
 
 // Should log error (throttled to every 60s)

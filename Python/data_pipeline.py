@@ -11,27 +11,6 @@ import torch
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 
-# Canonical implementations live in training_core.py (single source of truth,
-# also vendored into the self-contained Colab script mql5_v2.py).
-from training_core import (
-    _bb_pct_b,
-    _bb_width,
-    _cci,
-    _ema,
-    _macd_hist_norm,
-    _parkinson_vol,
-    _rsi,
-    _rolling_zscore,
-    _sma,
-    add_calendar_features,
-    build_base_feature_matrix,
-    compute_atr,
-    compute_uniqueness_weights,
-    cusum_filter,
-    exported_feature_columns,
-    triple_barrier_labels,
-)
-
 
 FEATURE_COUNT = 57
 BASE_FEATURE_COUNT = 57
@@ -102,6 +81,94 @@ def save_scaler_to_bin(scaler: StandardScaler, output_path: str) -> None:
         handle.write(struct.pack(f"<{n}d", *scaler.scale_))
 
 
+def compute_atr(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    period: int = 14,
+) -> np.ndarray:
+    tr = np.maximum(
+        high[1:] - low[1:],
+        np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])),
+    )
+    atr = np.zeros(len(close), dtype=np.float64)
+    if period <= len(tr):
+        atr[period] = tr[:period].mean()
+        for i in range(period + 1, len(close)):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i - 1]) / period
+    return atr
+
+
+def triple_barrier_labels(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    atr: np.ndarray,
+    k: float = 1.5,
+    vertical_bars: int = 20,
+) -> np.ndarray:
+    return triple_barrier_labels_with_ends(close, high, low, atr, k, vertical_bars)[0]
+
+
+def triple_barrier_labels_with_ends(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    atr: np.ndarray,
+    k: float = 1.5,
+    vertical_bars: int = 20,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if vertical_bars < 1:
+        raise ValueError("vertical_bars must be positive")
+    if not (len(close) == len(high) == len(low) == len(atr)):
+        raise ValueError("OHLC and ATR arrays must have identical lengths")
+
+    n = len(close)
+    labels = np.zeros(n, dtype=np.int8)
+    end_bars = np.minimum(np.arange(n, dtype=np.int32) + vertical_bars, max(0, n - 1))
+    for i in range(max(0, n - vertical_bars)):
+        if atr[i] <= 0:
+            continue
+        upper = close[i] + k * atr[i]
+        lower = close[i] - k * atr[i]
+        for j in range(i + 1, min(i + vertical_bars + 1, n)):
+            # Stop is checked first: when one bar touches both barriers, the conservative outcome is the loss.
+            if low[j] <= lower:
+                labels[i] = -1
+                end_bars[i] = j
+                break
+            if high[j] >= upper:
+                labels[i] = 1
+                end_bars[i] = j
+                break
+    return labels, end_bars
+
+
+def compute_uniqueness_weights(
+    event_indices: Sequence[int],
+    vertical_bars: int,
+    total_bars: int,
+) -> np.ndarray:
+    event_indices = np.asarray(event_indices, dtype=np.int32)
+    if len(event_indices) == 0:
+        return np.zeros(0, dtype=np.float32)
+
+    concurrency = np.zeros(total_bars, dtype=np.float32)
+    for idx in event_indices:
+        end = min(int(idx) + vertical_bars, total_bars)
+        concurrency[int(idx) : end] += 1.0
+
+    raw_weights = np.zeros(len(event_indices), dtype=np.float32)
+    for i, idx in enumerate(event_indices):
+        end = min(int(idx) + vertical_bars, total_bars)
+        raw_weights[i] = np.mean(1.0 / np.maximum(concurrency[int(idx) : end], 1e-9))
+
+    total = raw_weights.sum()
+    if total > 1e-9:
+        raw_weights = raw_weights / total * len(event_indices)
+    return raw_weights
+
+
 def compute_forward_returns(
     prices: np.ndarray,
     event_indices: Sequence[int],
@@ -113,6 +180,111 @@ def compute_forward_returns(
         end = min(int(idx) + holding_bars, len(prices) - 1)
         returns[i] = (prices[end] - prices[int(idx)]) / max(prices[int(idx)], 1e-10)
     return returns
+
+
+def cusum_filter(
+    close: np.ndarray,
+    threshold_multiplier: float = 1.0,
+    atr: Optional[np.ndarray] = None,
+) -> List[int]:
+    if atr is None:
+        atr = np.ones(len(close), dtype=np.float64)
+    events: List[int] = []
+    s_pos, s_neg = 0.0, 0.0
+    for i in range(1, len(close)):
+        ret = float(np.log(close[i] / (close[i - 1] + 1e-12)))
+        thresh = max(1e-8, threshold_multiplier * (float(atr[i]) / (float(close[i]) + 1e-9)))
+        s_pos = max(0.0, s_pos + ret)
+        s_neg = min(0.0, s_neg + ret)
+        if s_pos > thresh:
+            events.append(i)
+            s_pos = 0.0
+        elif s_neg < -thresh:
+            events.append(i)
+            s_neg = 0.0
+    return events
+
+
+def _lag(values: np.ndarray, periods: int) -> np.ndarray:
+    values = np.asarray(values)
+    if periods <= 0:
+        return values.copy()
+    lagged = np.zeros_like(values)
+    if periods < len(values):
+        lagged[periods:] = values[:-periods]
+    return lagged
+
+
+def _ema(x: np.ndarray, period: int) -> np.ndarray:
+    alpha = 2.0 / (period + 1)
+    result = np.empty_like(x, dtype=np.float64)
+    result[0] = x[0]
+    for i in range(1, len(x)):
+        result[i] = alpha * x[i] + (1 - alpha) * result[i - 1]
+    return result
+
+
+def _sma(x: np.ndarray, period: int) -> np.ndarray:
+    return pd.Series(x).rolling(period, min_periods=1).mean().values
+
+
+def _rsi(close: np.ndarray, period: int) -> np.ndarray:
+    delta = np.diff(close, prepend=close[0]).astype(np.float64)
+    avg_gain = _ema(np.maximum(delta, 0.0), period)
+    avg_loss = _ema(np.maximum(-delta, 0.0), period)
+    rs = avg_gain / (avg_loss + 1e-9)
+    return (100.0 - 100.0 / (1.0 + rs)) / 100.0
+
+
+def _bb_pct_b(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
+    mid = _sma(close, period)
+    std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).values
+    upper = mid + mult * std
+    lower = mid - mult * std
+    return (close - lower) / (upper - lower + 1e-9)
+
+
+def _bb_width(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
+    mid = _sma(close, period)
+    std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).values
+    return (2 * mult * std) / (mid + 1e-9)
+
+
+def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int = 9) -> np.ndarray:
+    macd = _ema(close, fast) - _ema(close, slow)
+    signal = _ema(macd, sig)
+    hist = macd - signal
+    previous_close = _lag(close, 1)
+    if len(previous_close):
+        previous_close[0] = close[0]
+    atr = compute_atr(np.maximum(close, previous_close), np.minimum(close, previous_close), close, 14)
+    return hist / (atr + 1e-9)
+
+
+def _rolling_zscore(x: np.ndarray, period: int) -> np.ndarray:
+    series = pd.Series(x.astype(np.float64))
+    mean = series.rolling(period, min_periods=2).mean()
+    std = series.rolling(period, min_periods=2).std(ddof=0)
+    return ((series - mean) / (std + 1e-9)).fillna(0.0).values
+
+
+def _cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+    tp = (high + low + close) / 3.0
+    sma = _sma(tp, period)
+    mad = (
+        pd.Series(tp)
+        .rolling(period)
+        .apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+        .fillna(1e-9)
+        .values
+    )
+    return (tp - sma) / (0.015 * mad + 1e-9) / 200.0
+
+
+def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14) -> np.ndarray:
+    log_hl = np.log((high + 1e-9) / (low + 1e-9)) ** 2
+    factor = 1.0 / (4.0 * np.log(2))
+    return np.sqrt(pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().values)
 
 
 def build_deriv_family_features(
@@ -250,19 +422,76 @@ def build_feature_matrix(
     family_id: int = -1,
     asset_class: int = -1,
 ) -> np.ndarray:
-    """57-col canonical base matrix plus optional family/asset-class extras.
-
-    The base block is ``training_core.build_base_feature_matrix`` (safe lags,
-    no ``np.roll`` wrap-around - the wrap only touched the first lag-period bars
-    but is gone entirely now). ``compute_atr`` backfills its warm-up window, so
-    ratio features at bars < period are finite instead of clipped at +/-3.
-    """
     n = len(close)
-    base = build_base_feature_matrix(open_, high, low, close, volume)
+    log_ret = np.concatenate([[0.0], np.log(close[1:] / (close[:-1] + 1e-12))])
+    atr14 = compute_atr(high, low, close, 14)
+    atr50 = compute_atr(high, low, close, 50)
+    atr5 = compute_atr(high, low, close, 5)
 
-    extra_cols = []
+    cols = [
+        log_ret,
+        log_ret / (atr14 + 1e-9),
+        (close - low) / (high - low + 1e-9),
+        np.log(volume.astype(np.float64) + 1.0),
+        atr14 / (close + 1e-9),
+        np.log(close / (_ema(close, 8) + 1e-9) + 1e-9),
+        np.log(close / (_ema(close, 21) + 1e-9) + 1e-9),
+        np.log(close / (_ema(close, 50) + 1e-9) + 1e-9),
+        np.log(_ema(close, 8) / (_ema(close, 21) + 1e-9) + 1e-9),
+        np.log(_ema(close, 21) / (_ema(close, 50) + 1e-9) + 1e-9),
+        _rsi(close, 14),
+        _rsi(close, 7),
+        _bb_pct_b(close, 20, 2.0),
+        _bb_width(close, 20, 2.0),
+        _macd_hist_norm(close, 12, 26, 9),
+        atr14 / (atr50 + 1e-9),
+        _parkinson_vol(high, low, 14),
+        volume / (_sma(volume.astype(np.float64), 20) + 1e-9),
+        np.zeros(n, dtype=np.float64),
+        np.zeros(n, dtype=np.float64),
+        np.zeros(n, dtype=np.float64),
+        np.zeros(n, dtype=np.float64),
+        _lag(log_ret, 1),
+        _lag(log_ret, 5),
+        _lag(log_ret, 20),
+        _rolling_zscore(close.astype(np.float64), 20),
+        _rolling_zscore(close.astype(np.float64), 50),
+        (high - low) / (close + 1e-9),
+        _rolling_zscore(high - low, 20),
+        _cci(high, low, close, 14),
+        _lag(log_ret / (atr14 + 1e-9), 2),
+        _lag(log_ret / (atr14 + 1e-9), 3),
+        _lag(log_ret / (atr14 + 1e-9), 5),
+        _lag(log_ret / (atr14 + 1e-9), 8),
+        _lag(log_ret / (atr14 + 1e-9), 13),
+        _rolling_zscore(volume.astype(np.float64), 20),
+        _lag(_rsi(close, 14), 1),
+        _lag(_rsi(close, 14), 3),
+        _lag(_bb_pct_b(close, 20, 2.0), 1),
+        _lag(_bb_pct_b(close, 20, 2.0), 3),
+        _rolling_zscore(_rsi(close, 14), 20),
+        _rolling_zscore(_rsi(close, 7), 20),
+        _macd_hist_norm(close, 12, 26, 9),
+        _lag(_macd_hist_norm(close, 12, 26, 9), 1),
+        atr14 / (atr5 + 1e-9),
+        _rolling_zscore(atr14, 20),
+        _lag(log_ret, 10),
+        _lag(log_ret, 15),
+        (close - _sma(close, 50)) / (atr14 + 1e-9),
+        (close - _sma(close, 200)) / (atr14 + 1e-9),
+        _rolling_zscore(_lag(log_ret, 1) * log_ret, 20),
+        _rolling_zscore(_lag(log_ret, 5) * log_ret, 20),
+        (close - _ema(close, 100)) / (atr50 + 1e-9),
+        _rolling_zscore(volume.astype(np.float64), 50),
+        atr50 / (atr14 + 1e-9),
+        np.zeros(n, dtype=np.float64),
+        np.ones(n, dtype=np.float64),
+    ]
+
+    # Extend with Deriv family-specific features if family_id is set
     if family_id >= 0:
-        extra_cols = build_deriv_family_features(close, high, low, volume, family_id)
+        deriv_feats = build_deriv_family_features(close, high, low, volume, family_id)
+        cols.extend(deriv_feats)
     elif asset_class >= 0:
         if asset_class == 0:      # FOREX
             ext = build_forex_features(close, high, low, volume, volume)
@@ -274,13 +503,30 @@ def build_feature_matrix(
             ext = build_energies_features(close, high, low, volume)
         else:
             ext = np.zeros((n, 0))
-        extra_cols = [ext[:, i] for i in range(ext.shape[1])]
+        cols.extend([ext[:, i] for i in range(ext.shape[1])])
 
-    if not extra_cols:
-        return base
-    features = np.column_stack([base] + [np.asarray(c, dtype=np.float32) for c in extra_cols])
-    return np.nan_to_num(features.astype(np.float32), nan=0.0, posinf=3.0, neginf=-3.0)
+    features = np.column_stack(cols).astype(np.float32)
+    return np.nan_to_num(features, nan=0.0, posinf=3.0, neginf=-3.0)
 
+
+def exported_feature_columns(frame: pd.DataFrame) -> List[str]:
+    feature_cols = [col for col in frame.columns if col.startswith("feature_")]
+    def sort_key(name: str) -> int:
+        try:
+            return int(name.split("_")[1])
+        except (IndexError, ValueError):
+            return 10**9
+    return sorted(feature_cols, key=sort_key)
+
+
+def add_calendar_features(features: np.ndarray, timestamps: pd.DatetimeIndex) -> np.ndarray:
+    dow = timestamps.dayofweek.values / 6.0
+    hod = timestamps.hour.values / 23.0
+    features[:, 18] = np.sin(2 * np.pi * dow)
+    features[:, 19] = np.cos(2 * np.pi * dow)
+    features[:, 20] = np.sin(2 * np.pi * hod)
+    features[:, 21] = np.cos(2 * np.pi * hod)
+    return features
 
 
 def prepare_sequences(
@@ -291,36 +537,36 @@ def prepare_sequences(
     timestamps: np.ndarray,
     seq_len: int,
     sample_indices: Sequence[int],
-    vertical_bars: int = 0,
+    label_end_indices: Optional[Sequence[int]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    X, y, w, r, ts, le = [], [], [], [], [], []
-    skipped = 0
-    n_bars = len(timestamps)
-    for idx, sample_index in enumerate(sample_indices):
-        if sample_index < seq_len:
-            skipped += 1
+    X, y, w, r, ts, label_end_ts = [], [], [], [], [], []
+    if not (len(sample_indices) == len(weights) == len(returns)):
+        raise ValueError("sample_indices, weights, and returns must align")
+    if label_end_indices is not None and len(label_end_indices) != len(sample_indices):
+        raise ValueError("label_end_indices must align with sample_indices")
+
+    for position, sample_index in enumerate(sample_indices):
+        sample_index = int(sample_index)
+        if sample_index < seq_len - 1 or sample_index >= len(features):
             continue
-        end = int(sample_index)
-        X.append(features[end - seq_len : end])
-        y.append(int(labels[end - 1]) + 1)
-        w.append(float(weights[idx]))
-        r.append(float(returns[idx]))
-        ts.append(timestamps[end - 1])
-        # Label for bar (end - 1) resolves over the next vertical_bars bars; the last
-        # bar it can touch is end - 1 + vertical_bars. Clamped - purged samples near
-        # the data end never reach a split.
-        le.append(timestamps[min(end - 1 + vertical_bars, n_bars - 1)])
+        label_end_index = int(label_end_indices[position]) if label_end_indices is not None else sample_index
+        if label_end_index < sample_index or label_end_index >= len(timestamps):
+            raise ValueError("label_end_indices must be at or after each sample and within timestamps")
+        X.append(features[sample_index - seq_len + 1 : sample_index + 1])
+        y.append(int(labels[sample_index]) + 1)
+        w.append(float(weights[position]))
+        r.append(float(returns[position]))
+        ts.append(timestamps[sample_index])
+        label_end_ts.append(timestamps[label_end_index])
 
-    X_arr = np.asarray(X, dtype=np.float32)
-    y_arr = np.asarray(y, dtype=np.int64)
-    w_arr = np.asarray(w, dtype=np.float32)
-    r_arr = np.asarray(r, dtype=np.float32)
-    ts_arr = np.asarray(ts)
-    le_arr = np.asarray(le)
-    assert len(X_arr) == len(y_arr) == len(w_arr) == len(r_arr) == len(ts_arr) == len(le_arr)
-    assert len(X_arr) == len(sample_indices) - skipped
-
-    return X_arr, y_arr, w_arr, r_arr, ts_arr, le_arr
+    return (
+        np.asarray(X, dtype=np.float32),
+        np.asarray(y, dtype=np.int64),
+        np.asarray(w, dtype=np.float32),
+        np.asarray(r, dtype=np.float32),
+        np.asarray(ts),
+        np.asarray(label_end_ts),
+    )
 
 
 def _split_arrays(
@@ -329,34 +575,38 @@ def _split_arrays(
     weights: np.ndarray,
     returns: np.ndarray,
     timestamps: np.ndarray,
-    label_ends: np.ndarray,
+    label_end_timestamps: np.ndarray,
     label_bars: np.ndarray,
+    label_end_bars: np.ndarray,
     train_ratio: float,
     val_ratio: float,
-    vertical_bars: int,
-    n_bars: int,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
     n = len(X)
     if n < 48:
         raise ValueError("Not enough prepared samples to split safely.")
+    if not all(
+        len(array) == n
+        for array in (y, weights, returns, timestamps, label_end_timestamps, label_bars, label_end_bars)
+    ):
+        raise ValueError("split arrays and label intervals must align")
+    if np.any(label_end_bars < label_bars):
+        raise ValueError("label end bars cannot precede sample bars")
 
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
     train_end = max(24, min(train_end, n - 24))
     val_end = max(train_end + 12, min(val_end, n - 12))
 
-    # A sample's label is resolved at label_bar + vertical_bars, so it is kept only if that
-    # horizon ends strictly before the first bar of the next segment.
+    # Keep a sample only when its actual barrier-resolution bar precedes the next segment.
     idx = np.arange(n)
-    horizon_end = label_bars + vertical_bars
-    train_sel = idx[(idx < train_end) & (horizon_end < label_bars[train_end])]
-    val_sel = idx[(idx >= train_end) & (idx < val_end) & (horizon_end < label_bars[val_end])]
-    # The test segment has no following segment, so its boundary is the end of the data:
-    # a label needs vertical_bars of future bars or triple_barrier_labels leaves it 0.
-    test_sel = idx[(idx >= val_end) & (horizon_end < n_bars)]
+    train_sel = idx[(idx < train_end) & (label_end_bars < label_bars[train_end])]
+    val_sel = idx[(idx >= train_end) & (idx < val_end) & (label_end_bars < label_bars[val_end])]
+    test_sel = idx[val_end:]
+    if not len(train_sel) or not len(val_sel) or not len(test_sel):
+        raise ValueError("Purging left an empty train, validation, or test split")
 
     def take(sel: np.ndarray) -> Tuple[np.ndarray, ...]:
-        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_ends[sel])
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_end_timestamps[sel])
 
     return take(train_sel), take(val_sel), take(test_sel)
 
@@ -421,32 +671,36 @@ def build_dataset_splits(
             features = add_calendar_features(features, pd.DatetimeIndex(symbol_df["date"]))
 
         atr = compute_atr(high, low, close, 14)
-        labels = triple_barrier_labels(close, high, low, atr, k=k, vertical_bars=vertical_bars)
+        labels, label_end_bars = triple_barrier_labels_with_ends(
+            close, high, low, atr, k=k, vertical_bars=vertical_bars
+        )
         events = np.asarray(cusum_filter(close, threshold_multiplier=1.0, atr=atr), dtype=np.int32)
-        label_indices = np.asarray([idx - 1 for idx in events if idx >= 1], dtype=np.int32)
-        if len(label_indices) < 48:
+        sample_indices = events[
+            (events >= seq_len - 1) & (events + vertical_bars < len(close))
+        ]
+        if len(sample_indices) < 48:
             continue
 
-        weights = compute_uniqueness_weights(label_indices, vertical_bars, len(close))
-        returns = compute_forward_returns(close, label_indices, holding_bars=vertical_bars)
+        weights = compute_uniqueness_weights(sample_indices, vertical_bars, len(close))
+        returns = compute_forward_returns(close, sample_indices, holding_bars=vertical_bars)
         timestamps = symbol_df["date"].to_numpy()
-        X, y, w, r, ts, le = prepare_sequences(
+        sample_label_end_bars = label_end_bars[sample_indices]
+        X, y, w, r, ts, label_end_ts = prepare_sequences(
             features,
             labels,
             weights,
             returns,
             timestamps,
             seq_len=seq_len,
-            sample_indices=label_indices,
-            vertical_bars=vertical_bars,
+            sample_indices=sample_indices,
+            label_end_indices=sample_label_end_bars,
         )
         if len(X) < 48:
             continue
 
-        kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
         train, val, test = _split_arrays(
-            X, y, w, r, ts, le, kept_label_bars, train_ratio, val_ratio,
-            vertical_bars=vertical_bars, n_bars=len(close),
+            X, y, w, r, ts, label_end_ts, sample_indices, sample_label_end_bars,
+            train_ratio, val_ratio,
         )
         train_parts.append(train)
         val_parts.append(val)
@@ -470,19 +724,16 @@ def _scale_splits(
     test: Tuple[np.ndarray, ...],
     scaler_output: Optional[str] = None,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Optional[StandardScaler]]:
-    X_tr, y_tr, w_tr, r_tr, ts_tr, le_tr = train
-    X_va, y_va, w_va, r_va, ts_va, le_va = val
-    X_te, y_te, w_te, r_te, ts_te, le_te = test
+    X_tr, y_tr, w_tr, r_tr, ts_tr, end_ts_tr = train
+    X_va, y_va, w_va, r_va, ts_va, end_ts_va = val
+    X_te, y_te, w_te, r_te, ts_te, end_ts_te = test
 
-    # The scaler is applied per bar at inference (CPipelineScaler::Apply scales a
-    # FEATURE_VECTOR_SIZE vector), so it must be fit per feature across all bars,
-    # not on the flattened (seq_len * n_features) sequence layout.
     scaler = StandardScaler()
     n_train, seq_len, n_features = X_tr.shape
-    scaler.fit(X_tr.reshape(-1, n_features))
+    scaler.fit(X_tr.reshape(n_train, seq_len * n_features))
 
     def transform(X: np.ndarray) -> np.ndarray:
-        flat = X.reshape(-1, n_features)
+        flat = X.reshape(len(X), seq_len * n_features)
         scaled = scaler.transform(flat)
         return scaled.reshape(len(X), seq_len, n_features).astype(np.float32)
 
@@ -490,9 +741,9 @@ def _scale_splits(
         save_scaler_to_bin(scaler, scaler_output)
 
     return (
-        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, le_tr),
-        (transform(X_va), y_va, w_va, r_va, ts_va, le_va),
-        (transform(X_te), y_te, w_te, r_te, ts_te, le_te),
+        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, end_ts_tr),
+        (transform(X_va), y_va, w_va, r_va, ts_va, end_ts_va),
+        (transform(X_te), y_te, w_te, r_te, ts_te, end_ts_te),
         scaler,
     )
 

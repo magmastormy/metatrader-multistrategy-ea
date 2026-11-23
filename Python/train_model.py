@@ -7,15 +7,14 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from scipy.stats import spearmanr
 
-from data_pipeline import PipelineMetadata, build_dataset_splits, _scale_splits
-from sklearn.preprocessing import StandardScaler
+from data_pipeline import PipelineMetadata, _scale_splits, build_dataset_splits
 from models import PatchTST, SequenceMLP, iTransformer
-from train_common import save_train_meta
-from validate_model import run_cpcv
+from validate_model import fit_fold_feature_scaler, purged_time_split_indices, run_cpcv, transform_fold_features
 
 
 def compute_ic(model: nn.Module, loader, device: str) -> float:
@@ -95,17 +94,15 @@ def train_candidate(
     model: nn.Module,
     train_split,
     val_split,
-    test_split,
     metadata: PipelineMetadata,
     epochs: int,
     batch_size: int,
     lr: float,
     weight_decay: float,
     device: str,
-) -> Tuple[float, float, nn.Module]:
+) -> Tuple[float, nn.Module]:
     train_loader = build_loader(train_split, batch_size=batch_size, shuffle=True)
     val_loader = build_loader(val_split, batch_size=batch_size, shuffle=False)
-    test_loader = build_loader(test_split, batch_size=batch_size, shuffle=False)
 
     y_train = train_split[1]
     counts = np.bincount(y_train, minlength=3)
@@ -145,9 +142,8 @@ def train_candidate(
 
     if best_state is not None:
         model.load_state_dict(best_state)
-    test_ic = compute_ic(model, test_loader, device)
-    print(f"  final_val_ic={best_val_ic:.4f} test_ic={test_ic:.4f} annualization={metadata.annualization:.1f}")
-    return best_val_ic, test_ic, model
+    print(f"  final_val_ic={best_val_ic:.4f} annualization={metadata.annualization:.1f}")
+    return best_val_ic, model
 
 
 def main() -> None:
@@ -165,7 +161,8 @@ def main() -> None:
     parser.add_argument("--k", type=float, default=1.5)
     parser.add_argument("--vert", type=int, default=20)
     parser.add_argument("--cpcv-splits", type=int, default=6)
-    parser.add_argument("--min-ic", type=float, default=0.02)
+    parser.add_argument("--min-val-ic", "--min-ic", dest="min_val_ic", type=float, default=0.02,
+                        help="Minimum validation IC required for export.")
     parser.add_argument("--force-export", action="store_true")
     parser.add_argument("--family-id", type=int, default=-1,
                         help="Deriv family ID (0-17). -1=universal (57 features)")
@@ -183,17 +180,24 @@ def main() -> None:
     if scaler_output is None:
         scaler_output = str(Path(args.output).with_name("scaler.bin"))
 
-    # Keep the raw arrays: CPCV fold models must be scaled per fold, not with the
-    # global train scaler (which saw data on both sides of every test group).
-    raw_train, raw_val, raw_test, metadata = build_dataset_splits(
-        args.csv,
+    raw_train_split, raw_val_split, raw_test_split, annualization = build_dataset_splits(
+        pd.read_csv(args.csv),
         seq_len=seq_len,
         k=args.k,
         vertical_bars=args.vert,
         family_id=args.family_id,
     )
-    train_split, val_split, test_split, _scaler = _scale_splits(
-        raw_train, raw_val, raw_test, scaler_output=scaler_output,
+    train_split, val_split, test_split, _ = _scale_splits(
+        raw_train_split, raw_val_split, raw_test_split, scaler_output=scaler_output
+    )
+    metadata = PipelineMetadata(
+        seq_len=seq_len,
+        n_features=train_split[0].shape[2],
+        train_size=len(train_split[0]),
+        val_size=len(val_split[0]),
+        test_size=len(test_split[0]),
+        annualization=annualization,
+        scaler_path=scaler_output,
     )
 
     print(
@@ -204,16 +208,14 @@ def main() -> None:
     candidates = instantiate_models(args.model, metadata.seq_len, metadata.n_features)
     best_name = ""
     best_val_ic = -1e9
-    best_test_ic = -1e9
     best_model = None
 
     for name, model in candidates.items():
-        val_ic, test_ic, trained = train_candidate(
+        val_ic, trained = train_candidate(
             name=name,
             model=model,
             train_split=train_split,
             val_split=val_split,
-            test_split=test_split,
             metadata=metadata,
             epochs=args.epochs,
             batch_size=args.batch_size,
@@ -224,46 +226,37 @@ def main() -> None:
         if val_ic > best_val_ic:
             best_name = name
             best_val_ic = val_ic
-            best_test_ic = test_ic
             best_model = trained
 
     if best_model is None:
         raise RuntimeError("No model candidates were trained.")
+    test_loader = build_loader(test_split, batch_size=args.batch_size, shuffle=False)
+    best_test_ic = compute_ic(best_model, test_loader, args.device)
+    print(f"selected={best_name} val_ic={best_val_ic:.4f} holdout_test_ic={best_test_ic:.4f}")
 
     temp_output = Path(args.output).with_suffix(".tmp.onnx")
     export_onnx(best_model, metadata.seq_len, metadata.n_features, str(temp_output))
 
-    arrays = [
-        np.concatenate([raw_train[i], raw_val[i], raw_test[i]], axis=0) for i in range(6)
-    ]
-    X_all, _, _, returns_all, timestamps_all, label_ends_all = arrays
+    arrays = raw_train_split
+    X_all, _, _, returns_all, timestamps_all, label_end_timestamps_all = arrays
 
     fold_dir = Path(tempfile.mkdtemp(prefix="cpcv_folds_"))
 
-    def fold_model_path(fold_no: int, train_idx: np.ndarray) -> str:
-        n_val = max(1, int(len(train_idx) * 0.15))
-        fit_idx, val_idx = train_idx[:-n_val], train_idx[-n_val:]
-
-        # Scale inside the fold: fit the scaler on this fold's fit indices only,
-        # per feature across all bars (same layout CPipelineScaler applies at inference).
-        n_feat = metadata.n_features
-        fold_scaler = StandardScaler()
-        fold_scaler.fit(arrays[0][fit_idx].reshape(-1, n_feat))
-
-        def take_scaled(sel: np.ndarray):
-            Xs = fold_scaler.transform(arrays[0][sel].reshape(-1, n_feat))
-            Xs = Xs.reshape(len(sel), metadata.seq_len, n_feat).astype(np.float32)
-            return (Xs, arrays[1][sel], arrays[2][sel], arrays[3][sel], arrays[4][sel])
-
-        fit_split = take_scaled(fit_idx)
-        val_split_fold = take_scaled(val_idx)
+    def fold_model_path(fold_no: int, train_idx: np.ndarray) -> object:
+        fit_idx, val_idx = purged_time_split_indices(
+            train_idx, arrays[4], arrays[5], validation_ratio=0.15
+        )
+        fold_scaler = fit_fold_feature_scaler(arrays[0], fit_idx)
+        fit_split = tuple(a[fit_idx] for a in arrays)
+        val_split_fold = tuple(a[val_idx] for a in arrays)
+        fit_split = (transform_fold_features(arrays[0][fit_idx], fold_scaler), *fit_split[1:])
+        val_split_fold = (transform_fold_features(arrays[0][val_idx], fold_scaler), *val_split_fold[1:])
         fold_model = instantiate_models(best_name, metadata.seq_len, metadata.n_features)[best_name]
-        _, _, trained = train_candidate(
+        _, trained = train_candidate(
             name=f"{best_name}-fold{fold_no}",
             model=fold_model,
             train_split=fit_split,
             val_split=val_split_fold,
-            test_split=val_split_fold,
             metadata=metadata,
             epochs=args.epochs,
             batch_size=args.batch_size,
@@ -273,34 +266,26 @@ def main() -> None:
         )
         path = str(fold_dir / f"fold_{fold_no}.onnx")
         export_onnx(trained, metadata.seq_len, metadata.n_features, path)
-        return path
+        return path, fold_scaler
 
     try:
         cpcv = run_cpcv(
             X=X_all,
             bar_returns=returns_all,
             timestamps=timestamps_all,
-            vertical_bars=args.vert,
+            label_end_timestamps=label_end_timestamps_all,
             fold_model_path=fold_model_path,
             n_splits=args.cpcv_splits,
             annualization=metadata.annualization,
-            label_ends_ns=label_ends_all,
         )
     finally:
         shutil.rmtree(fold_dir, ignore_errors=True)
 
-    deploy_ok = best_test_ic >= args.min_ic and cpcv["deploy_gate"]
+    deploy_ok = best_val_ic >= args.min_val_ic and cpcv["deploy_gate"]
     if deploy_ok or args.force_export:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         temp_output.replace(output)
-        # Record the training range so stacker_fit_indices can exclude rows the
-        # base model saw during fitting (early stopping still used val_split).
-        save_train_meta(
-            str(output), raw_train[4], raw_val[4],
-            seq_len=seq_len, k=args.k, vert=args.vert,
-            family_id=args.family_id, architecture=best_name,
-        )
         print(
             f"exported={output} model={best_name} val_ic={best_val_ic:.4f} "
             f"test_ic={best_test_ic:.4f} force_export={args.force_export}"
@@ -308,7 +293,7 @@ def main() -> None:
     else:
         temp_output.unlink(missing_ok=True)
         raise SystemExit(
-            f"Deployment gate failed: test_ic={best_test_ic:.4f} min_ic={args.min_ic:.4f} "
+            f"Deployment gate failed: val_ic={best_val_ic:.4f} min_val_ic={args.min_val_ic:.4f} "
             f"cpcv_pass={cpcv['deploy_gate']}"
         )
 

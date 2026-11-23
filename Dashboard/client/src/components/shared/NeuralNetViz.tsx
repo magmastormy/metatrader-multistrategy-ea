@@ -38,7 +38,7 @@ export default function NeuralNetViz({
   const particlesRef = useRef<Particle[]>([]);
   const timeRef = useRef(0);
 
-  const layers = useMemo(() => [65, 32, 16, 8, 3], []);
+  const layers = useMemo(() => [70, 32, 16, 8, 3], []);
 
   useEffect(() => {
     const canvas = canvasRef.current;

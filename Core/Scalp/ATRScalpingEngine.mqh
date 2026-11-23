@@ -92,8 +92,14 @@ public:
    }
 
    bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer,
-            CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL)
+             CUnifiedRiskManager *pRiskManager, CTradeManager *pTradeManager)
    {
+      if(pRiskManager == NULL || !pRiskManager.IsInitialized() || pTradeManager == NULL)
+      {
+         Print("[ATR-SCALP-ENGINE] Required risk or trade manager unavailable - refusing initialization");
+         return false;
+      }
+
       m_config         = config;
       m_symbolCount    = 0;
       m_entry.Configure(baseMagic, pSizer, pRiskManager, pTradeManager);

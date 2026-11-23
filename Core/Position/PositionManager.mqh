@@ -22,37 +22,52 @@ private:
     {
         return m_stateStore.FindPositionStateIndex(positionId);
     }
-
+    
     void UpsertPositionPredictionId(const ulong positionId, const string predictionId)
     {
         m_stateStore.UpsertPositionPredictionId(positionId, predictionId);
     }
-
+    
     string GetPositionPredictionId(const ulong positionId)
     {
         return m_stateStore.GetPositionPredictionId(positionId);
     }
 
+    void UpsertPositionIntentId(const ulong positionId, const string intentId)
+    {
+        m_stateStore.UpsertPositionIntentId(positionId, intentId);
+    }
+
+    string GetPositionIntentId(const ulong positionId)
+    {
+        return m_stateStore.GetPositionIntentId(positionId);
+    }
+
+    void RemovePositionIntentId(const ulong positionId)
+    {
+        m_stateStore.RemovePositionIntentId(positionId);
+    }
+    
     void RemovePositionPrediction(const ulong positionId)
     {
         m_stateStore.RemovePositionPrediction(positionId);
     }
-
+    
     void UpsertPositionAIPrediction(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
     {
         m_stateStore.UpsertPositionAIPrediction(positionId, predictionTime, predictionSignal);
     }
-
+    
     datetime GetPositionAIPredictionTime(const ulong positionId)
     {
         return m_stateStore.GetPositionAIPredictionTime(positionId);
     }
-
+    
     ENUM_TRADE_SIGNAL GetPositionAIPredictionSignal(const ulong positionId)
     {
         return m_stateStore.GetPositionAIPredictionSignal(positionId);
     }
-
+    
     void RemovePositionAIPrediction(const ulong positionId)
     {
         m_stateStore.RemovePositionAIPrediction(positionId);
@@ -74,42 +89,57 @@ public:
     {
         return FindPositionStateIndex(positionId);
     }
-
+    
     void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
     {
         UpsertPositionPredictionId(positionId, predictionId);
     }
 
+    void UpsertIntentPositionMap(const ulong positionId, const string intentId)
+    {
+        UpsertPositionIntentId(positionId, intentId);
+    }
+
+    string GetIntentIdForPosition(const ulong positionId)
+    {
+        return GetPositionIntentId(positionId);
+    }
+
+    void RemoveIntentPositionMap(const ulong positionId)
+    {
+        RemovePositionIntentId(positionId);
+    }
+    
     string GetPredictionIdForPosition(const ulong positionId)
     {
         return GetPositionPredictionId(positionId);
     }
-
+    
     void RemovePredictionPositionMap(const ulong positionId)
     {
         RemovePositionPrediction(positionId);
     }
-
+    
     int FindAIPredictionPositionIndex(const ulong positionId)
     {
         return FindPositionStateIndex(positionId);
     }
-
+    
     void UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
     {
         UpsertPositionAIPrediction(positionId, predictionTime, predictionSignal);
     }
-
+    
     datetime GetAIPredictionTimeForPosition(const ulong positionId)
     {
         return GetPositionAIPredictionTime(positionId);
     }
-
+    
     ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId)
     {
         return GetPositionAIPredictionSignal(positionId);
     }
-
+    
     void RemoveAIPredictionPositionMap(const ulong positionId)
     {
         RemovePositionAIPrediction(positionId);
