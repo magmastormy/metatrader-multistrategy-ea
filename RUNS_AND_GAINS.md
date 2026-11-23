@@ -457,6 +457,56 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 299b — the merged build (HEAD `f0c1bea`): mean +4.435%, and four of five windows are bit-identical to the pre-merge build
+
+**Question.** Batch 299 measured `09e18b0` because that was the tree when the binary was compiled. HEAD also
+contains the `origin/main` merge (`f0c1bea`: `995cb3b` intent tracing + hardened execution gates, `0c7260c` risk
+governance). Does the merged build still produce the same book?
+
+**Setup.** Identical to Batch 299 — factory defaults, same five windows, same `Volatility 75 Index` M15 /
+`Model=1` / deposit 10,000, four state files cleared, `.set` still parked, cold each run. Recompiled from HEAD:
+`sync_files.ps1` (57 Python files) then `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` ->
+**`OVERALL SUCCESS`, 0 errors / 0 warnings on all eight programs** — root EA **70,390 ms**, Testing 80,666 ms
+(against 285,687 / 307,721 ms for the pre-merge build: the merge is ~4x cheaper to compile, which is the "debloat").
+
+| window | balance | delta | % | min | max | tester |
+|---|---|---|---|---|---|---|
+| 08.01→08.08 | 10,000.00 → 10,031.72 | **+31.72** | **+0.317%** | 9,945.86 | 10,220.14 | 0:45:05 |
+| 08.08→08.15 | → 10,917.78 | **+917.78** | **+9.178%** | 9,999.19 | 10,985.39 | 0:25:28 |
+| 09.01→09.08 | → 10,198.79 | **+198.79** | **+1.988%** | 9,926.04 | 10,260.29 | 0:25:33 |
+| 09.15→09.22 | → 10,672.39 | **+672.39** | **+6.724%** | 9,756.30 | 10,706.30 | 0:22:15 |
+| 10.06→10.13 | → 10,397.04 | **+397.04** | **+3.970%** | 9,897.91 | 10,482.03 | 0:32:11 |
+
+**Arm:** mean **+4.435%**, sd **3.57 pp**, **t 2.78**, **5/5 positive**, worst **+0.317%**, best **+9.178%**.
+All five terminal lines read `successfully finished`, all five slices are exactly 10,080 samples starting at the
+ini `FromDate`.
+
+**Paired against `09e18b0` (Batch 299):** `−3.411 / 0 / 0 / 0 / 0` pp -> mean **−0.682 pp**, sd 1.53, **t −1.00**,
+0/5 positive. **Four of the five windows reproduce the pre-merge build to the cent** — not approximately, exactly,
+down to min and max equity — and the whole difference sits in `08.01→08.08`.
+
+| | `09e18b0` (Batch 299) | **`f0c1bea` (Batch 299b, HEAD)** |
+|---|---|---|
+| mean | +5.118% | **+4.435%** |
+| sd | 2.83 pp | **3.57 pp** |
+| t | 4.04 | **2.78** |
+| worst | +1.988% | **+0.317%** |
+| best | +9.178% | **+9.178%** |
+| negative windows | 0/5 | **0/5** |
+
+**Why only one window moved — mechanism.** Tag-level diff of the two w1 journals: the merged build emits
+**`[RISK-LOT-FLOOR]`** (`Crash 1000 Index | lot 0.1815 -> 0.2000 | uplift=1.10x <= cap=3.00x`) and
+**`[INTENT-STAGE]`**, and **no longer emits `[RISK-GATE-REJECT]`** (it emitted neither of the first two before).
+So the remote risk-governance work replaced the hard reject with a *capped size uplift* to the broker minimum,
+and added intent tracing, which is exactly the binding-on-lot-size lever `REMAINING_WORK.md` has been asking for —
+but as an uplift with a 3.00x ceiling, not as a per-symbol cap. Where the uplift does nothing different from the
+old rounding the windows are identical; the August open is the one window where the changed gate altered the
+trade path, and it cost 3.411 pp there.
+
+**Verdict.** No input changed, nothing shipped. On the current HEAD the factory configuration still has **5/5
+positive windows**, mean **+4.435%**, worst **+0.317%**, and remains statistically above zero (t 2.78) but below
+the pre-refactor arm (+5.345% across Batch 297) by 0.91 pp. The honest summary of the whole refactor + merge, on
+identical windows: **no distribution has been lost, none has been gained, and the compile cost fell by ~4x.**
 ## Batch 299 — the post-refactor baseline: five cold windows, mean +5.118%, and the rebuild is neutral, not an improvement
 
 **Question.** The working tree carries a 242-file refactor that has never been measured. Does the rebuilt engine

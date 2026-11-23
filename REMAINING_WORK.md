@@ -522,3 +522,13 @@ to it.
 8. **Demo attach** - the EA has still never been attached to a chart; sync + compile only.
 9. **`.set` parks not restored**: `.parked_b291`, `.parked_b291b`, `.parked_b292`, `.parked_b297`,
    `.parked_b299`.
+### Follow-up same day - Batch 299b: HEAD measured
+- HEAD `f0c1bea` recompiled (`OVERALL SUCCESS`, 0 errors / 0 warnings, root EA 70,390 ms) and swept on the same
+  five cold windows: **+0.317 / +9.178 / +1.988 / +6.724 / +3.970 %**, mean **+4.435%**, sd 3.57 pp, t 2.78,
+  5/5 positive, worst +0.317%.
+- Paired vs `09e18b0`: **-0.682 pp** (sd 1.53, t -1.00); four windows bit-identical, the delta concentrated in
+  `08.01→08.08`. Mechanism: the merge added `[RISK-LOT-FLOOR]` (min-lot uplift, 1.10x, cap 3.00x) and
+  `[INTENT-STAGE]`, and removed `[RISK-GATE-REJECT]`.
+- Consequence for item 1 below: the "bind on lot size" idea now exists in code as an **uplift with a 3x cap**,
+  not as a per-symbol risk cap. Whether a per-symbol cap is still worth building depends on measuring the
+  uplift's behaviour first (`[RISK-LOT-FLOOR]` counts per window), which the current engine does log.

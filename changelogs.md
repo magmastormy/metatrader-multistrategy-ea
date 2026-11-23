@@ -6,6 +6,30 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
+## [Unreleased] - 2026-11-23 (batch 299b - merged build sweep)
+
+### HEAD verification and the current factory distribution
+- HEAD `f0c1bea` (refactor `09e18b0` + merge of `995cb3b` / `0c7260c` / `7c712fe`) recompiled:
+  `sync_and_compile.ps1 -All` -> `OVERALL SUCCESS`, **0 errors / 0 warnings** on all eight programs,
+  root EA **70,390 ms** (vs 285,687 ms pre-merge - the debloat is real), Testing 80,666 ms.
+- Five cold windows on HEAD, same setup as Batch 299: `08.01` **+0.317%** (10,031.72),
+  `08.08` **+9.178%** (10,917.78), `09.01` **+1.988%** (10,198.79), `09.15` **+6.724%** (10,672.39),
+  `10.06` **+3.970%** (10,397.04). Arm: mean **+4.435%**, sd 3.57 pp, t 2.78, 5/5 positive,
+  worst +0.317%, best +9.178%.
+- Paired vs `09e18b0`: `-3.411 / 0 / 0 / 0 / 0` pp -> mean -0.682 pp, sd 1.53, t -1.00.
+  **Four windows reproduce the pre-merge build to the cent**; only `08.01→08.08` moved.
+- Mechanism (tag diff of the two w1 journals): the merged build adds `[RISK-LOT-FLOOR]`
+  (`lot 0.1815 -> 0.2000 | uplift=1.10x <= cap=3.00x`) and `[INTENT-STAGE]`, and drops
+  `[RISK-GATE-REJECT]`. The remote risk work replaced the hard reject with a capped min-lot uplift -
+  the "bind on lot size" lever, but as an uplift with a 3x ceiling rather than a per-symbol cap.
+- Scoreboards archived as `Tools/artifacts/scoreboards/scoreboard_b299b_w1..w5.csv`; journals as
+  `journal_b299b_w1..w5` in the agent temp dir.
+
+### Harness hardening for this sweep
+- Per-launch port guard added to the driver: `netstat -ano`, kill only a `node` holder of
+  `127.0.0.1:3000`, re-check before every window launch (the dev server respawned at least twice: pids
+  7124, 100, 4568). Scoreboards are now archived **after** the run, not before, so the file name matches
+  the run that produced it.
 ## [Unreleased] - 2026-11-23 (batch 299 - post-refactor cold baseline)
 
 ### Measurement - the rebuild still pays, within noise (no code change, nothing shipped)
