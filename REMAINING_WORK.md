@@ -570,15 +570,21 @@ reliable enough to name the August loss.
       chart-symbol exclusion item closes without a measurement.
 
 **Open, in priority order (reordered by what the measurements say):**
-1. **Out-of-regime for the single instrument.** Every shipped window is 2026-08..10, and the book now has one row.
-   Next: Crash-only on windows outside that slice (2026-06/07) and one month-length window.
+1. **Out-of-regime for the single instrument - partly done.** Two windows outside the slice ran: July `07.01->07.08`
+   **+4.075%** and June `06.04->06.08` **+4.208%** (truncated - `Crash 1000` history starts `06.04 01:57`, and the
+   run's first heartbeat was already 10,470.48, so the "+9.110%" a naive 10,000 base gives is an artifact). Seven
+   windows now: mean **+8.619%**, sd 6.15 pp, t 3.71, 7/7 positive. The month-length window `07.01->08.01` is
+   running; earlier history than June is not available in this terminal.
 2. **Does a second payer exist?** Only `Crash 1000` netted positive across five windows, so a diversifier has to be
    found by measurement, not by restoring a row that lost. Candidate arms: `Crash + Boom 1000`, and `Crash + Jump 75`
    with a per-symbol cap (see 3).
 3. **Per-symbol cap at sizing** - status unchanged in *form* but now better understood: the code path is an uplift
    with a 3x cap, and the uplift is inert. Building a real cap means changing the formula, not the input.
-4. **Port-3000 guard** still lives only in the ad-hoc drivers (`b300_*.ps1`), not in `Tools\run_window.ps1`; it killed
-   a node holder again at 23:04:25 this batch.
+4. **Port-3000 guard** - `Tools\run_window.ps1` already refuses to launch when anything owns `:3000` (it enumerates
+   the owning process and throws), so the guard exists; what it does not do is clear an unrelated Node dev server.
+   That is deliberate - a harness that kills processes is worse than one that stops. The `b300_*.ps1` drivers kill
+   only `node` holders, and one was killed again at 23:04:25 this batch. Remaining work, if any, is the standing
+   question of whether that dev server should move off 3000.
 5. **`InpMaxDailyRisk` 4% -> 6%** - unrun; now interacts with a single-symbol book, so re-measure before trusting.
 6. **`[ENGINE-CLOSE]` / scalp-on window** (`Tools\backtest_b290_scalp2.ini`) - still unrun.
 7. **Demo attach** - the EA has still never been attached to a chart.
