@@ -483,3 +483,42 @@ This section supersedes historical source-status wording above; it does not impl
 - **Compile fixes:** Replaced the C++-style pointer call in `FastScalpEngine.mqh` with MQL5 dot-call syntax and restored the missing `CDashBridgeTransport::LogState` implementation left declared and called after the transport split.
 - **Verification:** Full sync plus `-All -KeepLog -MaxCompileWaitSec 900` completed; all eight root programs report 0 errors and 0 warnings. Edited headers match the MT5 mirror by SHA-256.
 - **Still open:** No live/demo attach, broker runtime, or backtest was performed; compile success is not trading-performance evidence.
+
+## Status update - Batch 299 (2026-11-23)
+
+**Context.** This batch is the first cold distribution on the refactor. The measured binary was compiled from
+**`09e18b0`** (committed 12:42:50) at ~12:35; the `origin/main` merge **`f0c1bea`** (13:39:26) landed mid-sweep and
+brought `995cb3b` / `0c7260c` / `7c712fe` plus 153 files with MQL5 strategy changes, so HEAD is a **different
+build** from the one the five windows describe. HEAD must be compiled and swept before any number is attributed
+to it.
+
+**Done:**
+- [x] `.\sync_files.ps1` + `.\sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> `OVERALL SUCCESS`,
+      0 errors / 0 warnings on all eight programs (root EA 285,687 ms).
+- [x] `MultiStrategyAutonomousEA.set` parked as `.set.parked_b299`; compiled defaults verified in force.
+- [x] Five cold windows on factory defaults, `Tools/backtest_b299_cold_w1..w5.ini`: **+3.728 / +9.178 / +1.988 /
+      +6.724 / +3.970 %**, mean **+5.118%**, sd 2.83 pp, t 4.04, 5/5 positive, worst +1.988%.
+- [x] Paired against Batch 297: mean **-0.227 pp**, sd 2.37, t -0.21, 2/5 positive -> the rebuild is P&L-neutral,
+      not an improvement. No input changed, nothing shipped.
+- [x] `RUNS_AND_GAINS.md` Batch 299, `changelogs.md` batch-299 entry, this status block.
+
+**Open, in priority order:**
+1. **Per-symbol risk cap that binds on lot size** - still the only untested lever. `GetSymbolRiskAllocation`
+   never binds because the min-lot floor sets absolute size; Batch 298 proved deleting the small rows is worse
+   than keeping them, so the cap must bind on size, not admission.
+2. **Restore per-trade logging.** The rebuilt engine dropped `[EXECUTION-RECEIPT]` and `Trade Closed ... Net
+   Profit:`; without them there is no fill count and no per-symbol attribution on this build.
+3. **Port-3000 guard in the harness.** `Tools\run_window.ps1` / `run_windows.ps1` should assert that
+   `127.0.0.1:3000` is owned by `metatester64` before launching, and fail loudly otherwise - this batch lost two
+   windows and three control runs to an unrelated Node dev server.
+4. **Decide on the 3 remote commits.** Merging `995cb3b` (trace trade intents, harden execution gates) and
+   `0c7260c` (risk governance) may conflict with the 242-file local refactor; if merged, the five windows must be
+   re-run cold, because the measured baseline would no longer exist.
+5. **`InpAutoAddChartSymbol=false` paired window** - still unmeasured; it is what re-injects `Volatility 75`
+   closes into trimmed runs.
+6. **4% -> 6% daily-ceiling step** - still unrun.
+7. **`[ENGINE-CLOSE]` / `[SCALP-SIGNAL-REJECT]`** - compiled, never observed firing; the scalp-on window
+   (`Tools\backtest_b290_scalp2.ini`, `XAUUSD,Step Index`) is still unrun.
+8. **Demo attach** - the EA has still never been attached to a chart; sync + compile only.
+9. **`.set` parks not restored**: `.parked_b291`, `.parked_b291b`, `.parked_b292`, `.parked_b297`,
+   `.parked_b299`.

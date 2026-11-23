@@ -457,6 +457,86 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 299 — the post-refactor baseline: five cold windows, mean +5.118%, and the rebuild is neutral, not an improvement
+
+**Question.** The working tree carries a 242-file refactor that has never been measured. Does the rebuilt engine
+still produce the Batch 297 factory distribution, or did the refactor move the book?
+
+**Baseline note (read before the numbers).** These five windows were measured on the refactor commit **`09e18b0`**
+("Deep audit: fix correctness defects ... dedupe and harden Python training pipeline", committed 12:42:50). That
+commit was still the working tree when the binary was compiled at ~12:35, so the `.ex5` under test is `09e18b0`.
+While the sweep was running, `origin/main` was merged into the tree as **`f0c1bea`** (13:39:26), which brought in
+`995cb3b` / `0c7260c` / `7c712fe` and **153 changed files including MQL5 strategy sources**
+(`Strategies/NYOpenGapStrategy.mqh`, `SupportResistanceDetector.mqh`, `TrendlineDetector.mqh`,
+`MarketStructureAnalyzer.mqh`, `TrainingDataExporter.mq5`, `crash_recovery_helpers.mqh`). Those are **not** in the
+measured binary. This table therefore describes `09e18b0`, not HEAD; the merged build needs its own sweep before
+any number can be attributed to it.
+
+**Setup.** Factory defaults, no input changed: `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`,
+`InpMaxPortfolioRisk=12.0`, `InpSymbolsToTrade` = the eight Batch 297 symbols, `InpQuorumProfile=1`,
+`InpMinLiveVoters=1`, scalper off. `Volatility 75 Index` M15, `Model=1`, deposit 10,000, leverage 1:100, all four
+state files deleted before every launch, `MultiStrategyAutonomousEA.set` parked as `.set.parked_b299` so the
+compiled defaults execute, `Get-Process terminal64,metatester64` confirmed empty before every launch.
+
+| window | balance | delta | % | min | max | tester |
+|---|---|---|---|---|---|---|
+| 08.01→08.08 | 10,000.00 → 10,372.81 | **+372.81** | **+3.728%** | 9,962.81 | 10,454.29 | 1:22:46 |
+| 08.08→08.15 | → 10,917.78 | **+917.78** | **+9.178%** | 9,999.19 | 10,985.39 | 0:34:58 |
+| 09.01→09.08 | → 10,198.79 | **+198.79** | **+1.988%** | 9,926.04 | 10,260.29 | 0:32:30 |
+| 09.15→09.22 | → 10,672.39 | **+672.39** | **+6.724%** | 9,756.30 | 10,706.30 | 0:28:51 |
+| 10.06→10.13 | → 10,397.04 | **+397.04** | **+3.970%** | 9,897.91 | 10,482.03 | 0:34:25 |
+
+**Arm:** mean **+5.118%**, sd **2.83 pp**, **t 4.04**, **5/5 positive**, worst **+1.988%**, best **+9.178%**.
+Every window is 10,080 heartbeat samples starting exactly at the ini `FromDate` and every terminal log line reads
+`last test passed with result "successfully finished"` — the Batch 298 validity rule is satisfied five times.
+
+**Paired against Batch 297** (pre-refactor binary, same five windows, same inputs): `+2.098 / +1.902 / −3.693 /
+−0.720 / −0.722` pp → mean **−0.227 pp**, sd **2.37**, **t −0.21**, **2/5 positive**. Batch 297 arm on the same
+windows: mean +5.345%, sd 2.37, worst +1.630% (dominance over mean, sd and worst is the ship criterion there,
+and here not even the mean moves).
+
+| | Batch 297 (pre-refactor) | **Batch 299 (rebuild)** |
+|---|---|---|
+| mean | +5.345% | **+5.118%** |
+| sd | 2.37 pp | 2.83 pp |
+| t | 5.04 | **4.04** |
+| worst | +1.630% | **+1.988%** |
+| best | +7.444% | **+9.178%** |
+| negative windows | 0/5 | **0/5** |
+
+**What it means.** The refactor is P&L-neutral inside the noise this repository already knows: it does not destroy
+the edge, and it does not add one. It changes the *shape* rather than the level — both August windows gain
+(+2.10, +1.90 pp) while the three September/October windows lose (−3.69, −0.72, −0.72 pp) — so the trim-induced
+worst-case of Batch 297 (+1.630%) becomes +1.988% while the spread widens from 2.37 to 2.83 pp. The paired t of
+−0.21 is the honest number: this is a wash, and the correct claim is "the rebuild still pays, within noise", not
+"the rebuild pays more".
+
+**Cost of the rebuild.** Wall clock per 7-day window is now **28–83 minutes** against ~23–26 minutes before
+(variance is machine load, not the EA): a five-window sweep is an afternoon, not two hours. Compile is also much
+heavier — root EA **285,687 ms** against Batch 297's 74,406 ms, Testing EA 307,721 ms.
+
+**Observability regression (found, not fixed).** The rebuilt engine no longer prints `[EXECUTION-RECEIPT]` or
+`Trade Closed ... Net Profit:`. Fill counts, and therefore the per-symbol dollar attribution that `attr.py` /
+`attr2.py` produced for Batches 285–298, are no longer available from the journal at all; what remains is the
+10,080-sample `[COMPOUNDING-TIER-HEARTBEAT] balance=` stream plus `strategy_scoreboard.csv`. Per-symbol
+attribution has to be rebuilt (or the log lines restored) before any "which symbol pays" question can be asked
+again on this engine.
+
+**New hazard, cost two windows and three control runs — port 3000.** An unrelated Node dev server on this machine
+(`D:\MoneyBuildersProject\...`, `next start`) bound `127.0.0.1:3000`, which is the local MetaTester agent port. The
+terminal logged `automatic testing started` and then, 32 s later, `last test passed with result "some error after
+pass finished" in 0:00:00.000`; the agent log showed `login` → `tester forced to close` with no EA lines at all.
+Two independently different inis failed identically, **and re-running the already-proven w1 also failed** — which
+is what excluded the ini and pointed at the farm. Fix: `netstat -ano | findstr :3000`, kill any non-`metatester64`
+holder, confirm the port is owned by `metatester64`, *then* launch. The Node server is supervised and respawned at
+least once, so the port must be re-checked before every launch, not once per batch.
+
+**Verdict.** Nothing shipped, no input changed, factory config stands: 8 symbols, 1% / 4% / 12%, quorum profile 1,
+one live voter, scalper off. The rebuild passes the "does not destroy the edge" test and fails the "improves it"
+test, so the next lever is still the one `REMAINING_WORK.md` names — a per-symbol risk cap that binds on **lot
+size**. The daily ceiling is visibly binding in this build as well: `[RISK-DAILY-CAP]` reports
+`effective=4.13% capped to limit=4.00%` with 1,312–1,936 occurrences per window, and `[RISK-BUDGET]` closes each
+window at `effective=3.99/4.00`.
 ## Batch 298 — the last two bleeders inside the winning windows: measured, and they are not bleeders
 
 Batch 297 removed the three rows that never paid and the distribution turned all-positive. The obvious next move is to

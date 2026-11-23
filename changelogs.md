@@ -6,6 +6,43 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
+## [Unreleased] - 2026-11-23 (batch 299 - post-refactor cold baseline)
+
+### Measurement - the rebuild still pays, within noise (no code change, nothing shipped)
+- Five cold windows on the refactor commit **`09e18b0`** (the binary under test was compiled from that
+  tree at ~12:35; the `origin/main` merge `f0c1bea` landed at 13:39 **after** the build and brought 153
+  files including MQL5 strategy sources, so those are not in the measured binary - see
+  RUNS_AND_GAINS.md Batch 299), factory defaults
+  unchanged (8 symbols, `InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=4.0`, `InpMaxPortfolioRisk=12.0`,
+  `InpQuorumProfile=1`, `InpMinLiveVoters=1`, scalper off), `Volatility 75 Index` M15, `Model=1`,
+  deposit 10,000, four state files cleared per launch, `MultiStrategyAutonomousEA.set` parked as
+  `.set.parked_b299`:
+  `08.01` **+3.728%** (10,372.81), `08.08` **+9.178%** (10,917.78), `09.01` **+1.988%** (10,198.79),
+  `09.15` **+6.724%** (10,672.39), `10.06` **+3.970%** (10,397.04).
+  Arm: mean **+5.118%**, sd 2.83 pp, t 4.04, 5/5 positive, worst +1.988%, best +9.178%.
+  Paired vs Batch 297 same windows: `+2.098/+1.902/-3.693/-0.720/-0.722` pp -> mean -0.227 pp,
+  sd 2.37, t -0.21, 2/5 positive. Conclusion: neutral, not an improvement.
+- `.ini` set added: `Tools/backtest_b299_cold_w1..w5.ini` (Batch 297 trim-8 windows, `Report=backtest_b299`).
+
+### Verification
+- `.\sync_files.ps1` -> 44 Python files updated.
+- `.\sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> `OVERALL SUCCESS`, **0 errors /
+  0 warnings on all eight programs** (root EA 285,687 ms, Testing 307,721 ms, Exporter 90,029 ms).
+  Compile cost is ~4x the Batch 297 build (74,406 ms), consistent with the larger engine.
+
+### Observability regression found (open, not fixed)
+- The rebuilt engine no longer emits `[EXECUTION-RECEIPT]` or `Trade Closed ... Net Profit:`. Fill
+  counts and per-symbol dollar attribution (`Tools/attribute_pnl.ps1`, `attr2.py`) are unavailable on
+  this build; only `[COMPOUNDING-TIER-HEARTBEAT] balance=` and `strategy_scoreboard.csv` remain.
+  `Core/...` trade-feedback logging needs to be restored before the next "which symbol pays" question.
+
+### Test-harness hazard (new, cost 2 windows + 3 control runs)
+- An unrelated supervised Node dev server bound `127.0.0.1:3000`, the local MetaTester agent port.
+  Symptom: `automatic testing started`, then `last test passed with result "some error after pass
+  finished" in 0:00:00.000` after ~32 s; agent log shows `login` -> `tester forced to close`, no EA
+  lines. A known-good ini also failed, which is how the ini was excluded. Fix: check
+  `netstat -ano | findstr :3000`, kill any non-`metatester64` holder, confirm `metatester64` owns the
+  port, then launch - **before every launch**, because the server respawns.
 ## [Unreleased] - 2026-11-23 (batch 3)
 
 ### MQL5 - policy literals named, behavior identical
