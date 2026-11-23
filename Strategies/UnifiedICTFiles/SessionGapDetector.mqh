@@ -109,7 +109,7 @@ bool CSessionGapDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
 
 double CSessionGapDetector::GetATR(int period)
 {
-    // Batch 157: shared indicator-manager handle (was created+released twice per
+    // shared indicator-manager handle (was created+released twice per
     // Update); the manager owns the handle lifecycle.
     int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
@@ -142,7 +142,7 @@ bool CSessionGapDetector::DetectNDOG()
 
     double gapSize = MathAbs(todayOpen - prevClose);
     double atr = GetATR(14);
-    // Batch 156: fail closed without ATR - the old 5*point fallback sat below
+    // fail closed without ATR - the old 5*point fallback sat below
     // tick noise on synthetics and manufactured phantom NDOG zones.
     if(atr <= 0) return false;
     double minSize = atr * m_minGapSize;
@@ -177,7 +177,7 @@ bool CSessionGapDetector::DetectNWOG()
 
     double gapSize = MathAbs(thisWeekOpen - prevWeekClose);
     double atr = GetATR(14);
-    // Batch 156: fail closed without ATR (see DetectNDOG)
+    // fail closed without ATR (see DetectNDOG)
     if(atr <= 0) return false;
     double minSize = atr * m_minGapSize;
 
@@ -206,24 +206,36 @@ void CSessionGapDetector::UpdateFillStatus(SSessionGap &gap)
 {
     if(gap.isFilled || !gap.isValid) return;
 
-    // Check last 50 bars (on current timeframe) for fill
-    // Batch 156: closed bars only (shift 1) - intrabar pokes no longer latch
-    // isFilled/isMitigated off the forming bar.
-    for(int i = 1; i < 50; i++)
+    // NDOG opens at today's D1 boundary, so on the D1 scan timeframe shift 1 is already
+    // yesterday and the `barTime < gap.openTime` break fires before a single bar is read -
+    // fill state could never leave its detect-time value. Scan M15 for day gaps; the week
+    // gap keeps the detector timeframe because a week of M15 bars would not fit the cap.
+    ENUM_TIMEFRAMES scanTF = m_timeframe;
+    int maxBars = 50;
+    if(gap.type == GAP_NDOG && iBars(m_symbol, PERIOD_M15) >= 10)
     {
-        datetime barTime = iTime(m_symbol, m_timeframe, i);
+        scanTF = PERIOD_M15;
+        maxBars = 200;   // ~2 days of M15 bars; the openTime break stops it far earlier
+    }
+
+    // Check recent bars (on the scan timeframe) for fill
+    // closed bars only (shift 1) - intrabar pokes no longer latch
+    // isFilled/isMitigated off the forming bar.
+    for(int i = 1; i < maxBars; i++)
+    {
+        datetime barTime = iTime(m_symbol, scanTF, i);
         if(barTime < gap.openTime) break;
 
-        double high  = iHigh(m_symbol,  m_timeframe, i);
-        double low   = iLow(m_symbol,   m_timeframe, i);
-        double close = iClose(m_symbol, m_timeframe, i);
+        double high  = iHigh(m_symbol,  scanTF, i);
+        double low   = iLow(m_symbol,   scanTF, i);
+        double close = iClose(m_symbol, scanTF, i);
 
         double filledTop    = MathMin(high, gap.gapTop);
         double filledBottom = MathMax(low,  gap.gapBottom);
         double filled       = MathMax(0.0, filledTop - filledBottom);
 
         if(gap.size > 0)
-            gap.fillPercent = MathMax(gap.fillPercent,  // Batch 156: deepest penetration, not the oldest bar's overlap
+            gap.fillPercent = MathMax(gap.fillPercent,  // deepest penetration, not the oldest bar's overlap
                                       MathMin(100.0, (filled / gap.size) * 100.0));
 
         // Mitigated: price reached midpoint

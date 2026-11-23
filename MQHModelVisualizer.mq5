@@ -39,72 +39,72 @@ void OnStart()
 {
     Print("=== MQH Model Visualizer ===");
     PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
-    
+
     CCSVDataLoader dataLoader;
     CDataPreprocessor preprocessor;
     CLabelEncoder labelEncoder;
     CFeedForwardNN model;
     CTrainingSession trainer;
     CTrainingVisualizer visualizer;
-    
+
     if(!visualizer.Initialize())
     {
         Print("[MQH-VIZ] Failed to initialize visualizer");
         return;
     }
-    
+
     PrintFormat("[MQH-VIZ] Loading data from: %s", dataFile);
-    
+
     if(!dataLoader.Load(dataFile))
     {
         Print("[MQH-VIZ] Failed to load data file");
         visualizer.Shutdown();
         return;
     }
-    
+
     int totalRows = dataLoader.GetTotalRowCount();
     PrintFormat("[MQH-VIZ] Total rows loaded: %d", totalRows);
-    
+
     if(totalRows == 0)
     {
         Print("[MQH-VIZ] No data available");
         visualizer.Shutdown();
         return;
     }
-    
+
     double allFeatures[][FEATURE_VECTOR_SIZE];
     int labels[];
     int count = 0;
-    
+
     if(!dataLoader.LoadAllRows(allFeatures, labels, count))
     {
         Print("[MQH-VIZ] Failed to load rows");
         visualizer.Shutdown();
         return;
     }
-    
+
     preprocessor.SetSplitRatio(g_valRatio, g_testRatio);
     preprocessor.SplitData(allFeatures, labels, count);
     preprocessor.NormalizeData();
-    
+
     if(!model.Initialize(hiddenLayer1, hiddenLayer2, hiddenLayer3))
     {
         Print("[MQH-VIZ] Failed to initialize model");
         visualizer.Shutdown();
         return;
     }
-    
+
     model.SetLearningRate(g_learningRate);
     model.SetL2Regularization(l2Regularization);
-    
+
     STrainingConfig config;
     config.epochs = g_epochs;
     config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
     config.logInterval = 5;
-    
+
     trainer.SetConfig(config);
-    
+
     double trainFeatures[][FEATURE_VECTOR_SIZE];
     int trainLabels[];
     preprocessor.GetTrainData(trainFeatures, trainLabels);
@@ -112,40 +112,40 @@ void OnStart()
     double valFeatures[][FEATURE_VECTOR_SIZE];
     int valLabels[];
     preprocessor.GetValData(valFeatures, valLabels);
-    
+
     Print("[MQH-VIZ] Starting training with visualization...");
-    
+
     trainer.Train(model, trainFeatures, trainLabels, preprocessor.GetTrainCount(),
                   valFeatures, valLabels, preprocessor.GetValCount());
-    
+
     Print("[MQH-VIZ] Training complete");
-    
+
     CTrainingMetrics valMetrics = trainer.GetValMetrics();
-    
+
     visualizer.ShowMetricsTable(valMetrics.GetAccuracy(),
                                 valMetrics.GetPrecision(),
                                 valMetrics.GetRecall(),
                                 valMetrics.GetF1Score(),
                                 valMetrics.GetLoss());
-    
+
     int confusionMatrix[3][3];
     valMetrics.GetConfusionMatrix(confusionMatrix);
     visualizer.DrawConfusionMatrix(confusionMatrix);
-    
+
     if(saveChartImage)
     {
         string imageFile = StringFormat("TrainingChart_%s_%s_%s.png",
                                         symbolName,
                                         EnumToString(g_timeframe),
                                         TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
-        
+
         visualizer.SaveChartImage(imageFile);
     }
-    
+
     Print("\n=== Final Metrics ===");
     valMetrics.PrintAllMetrics();
     valMetrics.PrintConfusionMatrix();
-    
+
     Print("\n=== MQH Model Visualization Complete ===");
     Print("[MQH-VIZ] Chart will remain open for review");
 }

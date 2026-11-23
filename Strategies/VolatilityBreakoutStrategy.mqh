@@ -30,8 +30,8 @@ struct SVolatilityBreakoutSignal
     double takeProfit;
     double confidence;
     string reason;
-    
-    SVolatilityBreakoutSignal() : 
+
+    SVolatilityBreakoutSignal() :
         entryType(VB_ENTRY_NONE),
         direction(TRADE_SIGNAL_NONE),
         entryPrice(0),
@@ -47,7 +47,7 @@ private:
     int m_bbHandle;           // squeeze detection
     int m_atrHandle;
     int m_volumeHandle;
-    
+
     int m_bbPeriod;
     double m_bbDeviation;     // in standard deviations
     int m_atrPeriod;
@@ -57,10 +57,10 @@ private:
     int m_lookbackPeriods;    // squeeze lookback, in bars
     double m_atrStopMult;      // stop distance, in ATRs
     double m_atrTargetMult;    // target distance, in ATRs (3.0 vs 1.5 stop = 2.0R)
-    
+
     // AGENTS.md invariant #1: every trade is gated by this
     CUnifiedRiskManager* m_riskManager;
-    
+
     datetime m_lastSignalBar;
     datetime m_lastDeferLog;      // throttles the not-ready notice
     int m_signalsGenerated;
@@ -72,7 +72,7 @@ private:
     int     m_squeezeBar;         // Bar index when squeeze was detected
     bool    m_breakoutFailed;
     ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of the failed breakout
-    
+
     // One notice per minute per instance: at a bar close every symbol asks at the same instant,
     // so an unthrottled line here would be 13 lines per bar for a condition that lasts milliseconds.
     void NoticeDeferredRead(const string what)
@@ -115,12 +115,12 @@ public:
         m_strategyPrefix = "VOLBREAK";
         m_minConfidence = 0.65; // Higher threshold for breakout trades
     }
-    
+
     ~CVolatilityBreakoutStrategy()
     {
         Cleanup();
     }
-    
+
     void Cleanup()
     {
         // CIndicatorManager owns these handles - never IndicatorRelease them here
@@ -132,12 +132,12 @@ public:
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
     }
-    
+
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
-        
+
         m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, m_atrPeriod);
         m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
@@ -145,52 +145,52 @@ public:
         // Keltner Channel midline (EMA 20) and ADX(14)
         m_kcEmaHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
         m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
-        
+
         if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
         {
             Print("[VOLBREAK] Failed to create indicator handles");
             return false;
         }
-        
+
         // Injected through Init(); without it every trade would bypass risk validation
         m_riskManager = GetUnifiedRiskManager();
         if(m_riskManager == NULL)
             Print("[VOLBREAK] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
-        
+
         PrintFormat("[VOLBREAK] Initialized | BB(%d,%.1f) | ATR(%d) | Squeeze=%.0f%% | Vol=%.1fx | ATR_Exp=%.1fx",
-                   m_bbPeriod, m_bbDeviation, m_atrPeriod, 
+                   m_bbPeriod, m_bbDeviation, m_atrPeriod,
                    m_squeezeThreshold * 100, m_volumeMultiplier, m_atrExpansionMult);
-        
+
         return true;
     }
-    
+
     virtual void Deinit() override
     {
         Cleanup();
         CStrategyBase::Deinit();
     }
-    
+
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(!IsEnabled() || !m_is_initialized)
             return;
         if(symbol != m_symbol || timeframe != m_timeframe)
             return;
-        
+
         int currentBar = iBars(m_symbol, m_timeframe);
         if(currentBar == m_lastSignalBar)
             return;
         m_lastSignalBar = currentBar;
     }
-    
+
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
         SetDecisionReasonTag("VOLBREAK_UNSET");
-        
+
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("VOLBREAK_DISABLED_OR_UNINIT");
-        
+
         double bbUpper[2], bbMiddle[2], bbLower[2];
         if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
            !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
@@ -217,10 +217,10 @@ public:
         // Volume is confirmation-only: a copy failure leaves volRatio at its neutral 1.0
         double volumeBuffer[11];
         bool volumeAvailable = SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer);
-        
+
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
-        
+
         // Static arrays are NOT as-series: [0] is the OLDEST of the copied window, so with
         // count=11, start=1 the newest bar (shift 1) is index 10.
         double volRatio = 1.0;
@@ -246,9 +246,9 @@ public:
         // BB width drives squeeze detection; bb buffers: count=2, start=1 -> newest is [1]
         double bbWidth = bbUpper[1] - bbLower[1];
         double bbWidthPercent = (bbMiddle[1] > 0) ? (bbWidth / bbMiddle[1]) : 0;
-        
+
         bool isInSqueeze = DetectSqueezeState(bbWidthPercent);
-        
+
         // Pass the newest closed-bar bands ([1]). Under SafeCopyBuffer's oldest-first
         // layout [0] is shift 2, which would test the breach against two-bars-old levels
         // and miss real breakouts.
@@ -259,23 +259,23 @@ public:
             volRatio,
             isInSqueeze
         );
-        
+
         if(signal.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("VOLBREAK_NO_SIGNAL");
-        
+
         if(signal.confidence < m_minConfidence)
         {
-            PrintFormat("[VOLBREAK] Low confidence | %.1f%% < %.1f%%", 
+            PrintFormat("[VOLBREAK] Low confidence | %.1f%% < %.1f%%",
                        signal.confidence * 100, m_minConfidence * 100);
             return RejectSignal("VOLBREAK_LOW_CONFIDENCE");
         }
-        
+
         // Breakouts need ADX rising (volatility expanding); failure reversals are exempt
         if(signal.entryType != VB_ENTRY_FAILURE_REVERSAL && !ADXRising())
         {
             return RejectSignal("VOLBREAK_ADX_NOT_RISING");
         }
-        
+
         // Local pre-trade guard before the risk gate: a zero-distance ATR stop (flat ATR), a
         // target that does not cover the stop, or a spread wider than half the stop is refused here.
         double guardPoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -295,19 +295,21 @@ public:
         request.clusterCode = "";
 
         SetProposedStops(request.stopLossPips, request.takeProfitPips);
+        // Publish the real confidence before gating: it was written after the risk call, so the
+        // gate and its log saw whatever the out-parameter held on entry (0.0 on a fresh call).
+        confidence = signal.confidence;
         if(!ValidateWithRiskManager(request, "VOLBREAK", confidence))
             return TRADE_SIGNAL_NONE;
-        
+
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
         m_inSqueeze = isInSqueeze;
         m_signalsGenerated++;
         RecordSignal();
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "VOLBREAK_SIGNAL_BUY" : "VOLBREAK_SIGNAL_SELL");
-        confidence = signal.confidence;
-        
+
         // [CONSENSUS-DIAG] log required by AGENTS.md §6
         LogConsensusDiag(signal.direction, StringFormat("Type: %s | BB_Width=%.4f%% | ATR_Ratio=%.2f | Vol=%.2fx | Squeeze=%s", EnumToString(signal.entryType), bbWidthPercent * 100, atrRatio, volRatio, isInSqueeze ? "YES" : "NO"), confidence);
-        
+
         PrintFormat("[VOLBREAK] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
                    m_symbol,
                    signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
@@ -316,54 +318,54 @@ public:
                    signal.takeProfit,
                    confidence * 100,
                    signal.reason);
-        
+
         return signal.direction;
     }
-    
+
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_VOLATILITY_BREAKOUT; }
-    
+
 private:
     bool DetectSqueezeState(double currentBBWidthPercent)
     {
         double bbUpperHist[], bbLowerHist[], bbMiddleHist[];
         int historySize = m_lookbackPeriods + 2;
-        
+
         if(!SafeCopyBuffer(m_bbHandle, 1, 1, historySize, bbUpperHist) ||
            !SafeCopyBuffer(m_bbHandle, 2, 1, historySize, bbLowerHist) ||
            !SafeCopyBuffer(m_bbHandle, 0, 1, historySize, bbMiddleHist))
         {
             return false; // squeeze history unavailable
         }
-        
+
         double widths[];
         ArrayResize(widths, m_lookbackPeriods);
-        
+
         for(int i = 0; i < m_lookbackPeriods; i++)
         {
             double width = bbUpperHist[i] - bbLowerHist[i];
             double widthPct = (bbMiddleHist[i] > 0) ? (width / bbMiddleHist[i]) : 0;
             widths[i] = widthPct;
         }
-        
+
         ArraySort(widths);
-        
+
         // Squeeze line = m_squeezeThreshold percentile of the window's BB widths
         int percentileIndex = (int)(m_lookbackPeriods * m_squeezeThreshold);
         percentileIndex = MathMax(0, MathMin(percentileIndex, m_lookbackPeriods - 1));
         double squeezeThreshold = widths[percentileIndex];
-        
+
         // Width at or below that percentile counts as a squeeze
         bool inSqueeze = (currentBBWidthPercent <= squeezeThreshold);
-        
+
         if(inSqueeze && !m_inSqueeze)
         {
             PrintFormat("[VOLBREAK-SQUEEZE] Squeeze detected | Width=%.4f%% <= Threshold=%.4f%%",
                        currentBBWidthPercent * 100, squeezeThreshold * 100);
         }
-        
+
         return inSqueeze;
     }
-    
+
     SVolatilityBreakoutSignal DetectBreakoutSignal(
         double price, double prevPrice,
         double bbUpper, double bbMiddle, double bbLower,
@@ -417,7 +419,7 @@ private:
         bool brokeAboveBB = (price > bbUpper && prevPrice <= bbUpper);
         bool atrExpanding = (atrRatio >= m_atrExpansionMult);
         bool volumeSurge = (volRatio >= m_volumeMultiplier);
-        
+
         if(brokeAboveBB)
         {
             // Double Squeeze (BB inside KC): highest confidence tier
@@ -449,13 +451,13 @@ private:
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
-                
+
                 PrintFormat("[VOLBREAK-SIGNAL] BUY combined signal | Price=%.5f > BB_Upper=%.5f | ATR_Ratio=%.2f | Vol=%.2fx",
                            price, bbUpper, atrRatio, volRatio);
-                
+
                 return signal;
             }
-            
+
             if(isInSqueeze || atrExpanding)
             {
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
@@ -466,10 +468,10 @@ private:
                 signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
-                
+
                 return signal;
             }
-            
+
             // Plain band breakout: only valid with a volume surge
             if(volumeSurge)
             {
@@ -480,13 +482,13 @@ private:
                 signal.takeProfit = price + m_atrTargetMult * curATR;
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
-                
+
                 return signal;
             }
         }
-        
+
         bool brokeBelowBB = (price < bbLower && prevPrice >= bbLower);
-        
+
         if(brokeBelowBB)
         {
             // Double Squeeze (BB inside KC): highest confidence tier
@@ -518,13 +520,13 @@ private:
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
-                
+
                 PrintFormat("[VOLBREAK-SIGNAL] SELL combined signal | Price=%.5f < BB_Lower=%.5f | ATR_Ratio=%.2f | Vol=%.2fx",
                            price, bbLower, atrRatio, volRatio);
-                
+
                 return signal;
             }
-            
+
             if(isInSqueeze || atrExpanding)
             {
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
@@ -535,10 +537,10 @@ private:
                 signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
-                
+
                 return signal;
             }
-            
+
             // Plain band breakout: only valid with a volume surge
             if(volumeSurge)
             {
@@ -549,11 +551,11 @@ private:
                 signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
-                
+
                 return signal;
             }
         }
-        
+
         return signal;
     }
 
@@ -604,15 +606,20 @@ private:
         double low1 = iLow(m_symbol, m_timeframe, 1);
         double high1 = iHigh(m_symbol, m_timeframe, 1);
 
+        // The retest must reach the level zone, not just pass under it: without a lower
+        // bound any bar that crashed far through the level counted, and the multiplicative
+        // band was ~200 price units wide on BTC and sub-tick on some FX pairs.
         if(direction == TRADE_SIGNAL_BUY)
         {
-            // Closed above the squeeze high with the low within 0.2% of it
-            return (close1 > m_squeezeHighPrice && low1 <= m_squeezeHighPrice * 1.002);
+            // Closed above the squeeze high with the low inside the +-0.2% retest band
+            return (close1 > m_squeezeHighPrice &&
+                    low1 <= m_squeezeHighPrice * 1.002 && low1 >= m_squeezeHighPrice * 0.998);
         }
         else
         {
-            // Closed below the squeeze low with the high within 0.2% of it
-            return (close1 < m_squeezeLowPrice && high1 >= m_squeezeLowPrice * 0.998);
+            // Closed below the squeeze low with the high inside the +-0.2% retest band
+            return (close1 < m_squeezeLowPrice &&
+                    high1 >= m_squeezeLowPrice * 0.998 && high1 <= m_squeezeLowPrice * 1.002);
         }
     }
 

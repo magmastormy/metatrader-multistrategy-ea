@@ -38,13 +38,13 @@ private:
     double m_minConfidence;
     bool m_ownsModels;  // Track ownership to prevent double-delete
     datetime m_voteWindowStart;  // Rolling vote window start time
-    
+
     // Direction calibration rolling window (last 20 predictions)
     int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
     int  m_directionWindowCount; // Number of filled slots (0..20)
     datetime m_lastCalibrationWarningTime;  // Throttle calibration warning logs
-    
+
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
@@ -55,12 +55,12 @@ private:
         int dirValue = 0;
         if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
-        
+
         m_directionWindow[m_directionWindowIdx] = dirValue;
         m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
         if(m_directionWindowCount < 20)
             m_directionWindowCount++;
-        
+
         // Check and log degenerate detection
         if(IsDirectionDegenerate())
         {
@@ -142,7 +142,7 @@ private:
             double logConfidence = m_cachedConfidence;
             if(!MathIsValidNumber(logConfidence))
                 logConfidence = 0.0;
-                
+
             PrintFormat("[AI-VOTE][Ensemble] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u | models=%d | conf=%.2f | reason=%s",
                         m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes, m_ensemble.GetActiveModelCount(), logConfidence, m_lastDecisionReasonTag);
             m_lastVoteLogTime = now;
@@ -251,7 +251,7 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        
+
         datetime now = TimeCurrent();
         if(now - m_voteWindowStart >= 86400)
         {
@@ -315,7 +315,7 @@ public:
 
             double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
             confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
-            
+
             // Validate confidence value
             if(!IsValidConfidence(confidence))
             {
@@ -370,21 +370,21 @@ public:
         // FIX: Final NaN validation before returning
         if(!MathIsValidNumber(confidence))
             confidence = 0.0;
-        
+
         // Record prediction for direction calibration
         RecordDirectionPrediction(signal);
-            
+
         LogVoteHeartbeat();
         return signal;
     }
-    
+
     virtual string GetName(void) const override { return "Ensemble AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
     virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
-    
+
     virtual bool IsDirectionDegenerate(void) const override
     {
         if(m_directionWindowCount < 20)
@@ -413,7 +413,7 @@ public:
         if(directionalCount < 5) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
-    
+
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
         if(!IsDirectionDegenerate())
@@ -428,17 +428,17 @@ public:
         return baseWeight * 0.70;
     }
     virtual bool ValidateParameters(void) override { return m_ensemble.GetActiveModelCount() > 0 && m_modelsInitialized; }
-    
+
         virtual bool ValidateRiskManagerInjection(void) const override
         {
             return true; // MT5-native AI adapter: risk gate enforced at execution (CTradeManager pre-trade)
         }
-    
+
         virtual bool ShouldBypassTierConfidenceFloor(void) const override
         {
             return false; // Default: no bypass
         }
-    
+
         virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
@@ -466,42 +466,42 @@ public:
     {
         return m_ensemble.GetUncertainty();
     }
-    
+
     virtual bool IsModelHealthy(void) const override
     {
         return (m_modelA != NULL || m_modelB != NULL) && m_modelsInitialized;
     }
-    
+
     virtual bool IsTraining(void) const override
     {
         return m_ensemble.IsLearningEnabled();
     }
-    
+
     virtual int GetTrainingSteps(void) const override
     {
         return m_ensemble.GetUpdateCount();
     }
-    
+
     virtual double GetTemperature(void) const override
     {
         return 1.0;
     }
-    
+
     virtual void SetTemperature(const double temperature) override
     {
         if(temperature < 0) {}
     }
-    
+
     virtual int GetCurrentRegime(void) const override
     {
         return m_ensemble.GetCurrentRegime();
     }
-    
+
     virtual bool SaveCheckpoint(void) override
     {
         return false;
     }
-    
+
     virtual string GetLastLoadStatus(void) const override
     {
         return m_modelsInitialized ? "LOADED" : "NOT_INITIALIZED";

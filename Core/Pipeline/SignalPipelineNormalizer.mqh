@@ -15,14 +15,14 @@ public:
 static bool IsSyntheticSymbol(const string symbol)
 {
     if(symbol == "") return false;
-    
+
     // Use global multi-asset profiler for proper asset classification
     if(g_multiAssetProfiler != NULL)
     {
         SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbol);
         return IsSyntheticAssetClass(profile.assetClass);
     }
-    
+
     // Fallback to string matching if profiler not available
     // Check for broker-specific synthetic products that trade 24/7 or outside regular FX sessions.
     if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.

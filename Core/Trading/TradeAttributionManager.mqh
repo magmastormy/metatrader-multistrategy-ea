@@ -113,7 +113,7 @@ public:
     int    FindPendingCloseProfitIndex(const ulong positionId);
     void   AccumulatePendingCloseProfit(const ulong positionId, const double netProfit);
     double ConsumePendingCloseProfit(const ulong positionId);
-    
+
     // Read by EAOrchestrator's ProcessClosedPositionsForNNTraining; rows whose prediction id comes back empty are skipped there.
     int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
 
@@ -462,11 +462,11 @@ int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], doubl
 int count = ArraySize(m_pendingClosePositionIds);
 if(count == 0)
     return 0;
-    
+
 ArrayResize(positionIds, count);
 ArrayResize(profits, count);
 ArrayResize(predictionIds, count);
-    
+
 for(int i = 0; i < count; i++)
 {
     positionIds[i] = m_pendingClosePositionIds[i];
@@ -479,7 +479,7 @@ for(int i = 0; i < count; i++)
     if(predictionIds[i] == "" && PositionSelectByTicket(m_pendingClosePositionIds[i]))
         predictionIds[i] = ExtractPredictionIdFromComment(PositionGetString(POSITION_COMMENT));
 }
-    
+
 return count;
 }
 
@@ -529,7 +529,7 @@ void CTradeAttributionManager::SplitContributors(const string csv, string &contr
 {
     ArrayResize(contributors, 0);
     if(csv == "") return;
-    
+
     int start = 0;
     int pos = StringFind(csv, ",", start);
     while(pos >= 0)
@@ -551,7 +551,7 @@ void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId,
 {
     int index = FindAttributionIndexByPositionId(positionId);
     string csv = JoinContributors(contributors);
-    
+
     if(index >= 0)
     {
         m_attributionContributorCsv[index] = csv;
@@ -571,9 +571,9 @@ bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, st
     int index = FindAttributionIndexByPositionId(positionId);
     if(index < 0)
         return false;
-    
+
     SplitContributors(m_attributionContributorCsv[index], contributors);
-    
+
     int count = ArraySize(m_attributionPositionIds);
     for(int i = index; i < count - 1; i++)
     {
@@ -582,7 +582,7 @@ bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, st
     }
     ArrayResize(m_attributionPositionIds, count - 1);
     ArrayResize(m_attributionContributorCsv, count - 1);
-    
+
     return true;
 }
 

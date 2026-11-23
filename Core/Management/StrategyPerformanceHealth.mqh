@@ -58,10 +58,11 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
     if(idx < 0 || idx >= m_src.GetStrategyCount())
         return;
 
-    bool success = (netProfit > 0);
-
+    // Three-way outcome: a scratch close (netProfit == 0) is activity, not a decided result - it
+    // increments totalTrades but touches neither the win/loss counters nor the consecutive streaks,
+    // so breakeven exits stop dragging win-rate, health score and the consecutive-loss park.
     m_src.SetStrategyTotalTrades(idx, m_src.GetStrategyTotalTrades(idx) + 1);
-    if(success)
+    if(netProfit > 0.0)
     {
         m_src.SetStrategySuccessCount(idx, m_src.GetStrategySuccessCount(idx) + 1);
         m_src.SetStrategyWinningTrades(idx, m_src.GetStrategyWinningTrades(idx) + 1);
@@ -75,7 +76,7 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
             m_src.SetStrategyAvgProfit(idx, (prevTotalProfit + netProfit) / wins);
         }
     }
-    else
+    else if(netProfit < 0.0)
     {
         m_src.SetStrategyFailCount(idx, m_src.GetStrategyFailCount(idx) + 1);
         m_src.SetStrategyConsecutiveLosses(idx, m_src.GetStrategyConsecutiveLosses(idx) + 1);

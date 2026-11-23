@@ -6,11 +6,11 @@
 // moment; an aligned stack with a shallow pullback is the structure a trend trader actually enters.
 //
 // Shape:
-//   - The stack must be ordered on the closed bar, all four averages.
-//   - Bar 1 must have traded into the 21-EMA (its low <= EMA21 for a long) and closed back beyond it,
-//     which is the reset-and-resume rather than a fresh extension.
-//   - The pullback must not be deep: the close stays within 1.0 ATR of the 21-EMA.
-//   - Stop 1.2 ATR, target 2.4 ATR: 2R by construction.
+// - The stack must be ordered on the closed bar, all four averages.
+// - Bar 1 must have traded into the 21-EMA (its low <= EMA21 for a long) and closed back beyond it,
+// which is the reset-and-resume rather than a fresh extension.
+// - The pullback must not be deep: the close stays within 1.0 ATR of the 21-EMA.
+// - Stop 1.2 ATR, target 2.4 ATR: 2R by construction.
 #ifndef EMA_RIBBON_STRATEGY_MQH
 #define EMA_RIBBON_STRATEGY_MQH
 

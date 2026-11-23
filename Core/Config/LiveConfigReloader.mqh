@@ -21,9 +21,9 @@ enum EJsonTokenType
    JSON_TOK_LBRACE,     // {
    JSON_TOK_RBRACE,     // }
    JSON_TOK_LBRACKET,   // [
-   JSON_TOK_RBRACKET,   // ]
-   JSON_TOK_COLON,      // :
-   JSON_TOK_COMMA,      // ,
+   JSON_TOK_RBRACKET,   //]
+   JSON_TOK_COLON,      //:
+   JSON_TOK_COMMA,      //,
    JSON_TOK_STRING,
    JSON_TOK_NUMBER,
    JSON_TOK_TRUE,
@@ -81,7 +81,7 @@ public:
                             m_pendingReload(false),
                             m_unreadableReported(false),
                             m_lastRejectReason("") {}
-    
+
     // Initialize with the path as the operator wrote it, relative to MQL5\Files.
     // FileOpen cannot take an absolute path, and the absolute form this class used to build made both the mtime
     // probe and the read fail forever: m_lastModified stayed 0, so "currentModified <= m_lastModified" was always
@@ -159,20 +159,20 @@ public:
     bool ConsumeReloaded() { bool pending = m_pendingReload; m_pendingReload = false; return pending; }
 
     string GetCurrentConfig() const { return m_lastJson; }
-    
+
     // Parse helpers for common types
     static double GetDouble(string json, string path, double defaultVal = 0) {
         return JsonGetDouble(json, path, defaultVal);
     }
-    
+
     static int GetInt(string json, string path, int defaultVal = 0) {
         return (int)JsonGetLong(json, path, defaultVal);
     }
-    
+
     static bool GetBool(string json, string path, bool defaultVal = false) {
         return JsonGetBool(json, path, defaultVal);
     }
-    
+
     static string GetString(string json, string path, string defaultVal = "") {
         return JsonGetString(json, path, defaultVal);
     }
@@ -182,20 +182,20 @@ private:
     datetime GetFileWriteTime(string path) {
         int handle = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
         if(handle == INVALID_HANDLE) return 0;
-        
+
         // Use FileGetInteger with FILE_MODIFY_TIME or fallback
         datetime writeTime = TimeCurrent();
-        
+
         // Try to get file write time - use FILE_WRITE_DATE or FILE_MODIFY_DATE
         long fileTime = FileGetInteger(handle, FILE_MODIFY_DATE);
         if(fileTime > 0) {
             writeTime = (datetime)fileTime;
         }
-        
+
         FileClose(handle);
         return writeTime;
     }
-    
+
     string ReadFileToString(string path) {
         int h = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
         if(h == INVALID_HANDLE) return "";

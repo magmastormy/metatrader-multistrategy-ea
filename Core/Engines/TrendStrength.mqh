@@ -28,21 +28,21 @@ double CTrendStrength::Calculate(double &ma_fast[], double &ma_medium[],
 {
     double strength = 0;
     bool useAdxModel = (adx >= 0.0);
-    
+
     // Validate MA arrays have sufficient data
     if(ArraySize(ma_fast) < 5 || ArraySize(ma_medium) < 5 || ArraySize(ma_slow) < 5)
     {
         Print("[TrendEngine][WARN] Insufficient MA data for trend strength calculation");
         return 0.0;
     }
-    
+
     // Factor 1: MA alignment (40% weight)
     // Use epsilon to prevent division by zero with small values
     double fastMedDiff = ma_fast[0] - ma_medium[0];
     double medSlowDiff = ma_medium[0] - ma_slow[0];
     double slowValue = MathAbs(ma_slow[0]);
     double smallEpsilon = 0.0000001;
-    
+
     if(fastMedDiff > smallEpsilon && medSlowDiff > smallEpsilon)
     {
         // Perfect bullish alignment
@@ -68,7 +68,7 @@ double CTrendStrength::Calculate(double &ma_fast[], double &ma_medium[],
         // Partial alignment
         strength += 20;
     }
-    
+
     // Factor 2: ADX strength (30% weight) or synthetic slope proxy
     if(useAdxModel && adx > strongTrendThreshold)
     {
@@ -90,7 +90,7 @@ double CTrendStrength::Calculate(double &ma_fast[], double &ma_medium[],
             mediumSlopePct = MathAbs((ma_medium[0] - ma_medium[4]) / mediumValue) * 100.0;
         strength += MathMin(25.0, mediumSlopePct * 150.0);
     }
-    
+
     // Factor 3: MA slope consistency (20% weight)
     bool consistentSlope = true;
     for(int i = 1; i < 5; i++)
@@ -117,7 +117,7 @@ double CTrendStrength::Calculate(double &ma_fast[], double &ma_medium[],
             spreadPct = MathAbs((ma_fast[0] - ma_slow[0]) / slowValue) * 100.0;
         strength += MathMin(15.0, spreadPct * 120.0);
     }
-    
+
     // Clamp to valid range
     return MathMax(0.0, MathMin(100.0, strength));
 }

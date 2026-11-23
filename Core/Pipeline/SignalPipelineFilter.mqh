@@ -66,7 +66,7 @@ static bool ApplyRegimeAndCostGate(CMathematicalEngineRegistry* m_mathRegistry, 
                                                   MathMin(m_filters.readinessConfig.stalenessPenaltyMax, (double)snapshot.stalenessSeconds / (double)MathMax(10, m_filters.readinessConfig.stalenessPenaltyDivisor) * m_filters.readinessConfig.stalenessPenaltyMax));
 
         string regimeTag = regimeEngine.GetStateTag();
-    
+
         // Regime gate log throttling
         m_regimeGateLogCounter++;
         if(m_regimeGateLogCounter >= m_regimeGateLogInterval)
@@ -148,34 +148,34 @@ static bool ApplyTrendFilter(CMathematicalEngineRegistry* m_mathRegistry, const 
     CTrendEngine* trendEngine = m_mathRegistry ? m_mathRegistry.GetTrend(m_lastEvaluatedSymbol) : NULL;
     if(trendEngine == NULL)
         return true;
-    
+
     ENUM_TREND_TYPE trend = trendEngine.GetCurrentTrend();
     double trendStrength = trendEngine.GetTrendStrength();
-    
+
     // Only bypass trend alignment in neutral/ranging regimes for truly exceptional confidence.
     if(confidence > 0.82 && (trend == TREND_RANGING || trend == TREND_NONE))
     {
-        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true, 
-                       StringFormat("BYPASSED - High confidence in neutral trend (%.2f) | Trend: %s", 
+        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true,
+                       StringFormat("BYPASSED - High confidence in neutral trend (%.2f) | Trend: %s",
                                   confidence, EnumToString(trend)));
         return true;
     }
-    
+
     // âœ?FIX: Allow ranging markets - check if trend is actively AGAINST the signal
     // Only reject if there's a STRONG opposing trend
     bool strongOpposingTrend = false;
-    
+
     if(signal == TRADE_SIGNAL_BUY && trendEngine.IsTrendBearish() && trendStrength > 75)
         strongOpposingTrend = true;
     else if(signal == TRADE_SIGNAL_SELL && trendEngine.IsTrendBullish() && trendStrength > 75)
         strongOpposingTrend = true;
-    
+
     if(strongOpposingTrend)
     {
         if(trendStrength >= 90.0) // Increased from 85.0
         {
-            LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", false, 
-                           StringFormat("Hard opposing trend veto: %s (%.1f)", 
+            LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", false,
+                           StringFormat("Hard opposing trend veto: %s (%.1f)",
                                       EnumToString(trend), trendStrength));
             return false;
         }
@@ -186,52 +186,52 @@ static bool ApplyTrendFilter(CMathematicalEngineRegistry* m_mathRegistry, const 
                        StringFormat("Opposing trend attenuated: %s (%.1f)", EnumToString(trend), trendStrength));
         return true;
     }
-    
+
     // âœ?FIX: ALLOW signals in ranging markets (TREND_RANGING, TREND_NONE)
     // These are valid trading opportunities
     if(trend == TREND_RANGING || trend == TREND_NONE)
     {
-        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true, 
+        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true,
                        StringFormat("PASSED - Ranging market | Strength: %.1f", trendStrength));
         return true;
     }
-    
+
     // Check signal alignment with trend (only for trending markets)
     bool aligned = false;
     if(signal == TRADE_SIGNAL_BUY && trendEngine.IsTrendBullish())
         aligned = true;
     else if(signal == TRADE_SIGNAL_SELL && trendEngine.IsTrendBearish())
         aligned = true;
-    
+
     if(!aligned)
     {
         if(trendStrength < 60)
         {
             confidence *= 0.93;
-            LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true, 
+            LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true,
                            StringFormat("Weak trend misalignment (%.1f) - ALLOWING signal", trendStrength));
             return true;
         }
 
         confidence *= 0.80;
         confidence = MathMin(1.0, MathMax(0.0, confidence));
-        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true, 
-                       StringFormat("Managed trend misalignment: %s (%.1f) | confidence attenuated", 
+        LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true,
+                       StringFormat("Managed trend misalignment: %s (%.1f) | confidence attenuated",
                                   EnumToString(trend), trendStrength));
         return true;
     }
-    
+
     // Boost confidence for strong aligned trends
     if(trendEngine.IsStrongTrend())
         confidence *= 1.10;
-    
+
     // Cap confidence to valid range [0.0, 1.0]
     confidence = MathMin(1.0, MathMax(0.0, confidence));
-    
-    LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true, 
-                   StringFormat("Trend: %s, Strength: %.1f", 
+
+    LogResult(m_lastFilterName, m_lastFilterReason, "TrendFilter", true,
+                   StringFormat("Trend: %s, Strength: %.1f",
                               EnumToString(trend), trendStrength));
-    
+
     return true;
 }
 
@@ -240,10 +240,10 @@ static bool ApplyVolatilityFilter(CMathematicalEngineRegistry* m_mathRegistry, c
     CVolatilityEngine* volatilityEngine = m_mathRegistry ? m_mathRegistry.GetVolatility(m_lastEvaluatedSymbol) : NULL;
     if(volatilityEngine == NULL)
         return true;
-    
+
     ENUM_VOLATILITY_STATE volState = volatilityEngine.GetVolatilityState();
     double atrPercent = volatilityEngine.GetATRPercent();
-    
+
     double hardVolatilityLimit = m_filters.volatility.maxVolatility * 1.35;
     if(atrPercent > hardVolatilityLimit)
     {
@@ -261,7 +261,7 @@ static bool ApplyVolatilityFilter(CMathematicalEngineRegistry* m_mathRegistry, c
                                     atrPercent, m_filters.volatility.maxVolatility));
         return true;
     }
-    
+
     // Adjust confidence based on volatility
     if(volState == VOLATILITY_LOW)
         confidence *= 1.1;
@@ -269,14 +269,14 @@ static bool ApplyVolatilityFilter(CMathematicalEngineRegistry* m_mathRegistry, c
         confidence *= 0.9;
     else if(volState == VOLATILITY_EXTREME)
         confidence *= 0.7;
-    
+
     // Cap confidence to valid range [0.0, 1.0]
     confidence = MathMin(1.0, MathMax(0.0, confidence));
-    
-    LogResult(m_lastFilterName, m_lastFilterReason, "VolatilityFilter", true, 
-                   StringFormat("Volatility: %s (%.2f%%)", 
+
+    LogResult(m_lastFilterName, m_lastFilterReason, "VolatilityFilter", true,
+                   StringFormat("Volatility: %s (%.2f%%)",
                               EnumToString(volState), atrPercent));
-    
+
     return true;
 }
 
@@ -285,14 +285,14 @@ static bool ApplyLiquidityFilter(CMathematicalEngineRegistry* m_mathRegistry, st
     CLiquidityEngine* liquidityEngine = m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL;
     if(liquidityEngine == NULL)
         return true;
-    
+
     // Check for recent liquidity sweep
     if(liquidityEngine.HasLiquiditySweep(5))
     {
         confidence *= 1.15; // Boost confidence after liquidity grab
         LogResult(m_lastFilterName, m_lastFilterReason, "LiquidityFilter", true, "Recent liquidity sweep detected");
     }
-    
+
     // Check if price is near liquidity
     string liquiditySymbol = (symbol != "") ? symbol : _Symbol;
     double localCurrentPrice = SymbolInfoDouble(liquiditySymbol, SYMBOL_BID);
@@ -301,10 +301,10 @@ static bool ApplyLiquidityFilter(CMathematicalEngineRegistry* m_mathRegistry, st
         confidence *= 0.95; // Slightly reduce confidence near untested liquidity
         LogResult(m_lastFilterName, m_lastFilterReason, "LiquidityFilter", true, "Price near liquidity zone");
     }
-    
+
     // Cap confidence to valid range [0.0, 1.0]
     confidence = MathMin(1.0, MathMax(0.0, confidence));
-    
+
     return true;
 }
 
@@ -313,9 +313,9 @@ static bool ApplyStructureFilter(CMathematicalEngineRegistry* m_mathRegistry, co
     CStructureEngine* structureEngine = m_mathRegistry ? m_mathRegistry.GetStructure(m_lastEvaluatedSymbol) : NULL;
     if(structureEngine == NULL)
         return true;
-    
+
     bool structureAligned = false;
-    
+
     // Check for BOS/CHOCH alignment
     if(signal == TRADE_SIGNAL_BUY)
     {
@@ -333,7 +333,7 @@ static bool ApplyStructureFilter(CMathematicalEngineRegistry* m_mathRegistry, co
             confidence *= 1.2;
         }
     }
-    
+
     if(!structureAligned)
     {
         // Still allow signal but with reduced confidence
@@ -344,10 +344,10 @@ static bool ApplyStructureFilter(CMathematicalEngineRegistry* m_mathRegistry, co
     {
         LogResult(m_lastFilterName, m_lastFilterReason, "StructureFilter", true, "Structure break confirmed");
     }
-    
+
     // Cap confidence to valid range [0.0, 1.0]
     confidence = MathMin(1.0, MathMax(0.0, confidence));
-    
+
     return true;
 }
 
@@ -359,19 +359,19 @@ static bool ApplyTimeFilter(const SignalFilterSettings &m_filters, string &m_las
         LogResult(m_lastFilterName, m_lastFilterReason, "TimeFilter", true, "Synthetic index - 24/7 trading enabled");
         return true;
     }
-    
+
     // If synthetic indices and off-hours allowed, bypass time filter
     if(m_filters.session.allowSyntheticOffHours && CSignalPipelineNormalizer::IsSyntheticSymbol(symbol))
         return true;
-    
+
     MqlDateTime dt;
     TimeToStruct(TimeGMT(), dt);
     int currentHour = dt.hour;
-    
+
     // Check trading hours (0 AM - 10 PM GMT: Allowing Asia session)
     int startHour = 0;
     int endHour = 22;
-    
+
     if(startHour <= endHour)
     {
         if(currentHour < startHour || currentHour >= endHour)
@@ -388,14 +388,14 @@ static bool ApplyTimeFilter(const SignalFilterSettings &m_filters, string &m_las
             return false;
         }
     }
-    
+
     // Skip weekends (only for non-synthetic symbols)
     if(dt.day_of_week == 0 || dt.day_of_week == 6)
     {
         LogResult(m_lastFilterName, m_lastFilterReason, "TimeFilter", false, "Weekend - trading disabled");
         return false;
     }
-    
+
     LogResult(m_lastFilterName, m_lastFilterReason, "TimeFilter", true, "Active trading session");
     return true;
 }
@@ -405,23 +405,23 @@ static bool ApplySessionFilter(const SignalFilterSettings &m_filters, string &m_
     // If synthetic indices and off-hours allowed, bypass session filter
     if(m_filters.session.allowSyntheticOffHours && CSignalPipelineNormalizer::IsSyntheticSymbol(symbol))
         return true;
-    
+
     if(!m_filters.session.enableSessionFilter)
         return true;
-    
+
     MqlDateTime dt;
     TimeToStruct(TimeGMT(), dt);
     int gmtHour = dt.hour;
-    
+
     if(m_filters.session.tradeTokyoSession && gmtHour >= 0 && gmtHour < 9)
         return true;
-    
+
     if(m_filters.session.tradeLondonSession && gmtHour >= 8 && gmtHour < 17)
         return true;
-    
+
     if(m_filters.session.tradeNewYorkSession && gmtHour >= 13 && gmtHour < 22)
         return true;
-    
+
     LogResult(m_lastFilterName, m_lastFilterReason, "SessionFilter", false, StringFormat("Not in active trading session: %d:00 GMT", gmtHour));
     return false;
 }

@@ -8,17 +8,17 @@
 // wick is a liquidity grab that the Turtle Soup row already trades.
 //
 // Shape:
-//   - `CMarketStructureAnalyzer::Update()` runs first on every evaluated bar, and the break flags are
-//     read after it - the analyzer resets them on each classification, so reading before would see the
-//     previous bar's answer.
-//   - The break must be recent (within 2 bars) and the structural direction must be known.
-//   - A CISD (change in state of delivery) in the same direction within 3 bars is the confirmation:
-//     it is what separates a displacement leg from a single oversized candle.
-//   - Stop 1.2 ATR, target 2.4 ATR = 2R.
-//   - Category `STRATEGY_SUPPORT_RESISTANCE` (regime-neutral) on purpose: the `ictWeightMult` group
-//     is the operator's global dial for the existing ICT rows, and a new row silently inheriting
-//     someone else's multiplier would make its weight unreadable from the catalog. The row is judged
-//     by its own break-and-displacement gate instead.
+// - `CMarketStructureAnalyzer::Update()` runs first on every evaluated bar, and the break flags are
+// read after it - the analyzer resets them on each classification, so reading before would see the
+// previous bar's answer.
+// - The break must be recent (within 2 bars) and the structural direction must be known.
+// - A CISD (change in state of delivery) in the same direction within 3 bars is the confirmation:
+// it is what separates a displacement leg from a single oversized candle.
+// - Stop 1.2 ATR, target 2.4 ATR = 2R.
+// - Category `STRATEGY_SUPPORT_RESISTANCE` (regime-neutral) on purpose: the `ictWeightMult` group
+// is the operator's global dial for the existing ICT rows, and a new row silently inheriting
+// someone else's multiplier would make its weight unreadable from the catalog. The row is judged
+// by its own break-and-displacement gate instead.
 #ifndef ICT_STRUCTURE_SHIFT_STRATEGY_MQH
 #define ICT_STRUCTURE_SHIFT_STRATEGY_MQH
 

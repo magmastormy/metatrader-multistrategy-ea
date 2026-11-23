@@ -11,8 +11,10 @@ import torch
 import torch.nn as nn
 from scipy.stats import spearmanr
 
-from data_pipeline import PipelineMetadata, build_scaled_dataset_splits
+from data_pipeline import PipelineMetadata, build_dataset_splits, _scale_splits
+from sklearn.preprocessing import StandardScaler
 from models import PatchTST, SequenceMLP, iTransformer
+from train_common import save_train_meta
 from validate_model import run_cpcv
 
 
@@ -181,13 +183,17 @@ def main() -> None:
     if scaler_output is None:
         scaler_output = str(Path(args.output).with_name("scaler.bin"))
 
-    train_split, val_split, test_split, metadata = build_scaled_dataset_splits(
+    # Keep the raw arrays: CPCV fold models must be scaled per fold, not with the
+    # global train scaler (which saw data on both sides of every test group).
+    raw_train, raw_val, raw_test, metadata = build_dataset_splits(
         args.csv,
         seq_len=seq_len,
         k=args.k,
         vertical_bars=args.vert,
-        scaler_output=scaler_output,
         family_id=args.family_id,
+    )
+    train_split, val_split, test_split, _scaler = _scale_splits(
+        raw_train, raw_val, raw_test, scaler_output=scaler_output,
     )
 
     print(
@@ -228,17 +234,29 @@ def main() -> None:
     export_onnx(best_model, metadata.seq_len, metadata.n_features, str(temp_output))
 
     arrays = [
-        np.concatenate([train_split[i], val_split[i], test_split[i]], axis=0) for i in range(5)
+        np.concatenate([raw_train[i], raw_val[i], raw_test[i]], axis=0) for i in range(6)
     ]
-    X_all, _, _, returns_all, timestamps_all = arrays
+    X_all, _, _, returns_all, timestamps_all, label_ends_all = arrays
 
     fold_dir = Path(tempfile.mkdtemp(prefix="cpcv_folds_"))
 
     def fold_model_path(fold_no: int, train_idx: np.ndarray) -> str:
         n_val = max(1, int(len(train_idx) * 0.15))
         fit_idx, val_idx = train_idx[:-n_val], train_idx[-n_val:]
-        fit_split = tuple(a[fit_idx] for a in arrays)
-        val_split_fold = tuple(a[val_idx] for a in arrays)
+
+        # Scale inside the fold: fit the scaler on this fold's fit indices only,
+        # per feature across all bars (same layout CPipelineScaler applies at inference).
+        n_feat = metadata.n_features
+        fold_scaler = StandardScaler()
+        fold_scaler.fit(arrays[0][fit_idx].reshape(-1, n_feat))
+
+        def take_scaled(sel: np.ndarray):
+            Xs = fold_scaler.transform(arrays[0][sel].reshape(-1, n_feat))
+            Xs = Xs.reshape(len(sel), metadata.seq_len, n_feat).astype(np.float32)
+            return (Xs, arrays[1][sel], arrays[2][sel], arrays[3][sel], arrays[4][sel])
+
+        fit_split = take_scaled(fit_idx)
+        val_split_fold = take_scaled(val_idx)
         fold_model = instantiate_models(best_name, metadata.seq_len, metadata.n_features)[best_name]
         _, _, trained = train_candidate(
             name=f"{best_name}-fold{fold_no}",
@@ -266,6 +284,7 @@ def main() -> None:
             fold_model_path=fold_model_path,
             n_splits=args.cpcv_splits,
             annualization=metadata.annualization,
+            label_ends_ns=label_ends_all,
         )
     finally:
         shutil.rmtree(fold_dir, ignore_errors=True)
@@ -275,6 +294,13 @@ def main() -> None:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         temp_output.replace(output)
+        # Record the training range so stacker_fit_indices can exclude rows the
+        # base model saw during fitting (early stopping still used val_split).
+        save_train_meta(
+            str(output), raw_train[4], raw_val[4],
+            seq_len=seq_len, k=args.k, vert=args.vert,
+            family_id=args.family_id, architecture=best_name,
+        )
         print(
             f"exported={output} model={best_name} val_ic={best_val_ic:.4f} "
             f"test_ic={best_test_ic:.4f} force_export={args.force_export}"

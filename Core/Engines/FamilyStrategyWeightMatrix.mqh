@@ -38,15 +38,15 @@ public:
          SetWeights((ENUM_DERIV_FAMILY)i, 1.0, 1.0, 1.0, 1.0);
 
       // Crash/Boom: Structure dominates (spike detection + grid recovery)
-      //             Suppress mean-reversion (spikes make it dangerous)
+      // Suppress mean-reversion (spikes make it dangerous)
       SetWeights(DERIV_CRASH_BOOM, 0.8, 0.4, 1.5, 1.3);
 
       // Volatility: Mean-reversion + Scalp dominate (continuous movement, NO directional bias)
-      //             Suppress trend (no directional bias to follow) and structure (no order blocks/FVG)
+      // Suppress trend (no directional bias to follow) and structure (no order blocks/FVG)
       SetWeights(DERIV_VOLATILITY, 0.6, 1.5, 0.5, 1.3);
 
       // Step: Mean-reversion + Scalp (discrete steps, no trend)
-      //       Suppress trend (steps are not trends)
+      // Suppress trend (steps are not trends)
       SetWeights(DERIV_STEP, 0.5, 1.5, 1.0, 1.2);
 
       // Jump: Scalp + Structure (sharp events similar to Crash/Boom)
@@ -117,14 +117,14 @@ public:
          case SCALP_CLUSTER:          mult = m_weights[idx].scalp; break;
          default:                     mult = 1.0; break;
       }
-      
+
       // Log weight deviations for all families (not just Volatility)
       if(MathAbs(mult - 1.0) > 0.01)
       {
-         PrintFormat("[FAMILY-WEIGHT] %s | family=%s | cluster=%s | mult=%.3f", 
+         PrintFormat("[FAMILY-WEIGHT] %s | family=%s | cluster=%s | mult=%.3f",
                      "", EnumToString(family), EnumToString(cluster), mult);
       }
-      
+
       return mult;
    }
 
@@ -146,7 +146,7 @@ public:
       {
          if(!m_initialized)
             return "NOT_INITIALIZED";
-      
+
          string result = "";
          bool first = true;
          for(int i = 0; i < 19; i++)

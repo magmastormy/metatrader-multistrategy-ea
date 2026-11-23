@@ -32,7 +32,7 @@ public:
       m_asyncMode(false),
       m_maxLatencyMs(500)
    {
-      // Batch 152 (S-M-04): field-wise reset (string member, see SScalpPendingAsync::Reset)
+      // (S-M-04): field-wise reset (string member, see SScalpPendingAsync::Reset)
       for(int i = 0; i < ArraySize(m_pendingAsync); i++)
          m_pendingAsync[i].Reset();
       for(int i = 0; i < ArraySize(m_reservedLedger); i++)
@@ -65,7 +65,7 @@ public:
    {
       if(m_pendingAsyncCount >= ArraySize(m_pendingAsync))
       {
-         PrintFormat("[SCALP-ASYNC-OVERFLOW] Cannot track order %I64u �?pending array full (%d)",
+         PrintFormat("[SCALP-ASYNC-OVERFLOW] Cannot track order %I64u - pending array full (%d)",
                      orderTicket, m_pendingAsyncCount);
          return;
       }
@@ -149,7 +149,7 @@ public:
                         CFastScalpPositionTracker &positionTracker)
    {
       // 1. Ledger first: a late fill for an order that already timed out and was
-      //    quarantined. Register the position and keep the budget reserved.
+      // quarantined. Register the position and keep the budget reserved.
       for(int i = 0; i < m_reservedLedgerCount; i++)
       {
          if(m_reservedLedger[i].orderTicket == orderTicket && !m_reservedLedger[i].released)
@@ -335,7 +335,7 @@ public:
       for(int j = index; j < m_pendingAsyncCount - 1; j++)
          m_pendingAsync[j] = m_pendingAsync[j + 1];
 
-      // Clear tail slot (field-wise - Batch 152 S-M-04)
+      // Clear tail slot (field-wise - S-M-04)
       m_pendingAsync[m_pendingAsyncCount - 1].Reset();
       m_pendingAsyncCount--;
    }
@@ -382,7 +382,7 @@ public:
       for(int j = index; j < m_reservedLedgerCount - 1; j++)
          m_reservedLedger[j] = m_reservedLedger[j + 1];
 
-      // Clear tail slot (field-wise - Batch 152 S-M-04)
+      // Clear tail slot (field-wise - S-M-04)
       m_reservedLedger[m_reservedLedgerCount - 1].Reset();
       m_reservedLedgerCount--;
    }

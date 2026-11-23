@@ -48,14 +48,13 @@ private:
     double m_hurstMRThreshold;     // H below this = mean-reverting, fade the break
     double m_volumeConfirmRatio;   // breakout volume must exceed ratio * average
     int    m_volumeLookback;       // bars behind the breakout in that average
-    
+
     int    m_trendMaPeriod;        // EMA the breakout close is compared against
     bool   m_useTrendFilter;       // applies to momentum entries only, never to fades
 
     int m_bbHandle;
     int m_kcHandle;
     int m_atrHandle;
-    int m_volumeHandle;
     int m_maHandle;      // stays INVALID_HANDLE while m_useTrendFilter is off
 
     CHurstEngine* m_hurstEngine;   // injected, not owned - never released here
@@ -114,7 +113,6 @@ public:
         m_bbHandle(INVALID_HANDLE),
         m_kcHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
-        m_volumeHandle(INVALID_HANDLE),
         m_maHandle(INVALID_HANDLE),
         m_hurstEngine(NULL),
         m_riskManager(NULL),
@@ -136,7 +134,6 @@ public:
         if(m_bbHandle != INVALID_HANDLE) IndicatorRelease(m_bbHandle);
         if(m_kcHandle != INVALID_HANDLE) IndicatorRelease(m_kcHandle);
         if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-        if(m_volumeHandle != INVALID_HANDLE) IndicatorRelease(m_volumeHandle);
         if(m_maHandle != INVALID_HANDLE) IndicatorRelease(m_maHandle);
     }
 
@@ -164,8 +161,7 @@ public:
 
         m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
-        m_volumeHandle = iVolumes(symbol, timeframe, VOLUME_TICK);
-        
+
         // MA for the trend filter; stays INVALID_HANDLE when the filter is disabled
         if(m_useTrendFilter)
         {
@@ -461,11 +457,6 @@ public:
         {
             IndicatorRelease(m_atrHandle);
             m_atrHandle = INVALID_HANDLE;
-        }
-        if(m_volumeHandle != INVALID_HANDLE)
-        {
-            IndicatorRelease(m_volumeHandle);
-            m_volumeHandle = INVALID_HANDLE;
         }
         if(m_maHandle != INVALID_HANDLE)
         {

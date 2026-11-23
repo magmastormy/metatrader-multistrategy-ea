@@ -34,7 +34,7 @@ public:
 
     // Resolves conflict between two signals
     // Returns 1 if signal A wins, -1 if signal B wins, 0 if tie
-    static int ResolveConflict(ENUM_STRATEGY_TIER tierA, double confA, 
+    static int ResolveConflict(ENUM_STRATEGY_TIER tierA, double confA,
                                ENUM_STRATEGY_TIER tierB, double confB)
     {
         double scoreA = confA * GetTierMultiplier(tierA);

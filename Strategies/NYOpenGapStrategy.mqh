@@ -39,7 +39,7 @@ bool NYOpenIsUSDaylightTime(const datetime when)
 
     MqlDateTime dstStartStruct;
     dstStartStruct.year = year; dstStartStruct.mon = 3; dstStartStruct.day = secondSundayMarch;
-    dstStartStruct.hour = 2; dstStartStruct.min = 0; dstStartStruct.sec = 0;
+    dstStartStruct.hour = 7; dstStartStruct.min = 0; dstStartStruct.sec = 0; // 2:00 AM EST = 07:00 UTC
     datetime dstStart = StructToTime(dstStartStruct);
 
     // DST end: first Sunday of November at 2:00 AM local time.
@@ -54,10 +54,40 @@ bool NYOpenIsUSDaylightTime(const datetime when)
 
     MqlDateTime dstEndStruct;
     dstEndStruct.year = year; dstEndStruct.mon = 11; dstEndStruct.day = firstSundayNovember;
-    dstEndStruct.hour = 2; dstEndStruct.min = 0; dstEndStruct.sec = 0;
+    dstEndStruct.hour = 6; dstEndStruct.min = 0; dstEndStruct.sec = 0; // 2:00 AM EDT = 06:00 UTC
     datetime dstEnd = StructToTime(dstEndStruct);
 
     return (when >= dstStart && when < dstEnd);
+}
+
+
+// Locates the M30 bar that opens at `barOpenGmt` (GMT) and derives the broker offset
+// from that bar's own timestamp, so historical candidates are not shifted by the
+// current-time offset. Tries the standard offset plus/minus one hour to cover broker
+// offset era changes. Returns the bar shift or -1.
+int NYOpenFindSessionBar(const string symbol, const datetime barOpenGmt, const int standardOffset)
+{
+    const int dstSeconds = NYOpenIsUSDaylightTime(barOpenGmt) ? 3600 : 0;
+    int offsets[3];
+    offsets[0] = standardOffset;
+    offsets[1] = standardOffset - 3600;
+    offsets[2] = standardOffset + 3600;
+    for(int o = 0; o < 3; o++)
+    {
+        if(o > 0 && offsets[o] == offsets[o - 1])
+            continue;
+        const int expectedOffset = offsets[o] + dstSeconds;
+        const datetime estServer = barOpenGmt + expectedOffset;
+        const int shift = iBarShift(symbol, PERIOD_M30, estServer, false);
+        if(shift < 0)
+            continue;
+        const datetime barTime = iTime(symbol, PERIOD_M30, shift);
+        // The found bar must open at the session boundary; a neighbouring M30 bar is
+        // 1800s away and fails this check.
+        if(MathAbs((int)(barTime - barOpenGmt) - expectedOffset) <= 900)
+            return shift;
+    }
+    return -1;
 }
 
 // Targets gap-fill tendency at the 09:30 New York open (13:30 UTC in US DST, 14:30 UTC otherwise).
@@ -167,12 +197,10 @@ public:
         // candidate from the bar's own GMT time (DST-aware) instead of being reused from TimeCurrent(),
         // so DST transition weekends and seasonal broker offsets cannot shift the session boundary by an hour.
         const datetime gmtDay = gmtNow - (gmtNow % 86400);
-        const int brokerOffsetNow = (int)MathRound((double)(TimeCurrent() - gmtNow) / 1800.0) * 1800;
+        const int brokerOffsetNow = (int)MathRound((double)(TimeCurrent() - gmtNow) / 60.0) * 60;
         const int standardOffset  = brokerOffsetNow - (dstNow ? 3600 : 0);
 
         const datetime nyOpenGmt = gmtDay + windowStartMin * 60;
-        const int brokerOffsetOpen = standardOffset + (NYOpenIsUSDaylightTime(nyOpenGmt) ? 3600 : 0);
-        const datetime nyOpenServer = nyOpenGmt + brokerOffsetOpen;
 
         datetime priorNyCloseGmt = 0;
         for(int back = 1; back <= 4 && priorNyCloseGmt == 0; back++)
@@ -189,13 +217,12 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        const int brokerOffsetClose = standardOffset + (NYOpenIsUSDaylightTime(priorNyCloseGmt) ? 3600 : 0);
-        const datetime nyPriorCloseBarOpen = priorNyCloseGmt - 1800 + brokerOffsetClose;
-        const int openShift  = iBarShift(m_symbol, PERIOD_M30, nyOpenServer, false);
-        const int closeShift = iBarShift(m_symbol, PERIOD_M30, nyPriorCloseBarOpen, false);
-        if(openShift < 0 || closeShift < 0 ||
-           iTime(m_symbol, PERIOD_M30, openShift) != nyOpenServer ||
-           iTime(m_symbol, PERIOD_M30, closeShift) != nyPriorCloseBarOpen)
+        // Both session bars are located by GMT time; the broker offset is derived from
+        // each candidate bar's own timestamp inside NYOpenFindSessionBar.
+        const datetime nyPriorCloseBarOpenGmt = priorNyCloseGmt - 1800;
+        const int openShift  = NYOpenFindSessionBar(m_symbol, nyOpenGmt, standardOffset);
+        const int closeShift = NYOpenFindSessionBar(m_symbol, nyPriorCloseBarOpenGmt, standardOffset);
+        if(openShift < 0 || closeShift < 0)
         {
             SetDecisionReasonTag("NYGAP_SESSION_BARS_MISSING");
             return TRADE_SIGNAL_NONE;
@@ -288,8 +315,13 @@ public:
             tpPrice = prevDayClose;
         }
 
-        double slDistance = MathAbs(currentPrice - slPrice);
-        double tpDistance = MathAbs(tpPrice - currentPrice);
+        // currentPrice is BID for the midpoint check; distances must be measured off the side
+        // the order actually fills on or the stop is understated by the spread for buys.
+        double distPrice = bullish ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                   : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        if(distPrice <= 0.0) distPrice = currentPrice;
+        double slDistance = MathAbs(distPrice - slPrice);
+        double tpDistance = MathAbs(tpPrice - distPrice);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
         double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : 0.0;
@@ -313,7 +345,7 @@ public:
         long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
         double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
 
-        if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
+        if(!CSignalGuards::IsSignalTradable(distPrice, slPrice, tpPrice, spreadPrice))
         {
             SetDecisionReasonTag("NYGAP_NOT_TRADABLE");
             return TRADE_SIGNAL_NONE;

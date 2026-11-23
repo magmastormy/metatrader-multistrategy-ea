@@ -123,8 +123,8 @@
 // 57 base features + 8 candlestick pattern features + 5 oscillator-state features = 70 total
 // Candlestick features: pin bar bull/bear, engulfing, doji, hammer, shooting star, morning/evening star
 // Oscillator-state features (Theme 2, articles 18770/19103): Stochastic %K/%D zones, Stochastic slope,
-//   RSI(14) zone, MACD-histogram slope — encode oscillator REGIME, not just level, so the NN learns
-//   context. Bumped 65 -> 70; checkpoint version also bumped to force a clean retrain.
+// RSI(14) zone, MACD-histogram slope — encode oscillator REGIME, not just level, so the NN learns
+// context. Bumped 65 -> 70; checkpoint version also bumped to force a clean retrain.
 #ifndef AI_FEATURE_VECTOR_SIZE
 #define AI_FEATURE_VECTOR_SIZE  70
 #endif

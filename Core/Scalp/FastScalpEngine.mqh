@@ -54,10 +54,10 @@ private:
    CPositionSizer*           m_positionSizer;
    CRiskTierManager*         m_riskTierManager;
    CScalpSignalCache*        m_signalCache;          // External cache reference (optional)
-   CAIAdapter*               m_aiAdapter;            // L10-018: AI adapter for AI-VOTE logging
+   CAIAdapter*               m_aiAdapter;            // AI adapter for AI-VOTE logging
 
    datetime                  m_lastScalpTime;        // Last scalp entry time
-   long                      m_magicNumber;          // EA magic number for pending orders �?Batch 125: changed from uint to long
+   long                      m_magicNumber;          // EA magic number for pending orders -: changed from uint to long
    bool                      m_initialized;
 
    string                    m_refusalLogSymbols[];   // per-symbol refusal-log throttle
@@ -115,7 +115,7 @@ private:
 // Per-symbol stop and target, in points. The configured scalpSLPips/scalpTPPips (60/90) were applied
 // as raw points to every symbol, and a point is not a unit of risk: 60 points is 6.0 on Step Index,
 // 0.60 on XAUUSD (inside three spreads) and 4% of one spread on Volatility 75 Index. That is why the
-// cost gate refused every symbol but two ("spread=1431.0 ... tp=90.0 breakevenWR=0.941") and why the
+// cost gate refused every symbol but two ("spread=1431.0... tp=90.0 breakevenWR=0.941") and why the
 // engine only ever traded Step Index and XAUUSD. The stop is now the largest of 1.5 x ATR(14, M1),
 // 4 x spread and 1.5 x the broker stop level; the target keeps the configured TP:SL ratio; the
 // breakeven and trailing distances are fractions of that stop instead of 10/5/15 raw points.
@@ -221,7 +221,7 @@ public:
       m_positionSizer(NULL),
       m_riskTierManager(NULL),
       m_signalCache(NULL),
-      m_aiAdapter(NULL),            // L10-018: AI adapter
+      m_aiAdapter(NULL),            // AI adapter
       m_lastScalpTime(0),
       m_magicNumber(123456),
       m_initialized(false),
@@ -239,7 +239,7 @@ public:
                    CUnifiedRiskManager* riskManager,
                    CPositionSizer* scalpPosSizer,
                    CRiskTierManager* riskTierManager,
-                   CAIAdapter* aiAdapter = NULL)  // L10-018: AI adapter
+                   CAIAdapter* aiAdapter = NULL)  // AI adapter
    {
       if(scalpTradeMgr == NULL || riskManager == NULL ||
          scalpPosSizer == NULL || riskTierManager == NULL)
@@ -252,7 +252,7 @@ public:
       m_riskManager     = riskManager;
       m_positionSizer   = scalpPosSizer;
       m_riskTierManager = riskTierManager;
-      m_aiAdapter       = aiAdapter;  // L10-018: Store AI adapter
+      m_aiAdapter       = aiAdapter;  // Store AI adapter
 
       // CTradeManager has no GetMagicNumber accessor: market orders get base magic + per-symbol offset inside it
       // (TradeManager.mqh:1267), while m_magicNumber is set from config by the orchestrator and reaches only the
@@ -325,7 +325,7 @@ public:
       }
 
       // Slow path: RefreshIndicators does its own CopyBuffer reads. Reached from the same 1 s-throttled
-      // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry �?there
+      // tick driver (EAOrchestrator::ProcessScalpFastPath) whenever the cache has no valid entry - there
       // is no timer caller for this engine.
       return CFastScalpSignal::EvaluateSlowPath(symbol, m_config, m_indicators, gateReject);
    }
@@ -445,7 +445,7 @@ public:
 
    void RemovePendingOrder(int index) { m_pendingBook.RemovePendingOrder(index); }
 
-// 1R partial close / breakeven / trailing. No throttle of its own �?it runs once per ProcessScalpFastPath
+// 1R partial close / breakeven / trailing. No throttle of its own - it runs once per ProcessScalpFastPath
 // pass, and that driver is the thing limited to one call per second.
    void ManageScalpPositions()
    {
@@ -457,7 +457,7 @@ public:
    }
 
 // Counts every open position whose comment STARTS with "SCALP" (StringFind==0), terminal-wide and without
-// a magic-number or symbol filter �?this is the number the maxScalpPositions gate is compared against.
+// a magic-number or symbol filter - this is the number the maxScalpPositions gate is compared against.
    int CountScalpPositions() { return CFastScalpPositionTracker::CountScalpPositions(); }
 
    bool IsScalpPosition(ulong ticket) { return CFastScalpPositionTracker::IsScalpPosition(ticket); }

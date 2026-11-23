@@ -87,45 +87,45 @@ bool CPyBridgeProtocol::ValidateJsonResponse(const string &json_str)
 {
    if(json_str == "")
       return false;
-   
+
    // Checks only brace/bracket balance outside quoted strings - not full JSON validation.
    int brace_count = 0;
    int bracket_count = 0;
    bool in_string = false;
-   
+
    for(int i = 0; i < StringLen(json_str); i++)
    {
       ushort c = StringGetCharacter(json_str, i);
-      
+
       if(c == '"' && (i == 0 || StringGetCharacter(json_str, i-1) != '\\'))
          in_string = !in_string;
-      
+
       if(in_string)
          continue;
-      
+
       if(c == '{') brace_count++;
       if(c == '}') brace_count--;
       if(c == '[') bracket_count++;
       if(c == ']') bracket_count--;
-      
+
       if(brace_count < 0 || bracket_count < 0)
          return false;
    }
-   
+
    return (brace_count == 0 && bracket_count == 0 && !in_string);
 }
 
 SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &json_str)
 {
    SPythonBridgeResponse result;
-   
+
    if(json_str == "")
    {
       result.success = false;
       result.error_message = "Empty response from server";
       return result;
    }
-   
+
    if(StringFind(json_str, "\"error\"") != -1)
    {
       result.success = false;
@@ -134,7 +134,7 @@ SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &j
          result.error_message = "Unknown error in server response";
       return result;
    }
-   
+
    result.success = true;
 
    result.buy_prob       = ParseJsonDouble(json_str, "buy_prob");
@@ -194,7 +194,7 @@ bool CPyBridgeProtocol::ParseVersionResponse(const string &json_str, SPythonBrid
       return false;
 
    version.version = ParseJsonString(json_str, "version");
-   
+
    if(version.version != "")
    {
       string parts[];
@@ -203,9 +203,9 @@ bool CPyBridgeProtocol::ParseVersionResponse(const string &json_str, SPythonBrid
       if(parts_count >= 2) version.minor = (int)StringToInteger(parts[1]);
       if(parts_count >= 3) version.patch = (int)StringToInteger(parts[2]);
    }
-   
+
    version.compatible = CheckVersionCompatibility(version);
-   
+
    return true;
 }
 
@@ -213,14 +213,14 @@ bool CPyBridgeProtocol::CheckVersionCompatibility(const SPythonBridgeVersion &ve
 {
    const int REQUIRED_MAJOR = 1;
    const int REQUIRED_MINOR = 0;
-   
+
    // Major version must match exactly; minor version must be >= REQUIRED_MINOR.
    if(version.major != REQUIRED_MAJOR)
       return false;
-   
+
    if(version.minor < REQUIRED_MINOR)
       return false;
-   
+
    return true;
 }
 

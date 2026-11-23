@@ -331,7 +331,7 @@ public:
     if(!m_host.IsInitialized())
     {
         result.message = "Unified risk manager is not initialized";
-        CJsonLogger::LogRiskEvent("RiskGate", request.symbol, "NOT_INITIALIZED", 
+        CJsonLogger::LogRiskEvent("RiskGate", request.symbol, "NOT_INITIALIZED",
             "Unified risk manager is not initialized", 0.0, 0.0, corrId);
         CJsonLogger::ClearCorrelationId();
         return result;
@@ -447,7 +447,7 @@ public:
         CJsonLogger::ClearCorrelationId();
         return result;
     }
-    
+
     double tradeRisk = 0.0;
     if(!ValidateRiskLimits(request, validationMessage, tradeRisk))
     {
@@ -462,7 +462,7 @@ public:
         return result;
     }
     result.riskPercent = tradeRisk;
-    
+
     if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage, virtualReserved ? provisionalRiskPct : 0.0))
     {
         result.message = "Portfolio risk validation failed: " + validationMessage;
@@ -501,7 +501,7 @@ public:
         CJsonLogger::ClearCorrelationId();
         return result;
     }
-    
+
     double correlationRisk = 0.0;
     if(!ValidateCorrelationLimits(request, validationMessage, correlationRisk))
     {
@@ -516,7 +516,7 @@ public:
         return result;
     }
     result.correlationRisk = correlationRisk;
-    
+
     if(!ValidateMarginRequirements(request, validationMessage))
     {
         result.message = "Margin validation failed: " + validationMessage;
@@ -528,7 +528,7 @@ public:
         CJsonLogger::ClearCorrelationId();
         return result;
     }
-    
+
     if(!ValidateAccountHealth(request, validationMessage))
     {
         result.message = "Account health validation failed: " + validationMessage;
@@ -540,7 +540,7 @@ public:
         CJsonLogger::ClearCorrelationId();
         return result;
     }
-    
+
     // approved=true here is provisional: the lot floor / symbol budget / portfolio / family / correlation /
     // daily-risk / CVaR gates below can still reject. Approval bookkeeping runs again at the final exit.
     result.approved = true;
@@ -685,7 +685,7 @@ public:
         {
             int familyPositionCount = 0;
             int totalPositions = PositionsTotal();
-        
+
             for(int i = 0; i < totalPositions; i++)
             {
                 ulong ticket = PositionGetTicket(i);
@@ -817,7 +817,7 @@ public:
             result.riskPercent = (tradeRiskReduced / riskDenom) * 100.0;
     }
 
-    // The margin gate above priced request.lotSize, and the lot floor at :548 can have raised it since. Re-check on the
+    // The margin gate above priced request.lotSize, and the lot floor at:548 can have raised it since. Re-check on the
     // lot the candidate actually ships, so a round-up to the broker minimum cannot be approved on margin never verified.
     if(result.adjustedLotSize > request.lotSize)
     {
@@ -1020,19 +1020,19 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         message = "Empty symbol";
         return false;
     }
-    
+
     if(!m_host.IsSymbolDataValid(request.symbol))
     {
         message = "Invalid symbol data for " + request.symbol;
         return false;
     }
-    
+
     if(request.lotSize <= 0)
     {
         message = "Invalid lot size: " + DoubleToString(request.lotSize, 3);
         return false;
     }
-    
+
     double maxLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MAX);
 
     if(maxLot > 0.0 && request.lotSize > maxLot)
@@ -1040,7 +1040,7 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         message = StringFormat("Lot %.4f exceeds broker max %.4f for %s", request.lotSize, maxLot, request.symbol);
         return false;
     }
-    
+
     if(request.stopLossPips <= 0)
     {
         PrintFormat("[RISK-GATE] Rejected %s %s: Missing stop loss (strategy=%s, SL=%.1f pips)",
@@ -1048,19 +1048,19 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         message = "Invalid stop loss: " + DoubleToString(request.stopLossPips, 1) + " pips";
         return false;
     }
-    
+
     if(request.orderType != ORDER_TYPE_BUY && request.orderType != ORDER_TYPE_SELL)
     {
         message = "Invalid order type: " + EnumToString(request.orderType);
         return false;
     }
-    
+
     if(!m_host.CheckAccountTradingPermissions())
     {
         message = "Trading not allowed";
         return false;
     }
-    
+
     return true;
 }
 
@@ -1074,36 +1074,36 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
     SyncConfig();
 
     double tradeRisk = m_host.CalculateTradeRisk(request.symbol, request.lotSize, request.stopLossPips);
-    
+
     if(tradeRisk <= 0)
     {
         message = "Unable to calculate trade risk";
         return false;
     }
-    
+
     // riskPercent is currency risk as a 0-100 percent of CRiskMath::GetRiskDenominator = min(balance, equity).
     double riskDenominator = CRiskMath::GetRiskDenominator();
-    
+
     if(riskDenominator <= 0.0)
     {
         message = "Invalid account risk denominator";
         return false;
     }
-    
+
     riskPercent = (tradeRisk / riskDenominator) * 100.0;  // fraction -> 0-100 % scale
-    
+
     if(riskPercent > m_config.maxRiskPerTradePercent)
     {
         message = StringFormat("Risk %.2f%% exceeds maximum %.2f%%", riskPercent, m_config.maxRiskPerTradePercent);
         return false;
     }
-    
+
     if(m_emergencyRiskOverride > 0.0 && riskPercent > m_emergencyRiskOverride)
     {
         message = StringFormat("Emergency risk override exceeded: %.2f%% > %.2f%%", riskPercent, m_emergencyRiskOverride);
         return false;
     }
-    
+
     return true;
 }
 
@@ -1117,32 +1117,32 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
     SyncConfig();
 
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    
+
     if(CheckPointer(manager) == POINTER_INVALID)
     {
         message = "Portfolio risk manager not available";
         return false;
     }
-    
+
     if(m_portfolioRiskManager.HasUnprotectedPositions())
     {
         message = "Open position without protective stop-loss detected";
         return false;
     }
-    
+
     // Same basis as CUnifiedRiskManager::GetRemainingPortfolioRiskPercent (open exposure + reservations). The book
     // already holds THIS trade's provisional reservation, so the caller passes it in to subtract it.
     double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
     double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent() - MathMax(0.0, ownReservationRiskPercent);
     double currentRisk = openExposureRisk + reservedRisk;
     double totalRisk = currentRisk + tradeRiskPercent;
-    
+
     if(totalRisk > m_config.maxPortfolioRiskPercent)
     {
         message = StringFormat("Total portfolio risk %.2f%% would exceed maximum %.2f%%", totalRisk, m_config.maxPortfolioRiskPercent);
         return false;
     }
-    
+
     // The request's own stop goes with it. Without the third argument the manager re-priced the same
     // lot at 1.5 x ATR(14) of the chart timeframe - a different stop from the one the lot was sized
     // on - so a lot sized for 1% on the strategy's stop was re-read as 14-15% and refused
@@ -1153,7 +1153,7 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
         message = (portfolioReason != "") ? portfolioReason : "Trade blocked by portfolio risk manager";
         return false;
     }
-    
+
     return true;
 }
 
@@ -1246,21 +1246,21 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
 
     if(!m_clusterGovernanceEnabled)
         return true;
-    
+
     string requestClusterCode = CRiskClusterCodec::NormalizeClusterCode(request.clusterCode);
     if(requestClusterCode == "N")
         requestClusterCode = CRiskClusterCodec::NormalizeClusterCode(request.strategyCluster);
-    
+
     if(requestClusterCode == "N")
         return true;
-    
+
     // Cooldown cache: skips the full position scan when this symbol was recently rejected for conflict.
     if(m_clusterMutexEnabled && m_opposingGuard.IsCooldownActive(request.symbol, message))
         return false;
-    
+
     int clusterOpenPositions = 0;
     double clusterOpenRiskPercent = 0.0;
-    
+
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
@@ -1268,17 +1268,17 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
             continue;
         if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC)))
             continue;
-        
+
         string existingSymbol = PositionGetString(POSITION_SYMBOL);
         ENUM_POSITION_TYPE existingType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
         string existingComment = PositionGetString(POSITION_COMMENT);
         string existingClusterCode = "N";
         CRiskClusterCodec::ParseClusterCodeFromComment(existingComment, existingClusterCode);
         existingClusterCode = CRiskClusterCodec::NormalizeClusterCode(existingClusterCode);
-        
+
         if(existingClusterCode == "N" && existingSymbol == request.symbol)
             existingClusterCode = requestClusterCode;
-        
+
         if(m_clusterMutexEnabled && existingSymbol == request.symbol)
         {
             bool oppositeDirection = ((request.orderType == ORDER_TYPE_BUY && existingType == POSITION_TYPE_SELL) ||
@@ -1288,7 +1288,7 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
             {
                 // Feed the cooldown cache so the next opposing conflict is blocked without a scan.
                             m_opposingGuard.RegisterConflict(request.symbol);
-                
+
                 message = StringFormat("Opposing same-symbol cluster conflict (request=%s existing=%s ticket=%I64u)",
                                        requestClusterCode, existingClusterCode, ticket);
                 PrintFormat("[RISK-MUTEX-BLOCK] symbol=%s | request_cluster=%s | existing_cluster=%s | request_side=%s | existing_side=%s | ticket=%I64u",
@@ -1301,21 +1301,21 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
                 return false;
             }
         }
-        
+
         if(existingClusterCode == requestClusterCode)
         {
             clusterOpenPositions++;
             clusterOpenRiskPercent += m_host.EstimatePositionRiskPercent(ticket);
         }
     }
-    
+
     int projectedPositions = clusterOpenPositions + 1;
     double projectedRisk = clusterOpenRiskPercent + MathMax(0.0, tradeRiskPercent);
-    
+
     // Per-cluster risk cap first, global default only as the fallback.
     double effectiveClusterRiskCap = m_clusterBudget.GetClusterRiskCap(requestClusterCode,
                                                                        m_maxClusterRiskPercent);
-    
+
     PrintFormat("[RISK-CLUSTER] cluster=%s | open_positions=%d | projected_positions=%d | open_risk=%.2f%% | projected_risk=%.2f%% | caps=%d/%.2f%%",
                 requestClusterCode,
                 clusterOpenPositions,
@@ -1324,21 +1324,21 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
                 projectedRisk,
                 m_maxConcurrentPerCluster,
                 effectiveClusterRiskCap);
-    
+
     if(projectedPositions > m_maxConcurrentPerCluster)
     {
         message = StringFormat("Cluster position cap exceeded (%d > %d) for cluster %s",
                                projectedPositions, m_maxConcurrentPerCluster, requestClusterCode);
         return false;
     }
-    
+
     if(projectedRisk > effectiveClusterRiskCap)
     {
         message = StringFormat("Cluster risk cap exceeded (%.2f%% > %.2f%%) for cluster %s",
                                projectedRisk, effectiveClusterRiskCap, requestClusterCode);
         return false;
     }
-    
+
     return true;
 }
 
@@ -1366,18 +1366,18 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
 
     ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
     bool isHedging = (marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
-    
+
     double marginRequired = 0.0;
     double currentPriceLocal = (request.orderType == ORDER_TYPE_BUY) ?
                               SymbolInfoDouble(request.symbol, SYMBOL_ASK) :
                               SymbolInfoDouble(request.symbol, SYMBOL_BID);
-    
+
     if(!OrderCalcMargin(request.orderType, request.symbol, request.lotSize, currentPriceLocal, marginRequired))
     {
         message = "Unable to calculate margin requirement";
         return false;
     }
-    
+
     // Netting mode: an opposite position nets the order out, so margin is re-asked for the net volume; the loop breaks
     // on the first one. Margin is checked on request.lotSize, not the adjustedLotSize the lot floor may still raise below.
     if(!isHedging)
@@ -1388,13 +1388,13 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0) continue;
             if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
-            
+
             string posSymbol = PositionGetString(POSITION_SYMBOL);
             if(posSymbol != request.symbol) continue;
-            
+
             ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             ENUM_POSITION_TYPE reqType = (request.orderType == ORDER_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-            
+
             if(posType != reqType)
             {
                 double existingVolume = PositionGetDouble(POSITION_VOLUME);
@@ -1421,8 +1421,8 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
             }
         }
     }
-    
-    return m_marginHealth.CheckFreeMarginAndLevel(marginRequired, isHedging, message);
+
+    return m_marginHealth.CheckFreeMarginAndLevel(request.symbol, request.orderType, request.lotSize, marginRequired, isHedging, message);
 }
 
 bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
@@ -1440,7 +1440,7 @@ bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationReques
         message = StringFormat("Account balance too low: %.2f", accountBalanceLocal2);
         return false;
     }
-    
+
     // Drawdown state comes from the host (CUnifiedRiskManager::GetDrawdownState); only isCriticalActive vetoes here.
     SDrawdownState ddState = m_host.GetDrawdownState();
     if(ddState.isCriticalActive)
@@ -1449,13 +1449,13 @@ bool CRiskValidationPipeline::ValidateAccountHealth(const STradeValidationReques
                                ddState.currentDrawdownPct);
         return false;
     }
-    
+
     if(m_portfolioRiskManager.IsEmergencyMode())
     {
         message = "Emergency mode active - trading suspended";
         return false;
     }
-    
+
     return true;
 }
 

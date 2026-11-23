@@ -33,7 +33,7 @@ class CIndicatorManager
 private:
    // Singleton instance
    static CIndicatorManager *m_instance;
-   
+
    // Structure to hold indicator handle information
    struct IndicatorHandle
    {
@@ -45,16 +45,16 @@ private:
       int            paramCount;    // Number of meaningful params
       int            parameters[5]; // Store common parameters
    };
-   
+
    IndicatorHandle   m_handles[];   // Array of handles
-   
+
                      CIndicatorManager() {}; // Private constructor
                      ~CIndicatorManager();  // Destructor
-   
+
 public:
    static CIndicatorManager *Instance();
    static void              DestroyInstance();
-   
+
    // Get a handle for an indicator, creating it if needed
    int               GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int ma_shift, ENUM_MA_METHOD ma_method, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
@@ -65,19 +65,19 @@ public:
    int               GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_APPLIED_VOLUME applied_volume = VOLUME_TICK);
    int               GetStochasticHandle(string symbol, ENUM_TIMEFRAMES tf, int period_k, int period_d, int period_slow, ENUM_MA_METHOD ma_method, ENUM_STO_PRICE price_field);
-   
+
    // General method to access a handle
    int               GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
-   
+
    // Mark a handle as accessed
    void              AccessHandle(int handle);
-   
+
    // Release handles that haven't been accessed for a while
    void              ReleaseUnused(int maxAge = 300); // 5 minutes
-   
+
    // Release all handles for cleanup
    void              ReleaseAll();
-   
+
    // Find an existing handle
    int               FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
 
@@ -185,7 +185,7 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
                paramsMatch = false;
             }
          }
-         
+
          if(paramsMatch)
             return m_handles[i].handle;
       }
@@ -743,17 +743,17 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
          if(ArraySize(params) >= 2)
             return GetRSIHandle(symbol, tf, params[0], (ENUM_APPLIED_PRICE)params[1]);
          break;
-         
+
       case INDICATOR_MA:
          if(ArraySize(params) >= 4)
             return GetMAHandle(symbol, tf, params[0], params[1], (ENUM_MA_METHOD)params[2], (ENUM_APPLIED_PRICE)params[3]);
          break;
-         
+
       case INDICATOR_ATR:
          if(ArraySize(params) >= 1)
             return GetATRHandle(symbol, tf, params[0]);
          break;
-         
+
       case INDICATOR_MACD:
          if(ArraySize(params) >= 4)
             return GetMACDHandle(symbol, tf, params[0], params[1], params[2], (ENUM_APPLIED_PRICE)params[3]);
@@ -778,10 +778,10 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
          if(ArraySize(params) >= 1)
             return GetVolumesHandle(symbol, tf, (ENUM_APPLIED_VOLUME)params[0]);
          break;
-         
+
       // Add other indicator types as needed
    }
-   
+
    return INVALID_HANDLE;
 }
 

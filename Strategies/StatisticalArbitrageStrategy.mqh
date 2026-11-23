@@ -23,8 +23,8 @@ struct SStatArbSignal
     double exitZScore;                  // exit target z-score (reversion to the mean)
     double confidence;
     string reason;
-    
-    SStatArbSignal() : 
+
+    SStatArbSignal() :
         direction(TRADE_SIGNAL_NONE),
         leg1Symbol(""),
         leg2Symbol(""),
@@ -48,42 +48,42 @@ private:
     double m_slZBuffer;             // adverse SL distance in z (sigma)
 
     datetime m_lastSignalBar;
-    
+
     string m_activeLeg1Symbol;
     string m_activeLeg2Symbol;
     double m_activeSpreadMean;
     double m_activeSpreadStdDev;
     datetime m_pairLastUpdateTime;
-    
+
         CPythonBridge* m_pythonBridge;
-    
+
         // OU engine: mean-reversion-aware z-scores
         COrnsteinUhlenbeckEngine* m_ouEngine;
-    
+
     double GetValidatedMinLot(const string symbol)
     {
         double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         if(minLot <= 0.0 || !MathIsValidNumber(minLot))
         {
-            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_MIN for %s (returned %.6f), using fallback 0.01", 
+            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_MIN for %s (returned %.6f), using fallback 0.01",
                        symbol, minLot);
             minLot = 0.01;  // Safe fallback
         }
         return minLot;
     }
-    
+
     double GetValidatedLotStep(const string symbol)
     {
         double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
         if(lotStep <= 0.0 || !MathIsValidNumber(lotStep))
         {
-            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_STEP for %s (returned %.6f), using fallback 0.01", 
+            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_STEP for %s (returned %.6f), using fallback 0.01",
                        symbol, lotStep);
             lotStep = 0.01;  // Safe fallback
         }
         return lotStep;
     }
-    
+
 public:
     CStatisticalArbitrageStrategy(const string name = "Statistical Arbitrage v1.0", int magic = 0) :
         CStrategyBase(name, magic),
@@ -105,12 +105,12 @@ public:
         m_strategyPrefix = "STATARB";
         m_minConfidence = 0.70; // High threshold for stat arb (complex strategy)
     }
-    
+
     ~CStatisticalArbitrageStrategy()
     {
         Cleanup();
     }
-    
+
         void Cleanup()
         {
             // CIndicatorManager owns the indicator handles centrally - no manual release
@@ -119,83 +119,83 @@ public:
             m_pythonBridge = NULL;
             m_ouEngine = NULL;
         }
-    
+
     // Injects the OU engine used for mean-reversion-aware z-scores
     void SetOUEngine(COrnsteinUhlenbeckEngine* ouEngine) { m_ouEngine = ouEngine; }
-    
+
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
-        
+
         // Stat arb trades spreads between two instruments: it holds no indicator handles
         // on the chart symbol.
-        
+
         // Python Bridge and OU engine are injected by the EA after construction via
         // SetPythonBridge() / SetOUEngine(); without them the strategy rejects signals.
                 if(m_pythonBridge == NULL)
                     Print("[STATARB] WARNING: Python Bridge not set - call SetPythonBridge() from EA initialization");
                 if(m_ouEngine == NULL)
                     Print("[STATARB] WARNING: OU Engine not set - call SetOUEngine() from EA initialization");
-        
+
         PrintFormat("[STATARB] Initialized | Entry_Z=%.1f | Exit_Z=%.1f | Lookback=%d | Min_Corr=%.2f",
                    m_entryZThreshold, m_exitZThreshold, m_lookbackPeriods, m_minCorrelation);
         Print("[STATARB] NOTE: Requires Python Bridge for real-time correlation matrix");
-        
+
         return true;
     }
-    
+
     virtual void Deinit() override
     {
         Cleanup();
         CStrategyBase::Deinit();
     }
-    
+
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(!IsEnabled() || !m_is_initialized)
             return;
         if(symbol != m_symbol || timeframe != m_timeframe)
             return;
-        
+
         int currentBar = iBars(m_symbol, m_timeframe);
         if(currentBar == m_lastSignalBar)
             return;
         m_lastSignalBar = currentBar;
-        
+
         UpdateCorrelationMatrix();
     }
-    
+
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
         SetDecisionReasonTag("STATARB_UNSET");
-        
+
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("STATARB_DISABLED_OR_UNINIT");
-        
+
         if(!IsPythonBridgeAvailable())
         {
             return RejectSignal("STATARB_PYTHON_BRIDGE_UNAVAILABLE");
         }
-        
+
         string leg1Symbol = m_symbol;
         string leg2Symbol = FindBestCorrelatedPair(leg1Symbol);
-        
+
         if(leg2Symbol == "")
         {
             return RejectSignal("STATARB_NO_CORRELATED_PAIR");
         }
-        
+
         double spreadMean, spreadStdDev;
         if(!CalculateSpreadStatistics(leg1Symbol, leg2Symbol, spreadMean, spreadStdDev))
         {
             return RejectSignal("STATARB_SPREAD_CALC_FAILED");
         }
-        
+
         double currentSpread = GetCurrentSpread(leg1Symbol, leg2Symbol);
         double zScore = (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0;
-        
+
         // OU-adjusted z-score only when the engine is warmed up and sees mean reversion
         if(m_ouEngine != NULL && m_ouEngine.IsWarmedUp() && m_ouEngine.IsMeanReverting())
         {
@@ -210,133 +210,68 @@ public:
                            ouZScore, ouQuality, zScore);
             }
         }
-        
+
         // OU half-life filter: only trade if mean reversion speed is reasonable
         if(!ValidHalfLife())
         {
             return RejectSignal("STATARB_HALF_LIFE_INVALID");
         }
-        
+
         SStatArbSignal signal = DetectStatArbSignal(
             leg1Symbol, leg2Symbol,
             zScore, spreadMean, spreadStdDev
         );
-        
+
         if(signal.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("STATARB_NO_SIGNAL");
-        
+
         if(signal.confidence < m_minConfidence)
         {
-            PrintFormat("[STATARB] Low confidence | %.1f%% < %.1f%%", 
+            PrintFormat("[STATARB] Low confidence | %.1f%% < %.1f%%",
                        signal.confidence * 100, m_minConfidence * 100);
             return RejectSignal("STATARB_LOW_CONFIDENCE");
         }
-        
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-                CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
-                if(riskMgr != NULL)
-                {
-                    // Validate primary leg through risk manager
-                    double minLot = GetValidatedMinLot(m_symbol);
-                    STradeValidationRequest validationReq;
-                    ZeroMemory(validationReq);
-                    validationReq.symbol = m_symbol;
-                    validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    validationReq.lotSize = minLot;
-                    // These proposed stops reach the execution path. SL/TP are derived from the
-                    // spread's own sigma, not fixed pips: adverse move = m_slZBuffer sigma,
-                    // target = reversion to the exit z-threshold, so R:R stays above the
-                    // mean-reversion floor.
-                    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-                    if(point <= 0) point = 0.00001;
-                    double spreadStdDevPips = (spreadStdDev > 0) ? (spreadStdDev / point) : 0.0;
-                    if(spreadStdDevPips <= 0) spreadStdDevPips = 50.0;  // fallback if sigma unknown
-                    double tpZ = MathAbs(zScore) - m_exitZThreshold;    // reversion distance to exit
-                    if(tpZ < 0.5) tpZ = 0.5;
-                    validationReq.stopLossPips = m_slZBuffer * spreadStdDevPips;
-                    validationReq.takeProfitPips = tpZ * spreadStdDevPips;
-                    validationReq.confidence = signal.confidence;
-                    validationReq.strategy = m_name;
-                    validationReq.requestTime = TimeCurrent();
 
-                    SetProposedStops(validationReq.stopLossPips, validationReq.takeProfitPips);
-                    SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq, "STATARB", "", false);
-                    if(!validationResult.approved)
-                    {
-                        SetDecisionReasonTag("STATARB_RISK_REJECTED");
-                        PrintFormat("[STATARB] Risk rejected %s spread (Z=%.2f Conf=%.1f%%) | %s",
-                                   signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
-                                   signal.zScore, signal.confidence * 100, validationResult.message);
-                        return TRADE_SIGNAL_NONE;
-                    }
-
-                    double minLot2 = GetValidatedMinLot(signal.leg2Symbol);
-                    double lotStep2 = GetValidatedLotStep(signal.leg2Symbol);
-                    signal.leg1LotSize = minLot;
-                    signal.leg2LotSize = MathMax(minLot2,
-                                                  MathFloor(m_hedgeRatio * minLot / lotStep2) * lotStep2);
-                }
-        
-        m_lastSignalBar = iBars(m_symbol, m_timeframe);
-        m_activeLeg1Symbol = leg1Symbol;
-        m_activeLeg2Symbol = leg2Symbol;
-        m_activeSpreadMean = spreadMean;
-        m_activeSpreadStdDev = spreadStdDev;
-        m_pairLastUpdateTime = TimeCurrent();
-        
-        RecordSignal();
-        SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "STATARB_SIGNAL_LONG_SPREAD" : "STATARB_SIGNAL_SHORT_SPREAD");
-        confidence = signal.confidence;
-        
-        // [CONSENSUS-DIAG] log required by AGENTS.md §6
-        PrintFormat("[CONSENSUS-DIAG] %s+%s | %s Spread | Z=%.2f | Corr=%.2f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   leg1Symbol, leg2Symbol,
-                   signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
-                   signal.zScore,
-                   GetPairCorrelation(leg1Symbol, leg2Symbol),
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
-        
+        // The edge is the spread, but only m_symbol can be sent: leg2 is computed and
+        // discarded, so voting direction would book an unhedged leg with a two-leg stop.
+        // Abstain before the risk gate - its verdict cannot change the outcome, and the
+        // pair statistics above are diagnostics only until a two-leg executor exists.
         PrintFormat("[STATARB] %s+%s: %s Spread | Z=%.2f | Mean=%.5f | StdDev=%.5f | Conf: %.1f%% | %s",
                    leg1Symbol, leg2Symbol,
                    signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
                    signal.zScore,
                    spreadMean, spreadStdDev,
-                   confidence * 100,
+                   signal.confidence * 100,
                    signal.reason);
-        
-        // The edge is the spread, but only m_symbol can be sent: leg2 is computed and
-        // discarded, so voting direction would book an unhedged leg with a two-leg stop.
         PrintFormat("[STATARB-UNHEDGED] %s+%s | signal valid (Z=%.2f Conf=%.1f%%) but leg2 is never sent - abstaining instead of voting a naked %s on %s",
-                   leg1Symbol, leg2Symbol, zScore, confidence * 100,
+                   leg1Symbol, leg2Symbol, zScore, signal.confidence * 100,
                    signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL", m_symbol);
         SetDecisionReasonTag("STATARB_NAKED_LEG");
         return TRADE_SIGNAL_NONE;
     }
-    
+
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_STATISTICAL_ARBITRAGE; }
-    
+
     // Set Python Bridge reference (called by EA during initialization)
     void SetPythonBridge(CPythonBridge* bridge)
     {
         m_pythonBridge = bridge;
     }
-    
+
 private:
     bool IsPythonBridgeAvailable()
     {
         if(m_pythonBridge == NULL)
             return false;
-        
+
         return m_pythonBridge.IsConnected();
     }
-    
+
     void UpdateCorrelationMatrix()
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return;
-        
+
         double corrMatrix[];
         int size;
         string corrSymbols[];
@@ -346,16 +281,16 @@ private:
             PrintFormat("[STATARB] Correlation matrix updated | Size=%dx%d | Symbols=%d", size, size, ArraySize(corrSymbols));
         }
     }
-    
+
     // Returns "" unless a pair correlates at least m_minCorrelation
     string FindBestCorrelatedPair(const string symbol)
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return "";
-        
+
         string bestPair;
         double correlation;
-        
+
         if(m_pythonBridge.FindBestCorrelatedPair(symbol, bestPair, correlation))
         {
             if(correlation >= m_minCorrelation)
@@ -364,19 +299,19 @@ private:
                 return bestPair;
             }
         }
-        
+
         return "";
     }
-    
+
     double GetPairCorrelation(const string symbol1, const string symbol2)
     {
         if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return 0.0;
-        
+
         return m_pythonBridge.GetPairCorrelation(symbol1, symbol2);
     }
-    
-    bool CalculateSpreadStatistics(const string leg1, const string leg2, 
+
+    bool CalculateSpreadStatistics(const string leg1, const string leg2,
                                    double &mean, double &stdDev)
     {
         // CopyClose into a static array fills OLDEST-first ([0]=oldest); dynamic arrays +
@@ -389,44 +324,50 @@ private:
         {
             return false;
         }
-        
+
         double spreads[];
         ArrayResize(spreads, m_lookbackPeriods);
-        
+
         for(int i = 0; i < m_lookbackPeriods; i++)
         {
-            // With AS_SERIES=true, [i] = i bars ago from the last closed bar
-            spreads[i] = prices1[i] - (prices2[i] * m_hedgeRatio);
+            // With AS_SERIES=true, [i] = i bars ago from the last closed bar.
+            // Log-price spread: a raw price1 - price2*ratio difference is dominated by the
+            // two instruments' price levels, not by the cointegrated relationship.
+            if(prices1[i] <= 0.0 || prices2[i] <= 0.0)
+                return false;
+            spreads[i] = MathLog(prices1[i]) - MathLog(prices2[i] * m_hedgeRatio);
         }
-        
+
         mean = 0;
         for(int i = 0; i < m_lookbackPeriods; i++)
             mean += spreads[i];
         mean /= m_lookbackPeriods;
-        
+
         double variance = 0;
         for(int i = 0; i < m_lookbackPeriods; i++)
             variance += MathPow(spreads[i] - mean, 2);
         variance /= m_lookbackPeriods;
         stdDev = MathSqrt(variance);
-        
+
         return true;
     }
-    
+
     double GetCurrentSpread(const string leg1, const string leg2)
     {
         double price1 = iClose(leg1, PERIOD_CURRENT, 1);
         double price2 = iClose(leg2, PERIOD_CURRENT, 1);
-        
-        return price1 - (price2 * m_hedgeRatio);
+        if(price1 <= 0.0 || price2 <= 0.0)
+            return 0.0;
+
+        return MathLog(price1) - MathLog(price2 * m_hedgeRatio);
     }
-    
+
     SStatArbSignal DetectStatArbSignal(
         const string leg1, const string leg2,
         double zScore, double spreadMean, double spreadStdDev)
     {
         SStatArbSignal signal;
-        
+
         // Long spread: Z-score < -entry threshold (spread is too low, expect mean reversion up)
         if(zScore < -m_entryZThreshold)
         {
@@ -441,13 +382,13 @@ private:
             signal.confidence = 0.70 + MathAbs(zScore + m_entryZThreshold) * 0.05;
             signal.confidence = MathMin(0.95, signal.confidence);
             signal.reason = StringFormat("Spread undervalued | Z=%.2f < -%.1f", zScore, m_entryZThreshold);
-            
+
             PrintFormat("[STATARB-SIGNAL] LONG spread | %s-%s | Z=%.2f < -%.1f",
                        leg1, leg2, zScore, m_entryZThreshold);
-            
+
             return signal;
         }
-        
+
         // Short spread: Z-score > +entry threshold (spread is too high, expect mean reversion down)
         if(zScore > m_entryZThreshold)
         {
@@ -462,36 +403,36 @@ private:
             signal.confidence = 0.70 + MathAbs(zScore - m_entryZThreshold) * 0.05;
             signal.confidence = MathMin(0.95, signal.confidence);
             signal.reason = StringFormat("Spread overvalued | Z=%.2f > +%.1f", zScore, m_entryZThreshold);
-            
+
             PrintFormat("[STATARB-SIGNAL] SHORT spread | %s-%s | Z=%.2f > +%.1f",
                        leg1, leg2, zScore, m_entryZThreshold);
-            
+
             return signal;
         }
-        
+
         return signal;
     }
-    
+
     // Validates and logs the pair intent only - CTradeManager owns order execution
         bool ExecutePairTrade(const string symbol1, const string symbol2, double hedgeRatio, ENUM_TRADE_SIGNAL direction)
         {
             CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
             if(riskMgr == NULL)
                 return false;
-        
+
             double lot1 = GetValidatedMinLot(symbol1);
             double minLot2 = GetValidatedMinLot(symbol2);
             double lotStep2 = GetValidatedLotStep(symbol2);
             double lot2 = MathMax(minLot2, MathFloor(hedgeRatio * lot1 / lotStep2) * lotStep2);
-        
+
             PrintFormat("[STATARB-PAIR] Executing pair | %s %.2f %s + %s %.2f %s | Hedge=%.2f",
                        symbol1, lot1, direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                        symbol2, lot2, direction == TRADE_SIGNAL_BUY ? "SELL" : "BUY",
                        hedgeRatio);
-        
+
             return true;
         }
-    
+
     // OU half-life filter: reversion speed must sit inside the 2.0 - 20.0 band
     bool ValidHalfLife()
     {
@@ -502,11 +443,11 @@ private:
             return true;
         if(!m_ouEngine.IsWarmedUp())
             return false;
-        
+
         double halfLife = m_ouEngine.GetHalfLife();
         return (halfLife >= 2.0 && halfLife <= 20.0);
     }
-    
+
     // Cointegration stand-in: both paths gate on the Python correlation matrix, so a pair
     // needs correlation >= m_minCorrelation. No cointegration test is actually run here.
     bool IsCointegrated(const string symbol1, const string symbol2)
@@ -516,7 +457,7 @@ private:
             double correlation = GetPairCorrelation(symbol1, symbol2);
             return correlation >= m_minCorrelation;
         }
-        
+
         double correlation = GetPairCorrelation(symbol1, symbol2);
         return correlation >= m_minCorrelation;
     }

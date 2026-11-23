@@ -1,4 +1,4 @@
-// ATR indicator handle lifecycle per symbol plus the L10-017
+// ATR indicator handle lifecycle per symbol plus
 // incremental ATR/EMA refresh used by the grid recovery engine.
 // Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
@@ -63,7 +63,7 @@ public:
 
       state.currentATR = atrBuf[0];
 
-      // L10-017: Use incremental EMA instead of full CopyBuffer loop for efficiency
+      // Use incremental EMA instead of full CopyBuffer loop for efficiency
       // EMA formula: EMA_today = alpha * value_today + (1 - alpha) * EMA_yesterday
       // alpha = 2 / (period + 1)
       const int atrEmaPeriod = 50;

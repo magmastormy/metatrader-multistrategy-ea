@@ -19,7 +19,7 @@ class CLabelEncoder
 private:
     int m_numClasses;
     int m_classLabels[];
-    
+
 public:
     CLabelEncoder() : m_numClasses(3)
     {
@@ -28,7 +28,7 @@ public:
         m_classLabels[1] = 0;
         m_classLabels[2] = 1;
     }
-    
+
     int EncodeLabel(const int rawLabel)
     {
         for(int i = 0; i < m_numClasses; i++)
@@ -38,29 +38,29 @@ public:
         }
         return 1;
     }
-    
+
     int DecodeLabel(const int encodedLabel)
     {
         if(encodedLabel >= 0 && encodedLabel < m_numClasses)
             return m_classLabels[encodedLabel];
         return 0;
     }
-    
+
     void OneHotEncode(const int label, double &oneHot[])
     {
         ArrayResize(oneHot, m_numClasses);
         ArrayInitialize(oneHot, 0.0);
-        
+
         int encoded = EncodeLabel(label);
         if(encoded >= 0 && encoded < m_numClasses)
             oneHot[encoded] = 1.0;
     }
-    
+
     int ArgMax(const double &probabilities[], const int size)
     {
         int maxIdx = 0;
         double maxVal = probabilities[0];
-        
+
         for(int i = 1; i < size; i++)
         {
             if(probabilities[i] > maxVal)
@@ -69,10 +69,10 @@ public:
                 maxIdx = i;
             }
         }
-        
+
         return maxIdx;
     }
-    
+
     int GetNumClasses() const { return m_numClasses; }
 };
 

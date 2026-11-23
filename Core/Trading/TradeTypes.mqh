@@ -71,10 +71,10 @@ struct SAsyncTradeRequest
     bool expired;           // Whether the request timed out
     string comment;         // Trade comment
     STradeExecutionReceipt executionReceipt;  // Execution details
-    
+
     // FIX: Idempotency key for deduplication (UUID)
     string idempotencyKey;  // Unique key to detect duplicate submissions
-    
+
     // FIX: Persistence fields
     int retryCount;         // Number of retry attempts
     bool persisted;         // Whether this request has been persisted to CSV

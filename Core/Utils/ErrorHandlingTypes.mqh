@@ -23,7 +23,7 @@ struct SRetryConfig
     int retryDelay;          // Delay between retries in milliseconds
     bool exponentialBackoff; // Use exponential backoff for delays
     int maxDelayMs;          // Maximum delay in milliseconds
-    
+
     SRetryConfig() : maxRetries(3), retryDelay(100), exponentialBackoff(false), maxDelayMs(30000) {}
 };
 
@@ -80,9 +80,9 @@ struct SErrorAggregation
     ENUM_ERROR_SEVERITY maxSeverity;
     string lastComponent;
     string lastMessage;
-    
-    SErrorAggregation() : 
-        errorCode(0), count(0), firstOccurrence(0), lastOccurrence(0), 
+
+    SErrorAggregation() :
+        errorCode(0), count(0), firstOccurrence(0), lastOccurrence(0),
         maxSeverity(ERROR_INFO), lastComponent(""), lastMessage("") {}
 };
 
@@ -115,7 +115,7 @@ struct SErrorContext
     string additionalInfo;      // Additional context information
     datetime timestamp;         // Error timestamp
     ENUM_ERROR_SEVERITY severity;
-    
+
     SErrorContext() :
         component(""), operation(""), symbol(""), errorCode(0),
         additionalInfo(""), timestamp(0), severity(ERROR_INFO) {}
@@ -133,7 +133,7 @@ struct SComponentHealth
     string statusMessage;
     datetime lastErrorTime;
     ENUM_ERROR_SEVERITY lastErrorSeverity;
-    
+
     SComponentHealth() :
         componentName(""), status(COMPONENT_HEALTHY), errorCount(0), warningCount(0),
         lastError(0), lastHealthCheck(0), performanceScore(0.0), statusMessage(""),

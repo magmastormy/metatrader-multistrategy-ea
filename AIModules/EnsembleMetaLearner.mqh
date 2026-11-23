@@ -52,7 +52,7 @@ public:
         for(int i = 0; i < HMM_STATES; i++)
             m_pi[i] = 1.0 / (double)HMM_STATES;
         m_lastRegime = 2;
-        
+
         // Initialize transition learning
         for(int i = 0; i < HMM_STATES; i++)
         {
@@ -64,38 +64,38 @@ public:
         m_learningRate = 0.01;
         m_updateCounter = 0;
     }
-    
+
     void SetLearningEnabled(const bool enabled)
     {
         m_learningEnabled = enabled;
     }
-    
+
     void SetLearningRate(const double rate)
     {
         m_learningRate = MathMax(0.001, MathMin(0.1, rate));
     }
-    
+
     void UpdateTransitionMatrix()
     {
         if(!m_learningEnabled)
             return;
-        
+
         for(int i = 0; i < HMM_STATES; i++)
         {
             if(m_stateVisitCount[i] == 0)
                 continue;
-            
+
             for(int j = 0; j < HMM_STATES; j++)
             {
                 double observed = (double)m_transitionCount[i][j] / (double)m_stateVisitCount[i];
                 m_A[i][j] = (1.0 - m_learningRate) * m_A[i][j] + m_learningRate * observed;
             }
-            
+
             // Normalize row to ensure valid probability distribution
             double rowSum = 0.0;
             for(int j = 0; j < HMM_STATES; j++)
                 rowSum += m_A[i][j];
-            
+
             if(rowSum > 1e-12)
             {
                 for(int j = 0; j < HMM_STATES; j++)
@@ -128,7 +128,7 @@ public:
             for(int j = 0; j < HMM_STATES; j++)
                 m_pi[j] = newPi[j] / scale;
         }
-        
+
         // Track state transitions for learning
         if(m_learningEnabled)
         {
@@ -137,7 +137,7 @@ public:
             m_stateVisitCount[m_lastRegime]++;
             bool regimeChanged = (detectedRegime != m_lastRegime);
             m_lastRegime = detectedRegime;
-            
+
             // Update transition matrix periodically
             m_updateCounter++;
             if(m_updateCounter >= 100)
@@ -145,7 +145,7 @@ public:
                 UpdateTransitionMatrix();
                 m_updateCounter = 0;
             }
-            
+
             if(regimeChanged)
             {
                 int newRegime = m_lastRegime;
@@ -285,12 +285,14 @@ private:
     int                  m_resolvedTradeCount;
     double               m_minConfidence;
 
-    // Per-model per-regime performance tracking for adaptive regime multipliers
+    // Per-model per-regime performance tracking for adaptive regime multipliers. The head is
+    // per (model, regime) pair: a single per-model head made regimes share one write cursor, so
+    // each regime's 30-slot region received scattered writes the linear reader never saw.
     #define REGIME_PERF_WINDOW 30
     #define REGIME_PERF_MODELS 8
     #define REGIME_PERF_REGS   4
     double m_regimePerfBuf[REGIME_PERF_MODELS * REGIME_PERF_REGS * REGIME_PERF_WINDOW];
-    int    m_regimePerfHead[REGIME_PERF_MODELS];
+    int    m_regimePerfHead[REGIME_PERF_MODELS * REGIME_PERF_REGS];
     int    m_regimePerfCount[REGIME_PERF_MODELS * REGIME_PERF_REGS];
 
     double ClampValue(const double value, const double minValue, const double maxValue)
@@ -298,6 +300,11 @@ private:
         return MathMax(minValue, MathMin(maxValue, value));
     }
 
+    // Runs on every ProcessMarketData call, so it must be idempotent: only slots BEYOND the
+    // previous size are initialized. The old version re-initialized every model's rolling ring
+    // and ArrayInitialize'd the whole regime buffer on each call while leaving the count arrays
+    // untouched - rolling stats were then recomputed over zeroed slots (winRate collapsed) and
+    // the regime buffer could never hold a nonzero value (adaptive multiplier pinned at 1.0).
     void EnsureModelArrays()
     {
         int total = m_models.Total();
@@ -314,18 +321,40 @@ private:
         ArrayResize(m_lastModelSignal, total);
         ArrayResize(m_lastModelConfidence, total);
 
-        // Per-regime performance tracking
-        for(int i = oldSize; i < total && i < REGIME_PERF_MODELS; i++)
+        for(int i = oldSize; i < total; i++)
         {
-            m_regimePerfHead[i] = 0;
-            for(int r = 0; r < REGIME_PERF_REGS; r++)
-                m_regimePerfCount[i * REGIME_PERF_REGS + r] = 0;
-        }
-        ArrayInitialize(m_regimePerfBuf, 0.0);
+            m_modelPerformanceHistory[i] = 0.5;
+            m_modelRecentAccuracy[i] = 0.5;
+            m_modelWinRate[i] = 0.5;
+            m_modelAvgWin[i] = 1.0;
+            m_modelAvgLoss[i] = 1.0;
+            if(m_modelWeights[i] <= 0.0)
+                m_modelWeights[i] = (total > 0) ? (1.0 / (double)total) : 0.0;
+            m_modelRollHead[i] = 0;
+            m_modelRollCount[i] = 0;
+            for(int j = 0; j < ENSEMBLE_ROLLING_WINDOW; j++)
+                m_modelRollResults[i][j] = 0.0;
+            m_lastModelSignal[i] = 0;
+            m_lastModelConfidence[i] = 0.0;
 
-        for(int i = 0; i < total; i++)
+            if(i < REGIME_PERF_MODELS)
+            {
+                for(int r = 0; r < REGIME_PERF_REGS; r++)
+                {
+                    int slotIdx = i * REGIME_PERF_REGS + r;
+                    m_regimePerfHead[slotIdx] = 0;
+                    m_regimePerfCount[slotIdx] = 0;
+                    int bufBase = slotIdx * REGIME_PERF_WINDOW;
+                    for(int w = 0; w < REGIME_PERF_WINDOW; w++)
+                        m_regimePerfBuf[bufBase + w] = 0.0;
+                }
+            }
+        }
+
+        // Existing slots keep their accumulated state; only fill still-unset scalar defaults.
+        for(int i = 0; i < oldSize && i < total; i++)
         {
-            if(i >= ArraySize(m_modelPerformanceHistory) || m_modelPerformanceHistory[i] == 0.0)
+            if(m_modelPerformanceHistory[i] == 0.0)
                 m_modelPerformanceHistory[i] = 0.5;
             if(m_modelRecentAccuracy[i] <= 0.0)
                 m_modelRecentAccuracy[i] = 0.5;
@@ -337,8 +366,6 @@ private:
                 m_modelAvgLoss[i] = 1.0;
             if(m_modelWeights[i] <= 0.0)
                 m_modelWeights[i] = (total > 0) ? (1.0 / (double)total) : 0.0;
-            for(int j = 0; j < ENSEMBLE_ROLLING_WINDOW; j++)
-                m_modelRollResults[i][j] = 0.0;
         }
     }
 
@@ -480,6 +507,54 @@ public:
             return false;
         if(!m_models.Delete(index))
             return false;
+
+        // CArrayObj::Delete shifts later elements down, so every parallel stat array must shift
+        // with it or each surviving model inherits its neighbour's performance record.
+        int total = m_models.Total();
+        for(int i = index; i < total; i++)
+        {
+            m_modelWeights[i] = m_modelWeights[i + 1];
+            m_modelPerformanceHistory[i] = m_modelPerformanceHistory[i + 1];
+            m_modelRecentAccuracy[i] = m_modelRecentAccuracy[i + 1];
+            m_modelWinRate[i] = m_modelWinRate[i + 1];
+            m_modelAvgWin[i] = m_modelAvgWin[i + 1];
+            m_modelAvgLoss[i] = m_modelAvgLoss[i + 1];
+            m_modelRollHead[i] = m_modelRollHead[i + 1];
+            m_modelRollCount[i] = m_modelRollCount[i + 1];
+            for(int j = 0; j < ENSEMBLE_ROLLING_WINDOW; j++)
+                m_modelRollResults[i][j] = m_modelRollResults[i + 1][j];
+            m_lastModelSignal[i] = m_lastModelSignal[i + 1];
+            m_lastModelConfidence[i] = m_lastModelConfidence[i + 1];
+        }
+
+        // Regime perf regions are addressed by model index too; shift whole (model, regime) blocks.
+        if(index < REGIME_PERF_MODELS)
+        {
+            for(int mi = index; mi < REGIME_PERF_MODELS - 1; mi++)
+            {
+                for(int r = 0; r < REGIME_PERF_REGS; r++)
+                {
+                    int dst = mi * REGIME_PERF_REGS + r;
+                    int src = (mi + 1) * REGIME_PERF_REGS + r;
+                    m_regimePerfHead[dst] = m_regimePerfHead[src];
+                    m_regimePerfCount[dst] = m_regimePerfCount[src];
+                    int dstBase = dst * REGIME_PERF_WINDOW;
+                    int srcBase = src * REGIME_PERF_WINDOW;
+                    for(int w = 0; w < REGIME_PERF_WINDOW; w++)
+                        m_regimePerfBuf[dstBase + w] = m_regimePerfBuf[srcBase + w];
+                }
+            }
+            // Clear the tail model's regions so a re-added model starts clean.
+            for(int r = 0; r < REGIME_PERF_REGS; r++)
+            {
+                int tail = (REGIME_PERF_MODELS - 1) * REGIME_PERF_REGS + r;
+                m_regimePerfHead[tail] = 0;
+                m_regimePerfCount[tail] = 0;
+                int tailBase = tail * REGIME_PERF_WINDOW;
+                for(int w = 0; w < REGIME_PERF_WINDOW; w++)
+                    m_regimePerfBuf[tailBase + w] = 0.0;
+            }
+        }
 
         EnsureModelArrays();
         return true;
@@ -636,17 +711,19 @@ public:
             m_modelRollCount[modelIndex]++;
         RecomputeRollingStats(modelIndex);
 
-        // Track per-regime performance
+        // Track per-regime performance. Head and count are per (model, regime): the reader in
+        // GetAdaptiveRegimeMultiplier walks this regime's own region linearly, so writes must
+        // stay inside it.
         int regime = (int)m_lastDetectedRegime;
         if(regime >= 0 && regime < REGIME_PERF_REGS && modelIndex < REGIME_PERF_MODELS)
         {
-            int base = modelIndex * REGIME_PERF_REGS * REGIME_PERF_WINDOW + regime * REGIME_PERF_WINDOW;
-            int rSlot = m_regimePerfHead[modelIndex] % REGIME_PERF_WINDOW;
+            int perfSlot = modelIndex * REGIME_PERF_REGS + regime;
+            int base = perfSlot * REGIME_PERF_WINDOW;
+            int rSlot = m_regimePerfHead[perfSlot] % REGIME_PERF_WINDOW;
             m_regimePerfBuf[base + rSlot] = result;
-            m_regimePerfHead[modelIndex]++;
-            int cntIdx = modelIndex * REGIME_PERF_REGS + regime;
-            if(m_regimePerfCount[cntIdx] < REGIME_PERF_WINDOW)
-                m_regimePerfCount[cntIdx]++;
+            m_regimePerfHead[perfSlot]++;
+            if(m_regimePerfCount[perfSlot] < REGIME_PERF_WINDOW)
+                m_regimePerfCount[perfSlot]++;
         }
     }
 
@@ -891,23 +968,23 @@ public:
     {
         m_hmm.GetProbabilities(out);
     }
-    
+
     // Stub implementations for adapter compatibility
     double GetUncertainty() const
     {
         return 0.5;  // Default uncertainty
     }
-    
+
     bool IsLearningEnabled() const
     {
         return true;  // Always enabled by default
     }
-    
+
     int GetUpdateCount() const
     {
         return 0;  // Not tracked in ensemble
     }
-    
+
     int GetCurrentRegime() const
     {
         return (int)m_lastDetectedRegime;

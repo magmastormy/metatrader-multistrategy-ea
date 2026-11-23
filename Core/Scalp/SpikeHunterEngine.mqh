@@ -44,7 +44,7 @@ private:
 
    int FindFamilyOverrideIndex(const string symbol) const { return m_detector.FindFamilyOverrideIndex(symbol); }
 
-// Effective (override-aware) parameters for a symbol (Batch 102)
+// Effective (override-aware) parameters for a symbol
    double GetEffectiveVelocityMultiplier(int idx) const { return m_detector.GetEffectiveVelocityMultiplier(idx); }
    int    GetEffectiveMinConsecutiveTicks(int idx) const { return m_detector.GetEffectiveMinConsecutiveTicks(idx); }
    double GetEffectiveATRCompressionRatio(int idx) const { return m_detector.GetEffectiveATRCompressionRatio(idx); }
@@ -129,7 +129,7 @@ public:
                   m_totalDetections, m_executor.GetTotalTradesOpened(), m_totalTradesSkipped, m_alerts.GetAlertCount());
    }
 
-// Process a tick for a given symbol �?call every tick
+// Process a tick for a given symbol - call every tick
    void ProcessTick(const string symbol, double bid, double ask)
    {
       int idx = FindSymbolIndex(symbol);
@@ -153,14 +153,14 @@ public:
          return;
       }
 
-      // Spike detected �?record detection time for long-term cooldown
+      // Spike detected - record detection time for long-term cooldown
       m_detector.MarkSpikeDetected(idx);
       m_totalDetections++;
 
       int direction = DetermineSpikeDirection(idx);
       if(direction == 0)
       {
-         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined �?skipping",
+         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined - skipping",
                      symbol, m_detector.GetConfluenceCount(idx));
          m_totalTradesSkipped++;
          return;
@@ -175,7 +175,7 @@ public:
 
       if(!CanOpenSpikeTrade(idx))
       {
-         PrintFormat("[SPIKE-HUNT-SKIP] %s �?cooldown or max positions reached", symbol);
+         PrintFormat("[SPIKE-HUNT-SKIP] %s - cooldown or max positions reached", symbol);
          m_totalTradesSkipped++;
          return;
       }
@@ -200,7 +200,7 @@ public:
 
    const SSpikeHunterConfig GetConfig() const { return m_config; }
 
-// Set family-specific overrides for a symbol (Batch 102)
+// Set family-specific overrides for a symbol
    void SetFamilyOverrides(const string symbol, double velMult, int minTicks, double atrRatio,
                            double slMult, double tpMult, int magicOff, int cooldown, int minConf)
    {

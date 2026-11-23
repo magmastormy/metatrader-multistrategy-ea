@@ -29,7 +29,7 @@ struct TrendState
     bool isAccelerating;        // Trend acceleration
     bool isDecelerating;        // Trend deceleration
     datetime lastUpdate;
-    
+
     TrendState() : type(TREND_NONE), strength(0), angle(0), momentum(0),
                   volatility(0), isAccelerating(false), isDecelerating(false),
                   lastUpdate(0) {}

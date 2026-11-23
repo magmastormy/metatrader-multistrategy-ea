@@ -13,7 +13,7 @@ void CEnhancedErrorHandler::UpdateComponentHealthBySeverity(const string compone
         Print("[ERROR] Cannot update health for empty component name");
         return;
     }
-    
+
     int index = -1;
     for(int i = 0; i < m_componentCount; i++) {
         if(m_componentHealth[i].componentName == component) {
@@ -21,7 +21,7 @@ void CEnhancedErrorHandler::UpdateComponentHealthBySeverity(const string compone
             break;
         }
     }
-    
+
     if(index == -1) {
         if(m_componentCount >= 20) {
             Print("[WARNING] Maximum number of components reached. Cannot track health for: ", component);
@@ -33,36 +33,36 @@ void CEnhancedErrorHandler::UpdateComponentHealthBySeverity(const string compone
         m_componentHealth[index].errorCount = 0;
         m_componentHealth[index].status = COMPONENT_HEALTHY;
     }
-    
+
     m_componentHealth[index].lastErrorTime = TimeCurrent();
     m_componentHealth[index].lastErrorSeverity = severity;
     m_componentHealth[index].errorCount++;
-    
+
     if(severity >= ERROR_CRITICAL) {
         m_componentHealth[index].status = COMPONENT_FAILED;
-    } 
+    }
     else if(severity >= ERROR_RECOVERABLE) {
         if(m_componentHealth[index].status != COMPONENT_FAILED) {
             m_componentHealth[index].status = COMPONENT_DEGRADED;
         }
     }
-    
+
     if(severity >= ERROR_WARNING) {
         int recentErrors = 0;
         datetime timeThreshold = TimeCurrent() - 300;
-        
-        if(m_componentHealth[index].lastError > 0 && 
+
+        if(m_componentHealth[index].lastError > 0 &&
            m_componentHealth[index].lastError > timeThreshold) {
             recentErrors = 1;
         }
-        
+
         if(m_componentHealth[index].errorCount > 0) {
             datetime timeSinceLastError = TimeCurrent() - m_componentHealth[index].lastError;
             if(timeSinceLastError < 30) {
                 recentErrors += m_componentHealth[index].errorCount;
             }
         }
-        
+
         if(recentErrors > 10) {
             m_componentHealth[index].status = COMPONENT_FAILED;
             Print("[WARNING] Component ", component, " marked as FAILED due to error rate (recent errors: ", recentErrors, ")");
@@ -181,13 +181,13 @@ void CEnhancedErrorHandler::GetErrorStats(int &infoCount, int &warningCount,
 void CEnhancedErrorHandler::RegisterComponent(const string componentName)
 {
     if(FindComponentIndex(componentName) >= 0) return;
-    
+
     if(m_componentCount >= 20)
     {
         Print("Error: Maximum number of components (20) reached. Cannot register: ", componentName);
         return;
     }
-    
+
     m_componentHealth[m_componentCount].componentName = componentName;
     m_componentHealth[m_componentCount].status = COMPONENT_HEALTHY;
     m_componentHealth[m_componentCount].errorCount = 0;
@@ -196,9 +196,9 @@ void CEnhancedErrorHandler::RegisterComponent(const string componentName)
     m_componentHealth[m_componentCount].lastHealthCheck = TimeCurrent();
     m_componentHealth[m_componentCount].performanceScore = 1.0;
     m_componentHealth[m_componentCount].statusMessage = "Component registered";
-    
+
     m_componentCount++;
-    
+
     SErrorContext context;
     context.component = "ErrorHandler";
     context.operation = "RegisterComponent";
@@ -207,7 +207,7 @@ void CEnhancedErrorHandler::RegisterComponent(const string componentName)
     context.additionalInfo = "Component registered: " + componentName;
     context.timestamp = TimeCurrent();
     context.severity = ERROR_INFO;
-    
+
     LogError(ERROR_INFO, context);
 }
 

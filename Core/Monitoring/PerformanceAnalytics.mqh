@@ -44,38 +44,38 @@ private:
 
     bool m_initialized;
     datetime m_startTime;
-    
+
 public:
     // Constructor
     CPerformanceAnalytics(void);
-    
+
     // Destructor
     ~CPerformanceAnalytics(void);
-    
+
     // Initialize analytics
     bool Initialize(void);
-    
+
     // Record trade operations
     void RecordTrade(const string tradeSymbol, const ENUM_ORDER_TYPE orderType,
                     const double volume, const double price);
     void RecordClosedTrade(const ulong ticket, const double profit);
-    
+
     // Update counters
     void IncrementSuccessfulTrades(void) { m_stats.IncrementSuccessfulTrades(); }
     void IncrementFailedTrades(void) { m_stats.IncrementFailedTrades(); }
-    
+
     // Real-time monitoring (NEW)
     void UpdateRealTimeMetrics(void);
     void CheckPerformanceTriggers(void);
     bool ShouldReduceRisk(void) const { return m_triggers.NeedsRiskReduction(); }
     bool ShouldAdjustParameters(void) const { return m_triggers.NeedsParameterAdjustment(); }
-    
+
     // Calculate performance metrics
     void CalculateMetrics(void);
     void UpdateEquityCurve(void);
     void UpdateDrawdown(void);
     void CalculateRollingMetrics(void);
-    
+
     // Get performance data
     SPerformanceMetrics GetPerformanceMetrics(void);
     double GetWinRate(void) const { return m_stats.GetWinRate(); }
@@ -94,26 +94,26 @@ public:
     // Risk assessment
     bool IsPerformanceAcceptable(void);
     ENUM_RISK_LEVEL GetCurrentRiskLevel(void);
-    
+
     void SetRiskFreeRate(double rate) { m_stats.SetRiskFreeRate(rate); }
-    
+
     // Parameter adjustment recommendations (NEW)
     double GetRecommendedRiskReduction(void);
     double GetRecommendedConfidenceThreshold(void);
     bool ShouldEnableConservativeMode(void);
-    
+
     void PrintPerformanceReport(void);
     void PrintRealTimeDashboard(void);
     string GetPerformanceSummary(void);
     void SaveReportToCSV(const string filename);
-    
+
 private:
     // Internal calculations
     void CalculateWinRate(void);
     void CalculateProfitFactor(void);
     void CalculateSharpeRatio(void);
     void CalculateRecoveryFactor(void);
-    
+
     // Helper functions
     double CalculateStandardDeviation(const double &returns[]);
     void LogPerformanceUpdate(const string message);
@@ -143,10 +143,10 @@ bool CPerformanceAnalytics::Initialize(void)
     m_startTime = TimeCurrent();
     m_equity.InitializeEquity();
     m_initialized = true;
-    
-    CEnhancedErrorHandler::LogError(ERROR_INFO, "PerformanceAnalytics", 
+
+    CEnhancedErrorHandler::LogError(ERROR_INFO, "PerformanceAnalytics",
                            StringFormat("Performance analytics initialized - Starting equity: %.2f", m_equity.GetCurrentEquity()));
-    
+
     return true;
 }
 
@@ -162,47 +162,47 @@ void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORD
 void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double profit)
 {
     if(!m_initialized) return;
-    
+
     // Store return sample in circular buffer (index not advanced yet)
     int slot = m_stats.RegisterTradeSample(profit);
-    
+
     // Update equity curve in the same slot, then advance the shared index
     m_equity.RecordTradeEquity(slot);
     m_stats.AdvanceBufferIndex();
-    
+
     // Update profit/loss tracking
     m_stats.ApplyTradeOutcome(profit);
-    
+
     // Update equity tracking
     UpdateEquityCurve();
     UpdateDrawdown();
-    
+
     CalculateMetrics();
     CalculateRollingMetrics();
     CheckPerformanceTriggers();
-    
-    LogPerformanceUpdate(StringFormat("Closed trade #%d: Profit %.2f, Total P&L: %.2f", 
+
+    LogPerformanceUpdate(StringFormat("Closed trade #%d: Profit %.2f, Total P&L: %.2f",
                                      (int)ticket, profit, m_stats.GetNetProfit()));
 }
 
 void CPerformanceAnalytics::CalculateMetrics(void)
 {
     if(!m_initialized) return;
-    
+
     m_stats.CalculateMetrics(m_equity.GetMaxDrawdown(), m_equity.GetPeakEquity());
 }
 
 void CPerformanceAnalytics::UpdateEquityCurve(void)
 {
     if(!m_initialized) return;
-    
+
     m_equity.UpdateEquityCurve(m_stats.GetBufferIndex());
 }
 
 void CPerformanceAnalytics::UpdateDrawdown(void)
 {
     if(!m_initialized) return;
-    
+
     m_equity.UpdateDrawdown();
 }
 
@@ -215,7 +215,7 @@ bool CPerformanceAnalytics::IsPerformanceAcceptable(void)
 {
     if(!m_initialized)
         return true; // Not enough data
-    
+
     return m_triggers.IsPerformanceAcceptable(m_stats, m_equity.GetMaxDrawdown());
 }
 
@@ -223,21 +223,21 @@ ENUM_RISK_LEVEL CPerformanceAnalytics::GetCurrentRiskLevel(void)
 {
     if(!m_initialized)
         return RISK_LEVEL_LOW;
-    
+
     return m_triggers.GetCurrentRiskLevel(m_stats, m_equity.GetCurrentDrawdown());
 }
 
 void CPerformanceAnalytics::PrintPerformanceReport(void)
 {
     if(!m_initialized) return;
-    
+
     CPerfAnalyticsReport::PrintPerformanceReport(m_stats, m_equity, m_triggers);
 }
 
 void CPerformanceAnalytics::SaveReportToCSV(const string filename)
 {
     if(!m_initialized) return;
-    
+
     CPerfAnalyticsReport::SaveReportToCSV(filename, m_stats, m_equity);
 }
 
@@ -245,7 +245,7 @@ string CPerformanceAnalytics::GetPerformanceSummary(void)
 {
     if(!m_initialized)
         return "Performance analytics not initialized";
-    
+
     return CPerfAnalyticsReport::GetPerformanceSummary(m_stats, m_equity);
 }
 
@@ -282,22 +282,22 @@ void CPerformanceAnalytics::LogPerformanceUpdate(const string message)
 void CPerformanceAnalytics::UpdateRealTimeMetrics(void)
 {
     if(!m_initialized) return;
-    
+
     datetime currentTimeLocal = TimeCurrent();
-    
+
     // Update every 30 seconds
     if(currentTimeLocal - m_lastUpdate < 30) return;
-    
+
     m_lastUpdate = currentTimeLocal;
-    
+
     // Update current equity and drawdown
     UpdateEquityCurve();
     UpdateDrawdown();
-    
+
     CalculateRollingMetrics();
-    
+
     CheckPerformanceTriggers();
-    
+
     // Print dashboard every 5 minutes
     if(currentTimeLocal - m_lastReportTime >= 300)
     {
@@ -314,7 +314,7 @@ void CPerformanceAnalytics::CalculateRollingMetrics(void)
 void CPerformanceAnalytics::CheckPerformanceTriggers(void)
 {
     if(!m_initialized) return;
-    
+
     m_triggers.CheckPerformanceTriggers(m_stats, m_equity.GetCurrentDrawdown());
 }
 
@@ -331,14 +331,14 @@ double CPerformanceAnalytics::GetRecommendedConfidenceThreshold(void)
 bool CPerformanceAnalytics::ShouldEnableConservativeMode(void)
 {
     if(!m_initialized) return false;
-    
+
     return m_triggers.ShouldEnableConservativeMode(m_stats, m_equity.GetCurrentDrawdown());
 }
 
 void CPerformanceAnalytics::PrintRealTimeDashboard(void)
 {
     if(!m_initialized) return;
-    
+
     CPerfAnalyticsReport::PrintRealTimeDashboard(m_stats, m_equity, m_triggers);
 }
 

@@ -44,19 +44,19 @@ private:
 
         long ishape[] = {1, ONNX_SEQ_LEN, ONNX_FEAT_DIM};
         long oshape[] = {1, ONNX_N_CLASSES};
-        
+
         if(!OnnxSetInputShape(handle, 0, ishape))
         {
             PrintFormat("[ONNX] ERROR: Failed to set input shape [1,%d,%d]. Check model compatibility.", ONNX_SEQ_LEN, ONNX_FEAT_DIM);
             return false;
         }
-        
+
         if(!OnnxSetOutputShape(handle, 0, oshape))
         {
             PrintFormat("[ONNX] ERROR: Failed to set output shape [1,%d]. Check model classes.", ONNX_N_CLASSES);
             return false;
         }
-        
+
         return true;
     }
 
@@ -133,10 +133,11 @@ private:
         for(int i = 1; i < ONNX_N_CLASSES; i++)
             maxv = MathMax(maxv, yOutput[i]);
 
+        const float temp = (float)MathMax(0.1, m_temperature);
         float sumExp = 0.0f;
         for(int i = 0; i < ONNX_N_CLASSES; i++)
         {
-            probsOut[i] = (float)MathExp(yOutput[i] - maxv);
+            probsOut[i] = (float)MathExp((yOutput[i] - maxv) / temp);
             sumExp += probsOut[i];
         }
         if(sumExp <= 1e-9f)

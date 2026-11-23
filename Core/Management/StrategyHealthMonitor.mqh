@@ -42,7 +42,7 @@ private:
     // Strategy health entries (indexed by strategy array index)
     SStrategyHealthEntry m_healthEntries[];
     int m_healthEntryCount;
-    
+
     void EnsureCapacity(int index)
     {
         int currentSize = ArraySize(m_healthEntries);
@@ -80,13 +80,16 @@ private:
     }
     void UpdateRecentPerformance(SStrategyHealthEntry &entry, const double result)
     {
+        // Scratch closes are neutral here too: they must not enter the win/loss denominators
+        // (totalTrades feeds winRate = winningTrades/totalTrades) nor decay the rolling win-rate.
+        if(result == 0.0) return;
         entry.totalTrades++;
         if(result > 0)
         {
             entry.winningTrades++;
             entry.consecutiveLosses = 0;
         }
-        else if(result < 0)
+        else
         {
             entry.consecutiveLosses++;
         }
@@ -104,7 +107,7 @@ public:
     {
     }
     ~CStrategyHealthMonitor() {}
-    
+
     // These two limits are the disable rule the per-strategy park runs on; the quorum profile
     // owns them and pushes them here at construction (StrategyMgrInfrastructure).
     void SetOrchestratorMode(double minWinRate, int maxLosses)
@@ -113,7 +116,7 @@ public:
         m_maxConsecutiveLosses_Limit = MathMax(1, maxLosses);
     }
     void SetRollingWindowSize(const int size) { m_rollingWindowSize = MathMax(5, size); }
-    
+
     // Called once per roster row, so entry indexes match strategy indexes for the manager's
     // whole life. Default-constructed: every field starts at its reset value.
     int RegisterStrategy()
@@ -125,19 +128,19 @@ public:
         m_healthEntryCount++;
         return idx;
     }
-    
+
     void UpdatePerformance(int index, double netProfit)
     {
         if(index < 0 || index >= m_healthEntryCount) return;
         UpdateRecentPerformance(m_healthEntries[index], netProfit);
         CalculateStrategyMetrics(m_healthEntries[index]);
     }
-    
+
     void RecordTradeResult(int index, double netProfit)
     {
         UpdatePerformance(index, netProfit);
     }
-    
+
     // Disable/Enable logic
     bool CheckStrategyDisabling(int index)
     {

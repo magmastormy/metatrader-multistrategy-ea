@@ -11,7 +11,7 @@ enum ENUM_STRUCTURE_TYPE
 {
     STRUCT_TYPE_NONE = 0,
     STRUCT_TYPE_HH,          // Higher High
-    STRUCT_TYPE_HL,          // Higher Low  
+    STRUCT_TYPE_HL,          // Higher Low
     STRUCT_TYPE_LH,          // Lower High
     STRUCT_TYPE_LL,          // Lower Low
     STRUCT_TYPE_EQH,         // Equal High
@@ -31,8 +31,8 @@ struct SwingPoint
     double strength;        // 0-100 strength score
     bool isValid;
     bool isMitigated;
-    
-    SwingPoint() : price(0), time(0), bar(0), type(STRUCT_TYPE_NONE), 
+
+    SwingPoint() : price(0), time(0), bar(0), type(STRUCT_TYPE_NONE),
                    strength(0), isValid(false), isMitigated(false) {}
 };
 
@@ -49,7 +49,7 @@ struct MarketStructureState
     int chochCount;         // Change of Character count
     double structureStrength;
     datetime lastUpdate;
-    
+
     MarketStructureState() : currentStructure(STRUCT_TYPE_NONE), isBullish(false),
                             isBearish(false), lastHigh(0), lastLow(0),
                             prevHigh(0), prevLow(0), bosCount(0), chochCount(0),

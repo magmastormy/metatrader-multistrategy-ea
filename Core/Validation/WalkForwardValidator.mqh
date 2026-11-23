@@ -195,10 +195,10 @@ void WF_Run(const double &open[], const double &high[], const double &low[], con
    int cAll = WF_Simulate(open, high, low, close, atr, signal, conf, thrForBar, n, sl_atr, tp_atr, cost_rt, rAll, ebAll);
 
    // 3) Attribute trades to IS/OOS windows by ENTRY bar (first matching window wins).
-   //    IS windows OVERLAP (train_bars > step), so a trade's entry bar can fall inside
-   //    several IS regions. Each trade must be placed EXACTLY ONCE (guarded by
-   //    `attributed`) or isN/oosN overflow the cAll+1 buffers. OOS windows are
-   //    non-overlapping, so a trade matches OOS of at most one window.
+   // IS windows OVERLAP (train_bars > step), so a trade's entry bar can fall inside
+   // several IS regions. Each trade must be placed EXACTLY ONCE (guarded by
+   // `attributed`) or isN/oosN overflow the cAll+1 buffers. OOS windows are
+   // non-overlapping, so a trade matches OOS of at most one window.
    double isR[], oosR[]; ArrayResize(isR, cAll + 1); ArrayResize(oosR, cAll + 1);
    bool attributed[]; ArrayResize(attributed, cAll);
    for(int k = 0; k < cAll; k++) attributed[k] = false;

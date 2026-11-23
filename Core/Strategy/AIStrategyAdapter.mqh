@@ -1,7 +1,7 @@
 // Adapter to integrate CNeuralNetworkStrategy into Enterprise Manager
  #property copyright "Copyright 2025, Advanced Trading Systems"
  #property strict
- 
+
  #include "../../Interfaces/IStrategy.mqh"
  #include "../../Interfaces/IAIStrategy.mqh"
  #include "../../AIModules/NeuralNetworkStrategy.mqh"
@@ -9,7 +9,7 @@
  // CUnifiedRiskManager is the type the adapter casts the engine's void* risk-manager slot to (~:151),
  // so its definition has to be visible here rather than inherited from the includer.
  #include "../Risk/UnifiedRiskManager.mqh"
- 
+
  class CAIStrategyAdapter : public IAIStrategy
  {
  private:
@@ -22,11 +22,11 @@
      string m_lastDecisionReasonTag;
      CSubsystemLogger* m_logger;
      int m_logCounter;  // Counter for periodic logging
-     bool m_adapterOwnsNN;  // L1-008: Ownership flag - adapter owns NN if true
-    
+     bool m_adapterOwnsNN;  // Ownership flag - adapter owns NN if true
+
      // Unified risk manager for validation
      CUnifiedRiskManager* m_unifiedRiskManager;
-    
+
      // Direction calibration rolling window (last 50 predictions)
     int  m_directionWindow[50];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
@@ -34,7 +34,7 @@
     uint m_lastCalibrationWarningTick;  // Throttle calibration warning logs (GetTickCount-based, Issue 12.3)
     int  m_consecutiveBiasedVotes;  // Consecutive degenerate-vote counter
     datetime m_lastInvalidLog;  // FIX: Instance-level log throttle (not static)
-    
+
     // Vote tracking for [AI-VOTE] heartbeat logs
     ulong m_voteCount;
     ulong m_buyVotes;
@@ -42,12 +42,12 @@
     ulong m_noneVotes;
     datetime m_lastVoteLogTime;
     double m_cachedConfidence;
-    
+
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
     }
-    
+
     void LogVoteHeartbeat()
     {
         datetime now = TimeCurrent();
@@ -58,18 +58,18 @@
             m_lastVoteLogTime = now;
         }
     }
-    
+
     void RecordDirectionPrediction(ENUM_TRADE_SIGNAL signal)
     {
         int dirValue = 0;
         if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
-        
+
         m_directionWindow[m_directionWindowIdx] = dirValue;
         m_directionWindowIdx = (m_directionWindowIdx + 1) % 50;
         if(m_directionWindowCount < 50)
             m_directionWindowCount++;
-        
+
         // Check and log degenerate detection
         if(IsDirectionDegenerate())
         {
@@ -98,12 +98,12 @@
             m_consecutiveBiasedVotes = 0;
         }
     }
-    
+
 public:
     CAIStrategyAdapter(CNeuralNetworkStrategy* neuralNet, bool adapterOwnsNN = false)
     {
         m_neuralNet = neuralNet;
-        m_adapterOwnsNN = adapterOwnsNN;  // L1-008: Ownership flag
+        m_adapterOwnsNN = adapterOwnsNN;  // Ownership flag
         m_enabled = true;
         m_weight = 1.0;
         m_symbol = "";
@@ -125,7 +125,7 @@ public:
         m_cachedConfidence = 0.0;
         ArrayInitialize(m_directionWindow, 0);
     }
-    
+
     ~CAIStrategyAdapter()
         {
             if(m_logger != NULL)
@@ -133,7 +133,7 @@ public:
                 delete m_logger;
                 m_logger = NULL;
             }
-            // L1-008: Delete neural network only if adapter owns it
+            // Delete neural network only if adapter owns it
             if(m_adapterOwnsNN && m_neuralNet != NULL)
             {
                 delete m_neuralNet;
@@ -144,16 +144,16 @@ public:
                 m_neuralNet = NULL;  // Just clear pointer, external owner manages lifetime
             }
         }
-    
+
 // IStrategy Interface Implementation
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
                          void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
         {
             m_symbol = symbol;
             m_timeframe = timeframe;
             m_unifiedRiskManager = (CUnifiedRiskManager*)unifiedRiskManagerPtr;
             m_lastDecisionReasonTag = (m_neuralNet != NULL) ? "NNAI_INITIALIZED" : "NNAI_INIT_FAILED";
-        
+
             // Initialize AI logger
             if(m_logger == NULL)
             {
@@ -165,10 +165,10 @@ public:
                                                       symbol, EnumToString(timeframe)));
                 }
             }
-        
+
             return (m_neuralNet != NULL);
         }
-    
+
     virtual void Deinit(void) override
     {
         m_lastDecisionReasonTag = "NNAI_DEINIT";
@@ -204,13 +204,13 @@ public:
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
-        
+
         ENUM_TRADE_SIGNAL signal = m_neuralNet.GetNeuralSignalCached(confidence);
-        
+
         // Validate confidence value
         if(!IsValidConfidence(confidence))
         {
-            // L1-014: Use instance member instead of static (was shared across all adapters)
+            // Use instance member instead of static (was shared across all adapters)
             if(m_lastInvalidLog == 0 || (TimeCurrent() - m_lastInvalidLog) >= 300)
             {
                 PrintFormat("[AI-ADAPTER] Invalid confidence value: %.10f", confidence);
@@ -223,10 +223,10 @@ public:
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
-        
+
         m_voteCount++;
         m_cachedConfidence = confidence;
-        
+
         // Log AI decision every 5 calls
         m_logCounter++;
         if(m_logCounter % 5 == 0 && m_logger != NULL)
@@ -234,19 +234,19 @@ public:
             string signalStr = "NONE";
             if(signal == TRADE_SIGNAL_BUY) signalStr = "BUY";
             else if(signal == TRADE_SIGNAL_SELL) signalStr = "SELL";
-            
+
             m_logger.Log(LOG_AI, StringFormat("[PREDICTION] Signal=%s | Confidence=%.3f | Regime=%d | Temp=%.2f",
                                                   signalStr, confidence,
                                                   m_neuralNet.GetCurrentRegime(),
                                                   m_neuralNet.GetTemperature()));
-            
+
             // Log model health stats
             m_logger.Log(LOG_AI, StringFormat("[MODEL-HEALTH] Training=%s | Steps=%d | Uncertainty=%.3f",
                                                   m_neuralNet.IsTraining() ? "YES" : "NO",
                                                   m_neuralNet.GetTrainingSteps(),
                                                   m_neuralNet.GetLastUncertainty()));
         }
-        
+
         if(signal == TRADE_SIGNAL_BUY)
         {
             m_buyVotes++;
@@ -264,26 +264,26 @@ public:
             m_noneVotes++;
             m_lastDecisionReasonTag = "NNAI_NO_SIGNAL";
         }
-        
+
         // Record prediction for direction calibration
         RecordDirectionPrediction(signal);
-        
+
         LogVoteHeartbeat();
         return signal;
     }
-    
+
     virtual string GetName(void) const override { return "Neural Network AI"; }
-    
+
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_BRAIN; }
-    
+
     virtual bool IsEnabled(void) const override { return m_enabled; }
-    
+
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
-    
+
     virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
-    
+
     virtual void SetWeight(const double weight) override { m_weight = weight; }
-    
+
     virtual bool IsDirectionDegenerate(void) const override
     {
         if(m_directionWindowCount < 50)
@@ -300,13 +300,13 @@ public:
         double sellRatio = (double)sellCount / (double)directionalCount;
         return (buyRatio > 0.70 || sellRatio > 0.70);
     }
-    
+
     // FIX: Disable model entirely when degenerate (not just reduce weight)
     virtual bool ShouldDisableModel(void) const override
     {
         return IsDirectionDegenerate();
     }
-    
+
     double GetDirectionalBias(void) const
     {
         if(m_directionWindowCount < 50) return 0.0;
@@ -320,7 +320,7 @@ public:
         if(directionalCount < 10) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
-    
+
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
         if(!IsDirectionDegenerate())
@@ -328,25 +328,25 @@ public:
         // FIX: Return 0 to completely disable the model when degenerate
         return 0.0;
     }
-    
+
     virtual bool ValidateParameters(void) override { return (m_neuralNet != NULL); }
-    
+
         virtual bool ValidateRiskManagerInjection(void) const override
         {
             return (m_unifiedRiskManager != NULL);
         }
-    
+
         virtual bool ShouldBypassTierConfidenceFloor(void) const override
         {
             return false; // Default: no bypass
         }
-    
-        // L1-008: Getter for neural network (needed for initialization after factory creation)
+
+        // Getter for neural network (needed for initialization after factory creation)
         CNeuralNetworkStrategy* GetNeuralNetwork() const { return m_neuralNet; }
-    
+
         virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
-    
+
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {
         signals = 0;
@@ -373,53 +373,53 @@ public:
             return 1.0;
         return m_neuralNet.GetLastUncertainty();
     }
-    
+
     virtual bool IsModelHealthy(void) const override
     {
         return (m_neuralNet != NULL);
     }
-    
+
     virtual bool IsTraining(void) const override
     {
         if(m_neuralNet == NULL)
             return false;
         return m_neuralNet.IsTraining();
     }
-    
+
     virtual int GetTrainingSteps(void) const override
     {
         if(m_neuralNet == NULL)
             return 0;
         return m_neuralNet.GetTrainingSteps();
     }
-    
+
     virtual double GetTemperature(void) const override
     {
         if(m_neuralNet == NULL)
             return 1.0;
         return m_neuralNet.GetTemperature();
     }
-    
+
     virtual void SetTemperature(const double temperature) override
     {
         if(m_neuralNet != NULL)
             m_neuralNet.SetTemperature(temperature);
     }
-    
+
     virtual int GetCurrentRegime(void) const override
     {
         if(m_neuralNet == NULL)
             return -1;
         return (int)m_neuralNet.GetCurrentRegime();
     }
-    
+
     virtual bool SaveCheckpoint(void) override
     {
         if(m_neuralNet == NULL)
             return false;
         return m_neuralNet.SaveCheckpoint();
     }
-    
+
     virtual string GetLastLoadStatus(void) const override
     {
         if(m_neuralNet == NULL)

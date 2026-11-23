@@ -23,7 +23,7 @@ void CTrendMTF::ComputeAlignment(MTFTrendState &state)
 {
     int alignmentScore = 0;
     int totalWeight = 0;
-    
+
     // HTF has highest weight (40%)
     if(state.htf.type == TREND_BULLISH_STRONG || state.htf.type == TREND_BULLISH_WEAK)
     {
@@ -33,7 +33,7 @@ void CTrendMTF::ComputeAlignment(MTFTrendState &state)
     {
         alignmentScore -= 40;
     }
-    
+
     // MTF has medium weight (35%)
     if(state.mtf.type == TREND_BULLISH_STRONG || state.mtf.type == TREND_BULLISH_WEAK)
     {
@@ -43,7 +43,7 @@ void CTrendMTF::ComputeAlignment(MTFTrendState &state)
     {
         alignmentScore -= 35;
     }
-    
+
     // LTF has lowest weight (25%)
     if(state.ltf.type == TREND_BULLISH_STRONG || state.ltf.type == TREND_BULLISH_WEAK)
     {
@@ -53,19 +53,19 @@ void CTrendMTF::ComputeAlignment(MTFTrendState &state)
     {
         alignmentScore -= 25;
     }
-    
+
     state.alignment = MathAbs(alignmentScore);
-    
+
     state.isAligned = state.alignment >= 75;
-    
+
     if(alignmentScore > 50)
     {
-        state.consensus = state.htf.strength > 50 ? 
+        state.consensus = state.htf.strength > 50 ?
                           TREND_BULLISH_STRONG : TREND_BULLISH_WEAK;
     }
     else if(alignmentScore < -50)
     {
-        state.consensus = state.htf.strength > 50 ? 
+        state.consensus = state.htf.strength > 50 ?
                           TREND_BEARISH_STRONG : TREND_BEARISH_WEAK;
     }
     else

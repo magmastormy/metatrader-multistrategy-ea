@@ -15,7 +15,7 @@ struct SAIAdaptiveConfig {
     int adaptationInterval;           // Bars between adaptations
     bool usePerformanceAdaptation;    // Adapt based on performance
     bool useExternalLLM;              // Use external LLM for advanced reasoning (default: false)
-    
+
     SAIAdaptiveConfig() {
         enabled = true;
         adaptationInterval = 5;
@@ -30,9 +30,9 @@ private:
     CEnterpriseStrategyManager* m_managers[];
     string m_managerSymbols[];
     int m_managerCount;
-    
+
     SAIAdaptiveConfig m_adaptiveConfig;       // Adaptive mode configuration
-    
+
     bool m_initialized;
     bool m_adaptiveModeActive;
     datetime m_lastAdaptation;
@@ -45,7 +45,7 @@ private:
     datetime m_lastExternalReasoningTime;
     string m_lastExternalLLMPhase;
     string m_lastExternalReasoning;
-    
+
     void LogAI(ENUM_ERROR_LEVEL level, string message) {
         CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level, "AIEngine", message, 0);
     }
@@ -97,7 +97,7 @@ public:
         m_lastExternalLLMPhase = "";
         m_lastExternalReasoning = "";
     }
-    
+
     ~CAIEngine() {
         if(m_initialized) {
             LogExternalLLM("SHUTDOWN",
@@ -106,13 +106,13 @@ public:
                            true);
         }
     }
-    
+
     bool Initialize(CEnterpriseStrategyManager* &managers[], const string &symbols[], int count, const SAIAdaptiveConfig &config) {
         if(count <= 0) {
             LogAI(ERROR_LEVEL_ERROR, "No managers provided");
             return false;
         }
-        
+
         m_managerCount = count;
         ArrayResize(m_managers, count);
         ArrayResize(m_managerSymbols, count);
@@ -127,29 +127,29 @@ public:
         m_adaptiveConfig = config;
         m_adaptiveModeActive = config.enabled;
         m_initialized = true;
-        
+
         ConfigureExternalLLM();
         LogExternalLLM("INIT",
                        m_adaptiveConfig.useExternalLLM ?
                        "runtime role=adaptation_reasoning_telemetry" :
                        "disabled by config",
                        true);
-        
+
         LogAI(ERROR_LEVEL_INFO, StringFormat("AIEngine initialized successfully with %d managers", count));
         return true;
     }
-    
+
     void ProcessAdaptation() {
         if(!m_adaptiveModeActive || !m_initialized) return;
-        
+
         datetime nowTime = TimeCurrent();
-        
+
         if(nowTime - m_lastAdaptation < m_adaptiveConfig.adaptationInterval * PeriodSeconds()) {
             return;
         }
-        
+
         m_lastAdaptation = nowTime;
-        
+
         if(m_adaptiveConfig.usePerformanceAdaptation) {
             AdaptToPerformance();
         }
@@ -158,7 +158,7 @@ public:
             MaybeCaptureExternalReasoning();
         }
     }
-    
+
     void SetExternalAIEndpoint(const string &endpoint) {
         m_externalAIEndpoint = endpoint;
         m_externalAIConnected = (endpoint != "");
@@ -166,47 +166,51 @@ public:
                        (endpoint != "") ? ("endpoint set to " + endpoint) : "endpoint cleared",
                        true);
     }
-    
+
     void ConfigureExternalLLM() {
         if(m_adaptiveConfig.useExternalLLM) {
-            if(m_externalAIEndpoint == "")
-                SetExternalAIEndpoint("http://localhost:11434");
-            else
+            // Fail closed: an enabled LLM with no configured endpoint stays disconnected
+            // rather than silently targeting a localhost service.
+            if(m_externalAIEndpoint == "") {
+                LogExternalLLM("CONFIG", "useExternalLLM on but no endpoint configured; staying disconnected", true);
+                SetExternalAIEndpoint("");
+            } else {
                 SetExternalAIEndpoint(m_externalAIEndpoint);
+            }
         } else {
             SetExternalAIEndpoint("");
         }
     }
-    
+
     bool QueryExternalLLM(const string &prompt, string &llmResponse) {
         if(!m_externalAIConnected || m_externalAIEndpoint == "") {
             m_externalLLMFailureCount++;
             LogExternalLLM("QUERY-SKIP", "not connected");
             return false;
         }
-        
+
         // Prepare JSON request for Ollama API
         string escapedPrompt = EscapeJson(prompt);
         string jsonRequest = "{\"model\":\"phi3\",\"prompt\":\"" + escapedPrompt + "\",\"stream\":false}";
-        
+
         uchar request[];
         uchar responseData[];
         string resultHeaders;
-        
+
         StringToCharArray(jsonRequest, request);
         ArrayResize(request, ArraySize(request) - 1); // Remove null terminator
-        
+
         // Send POST request to Ollama API
         int timeout = 5000; // 5 second timeout
         m_externalLLMQueryCount++;
         LogExternalLLM("QUERY-START",
                        StringFormat("prompt_len=%d", StringLen(prompt)));
-        int res = WebRequest("POST", m_externalAIEndpoint + "/api/generate", "Content-Type: application/json", 
+        int res = WebRequest("POST", m_externalAIEndpoint + "/api/generate", "Content-Type: application/json",
                            timeout, request, responseData, resultHeaders);
-        
+
         if(res != -1) {
             string responseStr = CharArrayToString(responseData, 0, WHOLE_ARRAY, CP_UTF8);
-            
+
             // Parse JSON response to extract "response" field
             int responseStart = StringFind(responseStr, "\"response\":\"");
             if(responseStart >= 0) {
@@ -221,7 +225,7 @@ public:
                     return true;
                 }
             }
-            
+
             m_externalLLMFailureCount++;
             LogExternalLLM("QUERY-PARSE-FAIL",
                            StringFormat("http=%d | body_len=%d", res, StringLen(responseStr)),
@@ -236,27 +240,27 @@ public:
             return false;
         }
     }
-    
+
     bool ReasonStrategyWeights(const string &regime, const string &currentWeights, string &reasoning) {
         if(!m_externalAIConnected) {
             reasoning = "External LLM not connected";
             return false;
         }
-        
+
         string prompt = StringFormat("Current market regime: %s, Current strategy weights: %s. Suggest optimal strategy weight adjustments for these conditions in 1-2 sentences.",
                                       regime, currentWeights);
-        
+
         if(!QueryExternalLLM(prompt, reasoning)) {
             reasoning = "Failed to get strategy weight reasoning from LLM";
             return false;
         }
-        
+
         m_lastExternalReasoning = reasoning;
         LogExternalLLM("STRATEGY-WEIGHTS", "reasoning captured", true);
         LogAI(ERROR_LEVEL_INFO, "LLM Strategy Weight Reasoning: " + reasoning);
         return true;
     }
-    
+
 private:
     void MaybeCaptureExternalReasoning() {
         if(!m_adaptiveConfig.useExternalLLM)
@@ -276,7 +280,7 @@ private:
 
         for(int m = 0; m < m_managerCount; m++) {
             if(m_managers[m] == NULL) continue;
-            
+
             string regime = EnumToString(m_managers[m].GetCurrentMarketRegime());
             string currentWeights = m_managers[m].GetStrategyWeightsJSON();
             if(currentWeights == "") {
@@ -288,7 +292,7 @@ private:
             if(ReasonStrategyWeights(regime, currentWeights, reasoning)) {
                 m_lastExternalReasoning = reasoning;
                 LogExternalLLM("REASONING", "strategy-weight commentary captured for " + m_managerSymbols[m], true);
-                
+
                 // ACT ON LLM REASONING: Parse and apply weight adjustments
                 ApplyLLMReasoningToWeights(m_managers[m], reasoning);
             } else {
@@ -303,24 +307,24 @@ private:
 
         // Expected format: "Increase MOMENTUM weight to 1.5, decrease MEAN_REVERSION to 0.8"
         // or JSON-like format: {"MOMENTUM": 1.5, "MEAN_REVERSION": 0.8}
-        
+
         string adjustedReasoning = reasoning;
         StringToLower(adjustedReasoning);
-        
+
         // Simple keyword-based parsing
-        string strategies[] = {"momentum", "trend", "supportresistance", "ict", "candlestick", "unicorn", "powerofthree", 
+        string strategies[] = {"momentum", "trend", "supportresistance", "ict", "candlestick", "unicorn", "powerofthree",
                               "meanreversion", "volatilitybreakout", "fvgscalper", "turtlesoup", "breakerblock",
                               "nyopengap", "asianrangebreak", "statisticalarbitrage", "liquiditysweep",
                               "rangecompression", "exitingoptimizer", "kalmanmr", "changepointdetect",
                               "fourstateregime", "voltargeting", "neuronetwork", "transformer", "ensemble", "onnx"};
-        
+
         for(int s = 0; s < ArraySize(strategies); s++) {
             string strat = strategies[s];
             int pos = StringFind(adjustedReasoning, strat);
             if(pos >= 0) {
                 string afterStrat = StringSubstr(adjustedReasoning, pos + StringLen(strat));
                 StringTrimLeft(afterStrat);
-                
+
                 // Try to find a number pattern (e.g., "1.5", "0.8", "to 1.2")
                 int numStart = -1;
                 for(int i = 0; i < StringLen(afterStrat); i++) {
@@ -330,7 +334,7 @@ private:
                         break;
                     }
                 }
-                
+
                 if(numStart >= 0) {
                     string numStr = StringSubstr(afterStrat, numStart);
                     int numEnd = 0;
@@ -343,7 +347,7 @@ private:
                     }
                     if(numEnd == 0) numEnd = StringLen(numStr);
                     numStr = StringSubstr(numStr, 0, numEnd);
-                    
+
                     double newWeight = StringToDouble(numStr);
                     if(newWeight > 0.0 && newWeight <= 5.0) {
                         string properName = GetProperStrategyName(strat);
@@ -389,7 +393,7 @@ private:
         if(lowerName == "onnx") return "ONNX AI";
         return "";
     }
-    
+
     void AdaptToPerformance() {
         // Parking and re-enabling is the orchestrator's 60 s governance sweep, not this loop: the
         // accuracy reading those gates tested never had a writer here.

@@ -90,11 +90,11 @@ bool CPyBridgeHealth::CheckHealth(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
       return false;
-   
+
    string response;
    string healthUrl = transport.GetEndpoint() + "/health";
    bool success = transport.SendHttpRequest("GET", healthUrl, "", response);
-   
+
    if(success && StringFind(response, "\"status\":\"healthy\"") != -1)
    {
       m_last_heartbeat = TimeCurrent();
@@ -122,11 +122,11 @@ bool CPyBridgeHealth::SendHeartbeat(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
       return false;
-   
+
    string response;
    string heartbeatUrl = transport.GetEndpoint() + "/heartbeat";
    bool success = transport.SendHttpRequest("GET", heartbeatUrl, "", response);
-   
+
    if(success && StringFind(response, "\"status\":\"ok\"") != -1)
    {
       m_last_heartbeat = TimeCurrent();
@@ -153,12 +153,12 @@ bool CPyBridgeHealth::AttemptReconnect(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF)
       return false;
-   
+
    datetime now = TimeCurrent();
-   
+
    if((now - m_last_reconnect) < (m_reconnect_backoff / 1000))
       return false;
-   
+
    if(m_reconnect_attempts >= m_max_reconnect_attempts)
    {
       if(transport.GetState() != PYTHON_BRIDGE_ERROR)
@@ -177,20 +177,20 @@ bool CPyBridgeHealth::AttemptReconnect(CPyBridgeTransport &transport)
       }
       return false;
    }
-   
+
    m_last_reconnect = now;
    m_reconnect_attempts++;
    transport.SetState(PYTHON_BRIDGE_CONNECTING);
-   
-   string reconnectMsg = "Attempting reconnection (" + IntegerToString(m_reconnect_attempts) + 
+
+   string reconnectMsg = "Attempting reconnection (" + IntegerToString(m_reconnect_attempts) +
                          "/" + IntegerToString(m_max_reconnect_attempts) + ")...";
    transport.LogBridgeState(reconnectMsg);
-   
+
    // Try health check
    string response;
    string healthUrl = transport.GetEndpoint() + "/health";
    bool success = transport.SendHttpRequest("GET", healthUrl, "", response);
-   
+
    if(success && StringFind(response, "\"status\":\"healthy\"") != -1)
    {
       transport.SetState(PYTHON_BRIDGE_CONNECTED);
@@ -213,7 +213,7 @@ bool CPyBridgeHealth::CheckVersion(CPyBridgeTransport &transport)
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized())
       return false;
-   
+
    string response;
    string versionUrl = transport.GetEndpoint() + "/version";
    if(transport.SendHttpRequest("GET", versionUrl, "", response))
@@ -227,15 +227,15 @@ bool CPyBridgeHealth::CheckVersion(CPyBridgeTransport &transport)
          }
          else
          {
-            transport.LogBridgeState("Python bridge version incompatible! Required: " + 
-                          IntegerToString(1) + "." + IntegerToString(0) + 
+            transport.LogBridgeState("Python bridge version incompatible! Required: " +
+                          IntegerToString(1) + "." + IntegerToString(0) +
                           ", Got: " + m_server_version.version, ERROR_LEVEL_ERROR);
             transport.SetState(PYTHON_BRIDGE_ERROR);
             return false;
          }
       }
    }
-   
+
    transport.LogBridgeState("Failed to check Python bridge version", ERROR_LEVEL_WARNING);
    return false;
 }
@@ -243,10 +243,10 @@ bool CPyBridgeHealth::CheckVersion(CPyBridgeTransport &transport)
 SPythonBridgeHealthStatus CPyBridgeHealth::GetHealthStatus(const CPyBridgeTransport &transport) const
 {
    SPythonBridgeHealthStatus status;
-   
+
    status.state = transport.GetState();
    status.connected = transport.IsConnected();
-   status.healthy = (transport.GetState() == PYTHON_BRIDGE_CONNECTED && 
+   status.healthy = (transport.GetState() == PYTHON_BRIDGE_CONNECTED &&
                      (TimeCurrent() - m_last_heartbeat) < m_heartbeat_timeout);
    status.last_heartbeat = m_last_heartbeat;
    status.reconnect_attempts = m_reconnect_attempts;
@@ -255,7 +255,7 @@ SPythonBridgeHealthStatus CPyBridgeHealth::GetHealthStatus(const CPyBridgeTransp
    status.error_count = transport.GetErrorCount();
    status.last_error = transport.GetLastError();
    status.version = m_server_version;
-   
+
    return status;
 }
 

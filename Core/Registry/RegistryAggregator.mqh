@@ -23,14 +23,14 @@ class CRegistryAggregator
 {
 private:
     CMathematicalEngineRegistry* m_mathRegistry;
-    
+
     CNeuralNetRegistry* m_neuralNetRegistry;
-    
+
     CDrawingManagerRegistry* m_drawingRegistry;
-    
+
     CScanSchedulerRegistry* m_scanRegistry;
-    
-    
+
+
         CStrategyRegistry* m_strategyRegistry;
 
     public:
@@ -43,25 +43,25 @@ private:
     {
     }
     ~CRegistryAggregator();
-    
+
     bool Initialize();
     void Deinitialize();
-    
+
     CMathematicalEngineRegistry* GetMathRegistry() const { return m_mathRegistry; }
-    
+
     CNeuralNetRegistry* GetNeuralNetRegistry() const { return m_neuralNetRegistry; }
-    
+
     // Drives online learning for every active net: TickOnlineLearningAll -> per-net TickOnlineLearning, which
     // runs ResolveBarriers plus the self-labeled observation capture.
     // Called from EAOrchestrator.mqh:2990; this aggregator owns the only CNeuralNetRegistry instance — the
     // old claim that EAOrchestrator could not see the type is stale, it includes NeuralNetRegistry.mqh at line 15.
     void TickNeuralNetOnlineLearning() const;
-    
+
     CDrawingManagerRegistry* GetDrawingRegistry() const { return m_drawingRegistry; }
-    
+
     CScanSchedulerRegistry* GetScanRegistry() const { return m_scanRegistry; }
-    
-    
+
+
         CStrategyRegistry* GetStrategyRegistry() const { return m_strategyRegistry; }
 
     void ClearAll();
@@ -82,85 +82,85 @@ CRegistryAggregator::~CRegistryAggregator()
 bool CRegistryAggregator::Initialize()
 {
     bool ok = true;
-    
+
     m_mathRegistry = new CMathematicalEngineRegistry();
     if(m_mathRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate MathematicalEngineRegistry");
         ok = false;
     }
-    
+
     m_neuralNetRegistry = new CNeuralNetRegistry();
     if(m_neuralNetRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate NeuralNetRegistry");
         ok = false;
     }
-    
+
     m_drawingRegistry = new CDrawingManagerRegistry();
     if(m_drawingRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate DrawingManagerRegistry");
         ok = false;
     }
-    
+
     m_scanRegistry = new CScanSchedulerRegistry();
     if(m_scanRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate ScanSchedulerRegistry");
         ok = false;
     }
-    
+
     m_strategyRegistry = new CStrategyRegistry();
     if(m_strategyRegistry == NULL)
     {
         Print("[RegistryAggregator] ERROR: Failed to allocate StrategyRegistry");
         ok = false;
     }
-    
+
     if(ok)
     {
         Print("[RegistryAggregator] All registries initialized successfully");
     }
-    
+
     return ok;
 }
 
 void CRegistryAggregator::Deinitialize()
 {
     ClearAll();
-    
+
     if(m_mathRegistry != NULL)
     {
         delete m_mathRegistry;
         m_mathRegistry = NULL;
     }
-    
+
     if(m_neuralNetRegistry != NULL)
     {
         delete m_neuralNetRegistry;
         m_neuralNetRegistry = NULL;
     }
-    
+
     if(m_drawingRegistry != NULL)
     {
         delete m_drawingRegistry;
         m_drawingRegistry = NULL;
     }
-    
+
     if(m_scanRegistry != NULL)
     {
         delete m_scanRegistry;
         m_scanRegistry = NULL;
     }
-    
-    
+
+
         if(m_strategyRegistry != NULL)
         {
             delete m_strategyRegistry;
             m_strategyRegistry = NULL;
         }
-    
+
         Print("[RegistryAggregator] All registries deinitialized");
 }
 

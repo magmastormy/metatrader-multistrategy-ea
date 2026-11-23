@@ -77,7 +77,7 @@ struct SSpikeSymbolState
    datetime lastDiagTime;              // Last time near-miss diagnostic was logged
 };
 
-// Per-symbol family override parameters (Batch 102)
+// Per-symbol family override parameters
 struct SSpikeHunterFamilyOverrides
 {
    string   symbol;

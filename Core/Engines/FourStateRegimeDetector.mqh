@@ -254,7 +254,7 @@ public:
         bool Initialize()
         {
             ResolveTimeframe();
-        
+
             double closes[];
             ArraySetAsSeries(closes, true);
             // shift 1 = last closed bar (not shift 0 = forming bar)
@@ -301,7 +301,7 @@ public:
         bool Update()
         {
             ResolveTimeframe();
-        
+
             datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
             if(currentBarTime <= 0)
                 return false;

@@ -35,10 +35,10 @@ private:
     double m_authorityMinCostScore;
     double m_authorityMinReadinessScore;
     double m_authorityMinContextScore;
-    
+
     // Non-owning manager reference; used only for strategy name/type lookups
     CEnterpriseStrategyManager* m_strategyManager;
-    
+
     struct SStrategyPerf
     {
         string name;
@@ -51,14 +51,14 @@ private:
         double grossLossR;
         double profitFactor;
         int consecutiveLosses;
-        
+
         SStrategyPerf() : name(""), totalTrades(0), winningTrades(0), expectancyR(0),
                          grossWinR(0), grossLossR(0), profitFactor(1.0), consecutiveLosses(0) {}
     };
-    
+
     SStrategyPerf m_strategyPerf[];
     int m_perfCount;
-    
+
     int FindPerfIndex(const string name)
     {
         for(int i = 0; i < m_perfCount; i++)
@@ -72,10 +72,10 @@ public:
         bool allowed;
         double riskMultiplier;
         string reason;
-        
+
         SAuthorityResult() : allowed(false), riskMultiplier(0.1), reason("") {}
     };
-    
+
     // Defaults are the strictest values this class has ever used, so an un-Configure()d
     // resolver can only under-promote. Configure() below is the real source of truth.
     CLiveAuthorityResolver() : m_effectiveEAMode(EA_MODE_HYBRID), m_aiStandaloneMinConfidence(0.65),
@@ -88,14 +88,14 @@ public:
     {
         ArrayResize(m_strategyPerf, 0);
     }
-    
+
     ~CLiveAuthorityResolver() {}
-    
+
     void SetStrategyManager(CEnterpriseStrategyManager* manager)
     {
         m_strategyManager = manager;
     }
-    
+
     // No default arguments: every authority threshold has to be supplied, so a new call
     // site cannot silently reintroduce a literal and leave an input dead.
     void Configure(ENUM_EA_MODE eaMode,
@@ -152,7 +152,7 @@ public:
         if(confidenceFloor > 0.0)
             m_aiStandaloneMinConfidence = confidenceFloor;
     }
-    
+
             void Resolve(const string symbol, bool hasAIContributor, bool hasONNXContributor,
                          bool hasIndicatorContributor, int indicatorContributorCount,
                          int confluence, double confidence, double qualityScore,
@@ -164,7 +164,7 @@ public:
         {
             if(corrId != "")
                 CJsonLogger::SetCorrelationId(corrId);
-            
+
             if(m_effectiveEAMode == EA_MODE_INDICATOR_ONLY && hasAIContributor)
             {
                 result.allowed = false;
@@ -173,7 +173,7 @@ public:
                 CJsonLogger::ClearCorrelationId();
                 return;
             }
-        
+
             if(m_effectiveEAMode == EA_MODE_AI_ONLY && !hasAIContributor)
             {
                 result.allowed = false;
@@ -182,10 +182,10 @@ public:
                 CJsonLogger::ClearCorrelationId();
                 return;
             }
-        
+
             double authorityScore = 0.0;
             string reasons = "";
-        
+
             if(hasONNXContributor)
             {
                 authorityScore += 0.30;
@@ -196,19 +196,19 @@ public:
                 authorityScore += 0.25;
                 reasons += "AI ";
             }
-        
+
             if(hasIndicatorContributor)
             {
                 authorityScore += 0.20 * MathMin(1.0, indicatorContributorCount / 2.0);
                 reasons += "INDICATOR ";
             }
-        
+
             if(confluence >= m_authorityMinConfluence)
             {
                 authorityScore += 0.15;
                 reasons += "CONFLUENCE ";
             }
-        
+
             // These four bonuses were silent while their inputs arrived unwritten; now that the
             // consensus publishes them, each names itself in `reasons` so a grown lot is traceable.
             if(qualityScore >= 0.7)      { authorityScore += 0.10; reasons += "QUALITY "; }
@@ -220,23 +220,23 @@ public:
             // so the bonus is earned at the TOP of the range. The previous `<= 0.3` test paid
             // authority points to the most expensive trades.
             if(costScore >= m_authorityMinCostScore) { authorityScore += 0.05; reasons += "COST "; }
-        
+
             double minConfidence = m_aiStandaloneMinConfidence;
             if(hasIndicatorContributor)
                 minConfidence = 0.55; // Lower threshold with indicator support
-        
+
             if(confidence < minConfidence)
             {
                 result.allowed = false;
                 result.riskMultiplier = m_aiBootstrapRiskMultiplier * 0.5;
                 result.reason = StringFormat("LOW_CONFIDENCE_%.2f<%.2f", confidence, minConfidence);
-                CJsonLogger::LogRiskEvent("AuthorityReject", symbol, "LOW_CONFIDENCE", 
-                    StringFormat("Confidence %.2f below threshold %.2f", confidence, minConfidence), 
+                CJsonLogger::LogRiskEvent("AuthorityReject", symbol, "LOW_CONFIDENCE",
+                    StringFormat("Confidence %.2f below threshold %.2f", confidence, minConfidence),
                     confidence, minConfidence, corrId);
                 CJsonLogger::ClearCorrelationId();
                 return;
             }
-        
+
             double riskMult;
             if(authorityScore >= 0.80)
                 riskMult = 1.0;
@@ -248,7 +248,7 @@ public:
                 riskMult = 0.50;
             else
                 riskMult = m_aiBootstrapRiskMultiplier * 0.5;
-        
+
             // Bootstrap: AI-only contributors need a proven record before full risk
             if(hasAIContributor && !hasIndicatorContributor)
             {
@@ -283,20 +283,22 @@ public:
                     }
                 }
             }
-        
+
             // Safety floor
             riskMult = MathMax(0.10, riskMult);
-        
+
             result.allowed = true;
             result.riskMultiplier = riskMult;
             result.reason = "AUTHORIZED | score=" + DoubleToString(authorityScore, 2) + " | " + reasons;
-            CJsonLogger::LogRiskEvent("AuthorityAllow", symbol, "AUTHORIZED", 
-                StringFormat("authorityScore=%.2f riskMult=%.2f reasons=%s", authorityScore, riskMult, reasons), 
+            CJsonLogger::LogRiskEvent("AuthorityAllow", symbol, "AUTHORIZED",
+                StringFormat("authorityScore=%.2f riskMult=%.2f reasons=%s", authorityScore, riskMult, reasons),
                 authorityScore, riskMult, corrId);
             CJsonLogger::ClearCorrelationId();
         }
-    
-    void RecordOutcome(const string strategyName, double profitR, bool isWin)
+
+    // Outcome derives from the sign of profitR: a breakeven close (R == 0) is activity, not a
+    // decided result - it must not inflate the loss side of win-rate or consecutive-loss counts.
+    void RecordOutcome(const string strategyName, double profitR)
     {
         int idx = FindPerfIndex(strategyName);
         if(idx < 0)
@@ -306,68 +308,71 @@ public:
             m_strategyPerf[idx].name = strategyName;
             m_perfCount++;
         }
-        
+
         SStrategyPerf perf = m_strategyPerf[idx];
         perf.totalTrades++;
-        if(isWin) perf.winningTrades++;
-        
+        if(profitR > 0.0)
+        {
+            perf.winningTrades++;
+            perf.consecutiveLosses = 0;
+        }
+        else if(profitR < 0.0)
+        {
+            perf.consecutiveLosses++;
+        }
+
         double oldExp = perf.expectancyR;
         perf.expectancyR = (oldExp * (perf.totalTrades - 1) + profitR) / perf.totalTrades;
-        
-        // Accumulate by the sign of profitR rather than by isWin: a breakeven close (R == 0)
+
+        // Accumulate by the sign of profitR: a breakeven close (R == 0)
         // belongs to neither side of a profit factor and must not enter the loss denominator.
         if(profitR > 0.0)
             perf.grossWinR += profitR;
         else if(profitR < 0.0)
             perf.grossLossR -= profitR;
-        
+
         // A record with no losing trade is a perfect one, not a divide-by-zero; the cap keeps
         // the sentinel a readable magnitude in the [AUTHORITY-LEARN] log.
         perf.profitFactor = (perf.grossLossR > 0.0)
                           ? perf.grossWinR / perf.grossLossR
                           : (perf.grossWinR > 0.0 ? 999.0 : 1.0);
-        
-        if(isWin)
-            perf.consecutiveLosses = 0;
-        else
-            perf.consecutiveLosses++;
-        
+
         m_strategyPerf[idx] = perf;
     }
-    
+
     string ExtractAIName(const string contributorSummary, const int &strategyIndices[])
     {
         // AI Strategy types: STRATEGY_BRAIN, STRATEGY_AI_ENHANCED, STRATEGY_ONNX
-        
+
         if(m_strategyManager == NULL || ArraySize(strategyIndices) == 0)
         {
             // Manager not available - cannot reliably identify AI strategies
             return "";
         }
-        
+
         for(int i = 0; i < ArraySize(strategyIndices); i++)
         {
             int idx = strategyIndices[i];
             if(idx < 0 || idx >= m_strategyManager.GetRegisteredStrategyCount())
                 continue;
-            
+
             string strategyName = m_strategyManager.GetRegisteredStrategyName(idx);
             if(strategyName == "") continue;
-            
+
             ENUM_STRATEGY_TYPE stratType = GetStrategyTypeByName(strategyName);
             if(stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED || stratType == STRATEGY_ONNX)
             {
                 return strategyName; // Return the actual strategy name for perf tracking
             }
         }
-        
+
         return "";
     }
-    
+
     ENUM_STRATEGY_TYPE GetStrategyTypeByName(const string strategyName)
     {
         if(m_strategyManager == NULL) return STRATEGY_CUSTOM;
-        
+
         int count = m_strategyManager.GetRegisteredStrategyCount();
         for(int i = 0; i < count; i++)
         {

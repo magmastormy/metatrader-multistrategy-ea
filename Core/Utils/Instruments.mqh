@@ -18,15 +18,15 @@ class CTradeManager;
 class CPerformanceAnalytics;
 
 // Manual list (Mode A) - Optimized for Deriv broker compatibility
-// NOTE: Removed duplicates, preferring .0 suffix for Deriv symbols
+// NOTE: Removed duplicates, preferring.0 suffix for Deriv symbols
 static const string s_manualInstrumentList[] = {
-    // Major Forex Pairs (Deriv .0 format preferred)
+    // Major Forex Pairs (Deriv.0 format preferred)
     "EURUSD.0", "GBPUSD.0", "USDJPY.0", "USDCHF.0", "AUDUSD.0", "NZDUSD.0",
     "USDCAD.0", "EURGBP.0", "EURJPY.0", "GBPJPY.0", "AUDJPY.0", "EURAUD.0",
     "EURCHF.0", "GBPCHF.0", "AUDCAD.0", "AUDNZD.0", "CADJPY.0", "CHFJPY.0",
     "NZDCAD.0", "NZDJPY.0", "NZDCHF.0",
 
-    // Metals (Deriv .0 format)
+    // Metals (Deriv.0 format)
     "XAUUSD.0", "XAGUSD.0", "XPTUSD.0", "XPDUSD.0",
 
     // Indices & CFDs (Note: Most indices not available on Deriv)
@@ -35,7 +35,7 @@ static const string s_manualInstrumentList[] = {
     // Commodities
     "WTICOUSD.0", "BRENTUSD.0", "NGASUSD.0", "COPPER.0",
 
-    // Crypto Majors (Deriv .0 format)
+    // Crypto Majors (Deriv.0 format)
     "BTCUSD.0", "ETHUSD.0", "LTCUSD.0", "XRPUSD.0", "ADAUSD.0", "SOLUSD.0",
     "BNBUSD.0", "DOGEUSD.0", "DOTUSD.0", "SHIBUSD.0",
 
@@ -261,6 +261,7 @@ int DetectFamilyId(const string symbol)
     if(IsSkewStepSyntheticSymbolName(symbol))       return 9;   // DERIV_SKEW_STEP
     if(IsMultiStepSyntheticSymbolName(symbol))      return 5;   // DERIV_MULTISTEP
     if(IsStepSyntheticSymbolName(symbol))           return 2;   // DERIV_STEP
+    if(IsSpotVolatilitySyntheticSymbolName(symbol)) return 17;  // DERIV_SPOT_VOLATILITY (before Volatility: spot names also carry "VOLATILITY ")
     if(IsVolatilitySyntheticSymbolName(symbol))     return 1;   // DERIV_VOLATILITY
     if(IsExponentialSyntheticSymbolName(symbol))    return 6;   // DERIV_EXPONENTIAL
     if(IsHybridSyntheticSymbolName(symbol))         return 7;   // DERIV_HYBRID
@@ -270,7 +271,6 @@ int DetectFamilyId(const string symbol)
     if(IsDerivedSyntheticSymbolName(symbol))        return 14;
     if(IsStableSpreadSyntheticSymbolName(symbol))   return 15;  // DERIV_STABLE_SPREAD
     if(IsPairsArbitrageSyntheticSymbolName(symbol)) return 16;  // DERIV_PAIRS_ARBITRAGE
-    if(IsSpotVolatilitySyntheticSymbolName(symbol)) return 17;  // DERIV_SPOT_VOLATILITY
     return -1;
 }
 
@@ -386,6 +386,8 @@ string GetInstrumentExecutionProfileName(const string symbol)
 {
     if(IsBoomCrashSyntheticSymbolName(symbol))
         return "SYNTHETIC_BOOM_CRASH";
+    if(IsSpotVolatilitySyntheticSymbolName(symbol))
+        return "SYNTHETIC_SPOT_VOLATILITY";
     if(IsVolatilitySyntheticSymbolName(symbol))
         return "SYNTHETIC_VOLATILITY";
     if(IsStepSyntheticSymbolName(symbol) && !IsSkewStepSyntheticSymbolName(symbol) && !IsMultiStepSyntheticSymbolName(symbol))
@@ -416,8 +418,6 @@ string GetInstrumentExecutionProfileName(const string symbol)
         return "SYNTHETIC_DERIVED";
     if(IsStableSpreadSyntheticSymbolName(symbol))
         return "SYNTHETIC_STABLE_SPREAD";
-    if(IsSpotVolatilitySyntheticSymbolName(symbol))
-        return "SYNTHETIC_SPOT_VOLATILITY";
     if(IsPairsArbitrageSyntheticSymbolName(symbol))
         return "SYNTHETIC_PAIRS_ARBITRAGE";
     if(IsPainSyntheticSymbolName(symbol))

@@ -1,7 +1,7 @@
 // Owns the scalp entry path extracted from CFastScalpEngine: entry gates, risk gating, lot finalization, send.
 // Methods are `static` and mutable engine state (cooldown stamp, risk budget, trackers) arrives by reference, so
 // side effects and their ordering match the inline original. The pre-trade CUnifiedRiskManager validation here
-// is AGENTS.md Invariant #1; the partial-fill risk scaling keeps its L10-015 behaviour.
+// is AGENTS.md Invariant #1; the partial-fill risk scaling keeps its behaviour.
 #property strict
 
 #ifndef CORE_SCALP_FAST_SCALP_ENTRY_MQH
@@ -18,7 +18,7 @@
 #include "FastScalpRiskBudget.mqh"
 #include "FastScalpAsyncTracker.mqh"
 
-// Forward declaration for AI adapter (L10-018) â€?only ever NULL-checked here
+// Forward declaration for AI adapter â€?only ever NULL-checked here
 class CAIAdapter;
 
 // CFastScalpEntry â€?stateless scalp entry gating + execution
@@ -159,7 +159,7 @@ public:
       // the margin cap. FinalizeLotSize can only shrink or refuse, so re-validating here approved the
       // same trade a second time and took a second virtual reservation for it.
 
-      // L10-018: AI-VOTE logging. Unreachable today: the only Initialize call site
+      // AI-VOTE logging. Unreachable today: the only Initialize call site
       // (EAOrchestrator.mqh:1162) leaves the optional aiAdapter defaulted to NULL.
       if(aiAdapter != NULL)
       {
@@ -186,7 +186,7 @@ public:
             return false;
          }
 
-         // Batch 152 (T-10): the request we just submitted was appended at the END
+         // (T-10): the request we just submitted was appended at the END
          // of the pending array - index 0 is the oldest, possibly unrelated entry.
          int lastPendingIdx = tradeManager.GetPendingAsyncCount() - 1;
          asyncTracker.OnAsyncOrderSent(lastPendingIdx >= 0 ?
@@ -230,7 +230,7 @@ public:
          double riskPerTrade = riskManager != NULL ?
                                riskManager.GetActiveRiskPerTradePercent() : 1.0;
 
-         // L10-015: Check for partial fill and scale risk budget
+         // Check for partial fill and scale risk budget
          STradeExecutionReceipt receipt;
          tradeManager.GetLastExecutionReceipt(receipt);
          double fillRatio = 1.0;

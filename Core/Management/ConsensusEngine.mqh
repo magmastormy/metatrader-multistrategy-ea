@@ -657,7 +657,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         // Divided by buyWeight, not by buyVotes. `conf * weight` summed and then divided by the
         // vote count scales the result by the average registration weight: a 1.70-weight voter at
         // 0.69 confidence reads 1.17, and every consumer of this number treats it as quality in
-        // [0,1] - the >0.70 quorum discount at :435 fires for it unconditionally, and the
+        // [0,1] - the >0.70 quorum discount at:435 fires for it unconditionally, and the
         // 0.55 floor cannot be missed by any row heavy enough, while a 0.50-weight row can never
         // reach it. Dividing by the weight actually cast makes this a weighted mean confidence,
         // which is the quantity the 0.55 / 0.68 / 0.70 constants are documented to be.

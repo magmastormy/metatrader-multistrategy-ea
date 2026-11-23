@@ -54,7 +54,7 @@ private:
 
     double m_ewmaVol;           // Running EWMA volatility
     double m_volHistory[];      // Rolling history for percentile calculation
-    int    m_volHistorySize;    // Batch 119: size of vol history array
+    int    m_volHistorySize;    // size of vol history array
     int    m_volCursor;
     int    m_volCount;
 
@@ -198,7 +198,7 @@ public:
         // Resolve PERIOD_CURRENT to actual chart timeframe
         if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
             m_timeframe = Period();
-        
+
         m_atrHandle = iATR(m_symbol, m_timeframe, m_atrPeriod);
         if(m_atrHandle == INVALID_HANDLE)
             return false;

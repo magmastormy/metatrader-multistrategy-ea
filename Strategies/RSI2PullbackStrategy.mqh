@@ -2,14 +2,14 @@
 //
 // The shape is deliberate and narrow, because this is the one voter that trades AGAINST the last
 // one or two bars while still requiring the higher-timeframe direction to agree:
-//   - RSI(2) measures a two-bar impulse, so the signal fires while the pullback is still fresh
-//     rather than after the market has already turned.
-//   - The 200-period SMA is the trend authority: an oversold reading below it is a downtrend
-//     continuing, not a dip, and that is the failure mode this filter exists to remove.
-//   - The distance cap (4 ATR) refuses a price that is already far from the mean, where a "dip"
-//     is a trend leg and mean reversion loses its edge.
-//   - Stops and targets are ATR multiples (1.2 / 2.1 ATR, `m_rewardMultiple` 1.75), so R:R is fixed
-//     by construction and the voter cannot be sized into a trade whose target does not cover its stop.
+// - RSI(2) measures a two-bar impulse, so the signal fires while the pullback is still fresh
+// rather than after the market has already turned.
+// - The 200-period SMA is the trend authority: an oversold reading below it is a downtrend
+// continuing, not a dip, and that is the failure mode this filter exists to remove.
+// - The distance cap (4 ATR) refuses a price that is already far from the mean, where a "dip"
+// is a trend leg and mean reversion loses its edge.
+// - Stops and targets are ATR multiples (1.2 / 2.1 ATR, `m_rewardMultiple` 1.75), so R:R is fixed
+// by construction and the voter cannot be sized into a trade whose target does not cover its stop.
 #ifndef RSI2_PULLBACK_STRATEGY_MQH
 #define RSI2_PULLBACK_STRATEGY_MQH
 

@@ -143,7 +143,7 @@ public:
       }
    }
 
-// L10-003: Cap cumulative lot multiplier to prevent unbounded
+// Cap cumulative lot multiplier to prevent unbounded
 // martingale risk. Returns false when the cap is exceeded and
 // reports the accumulated ratio through cumulativeLotRatio.
    static bool PassesCumulativeLotCap(const SGridRecoveryConfig &config, int level, double baseLot,

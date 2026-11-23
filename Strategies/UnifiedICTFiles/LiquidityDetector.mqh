@@ -40,7 +40,7 @@ struct SLiquidityPool
     double strength;
     ENUM_TIMEFRAMES timeframe;
     bool isEngineered;
-    
+
     SLiquidityPool() : type(UICT_LIQ_NONE), time(0), price(0), touchCount(0),
                       isSwept(false), sweptTime(0), confirmedReversal(false),
                       strength(0.5), timeframe(PERIOD_CURRENT), isEngineered(false) {}
@@ -65,13 +65,13 @@ class CLiquidityDetector
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     SLiquidityPool      m_liquidityPools[];
     int                 m_poolCount;
     int                 m_maxPools;
-    
+
     double              m_equalTolerance;
-    
+
     // Internal methods
     bool                IsAtPsychologicalLevel(double price);
     long                GetAverageVolume(int bars);
@@ -93,34 +93,34 @@ private:
     double              FindTimeRangeExtreme(const datetime startTime,
                                              const datetime endTime,
                                              const bool wantHigh) const;
-    
+
 public:
                         CLiquidityDetector();
                        ~CLiquidityDetector();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, double equalTolerancePips = 5);
     void                Update();
-    
+
     void                DetectEqualHighsLows(int lookback = 50);
     void                DetectSwingLiquidity(int lookback = 50);
     void                DetectSessionLiquidity();
     void                DetectTimeframeLiquidity();
-    
+
     bool                DetectLiquiditySweep(SLiquidityPool &pool);
     bool                HasRecentSweep(bool &isBuyside);
     bool                DetectTurtleSoup(STurtleSoupSignal &signal, const int maxBarsAgo = 3);
-    
+
     int                 GetPoolCount() const { return m_poolCount; }
     bool                GetPool(int index, SLiquidityPool &pool);
     int                 FindNearestLiquidity(double price, bool above);
     int                 FindSweptLiquidity();
-    
+
     // Checks
     bool                IsNearLiquidity(double price, double tolerancePips = 20);
     bool                HasBuysideLiquidity(double price);
     bool                HasSellsideLiquidity(double price);
 
-    // Batch 103: External swing liquidity mapping
+    // External swing liquidity mapping
     struct SExternalLiquidityPool
     {
         double price;
@@ -156,7 +156,7 @@ bool CLiquidityDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     m_timeframe = timeframe;
     m_equalTolerance = equalTolerancePips;
     m_poolCount = 0;
-    
+
     return true;
 }
 
@@ -164,12 +164,12 @@ void CLiquidityDetector::Update()
 {
     m_poolCount = 0;
     ArrayResize(m_liquidityPools, 0);
-    
+
     DetectEqualHighsLows(500);  // Expanded from 50 for historical memory
     DetectSwingLiquidity(500);  // Expanded from 50 for historical memory
     DetectTimeframeLiquidity();
     DetectInstitutionalLevels();
-    
+
     // Check for sweeps
     for(int i = 0; i < m_poolCount; i++)
     {
@@ -179,36 +179,36 @@ void CLiquidityDetector::Update()
 
 void CLiquidityDetector::DetectEqualHighsLows(int lookback)
 {
-    // Batch 157: the "pips" tolerance was multiplied by raw POINT (half a tick on
+    // the "pips" tolerance was multiplied by raw POINT (half a tick on
     // FX, 0.05 absolute on synthetics priced in thousands) - equal highs/lows were
     // effectively dead outside FX. Floor at 0.2bp of price so the band scales with
     // instrument value; FX behavior is preserved (points term still dominates there).
     double tolerance = MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT),
                                SymbolInfoDouble(m_symbol, SYMBOL_BID) * 0.00002);
-    
+
     double high[], low[];
     datetime time[];
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
-    
+
     if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
     if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
-    
+
     // Find equal highs (buy-side liquidity)
     for(int i = 5; i < lookback - 5; i++)
     {
         double high1 = high[i];
-        
+
         for(int j = i + 3; j < i + 20 && j < lookback; j++)
         {
             double high2 = high[j];
-            
+
             if(MathAbs(high1 - high2) < tolerance)
             {
                 ArrayResize(m_liquidityPools, m_poolCount + 1);
-                
+
                 m_liquidityPools[m_poolCount].type = UICT_LIQ_EQUAL_HIGHS;
                 m_liquidityPools[m_poolCount].time = time[i];
                 m_liquidityPools[m_poolCount].price = (high1 + high2) / 2.0;
@@ -221,20 +221,20 @@ void CLiquidityDetector::DetectEqualHighsLows(int lookback)
             }
         }
     }
-    
+
     // Find equal lows (sell-side liquidity)
     for(int i = 5; i < lookback - 5; i++)
     {
         double low1 = low[i];
-        
+
         for(int j = i + 3; j < i + 20 && j < lookback; j++)
         {
             double low2 = low[j];
-            
+
             if(MathAbs(low1 - low2) < tolerance)
             {
                 ArrayResize(m_liquidityPools, m_poolCount + 1);
-                
+
                 m_liquidityPools[m_poolCount].type = UICT_LIQ_EQUAL_LOWS;
                 m_liquidityPools[m_poolCount].time = time[i];
                 m_liquidityPools[m_poolCount].price = (low1 + low2) / 2.0;
@@ -256,11 +256,11 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
-    
+
     if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
     if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
-    
+
     // Find swing highs
     for(int i = 3; i < lookback - 3; i++)
     {
@@ -268,7 +268,7 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
            high[i] > high[i-2] && high[i] > high[i+2])
         {
             ArrayResize(m_liquidityPools, m_poolCount + 1);
-            
+
             m_liquidityPools[m_poolCount].type = UICT_LIQ_SWING_HIGH;
             m_liquidityPools[m_poolCount].time = time[i];
             m_liquidityPools[m_poolCount].price = high[i];
@@ -278,7 +278,7 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
             m_poolCount++;
         }
     }
-    
+
     // Find swing lows
     for(int i = 3; i < lookback - 3; i++)
     {
@@ -286,7 +286,7 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
            low[i] < low[i-2] && low[i] < low[i+2])
         {
             ArrayResize(m_liquidityPools, m_poolCount + 1);
-            
+
             m_liquidityPools[m_poolCount].type = UICT_LIQ_SWING_LOW;
             m_liquidityPools[m_poolCount].time = time[i];
             m_liquidityPools[m_poolCount].price = low[i];
@@ -355,6 +355,7 @@ bool CLiquidityDetector::IsUSDSTime(const datetime when) const
 
     MqlDateTime dstStartStruct = marchStart;
     dstStartStruct.day = secondSundayMarch;
+    dstStartStruct.hour = 7; // 2:00 AM EST = 07:00 UTC
     datetime dstStart = StructToTime(dstStartStruct);
 
     MqlDateTime novemberStart;
@@ -372,6 +373,7 @@ bool CLiquidityDetector::IsUSDSTime(const datetime when) const
 
     MqlDateTime dstEndStruct = novemberStart;
     dstEndStruct.day = firstSundayNovember;
+    dstEndStruct.hour = 6; // 2:00 AM EDT = 06:00 UTC
     datetime dstEnd = StructToTime(dstEndStruct);
 
     return (when >= dstStart && when < dstEnd);
@@ -490,18 +492,18 @@ void CLiquidityDetector::DetectInstitutionalLevels()
 bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
 {
     if(pool.isSwept) return false;
-    
+
     double tolerance = 3 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     for(int i = 0; i < 20; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime <= pool.time) break;
-        
+
         double high = iHigh(m_symbol, m_timeframe, i);
         double low = iLow(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(pool.type == UICT_LIQ_EQUAL_HIGHS || pool.type == UICT_LIQ_SWING_HIGH ||
            pool.type == UICT_LIQ_DAILY_HIGH || pool.type == UICT_LIQ_WEEKLY_HIGH ||
            pool.type == UICT_LIQ_MONTHLY_HIGH || pool.type == UICT_LIQ_QUARTERLY_HIGH)
@@ -537,7 +539,7 @@ bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
             }
         }
     }
-    
+
     return false;
 }
 
@@ -562,7 +564,7 @@ bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
             }
         }
     }
-    
+
     return false;
 }
 
@@ -626,7 +628,7 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
                 signal.reclaimClose = close;
                 signal.eventTime = iTime(m_symbol, m_timeframe, shift);
                 double barRange2 = high - low;
-                double penTerm2 = (barRange2 > 0.0) ? ((pool.price - low) / barRange2) * 0.05 : 0.0;  // Batch 157: scale-free, see above
+                double penTerm2 = (barRange2 > 0.0) ? ((pool.price - low) / barRange2) * 0.05 : 0.0;  // scale-free, see above
                 signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + penTerm2);
                 return true;
             }
@@ -639,24 +641,24 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
 double CLiquidityDetector::CalculateLiquidityStrength(int bar1, int bar2)
 {
     double strength = 0.60;
-    
+
     // Time between touches
     int barsBetween = bar2 - bar1;
     if(barsBetween >= 10)
         strength += 0.15;
-    
+
     // Check if at psychological level
     double price = iHigh(m_symbol, m_timeframe, bar1);
     if(IsAtPsychologicalLevel(price))
         strength += 0.15;
-    
+
     long vol1 = iVolume(m_symbol, m_timeframe, bar1);
     long vol2 = iVolume(m_symbol, m_timeframe, bar2);
     long avgVol = GetAverageVolume(20);
-    
+
     if(avgVol > 0 && (vol1 > avgVol * 1.5 || vol2 > avgVol * 1.5))
         strength += 0.10;
-    
+
     return MathMin(1.0, strength);
 }
 
@@ -666,7 +668,7 @@ bool CLiquidityDetector::IsAtPsychologicalLevel(double price)
 
     int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
 
-    // Batch 157: digits==2 synthetics never earned the bonus before (only the
+    // digits==2 synthetics never earned the bonus before (only the
     // FX branches returned true). Keep the FX grids and add a magnitude-based
     // round-number grid for everything else.
     if(digits == 5 || digits == 3)
@@ -691,10 +693,10 @@ bool CLiquidityDetector::IsAtPsychologicalLevel(double price)
 long CLiquidityDetector::GetAverageVolume(int bars)
 {
     long avgVol = 0;
-    
+
     for(int i = 0; i < bars; i++)
         avgVol += iVolume(m_symbol, m_timeframe, i);
-    
+
     return (bars > 0) ? avgVol / bars : 0;
 }
 
@@ -709,11 +711,11 @@ int CLiquidityDetector::FindNearestLiquidity(double price, bool above)
 {
     int nearestIndex = -1;
     double minDistance = DBL_MAX;
-    
+
     for(int i = 0; i < m_poolCount; i++)
     {
         if(m_liquidityPools[i].isSwept) continue;
-        
+
         if(above)
         {
             if(m_liquidityPools[i].price > price)
@@ -739,7 +741,7 @@ int CLiquidityDetector::FindNearestLiquidity(double price, bool above)
             }
         }
     }
-    
+
     return nearestIndex;
 }
 
@@ -752,20 +754,20 @@ int CLiquidityDetector::FindSweptLiquidity()
             return i;
         }
     }
-    
+
     return -1;
 }
 
 bool CLiquidityDetector::IsNearLiquidity(double price, double tolerancePips)
 {
     double tolerance = tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     for(int i = 0; i < m_poolCount; i++)
     {
         if(MathAbs(price - m_liquidityPools[i].price) < tolerance)
             return true;
     }
-    
+
     return false;
 }
 
@@ -786,7 +788,7 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
 {
     ArrayResize(pools, 0);
     int found = 0;
-    // Batch 156: per-side budgets - the shared counter let the swing-high pass
+    // per-side budgets - the shared counter let the swing-high pass
     // consume every slot, so sell-side pools were never emitted.
     int maxPerSide = MathMax(1, maxPools / 2);
     int foundHighs = 0;
@@ -816,7 +818,7 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
             for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
             {
                 double h2 = iHigh(m_symbol, m_timeframe, j);
-                if(h2 > 0 && MathAbs(h2 - h) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), h * 0.00002))  // Batch 157: scale-free floor
+                if(h2 > 0 && MathAbs(h2 - h) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), h * 0.00002))  // scale-free floor
                 {
                     pool.strength = MathMin(1.0, pool.strength + 0.15);
                     break;
@@ -852,7 +854,7 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
             for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
             {
                 double l2 = iLow(m_symbol, m_timeframe, j);
-                if(l2 > 0 && MathAbs(l2 - l) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), l * 0.00002))  // Batch 157: scale-free floor
+                if(l2 > 0 && MathAbs(l2 - l) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), l * 0.00002))  // scale-free floor
                 {
                     pool.strength = MathMin(1.0, pool.strength + 0.15);
                     break;

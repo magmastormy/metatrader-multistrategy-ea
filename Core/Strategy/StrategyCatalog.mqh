@@ -209,7 +209,7 @@ void BuildStrategyCatalog()
     CatalogAdd("ICT Structure Shift",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ICT_STRUCTURE_SHIFT,  -1,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, false, "", "", CatCreate_ICTStructureShift, STRATEGY_SUPPORT_RESISTANCE);
 
     //--- 5 AI adapters: created by CStrategyFactory and registered by the orchestrator, not by AutoRegisterStrategies ---
-    //    Both slots are -1, so AI rows always resolve to fixedPolicy = LIVE.
+    // Both slots are -1, so AI rows always resolve to fixedPolicy = LIVE.
     CatalogAdd("Neural Network AI", CAT_KIND_AI, CAT_AI_NEURAL_NET,    "Neural Network AI", -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "nn_adapter_register_failed",            NULL, -1);
     CatalogAdd("Transformer AI",    CAT_KIND_AI, CAT_AI_TRANSFORMER,   "Transformer AI",    -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "transformer_adapter_register_failed",   NULL, -1);
     CatalogAdd("Ensemble AI",       CAT_KIND_AI, CAT_AI_ENSEMBLE,      "Ensemble AI",       -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, false, "", "ensemble_adapter_register_failed",      NULL, -1);

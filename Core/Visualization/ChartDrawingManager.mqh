@@ -49,7 +49,7 @@ struct SDrawingConfig
     bool cleanupOldObjects;       // Auto-cleanup obsolete objects
     int maxObjectAge;             // Max age in bars before cleanup
     int maxObjectsPerStrategy;    // Max objects allowed per strategy
-    
+
     SDrawingConfig()
     {
         enableDrawing = true;
@@ -78,15 +78,15 @@ private:
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
     int m_maxObjects;                 // Max objects for this manager (default 900)
-    
+
     int m_objectsDrawn;
     int m_objectsDeleted;
     datetime m_lastCleanup;
-    
+
     bool m_isDirty;                   // Flag indicating data has changed
     datetime m_lastDirtyTime;         // Last time dirty flag was set
     int m_lastBarDrawn;               // Last bar number when drawing occurred
-    
+
     string GenerateObjectName(const string objectType, const string uniqueId);
     string BuildScopedPrefix(const string basePrefix, const string symbol, ENUM_TIMEFRAMES tf);
     bool PrepareSnapshotDraw();
@@ -97,77 +97,77 @@ private:
     bool ValidateTime(datetime time);
     bool ValidatePrice(double price);
     void DebouncedRedraw();
-    
+
 public:
     CChartDrawingManager();
     ~CChartDrawingManager();
-    
+
     bool Initialize(const string symbol, ENUM_TIMEFRAMES tf, const string prefix = "");
     void SetConfiguration(const SDrawingConfig &config) { m_config = config; }
     void SetMaxObjects(const int maxObjects) { m_maxObjects = MathMax(100, maxObjects); }
     SDrawingConfig GetConfiguration() const { return m_config; }
-    
+
     // Structure Drawing (HH/HL/LH/LL, BOS, CHOCH)
     bool DrawSwingHigh(datetime time, double price, const string label = "HH");
     bool DrawSwingLow(datetime time, double price, const string label = "LL");
     bool DrawBOS(datetime time1, double price1, datetime time2, double price2, bool isBullish);
     bool DrawCHOCH(datetime time1, double price1, datetime time2, double price2, bool isBullish);
-    
+
     bool DrawICT_CHOCH(datetime time, double price, bool isBullish, const string htfLabel = "");
-    bool DrawICT_SupplyZone(datetime timeStart, datetime timeEnd, double top, double bottom, 
+    bool DrawICT_SupplyZone(datetime timeStart, datetime timeEnd, double top, double bottom,
                            const string label = "", int transparency = 85);
     bool DrawICT_DemandZone(datetime timeStart, datetime timeEnd, double top, double bottom,
                            const string label = "", int transparency = 85);
-    
-    bool DrawZone(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow, 
+
+    bool DrawZone(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                   const string label, color zoneColor, bool isFilled = true, int transparency = 90);
     bool DrawOrderBlock(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                        bool isBullish, double strength = 1.0, const string uniqueId = "");
     bool DrawHorizontalLevel(double price, color levelColor, const string label = "",
                              ENUM_LINE_STYLE style = STYLE_DOT, int width = 1, bool rayRight = true);
-    
+
     bool DrawFVG(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow,
                  bool isBullish, bool isFilled = false, const string uniqueId = "");
-    
-    bool DrawLiquidityLevel(datetime time1, datetime time2, double price, 
+
+    bool DrawLiquidityLevel(datetime time1, datetime time2, double price,
                            const string label, bool isSwept = false);
     bool DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price);
     bool DrawEqualLows(datetime time1, datetime time2, datetime time3, double price);
-    
+
     bool DrawEntrySignal(datetime time, double price, bool isBuy, double confidence,
                         const string strategyName, const string reason = "");
-    bool DrawExitSignal(datetime time, double price, bool wasProfit, 
+    bool DrawExitSignal(datetime time, double price, bool wasProfit,
                        const string reason = "");
     bool DrawStopLoss(datetime time, double price, bool isForBuy);
     bool DrawTakeProfit(datetime time, double price, bool isForBuy, int level = 1);
-    
+
     bool DrawTrendLine(datetime time1, double price1, datetime time2, double price2,
                       color lineColor = clrWhite, int width = 1, ENUM_LINE_STYLE style = STYLE_SOLID);
-    
+
     bool DrawTextLabel(datetime time, double price, const string text,
                       color textColor = clrWhite, int fontSize = 10, ENUM_ANCHOR_POINT anchor = ANCHOR_CENTER);
-    
+
     bool DrawPattern(const string patternName, datetime &time[], double &price[], int pointCount, color patternColor, int width = 1);
-    
+
     void CleanupOldObjects();
     void CleanupByPrefix(const string prefix);
     void CleanupAll();
     void DeleteObject(const string objName);
-    
+
     int GetObjectsDrawn() const { return m_objectsDrawn; }
     int GetObjectsDeleted() const { return m_objectsDeleted; }
     int GetObjectCount() const { return m_objectsDrawn - m_objectsDeleted; }
-    
+
     void EnableDebugMode(bool enable) { m_config.enableDebugMode = enable; }
     bool IsDebugMode() const { return m_config.enableDebugMode; }
     string GetPrefix() const { return m_prefix; }
-    
+
     void SetDirty(bool dirty = true) { m_isDirty = dirty; m_lastDirtyTime = TimeCurrent(); }
     bool IsDirty() const { return m_isDirty; }
     bool ShouldRedraw();
-    
+
     void LogStatistics();
-    
+
     int GetCurrentObjectCount();
     bool IsObjectLimitReached();
 };
@@ -195,26 +195,26 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
         return false;
 
     PrepareSnapshotDraw();
-    
+
     int tfSeconds = PeriodSeconds(m_timeframe);
     if(tfSeconds <= 0)
         tfSeconds = 60;
-    
+
     datetime timeEnd = TimeCurrent() + (datetime)(tfSeconds * 20);
     datetime timeStart = timeEnd - (datetime)(tfSeconds * 200);
-    
+
     string objName = GenerateObjectName("SR_LEVEL", label);
     ObjectDelete(m_chartID, objName);
-    
+
     if(!ObjectCreate(m_chartID, objName, OBJ_TREND, 0, timeStart, price, timeEnd, price))
         return false;
-    
+
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, levelColor);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, width);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, style);
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, rayRight);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
+
     if(label != "")
     {
         string labelName = objName + "_LABEL";
@@ -248,7 +248,7 @@ bool CChartDrawingManager::Initialize(const string symbol, ENUM_TIMEFRAMES tf, c
     m_chartID = ChartID();
     m_prefix = BuildScopedPrefix(prefix, symbol, tf);
     m_lastCleanup = TimeCurrent();
-    
+
     Print("[ChartDrawing] Initialized for ", symbol, " on ", EnumToString(tf));
     return true;
 }
@@ -288,7 +288,7 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
         objName += "_" + uniqueId;
     else
         objName += "_" + IntegerToString(GetTickCount());
-    
+
     return objName;
 }
 
@@ -314,21 +314,21 @@ bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const stri
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("SWING_HIGH", TimeToString(time));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_ARROW_DOWN, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_BEARISH_PRIMARY);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
+
     string labelName = objName + "_LABEL";
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, label);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_TEXT_LIGHT);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 8);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
-    
+
     m_objectsDrawn += 2;
     DebouncedRedraw();
     return true;
@@ -340,21 +340,21 @@ bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const strin
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("SWING_LOW", TimeToString(time));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_ARROW_UP, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_BULLISH_PRIMARY);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
+
     string labelName = objName + "_LABEL";
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, label);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_TEXT_LIGHT);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 8);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_TOP);
-    
+
     m_objectsDrawn += 2;
     DebouncedRedraw();
     return true;
@@ -366,25 +366,25 @@ bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("BOS", TimeToString(time2));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_TREND, 0, time1, price1, time2, price2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_BOS);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, STYLE_SOLID);
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, false);
-    
+
     string labelName = objName + "_LABEL";
     double midPrice = (price1 + price2) / 2;
     datetime midTime = (datetime)((time1 + time2) / 2);
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, isBullish ? "BOS↑" : "BOS↓");
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_BOS);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-    
+
     m_objectsDrawn += 2;
     DebouncedRedraw();
     return true;
@@ -396,19 +396,19 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("CHOCH", TimeToString(time2));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_TREND, 0, time1, price1, time2, price2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, STYLE_DASH);
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, false);
-    
+
     string labelName = objName + "_LABEL";
     double midPrice = (price1 + price2) / 2;
     datetime midTime = (datetime)((time1 + time2) / 2);
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, isBullish ? "CHOCH↑" : "CHOCH↓");
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
@@ -427,21 +427,21 @@ bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBul
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("ICT_CHOCH", TimeToString(time));
-    
+
     int arrowCode = isBullish ? 233 : 234;  // Up/Down arrows
     ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, arrowCode);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 4);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
+
     string labelName = objName + "_LABEL";
     string labelText = isBullish ? "CHOCH↑" : "CHOCH↓";
     if(htfLabel != "")
         labelText += " [" + htfLabel + "]";
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, labelText);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
@@ -458,15 +458,15 @@ bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeE
 {
     if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
         return false;
-    
+
     if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
         return false;
-    
+
     PrepareSnapshotDraw();
-    
+
     string zoneLabel = (label != "") ? "SUPPLY_" + label : "SUPPLY";
     string objName = GenerateObjectName("SUPPLY", zoneLabel + "_" + TimeToString(timeStart));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, top, timeEnd, bottom);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_SUPPLY);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
@@ -474,17 +474,17 @@ bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeE
     ObjectSetInteger(m_chartID, objName, OBJPROP_FILL, true);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, true);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BGCOLOR, COLOR_SCHEME_SUPPLY);
-    
+
     string labelName = objName + "_LABEL";
     datetime midTime = (datetime)((timeStart + timeEnd) / 2);
     double midPrice = (top + bottom) / 2;
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, "SUPPLY");
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrWhite);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-    
+
     m_objectsDrawn += 2;
     DebouncedRedraw();
     return true;
@@ -495,15 +495,15 @@ bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeE
 {
     if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
         return false;
-    
+
     if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
         return false;
-    
+
     PrepareSnapshotDraw();
-    
+
     string zoneLabel = (label != "") ? "DEMAND_" + label : "DEMAND";
     string objName = GenerateObjectName("DEMAND", zoneLabel + "_" + TimeToString(timeStart));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, top, timeEnd, bottom);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_DEMAND);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
@@ -511,17 +511,17 @@ bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeE
     ObjectSetInteger(m_chartID, objName, OBJPROP_FILL, true);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, true);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BGCOLOR, COLOR_SCHEME_DEMAND);
-    
+
     string labelName = objName + "_LABEL";
     datetime midTime = (datetime)((timeStart + timeEnd) / 2);
     double midPrice = (top + bottom) / 2;
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, "DEMAND");
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrBlack);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-    
+
     m_objectsDrawn += 2;
     DebouncedRedraw();
     return true;
@@ -545,24 +545,24 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
     }
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("ZONE", label + "_" + TimeToString(timeStart));
     if(m_config.enableDebugMode)
         Print("[ChartDrawing] Drawing zone: ", objName, " | Price: ", priceLow, "-", priceHigh);
-    
+
     ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, priceHigh, timeEnd, priceLow);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, zoneColor);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, STYLE_SOLID);
     ObjectSetInteger(m_chartID, objName, OBJPROP_FILL, isFilled);
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, true);
-    
+
     if(isFilled && transparency > 0)
     {
         color transparentColor = zoneColor;
         ObjectSetInteger(m_chartID, objName, OBJPROP_BGCOLOR, transparentColor);
     }
-    
+
     m_objectsDrawn++;
     DebouncedRedraw();
     return true;
@@ -573,12 +573,12 @@ bool CChartDrawingManager::DrawOrderBlock(datetime timeStart, datetime timeEnd, 
 {
     if(!m_config.enableDrawing || !m_config.enableOrderBlocks)
         return false;
-    
+
     color obColor = isBullish ? (color)COLOR_SCHEME_ORDERBLOCK_BULL : (color)COLOR_SCHEME_ORDERBLOCK_BEAR;
     string label = isBullish ? "OB_BULL" : "OB_BEAR";
     if(uniqueId != "")
         label += "_" + uniqueId;
-    
+
     return DrawZone(timeStart, timeEnd, priceHigh, priceLow, label, obColor, true, 85);
 }
 
@@ -587,15 +587,15 @@ bool CChartDrawingManager::DrawFVG(datetime timeStart, datetime timeEnd, double 
 {
     if(!m_config.enableDrawing || !m_config.enableFVG)
         return false;
-    
+
     color fvgColor = isBullish ? (color)COLOR_SCHEME_FVG_BULL : (color)COLOR_SCHEME_FVG_BEAR;
     string label = isBullish ? "FVG_BULL" : "FVG_BEAR";
     if(uniqueId != "")
         label += "_" + uniqueId;
-    
+
     // transparency is inert: DrawZone never computes alpha, it only re-sets BGCOLOR to the same zoneColor
     int transparency = isFilled ? 50 : 85;
-    
+
     return DrawZone(timeStart, timeEnd, priceHigh, priceLow, label, fvgColor, true, transparency);
 }
 
@@ -606,15 +606,15 @@ bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, do
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("LIQUIDITY", label + "_" + TimeToString(time1));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_TREND, 0, time1, price, time2, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_LIQUIDITY);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, isSwept ? 1 : 2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, isSwept ? STYLE_DOT : STYLE_DASHDOT);
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, !isSwept);
-    
+
     string labelName = objName + "_LABEL";
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time2, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, label + (isSwept ? " [SWEPT]" : ""));
@@ -634,21 +634,21 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
         return false;
 
     PrepareSnapshotDraw();
-    
+
     string objName = GenerateObjectName("ENTRY", strategyName + "_" + TimeToString(time));
-    
+
     int arrowCode = isBuy ? 233 : 234;  // Up/Down arrows
     ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, arrowCode);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, isBuy ? clrLime : clrRed);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 1);  // Reduced from 3 to 1 for smaller arrows
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
+
     string labelName = objName + "_LABEL";
     string labelText = StringFormat("%s %.0f%%", strategyName, confidence * 100);
     if(reason != "")
         labelText += " " + reason;
-    
+
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, labelText);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrWhite);
@@ -666,11 +666,11 @@ void CChartDrawingManager::CleanupOldObjects()
 {
     if(!m_config.cleanupOldObjects)
         return;
-    
+
     datetime cleanupTime = TimeCurrent();
     if(cleanupTime - m_lastCleanup < 60)  // Cleanup every minute
         return;
-    
+
     DeleteOldObjects(m_prefix, m_config.maxObjectAge);
     m_lastCleanup = cleanupTime;
 }
@@ -703,7 +703,7 @@ bool CChartDrawingManager::IsObjectOld(const string objName, int maxAge)
     datetime objTime = (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME);
     if(objTime == 0)
         return false;
-    
+
     int objBar = iBarShift(m_symbol, m_timeframe, objTime);
     return (objBar > maxAge);
 }
@@ -732,9 +732,9 @@ bool CChartDrawingManager::CheckObjectLimitAndCleanup()
     int totalObjects = ObjectsTotal(m_chartID);
     if(totalObjects < m_maxObjects)
         return true;
-    
+
     int objectsToDelete = totalObjects - (m_maxObjects - 100); // Keep buffer of 100
-    
+
     // The cap compares every object on the chart, yet only this manager's prefixed objects are deleted.
     struct ObjectInfo
     {
@@ -743,7 +743,7 @@ bool CChartDrawingManager::CheckObjectLimitAndCleanup()
     };
     ObjectInfo objects[];
     int count = 0;
-    
+
     for(int i = 0; i < ObjectsTotal(m_chartID); i++)
     {
         string name = ObjectName(m_chartID, i);
@@ -756,7 +756,7 @@ bool CChartDrawingManager::CheckObjectLimitAndCleanup()
             count++;
         }
     }
-    
+
     for(int i = 0; i < count - 1; i++)
     {
         for(int j = i + 1; j < count; j++)
@@ -769,7 +769,7 @@ bool CChartDrawingManager::CheckObjectLimitAndCleanup()
             }
         }
     }
-    
+
     int deleted = 0;
     for(int i = 0; i < count && deleted < objectsToDelete; i++)
     {
@@ -779,7 +779,7 @@ bool CChartDrawingManager::CheckObjectLimitAndCleanup()
             deleted++;
         }
     }
-    
+
     return true;
 }
 
@@ -798,13 +798,13 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
 
     if(!DrawLiquidityLevel(time1, time3, price, "EQH", false))
         return false;
-    
+
     string objName1 = GenerateObjectName("EQH_M1", TimeToString(time1));
     ObjectCreate(m_chartID, objName1, OBJ_ARROW_STOP, 0, time1, price);
-    
+
     string objName2 = GenerateObjectName("EQH_M2", TimeToString(time2));
     ObjectCreate(m_chartID, objName2, OBJ_ARROW_STOP, 0, time2, price);
-    
+
     if(time3 > time2)
     {
         string objName3 = GenerateObjectName("EQH_M3", TimeToString(time3));
@@ -821,13 +821,13 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
 
     if(!DrawLiquidityLevel(time1, time3, price, "EQL", false))
         return false;
-    
+
     string objName1 = GenerateObjectName("EQL_M1", TimeToString(time1));
     ObjectCreate(m_chartID, objName1, OBJ_ARROW_CHECK, 0, time1, price);
-    
+
     string objName2 = GenerateObjectName("EQL_M2", TimeToString(time2));
     ObjectCreate(m_chartID, objName2, OBJ_ARROW_CHECK, 0, time2, price);
-    
+
     if(time3 > time2)
     {
         string objName3 = GenerateObjectName("EQL_M3", TimeToString(time3));
@@ -844,14 +844,14 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
         return false;
 
     PrepareSnapshotDraw();
-        
+
     string objName = GenerateObjectName("EXIT", TimeToString(time));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, 251); // X sign
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, wasProfit ? clrLime : clrRed);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 1);  // Reduced from 2 to 1
-    
+
     if(reason != "")
     {
         string labelName = objName + "_LABEL";
@@ -861,7 +861,7 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
         ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_TOP);
         ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 8);
     }
-    
+
     m_objectsDrawn++;
     DebouncedRedraw();
     return true;
@@ -885,9 +885,9 @@ bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime
         return false;
 
     PrepareSnapshotDraw();
-        
+
     string objName = GenerateObjectName("TL", TimeToString(time2));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_TREND, 0, time1, price1, time2, price2);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, lineColor);
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, width);
@@ -906,9 +906,9 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
         return false;
 
     PrepareSnapshotDraw();
-        
+
     string objName = GenerateObjectName("TXT", text + "_" + TimeToString(time));
-    
+
     ObjectCreate(m_chartID, objName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, objName, OBJPROP_TEXT, text);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, textColor);
@@ -927,7 +927,7 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
         return false;
 
     PrepareSnapshotDraw();
-    
+
     bool success = true;
     for(int i = 0; i < pointCount - 1; i++)
     {
@@ -937,7 +937,7 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
             success = false;
             continue;
         }
-        
+
         ObjectSetInteger(m_chartID, segName, OBJPROP_COLOR, patternColor);
         ObjectSetInteger(m_chartID, segName, OBJPROP_WIDTH, width);
         ObjectSetInteger(m_chartID, segName, OBJPROP_STYLE, STYLE_SOLID);
@@ -960,11 +960,11 @@ bool CChartDrawingManager::ValidatePrice(double price)
 {
     if(price <= 0)
         return false;
-    
+
 // Reached only via ValidateCoordinates, which just the zone draws call; line and marker draws are unvalidated
     if(price != price || MathAbs(price) > 1e308)
         return false;
-    
+
     return (price >= 0.00001 && price <= 1000000.0);
 }
 
@@ -976,28 +976,28 @@ bool CChartDrawingManager::ValidateCoordinates(datetime time1, datetime time2, d
             Print("[ChartDrawing] Invalid time1: ", time1);
         return false;
     }
-    
+
     if(!ValidateTime(time2))
     {
         if(m_config.enableDebugMode)
             Print("[ChartDrawing] Invalid time2: ", time2);
         return false;
     }
-    
+
     if(!ValidatePrice(price1))
     {
         if(m_config.enableDebugMode)
             Print("[ChartDrawing] Invalid price1: ", price1);
         return false;
     }
-    
+
     if(!ValidatePrice(price2))
     {
         if(m_config.enableDebugMode)
             Print("[ChartDrawing] Invalid price2: ", price2);
         return false;
     }
-    
+
     return true;
 }
 
@@ -1006,9 +1006,9 @@ bool CChartDrawingManager::ShouldRedraw()
 {
     if(!m_config.enableDrawing)
         return false;
-    
+
     int currentBar = iBarShift(m_symbol, m_timeframe, TimeCurrent());
-    
+
     // Nothing in this repo calls ShouldRedraw, so the dirty flag never gates drawing today
     if(m_isDirty)
     {
@@ -1016,13 +1016,13 @@ bool CChartDrawingManager::ShouldRedraw()
         m_lastBarDrawn = currentBar;
         return true;
     }
-    
+
     if(currentBar != m_lastBarDrawn)
     {
         m_lastBarDrawn = currentBar;
         return true;
     }
-    
+
     return false;
 }
 
@@ -1030,14 +1030,14 @@ void CChartDrawingManager::LogStatistics()
 {
     int currentObjects = ObjectsTotal(m_chartID);
     int ourObjects = 0;
-    
+
     for(int i = 0; i < currentObjects; i++)
     {
         string objName = ObjectName(m_chartID, i);
         if(StringFind(objName, m_prefix) == 0)
             ourObjects++;
     }
-    
+
     PrintFormat("[ChartDrawing] Stats | Symbol: %s | TF: %s | Prefix: %s",
                 m_symbol, EnumToString(m_timeframe), m_prefix);
     PrintFormat("[ChartDrawing] Stats | Objects Drawn: %d | Objects Deleted: %d",
@@ -1052,21 +1052,21 @@ int CChartDrawingManager::GetCurrentObjectCount()
 {
     int count = 0;
     int totalObjects = ObjectsTotal(m_chartID);
-    
+
     for(int i = 0; i < totalObjects; i++)
     {
         string objName = ObjectName(m_chartID, i);
         if(StringFind(objName, m_prefix) == 0)
             count++;
     }
-    
+
     return count;
 }
 
 bool CChartDrawingManager::IsObjectLimitReached()
 {
     int currentCount = GetCurrentObjectCount();
-    
+
     if(currentCount >= m_config.maxObjectsPerStrategy)
     {
         if(m_config.enableDebugMode)
@@ -1074,7 +1074,7 @@ bool CChartDrawingManager::IsObjectLimitReached()
                        currentCount, m_config.maxObjectsPerStrategy, m_prefix);
         return true;
     }
-    
+
     // 80% of the limit only logs in debug mode; only the full limit returns true
     if(currentCount >= m_config.maxObjectsPerStrategy * 0.8)
     {
@@ -1082,7 +1082,7 @@ bool CChartDrawingManager::IsObjectLimitReached()
             PrintFormat("[ChartDrawing] Object limit approaching: %d/%d (strategy: %s)",
                        currentCount, m_config.maxObjectsPerStrategy, m_prefix);
     }
-    
+
     return false;
 }
 

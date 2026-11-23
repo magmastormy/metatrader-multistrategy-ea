@@ -28,7 +28,7 @@ private:
 
     // Value member: constructed and destroyed with this manager, never a pointer
     CCorrelationEngine m_correlationEngine;
-    
+
     struct SymbolExposure
     {
         string symbol;
@@ -48,7 +48,7 @@ private:
                                           // like, positionCount excludes positions without computable risk and would
                                           // force a full rescan on every call while any SL-less position exists
         bool     isValid;                // Whether cache is valid
-                int      version;                // Version counter for race condition prevention (L5-006)
+                int      version;                // Version counter for race condition prevention
     };
 
     SCachedPortfolioRisk m_riskCache;
@@ -78,9 +78,9 @@ private:
 public:
     CPortfolioRiskManager();
     ~CPortfolioRiskManager();
-    
+
     bool Initialize(double maxRiskPercent = 10.0, double maxCorrelation = 0.7);
-    
+
     double GetPortfolioRisk();
     bool   IsTradeAllowed(string symbol, double lotSize, double stopLossPoints = 0.0);
     bool   CheckCorrelationLimits(string symbol);
@@ -97,11 +97,11 @@ public:
     double CalculateCVaR(double confidence = 0.95) const;
     bool   IsCVaRLimitExceeded(double proposedRiskPct) const;
     double GetCurrentCVaR() const;
-    
+
         void   RecordEquityCurveReturn(double equityPercentChange);
         void   UpdateEquityCurve();
         void   SetUseEquityCurveForCVaR(bool use) { m_useEquityCurveForCVaR = use; }
-    
+
     void   SetAssetClassCorrThreshold(double threshold) { m_assetClassCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
     void   SetCrossAssetCorrThreshold(double threshold) { m_crossAssetCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
 
@@ -166,7 +166,7 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     ArrayResize(m_riskCache.perSymbolName, 0);
     ArrayResize(m_tradeReturns, m_maxReturnHistory);
     ArrayInitialize(m_tradeReturns, 0.0);
-    
+
     ArrayResize(m_equityCurveReturns, m_maxEquityCurveHistory);
     ArrayInitialize(m_equityCurveReturns, 0.0);
 }
@@ -183,7 +183,7 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
         Print("[PortfolioRisk] Invalid max risk percent: ", maxRiskPercent);
         return false;
     }
-    
+
     m_maxPortfolioRisk = maxRiskPercent;
     m_maxCorrelation = maxCorrelation;
     m_emergencyMode = false;
@@ -205,9 +205,9 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     // caller, so the ctor defaults (0.85 same-class / 0.70 cross-class) are what the engine keeps using
     m_correlationEngine.Initialize(30, 300, 1.0, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
 
-    PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f | AssetClass=%.2f CrossAsset=%.2f", 
+    PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f | AssetClass=%.2f CrossAsset=%.2f",
                 m_maxPortfolioRisk, m_maxCorrelation, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
-    
+
     return true;
 }
 
@@ -253,9 +253,9 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
         RecordBlockReason("Emergency Mode Active");
         return false;
     }
-    
+
     double currentRisk = GetPortfolioRisk();
-    
+
     // Fail-closed at the cap (>=, not >): a book already at max blocks every entry before correlation is even looked at
     if(currentRisk >= m_maxPortfolioRisk)
     {
@@ -264,7 +264,7 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
                                        m_maxPortfolioRisk));
         return false;
     }
-    
+
     double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
     if(currentRisk + estimatedNewRisk > m_maxPortfolioRisk)
     {
@@ -276,7 +276,7 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
 
     if(!CheckCorrelationLimits(symbol))
         return false;
-    
+
     return true;
 }
 
@@ -284,7 +284,7 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 {
     m_lastBlockReason = "";
     int positionsOnSymbol = GetPositionsOnSymbol(symbol);
-    
+
     if(m_maxCorrelation > 0.0)
     {
         double maxAbsCorrelation = 0.0;
@@ -357,7 +357,7 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
             return false;
         }
     }
-    
+
     return true;
 }
 
@@ -384,13 +384,13 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
     double riskDenominator = GetRiskDenominator();
     m_missingStopDetected = false;
     m_missingStopCount = 0;
-    
+
     if(riskDenominator <= 0.0)
     {
         m_currentTotalRisk = 0.0;
         return;
     }
-    
+
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
@@ -406,7 +406,7 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
         }
         totalRiskDollar += positionRisk;
     }
-    
+
     m_currentTotalRisk = (totalRiskDollar / riskDenominator) * 100.0;
     if(m_missingStopDetected)
     {
@@ -425,21 +425,21 @@ double CPortfolioRiskManager::GetRiskDenominator() const
 double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
 {
     if(!PositionSelectByTicket(ticket)) return 0.0;
-    
+
     double sl = PositionGetDouble(POSITION_SL);
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
     double volume = PositionGetDouble(POSITION_VOLUME);
     string symbol = PositionGetString(POSITION_SYMBOL);
-    
+
     if(sl <= 0)
         return -1.0; // Missing SL is an unbounded-risk state and must hard-veto new entries.
-    
+
     double diff = MathAbs(openPrice - sl);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-    
+
     if(tickSize <= 0) return 0.0;
-    
+
     return (diff / tickSize) * tickValue * volume;
 }
 
@@ -535,7 +535,7 @@ int CPortfolioRiskManager::FindSymbolInCache(string symbol)
 void CPortfolioRiskManager::RefreshRiskCache()
 {
     m_riskCache.version++;
-    
+
     UpdateCurrentRisk();
 
     ArrayResize(m_riskCache.perSymbolRisk, 0);
@@ -689,7 +689,7 @@ void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
         m_equityCurveReturns[m_maxEquityCurveHistory - 1] = equityPercentChange;
     }
 
-    PrintFormat("[CVAR-EQUITY] Equity curve return recorded: %.4f (total samples: %d)", 
+    PrintFormat("[CVAR-EQUITY] Equity curve return recorded: %.4f (total samples: %d)",
                 equityPercentChange, m_equityCurveReturnCount);
 }
 

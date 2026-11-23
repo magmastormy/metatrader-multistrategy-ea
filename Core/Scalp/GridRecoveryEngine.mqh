@@ -245,7 +245,7 @@ public:
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
          return false;
 
-      // L10-003: Equity floor check - don't activate grid if equity below floor
+      // Equity floor check - don't activate grid if equity below floor
       if(!CGridRecoveryDrawdown::PassesActivationEquityFloor(m_config.equityFloorPercent))
          return false;
 
@@ -281,7 +281,7 @@ public:
          double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
          entryPrice = (direction == 1) ? ask : bid;
 
-         // L10-003: Record initial equity when grid is first activated
+         // Record initial equity when grid is first activated
          m_symbolStates[idx].initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
          PrintFormat("[GRID-RECOVERY] Grid activated for %s | initialEquity=%.2f | floor=%.1f%%",
                      symbol, m_symbolStates[idx].initialEquity, m_config.equityFloorPercent);
@@ -303,7 +303,7 @@ public:
             entryPrice = prevEntry + gridSpacing;   // SELL grid: higher entries
       }
 
-      // L10-003: Equity floor check - stop grid if equity dropped below floor
+      // Equity floor check - stop grid if equity dropped below floor
       if(!CGridRecoveryDrawdown::PassesLevelEquityFloor(m_symbolStates[idx].initialEquity, m_config.equityFloorPercent, level))
          return false;
 
@@ -334,7 +334,7 @@ public:
 
       double lotSize = CalculateGridLot(level, baseLot);
 
-      // L10-003: Cap cumulative lot multiplier to prevent unbounded martingale risk
+      // Cap cumulative lot multiplier to prevent unbounded martingale risk
       double cumulativeLotRatio = 0.0;
       if(!CGridRecoveryLevels::PassesCumulativeLotCap(m_config, level, baseLot, cumulativeLotRatio))
          return false;
@@ -383,10 +383,10 @@ public:
       if(!m_execution.PassesRiskValidation(symbol, orderType, lotSize, slDistance, level))
          return false;
 
-      // L10-018: AI-VOTE logging
+      // AI-VOTE logging
       m_execution.LogAIVote(symbol, direction);
 
-      // L10-014: Execute with dynamic slippage from TradeManager if available
+      // Execute with dynamic slippage from TradeManager if available
       ulong resultTicket = 0;
       bool result = m_execution.ExecuteEntry(symbol, direction, level, lotSize, entryPrice, sl, tp, magic, resultTicket);
 

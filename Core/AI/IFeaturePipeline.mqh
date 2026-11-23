@@ -16,7 +16,7 @@ struct SFeaturePipelineConfig
     string description;             // Human-readable description
     datetime createdTime;           // When this schema was created
     string author;                  // Who created this schema
-    
+
     SFeaturePipelineConfig()
     {
         version = 1;
@@ -37,7 +37,7 @@ struct SFeaturePipelineMetadata
     int usageCount;                 // How many times used
     bool isActive;                  // Currently active for A/B testing
     double trafficSplit;            // Percentage of traffic (0-100)
-    
+
     SFeaturePipelineMetadata()
     {
         name = "";
@@ -53,39 +53,39 @@ class IFeaturePipeline
 {
 public:
     virtual ~IFeaturePipeline() {}
-    
+
     // Build feature vector for a single bar (NN, ONNX, etc.)
     virtual bool BuildFeatures(const string symbol,
                                const ENUM_TIMEFRAMES timeframe,
                                double &features[],
                                const int barShift = 1) = 0;
-    
+
     // Build feature sequence for sequence models (Transformer, LSTM, etc.)
     virtual bool BuildSequence(const string symbol,
                                const ENUM_TIMEFRAMES timeframe,
                                double &sequence[],
                                const int sequenceLength) = 0;
-    
+
     // Get pipeline configuration (schema version, feature count, etc.)
     virtual SFeaturePipelineConfig GetConfig() const = 0;
-    
+
     // Get pipeline name/identifier
     virtual string GetName() const = 0;
-    
+
     virtual int GetSchemaVersion() const = 0;
-    
+
     // Check if pipeline is ready (indicators loaded, etc.)
     virtual bool IsReady() const = 0;
-    
+
     // Get feature names for debugging/logging
     virtual string GetFeatureNames() const = 0;
-    
+
     // Validate feature vector size matches expected
     virtual bool ValidateFeatureVector(const double &features[]) const = 0;
-    
+
     // Get metadata for A/B testing
     virtual SFeaturePipelineMetadata GetMetadata() const = 0;
-    
+
     // Update metadata (e.g., performance score)
     virtual void UpdateMetadata(const SFeaturePipelineMetadata &metadata) = 0;
 };

@@ -90,7 +90,11 @@ private:
         ArrayResize(levels, 20);
 
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-        double pipValue = point * 10.0; // for 5-digit brokers
+        // Pip size follows the broker's digit convention: odd digit counts (3/5-digit FX)
+        // quote pips at point*10, even counts (2/4-digit and most synthetics) at point.
+        // The old point*10 was wrong by 10x on even-digit instruments.
+        long digits = SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
+        double pipValue = point * ((digits % 2 == 1) ? 10.0 : 1.0);
         double roundSpacing = m_roundNumberPips * pipValue;
 
         if(roundSpacing <= 0) return;
@@ -445,6 +449,15 @@ public:
         {
             signal.stopLoss = bestSweepLevel + bestSweepWick * 1.1; // Beyond the swept extreme
             signal.takeProfit = close - (signal.stopLoss - close) * 2.0; // 2R target
+        }
+
+        // Chase cap: a sweep found several bars back can leave the stop multiple ATRs
+        // from the entry, which turns the 2R target into a different bet than the sweep.
+        if(atr[0] > 0 && MathAbs(close - signal.stopLoss) > 3.0 * atr[0])
+        {
+            LogRejectEvent("STOP_TOO_FAR");
+            signal.direction = TRADE_SIGNAL_NONE;
+            return signal;
         }
 
         string levelNames[] = {"NONE", "PREV_SESS_H", "PREV_SESS_L", "DAILY_H", "DAILY_L",

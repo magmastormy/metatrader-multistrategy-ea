@@ -162,6 +162,7 @@ struct SOrchestratorConfig
 
     bool    dashboardEnabled;
     string  dashboardEndpoint;
+    string  dashboardApiKey;
     int     dashboardPushIntervalSec;
     bool    dashboardControlEnabled;
 
@@ -195,6 +196,8 @@ struct SOrchestratorConfig
     double  atrCrisisRatioThresholdSynthetic;
     double  atrCrisisRatioThresholdVolatility;
     double  atrCrisisRatioThresholdDefault;
+    double  atrCrisisCeilingSynthetic;
+    double  atrCrisisCeilingForex;
     double  hardSpreadCutoffPoints;
     int     deadlockAttributionIntervalSec;
     int     heartbeatInterval;
@@ -335,7 +338,7 @@ struct SOrchestratorConfig
     bool    useSignalPipeline;
     // Prefer the strategy's own designed SL/TP over the ATR fallback when building a candidate.
     // Carried here because the headers that need it (EAOrchestrator, CandidateBuilder) cannot read a
-    // program `input` - an input exists only in the .mq5 translation unit.
+    // program `input` - an input exists only in the.mq5 translation unit.
     bool    useStrategyStops;
     bool    allowSyntheticOffHours;
     double  minTrendStrength;
@@ -505,13 +508,14 @@ struct SOrchestratorConfig
         pythonBridgeMaxReconnectAttempts = 5;
         pythonBridgeReconnectBackoffMs = 2000;
         enableExternalLLM = false;
-        externalLLMEndpoint = "http://localhost:11434";
+        externalLLMEndpoint = "";
         aiConfidenceThreshold = 0.70;
         aiWeightMultiplier = 1.0;
         aiDrawdownSizingLimit = 0.20;
 
         dashboardEnabled = true;
         dashboardEndpoint = "http://127.0.0.1:8765";
+        dashboardApiKey = "";
         dashboardPushIntervalSec = 5;
         dashboardControlEnabled = false;
 
@@ -544,6 +548,8 @@ struct SOrchestratorConfig
         atrCrisisRatioThresholdSynthetic = 15.0;
         atrCrisisRatioThresholdVolatility = 10.0;
         atrCrisisRatioThresholdDefault = 8.0;
+        atrCrisisCeilingSynthetic = 2.5;
+        atrCrisisCeilingForex = 2.0;
         hardSpreadCutoffPoints = 200.0;
         deadlockAttributionIntervalSec = 60;
         heartbeatInterval = 60;

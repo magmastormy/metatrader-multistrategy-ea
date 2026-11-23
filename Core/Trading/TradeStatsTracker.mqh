@@ -45,22 +45,27 @@ public:
     //--- Ingest: accumulation block lifted verbatim out of
     //--- CTradeManager::UpdatePerformanceMetrics. netProfit is already
     //--- net of commission and swap when it reaches here.
+    //--- Outcome is derived from netProfit, not the caller's isWin flag: that flag is computed
+    //--- on GROSS profit, so commission/swap could bucket a net loser as a win. A scratch close
+    //--- (net == 0) is activity, not a decided result - it stays out of every win/loss bucket.
     void RecordTrade(const bool isWin, const double netProfit)
     {
-        if(isWin)
+        if(netProfit == 0.0)
+        {
+            m_stats.totalTrades++;
+            m_stats.lastTradeTime = TimeCurrent();
+            return;
+        }
+        if(netProfit > 0.0)
         {
             m_stats.successfulTrades++;
-            if(netProfit > 0) {
-                m_stats.winningTrades++;
-                m_stats.totalProfit += netProfit;
-            }
+            m_stats.winningTrades++;
+            m_stats.totalProfit += netProfit;
         }
         else
         {
             m_stats.failedTrades++;
-            if(netProfit < 0) {
-                m_stats.totalLoss += MathAbs(netProfit);
-            }
+            m_stats.totalLoss += MathAbs(netProfit);
         }
 
         m_stats.totalTrades++;

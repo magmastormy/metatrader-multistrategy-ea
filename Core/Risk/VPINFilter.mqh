@@ -2,6 +2,15 @@
 #ifndef CORE_RISK_VPIN_FILTER_MQH
 #define CORE_RISK_VPIN_FILTER_MQH
 
+// Toxicity band edges and regime size multipliers (item-19 sweep); the bands are
+// documented on ENUM_VPIN_TOXICITY and were previously inline literals.
+#define VPIN_BAND_MEDIUM   0.3
+#define VPIN_BAND_HIGH     0.5
+#define VPIN_MULT_LOW      1.0
+#define VPIN_MULT_MEDIUM   0.5
+#define VPIN_MULT_HIGH     0.25
+#define VPIN_MULT_EXTREME  0.1
+
 #include "../Utils/Enums.mqh"
 
 enum ENUM_VPIN_TOXICITY
@@ -99,7 +108,7 @@ private:
         }
 
         bool isBuy;
-        
+
         switch(m_classifyMode)
         {
             case VPIN_CLASSIFY_BID_ASK:
@@ -124,7 +133,7 @@ private:
                         isBuy = m_prevTickIsBuy;
                 }
                 break;
-                
+
             case VPIN_CLASSIFY_VOLUME_WEIGHTED:
                 // Behaves like the tick rule here: tickVolume is not read inside the classification itself
                 if(tickPrice > m_prevTickPrice)
@@ -134,7 +143,7 @@ private:
                 else
                     isBuy = m_prevTickIsBuy;
                 break;
-                
+
             case VPIN_CLASSIFY_TICK_RULE:
             default:
                 if(tickPrice > m_prevTickPrice)
@@ -235,9 +244,9 @@ private:
     {
         if(vpin >= m_extremeThreshold)
             return VPIN_TOXICITY_EXTREME;
-        if(vpin >= 0.5)
+        if(vpin >= VPIN_BAND_HIGH)
             return VPIN_TOXICITY_HIGH;
-        if(vpin >= 0.3)
+        if(vpin >= VPIN_BAND_MEDIUM)
             return VPIN_TOXICITY_MEDIUM;
         return VPIN_TOXICITY_LOW;
     }
@@ -247,11 +256,11 @@ private:
     {
         switch(regime)
         {
-            case VPIN_TOXICITY_LOW:     return 1.0;
-            case VPIN_TOXICITY_MEDIUM:  return 0.5;
-            case VPIN_TOXICITY_HIGH:    return 0.25;
-            case VPIN_TOXICITY_EXTREME: return 0.1;
-            default:                    return 1.0;
+            case VPIN_TOXICITY_LOW:     return VPIN_MULT_LOW;
+            case VPIN_TOXICITY_MEDIUM:  return VPIN_MULT_MEDIUM;
+            case VPIN_TOXICITY_HIGH:    return VPIN_MULT_HIGH;
+            case VPIN_TOXICITY_EXTREME: return VPIN_MULT_EXTREME;
+            default:                    return VPIN_MULT_LOW;
         }
     }
 

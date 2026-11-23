@@ -32,7 +32,7 @@ private:
     int    m_bufHead;
     int    m_bufCount;
     int    m_bufMax;
-    
+
     // Early stopping parameters
     double m_lossHistory[];
     int    m_lossHead;
@@ -40,7 +40,7 @@ private:
     int    m_earlyStoppingPatience;
     double m_earlyStoppingThreshold;
     int    m_consecutiveNoImprovement;
-    
+
     // Training cooldown to prevent overfitting
     int    m_samplesSinceLastTrain;
     int    m_trainCooldown;
@@ -87,12 +87,12 @@ private:
         param -= lr * ((mHat / (MathSqrt(vHat) + eps)) + (wd * param));
     }
 
-    void ClipGradients(double &gradW1[][ML_H1], double &gradB1[], 
+    void ClipGradients(double &gradW1[][ML_H1], double &gradB1[],
                       double &gradW2[][ML_OUT], double &gradB2[],
                       const double maxNorm = 1.0) const
     {
         double norm = 0.0;
-        
+
         for(int i = 0; i < ML_INPUT; i++)
             for(int j = 0; j < ML_H1; j++)
                 norm += gradW1[i][j] * gradW1[i][j];
@@ -103,7 +103,7 @@ private:
                 norm += gradW2[i][j] * gradW2[i][j];
         for(int j = 0; j < ML_OUT; j++)
             norm += gradB2[j] * gradB2[j];
-        
+
         norm = MathSqrt(norm);
         if(norm > maxNorm && norm > 1e-12)
         {
@@ -175,7 +175,7 @@ private:
                 double pProfit = Sigmoid(logits[1] - logits[0]);
                 double target = (m_bufY[idx] > 0) ? 1.0 : 0.0;
                 double dProfit = pProfit - target;
-                
+
                 // Calculate binary cross-entropy loss
                 double logEps = 1e-15;
                 double loss = -target * MathLog(MathMax(pProfit, logEps)) - (1.0 - target) * MathLog(MathMax(1.0 - pProfit, logEps));
@@ -212,10 +212,10 @@ private:
             }
 
             m_step++;
-            
+
             // Apply gradient clipping to prevent exploding gradients
             ClipGradients(gradW1, gradB1, gradW2, gradB2, clipNorm);
-            
+
             double invBatch = 1.0 / (double)effectiveBatch;
             for(int i = 0; i < ML_INPUT; i++)
             {
@@ -244,7 +244,7 @@ private:
                                  gradB2[j] * invBatch, lr, beta1, beta2, eps, wd);
             }
         }
-        
+
         // Record average loss for early stopping
         if(lossCount > 0)
         {
@@ -277,7 +277,7 @@ public:
         m_bufHead = 0;
         m_bufCount = 0;
         m_step = 0;
-        
+
         // Initialize early stopping parameters
         ArrayResize(m_lossHistory, 20);
         ArrayInitialize(m_lossHistory, 0.0);
@@ -294,7 +294,12 @@ public:
         m_recentTotal = 0;
         m_perfWindowHead = 0;
 
-        MathSrand((int)(TimeLocal() % 2147483647));
+        // Deterministic per-instance seed: construction order is fixed, so every run
+        // gets identical initial weights. (Was TimeLocal(): the same ticks produced
+        // different meta-labeler weights - and different Approve() gates - per run.)
+        static int s_initSeq = 0;
+        s_initSeq++;
+        MathSrand((uint)(1000003 + s_initSeq * 7919));
         double scale1 = MathSqrt(2.0 / (double)ML_INPUT);
         double scale2 = MathSqrt(2.0 / (double)ML_H1);
         for(int i = 0; i < ML_INPUT; i++)
@@ -329,17 +334,17 @@ public:
     void Deinit() {}
 
     // Meta-input layout, the 26 slots AI_MLP_INPUT sizes:
-    // [0]    primaryConf
+    // [0] primaryConf
     // [1..4] regimeProbs (4 HMM states)
-    // [5]    barVolRatio
+    // [5] barVolRatio
     // [6..9] signal probabilities (none, buy, sell, entropy)
-    // [10]   conformalUncertainty
-    // [11]   recentWinRate
-    // [12]   recentAvgConfidence
+    // [10] conformalUncertainty
+    // [11] recentWinRate
+    // [12] recentAvgConfidence
     // [13..22] featSubset (first 10 normalized features)
-    // [23]   momentum (price change ratio)
-    // [24]   rsiZone (RSI(14) zone [-1,1])  -- Theme 2 (18770/19103): learn "unreliable near extremes"
-    // [25]   stochKZone (Stochastic %K zone [-1,1])
+    // [23] momentum (price change ratio)
+    // [24] rsiZone (RSI(14) zone [-1,1]) -- Theme 2 (18770/19103): learn "unreliable near extremes"
+    // [25] stochKZone (Stochastic %K zone [-1,1])
     void BuildInput(const double primaryConf,
                     const double &regimeProbs[],
                     const double barVolRatio,
@@ -433,12 +438,12 @@ public:
             return false;
         if(m_lossCount < m_earlyStoppingPatience)
             return false;
-        
+
         // Calculate average loss over patience window
         double recentAvg = 0.0;
         double olderAvg = 0.0;
         int patience = m_earlyStoppingPatience;
-        
+
         for(int i = 0; i < patience; i++)
         {
             int recentIdx = (m_lossHead - 1 - i + ArraySize(m_lossHistory)) % ArraySize(m_lossHistory);
@@ -446,10 +451,10 @@ public:
             recentAvg += m_lossHistory[recentIdx];
             olderAvg += m_lossHistory[olderIdx];
         }
-        
+
         recentAvg /= (double)patience;
         olderAvg /= (double)patience;
-        
+
         // If recent loss is not improving, stop early
         return (olderAvg - recentAvg) < m_earlyStoppingThreshold;
     }

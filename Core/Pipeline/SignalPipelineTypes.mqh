@@ -24,7 +24,7 @@ struct SReadinessScoreConfig
     double warmupScore;
     double stalenessPenaltyMax;
     int stalenessPenaltyDivisor;
-    
+
     SReadinessScoreConfig() :
         healthyScore(1.00),
         reusedSnapshotScore(0.88),
@@ -33,7 +33,7 @@ struct SReadinessScoreConfig
         warmupScore(0.58),
         stalenessPenaltyMax(0.30),
         stalenessPenaltyDivisor(120) {} // 2 minutes
-    
+
     bool Validate() const
     {
         if(healthyScore < 0.0 || healthyScore > 1.0)
@@ -60,9 +60,9 @@ struct STrendFilterSettings
 {
     bool enabled;
     int minStrength;
-    
+
     STrendFilterSettings() : enabled(true), minStrength(50) {}
-    
+
     bool Validate() const
     {
         return minStrength >= 0 && minStrength <= 100;
@@ -73,9 +73,9 @@ struct SVolatilityFilterSettings
 {
     bool enabled;
     double maxVolatility;
-    
+
     SVolatilityFilterSettings() : enabled(true), maxVolatility(3.0) {}
-    
+
     bool Validate() const
     {
         return maxVolatility >= 0.0 && maxVolatility <= 10.0;
@@ -85,18 +85,18 @@ struct SVolatilityFilterSettings
 struct SLiquidityFilterSettings
 {
     bool enabled;
-    
+
     SLiquidityFilterSettings() : enabled(true) {}
-    
+
     bool Validate() const { return true; }
 };
 
 struct SStructureFilterSettings
 {
     bool enabled;
-    
+
     SStructureFilterSettings() : enabled(true) {}
-    
+
     bool Validate() const { return true; }
 };
 
@@ -109,15 +109,15 @@ struct SSessionFilterSettings
     bool tradeLondonSession;
     bool tradeNewYorkSession;
     bool tradeTokyoSession;
-    
-    SSessionFilterSettings() : 
+
+    SSessionFilterSettings() :
         enableTimeFilter(false),
         enableSessionFilter(false),
         allowSyntheticOffHours(true),
         tradeLondonSession(true),
         tradeNewYorkSession(true),
         tradeTokyoSession(true) {}
-    
+
     bool Validate() const { return true; }
 };
 
@@ -127,13 +127,13 @@ struct SRegimeCostGateSettings
     double maxSpreadToAtrRatio;
     int spreadShockCooldownSeconds;
     double maxEntryRangeZScore;
-    
-    SRegimeCostGateSettings() : 
+
+    SRegimeCostGateSettings() :
         enabled(true),
         maxSpreadToAtrRatio(0.25),
         spreadShockCooldownSeconds(30),
         maxEntryRangeZScore(2.50) {}
-    
+
     bool Validate() const
     {
         if(maxSpreadToAtrRatio < 0.0 || maxSpreadToAtrRatio > 10.0)
@@ -150,9 +150,9 @@ struct SConfidenceSettings
 {
     double minConfidence;
     double intrabarConfidenceCap;
-    
+
     SConfidenceSettings() : minConfidence(0.35), intrabarConfidenceCap(0.05) {}
-    
+
     bool Validate() const
     {
         if(minConfidence < 0.0 || minConfidence > 1.0)
@@ -167,7 +167,7 @@ struct SFilterOrderSettings
 {
     int filterOrder[7];
     int filterOrderCount;
-    
+
     SFilterOrderSettings() : filterOrderCount(7)
     {
         // Default filter order: RegimeCostGate -> Trend -> Volatility -> Liquidity -> Structure -> Time -> Session
@@ -179,7 +179,7 @@ struct SFilterOrderSettings
         filterOrder[5] = 5; // Time
         filterOrder[6] = 6; // Session
     }
-    
+
     bool Validate() const
     {
         if(filterOrderCount < 1 || filterOrderCount > 7)
@@ -201,14 +201,14 @@ struct SReadinessComponentWeights
     double liquidityWeight;
     double volatilityWeight;
     double regimeWeight;
-    
-    SReadinessComponentWeights() : 
+
+    SReadinessComponentWeights() :
         trendWeight(1.25),
         structureWeight(1.15),
         liquidityWeight(0.90),
         volatilityWeight(1.05),
         regimeWeight(1.10) {}
-    
+
     bool Validate() const
     {
         double sum = trendWeight + structureWeight + liquidityWeight + volatilityWeight + regimeWeight;
@@ -229,9 +229,9 @@ struct SignalFilterSettings
     SFilterOrderSettings filterOrder;
     SReadinessScoreConfig readinessConfig;
     SReadinessComponentWeights readinessWeights;
-    
+
     SignalFilterSettings() {}
-    
+
     // Validate all grouped settings
     bool Validate() const
     {
@@ -246,7 +246,7 @@ struct SignalFilterSettings
                readinessConfig.Validate() &&
                readinessWeights.Validate();
     }
-    
+
     // Apply a preset configuration
     void ApplyPreset(ENUM_FILTER_PRESET preset)
     {
@@ -261,7 +261,7 @@ struct SignalFilterSettings
                 regimeCostGate.enabled = true; regimeCostGate.maxSpreadToAtrRatio = 0.15; regimeCostGate.maxEntryRangeZScore = 2.0;
                 confidence.minConfidence = 0.45; confidence.intrabarConfidenceCap = 0.03;
                 break;
-                
+
             case FILTER_PRESET_BALANCED:
                 trend.enabled = true; trend.minStrength = 50;
                 volatility.enabled = true; volatility.maxVolatility = 3.0;
@@ -271,7 +271,7 @@ struct SignalFilterSettings
                 regimeCostGate.enabled = true; regimeCostGate.maxSpreadToAtrRatio = 0.25; regimeCostGate.maxEntryRangeZScore = 2.5;
                 confidence.minConfidence = 0.40; confidence.intrabarConfidenceCap = 0.05;
                 break;
-                
+
             case FILTER_PRESET_AGGRESSIVE:
                 trend.enabled = true; trend.minStrength = 35;
                 volatility.enabled = true; volatility.maxVolatility = 4.5;
@@ -281,7 +281,7 @@ struct SignalFilterSettings
                 regimeCostGate.enabled = true; regimeCostGate.maxSpreadToAtrRatio = 0.40; regimeCostGate.maxEntryRangeZScore = 3.0;
                 confidence.minConfidence = 0.30; confidence.intrabarConfidenceCap = 0.08;
                 break;
-                
+
             case FILTER_PRESET_CUSTOM:
             default:
                 // Keep current values

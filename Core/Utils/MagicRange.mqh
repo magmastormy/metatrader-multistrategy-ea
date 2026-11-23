@@ -18,8 +18,8 @@
 
 //--- Magic layout. One number identifies one owner; the symbol comes from the
 //--- position itself, so no engine has to encode it.
-//---     consensus = base + assetClassOffset + symbolIndex * MAGIC_SYMBOL_MULTIPLIER
-//---     fast scalp = base + 6000 | ATR scalp = base + 6100 | grid = base + 6200 + level | spike = base + 6300
+//--- consensus = base + assetClassOffset + symbolIndex * MAGIC_SYMBOL_MULTIPLIER
+//--- fast scalp = base + 6000 | ATR scalp = base + 6100 | grid = base + 6200 + level | spike = base + 6300
 //--- Engine bands sit under the lowest asset offset (7000). Before this a fast scalp shipped
 //--- CTradeManager's consensus magic for its own symbol, and the ATR scalp sat on ASSET_FOREX's offset.
 #define MAGIC_ENGINE_FAST_SCALP  6000

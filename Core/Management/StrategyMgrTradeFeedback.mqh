@@ -25,8 +25,8 @@ public:
     void SetSource(CEnterpriseStrategyManager* src) { m_src = src; }
 
     //--- Initialize() seeded both fields from the same argument:
-    //---   m_managedMagic = managedMagic;
-    //---   m_managedMagicRangeMax = managedMagic; // EA updates it later
+    //--- m_managedMagic = managedMagic;
+    //--- m_managedMagicRangeMax = managedMagic; // EA updates it later
     void SetManagedMagic(const long managedMagic)
     {
         m_managedMagic = managedMagic;
@@ -110,7 +110,7 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                                  CMagicRange::IsEngineReservedOffset((int)(dealMagic - m_managedMagic));
 
             // Engine-managed exits are correctly excluded from strategy scoring, but they must still
-            // leave a realised-P&L record. Batch 290 measured 2,265 fills against only 260
+            // leave a realised-P&L record. measured 2,265 fills against only 260
             // "Trade Closed" lines: the fast-scalp path closes on server-side SL/TP, lands here as an
             // engine-managed deal, and returned before anything was printed - so roughly 270 USD of a
             // -258.77 window had no journal line at all. This prints and returns; scoring is untouched.
@@ -185,8 +185,9 @@ void CStrategyMgrTradeFeedback::OnTradeTransaction(const MqlTradeTransaction& tr
                 // Reset cached contributor context after close in manager-only governance mode.
                 m_src.ResetLastContributorContext();
 
+                string outcomeLabel = (netProfit > 0.0) ? "SUCCESS" : ((netProfit < 0.0) ? "FAILURE" : "SCRATCH");
                 PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %.2f | Result: %s",
-                           dealSymbol, dealTicket, positionId, netProfit, success ? "SUCCESS" : "FAILURE");
+                           dealSymbol, dealTicket, positionId, netProfit, outcomeLabel);
 
                 // Per-symbol loss-streak breaker: the fill that trips it says so once, here, with the symbol name
                 // in hand. A winner resets the count, so the block only fires on a real run of losses.

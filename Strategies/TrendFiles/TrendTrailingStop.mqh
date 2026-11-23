@@ -30,7 +30,7 @@ struct STradeTrailInfo
     bool            atBreakeven;
     ENUM_TRAILING_METHOD method;
     datetime        openTime;
-    
+
     STradeTrailInfo() : ticket(0), entryPrice(0), currentSL(0), highestPrice(0),
                         lowestPrice(DBL_MAX), isBuy(true), atBreakeven(false),
                         method(TRAIL_EMA21), openTime(0) {}
@@ -41,48 +41,48 @@ class CTrendTrailingStop
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     // Reference to EMA system
     CMultiEMASystem*    m_emaSystem;
     bool                m_ownEmaSystem;
-    
+
     // Configuration
     double              m_breakEvenRR;          // R:R to move to breakeven (e.g., 1.0)
     double              m_breakEvenBuffer;      // Pips buffer above/below entry
     double              m_emaBuffer;            // Pips buffer from EMA
     double              m_atrMultiplier;        // ATR multiplier for trailing
-    
+
     // Internal methods
     double              GetATR(int period = 14);
     double              CalculateNewSL(const STradeTrailInfo &trade);
     bool                ShouldMoveToBreakeven(const STradeTrailInfo &trade);
-    
+
 public:
                         CTrendTrailingStop();
                        ~CTrendTrailingStop();
-    
+
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                   CMultiEMASystem* emaSystem = NULL);
     void                Deinit();
-    
+
     // Trailing stop calculation
     double              CalculateTrailingStop(STradeTrailInfo &trade);
     double              CalculateBreakevenStop(const STradeTrailInfo &trade);
-    
+
     bool                ShouldExitEarly(const STradeTrailInfo &trade);
-    
+
     // Configuration
     void                SetBreakEvenRR(double rr) { m_breakEvenRR = rr; }
     void                SetBreakEvenBuffer(double pips) { m_breakEvenBuffer = pips; }
     void                SetEMABuffer(double pips) { m_emaBuffer = pips; }
     void                SetATRMultiplier(double mult) { m_atrMultiplier = mult; }
-    void                SetTrailingMethod(STradeTrailInfo &tradeInfo, ENUM_TRAILING_METHOD method) 
+    void                SetTrailingMethod(STradeTrailInfo &tradeInfo, ENUM_TRAILING_METHOD method)
                         { tradeInfo.method = method; }
-    
+
     // EMA-based stops
     double              GetEMA21TrailStop(bool isBuy);
     double              GetEMA8TrailStop(bool isBuy);
-    
+
     // ATR-based stops
     double              GetATRTrailStop(bool isBuy, double highestOrLowest);
 };
@@ -109,7 +109,7 @@ bool CTrendTrailingStop::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
 {
     m_symbol = symbol;
     m_timeframe = timeframe;
-    
+
     if(emaSystem != NULL)
     {
         m_emaSystem = emaSystem;
@@ -124,7 +124,7 @@ bool CTrendTrailingStop::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
             m_ownEmaSystem = true;
         }
     }
-    
+
     return (m_emaSystem != NULL);
 }
 
@@ -153,21 +153,22 @@ double CTrendTrailingStop::GetATR(int period)
 bool CTrendTrailingStop::ShouldMoveToBreakeven(const STradeTrailInfo &tradeInfo)
 {
     if(tradeInfo.atBreakeven) return false;
-    
-    double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+
+    // Same side-of-market rule as CalculateTrailingStop: a sell's profit is measured to ASK.
+    double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
     double riskDistance = MathAbs(tradeInfo.entryPrice - tradeInfo.currentSL);
-    
+
     if(riskDistance <= 0) return false;
-    
+
     double profitDistance;
-    
+
     if(tradeInfo.isBuy)
         profitDistance = lastPrice - tradeInfo.entryPrice;
     else
         profitDistance = tradeInfo.entryPrice - lastPrice;
-    
+
     double currentRR = profitDistance / riskDistance;
-    
+
     return (currentRR >= m_breakEvenRR);
 }
 
@@ -175,9 +176,9 @@ double CTrendTrailingStop::CalculateBreakevenStop(const STradeTrailInfo &tradeIn
 {
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
-    
+
     double buffer = m_breakEvenBuffer * point;
-    
+
     if(tradeInfo.isBuy)
         return tradeInfo.entryPrice + buffer;
     else
@@ -187,16 +188,16 @@ double CTrendTrailingStop::CalculateBreakevenStop(const STradeTrailInfo &tradeIn
 double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
 {
     if(m_emaSystem == NULL) return 0;
-    
+
     double ema21 = m_emaSystem.GetEMA21(0);
     // unwarmed EMA feed returns 0 - a sell trail stop would collapse
     // to ~buffer and TRAIL_HYBRID's MathMin could emit it as a real SL.
     if(ema21 <= 0) return 0;
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
-    
+
     double buffer = m_emaBuffer * point;
-    
+
     if(isBuy)
         return ema21 - buffer;
     else
@@ -206,14 +207,14 @@ double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
 double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
 {
     if(m_emaSystem == NULL) return 0;
-    
+
     double ema8 = m_emaSystem.GetEMA8(0);
     if(ema8 <= 0) return 0;  // unwarmed feed guard - see GetEMA21TrailStop
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
 
     double buffer = (m_emaBuffer * 0.5) * point;  // Tighter buffer for 8 EMA
-    
+
     if(isBuy)
         return ema8 - buffer;
     else
@@ -235,24 +236,24 @@ double CTrendTrailingStop::GetATRTrailStop(bool isBuy, double highestOrLowest)
 double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
 {
     double newSL = tradeInfo.currentSL;
-    
+
     switch(tradeInfo.method)
     {
         case TRAIL_EMA21:
             newSL = GetEMA21TrailStop(tradeInfo.isBuy);
             break;
-            
+
         case TRAIL_EMA8:
             newSL = GetEMA8TrailStop(tradeInfo.isBuy);
             break;
-            
+
         case TRAIL_ATR:
             if(tradeInfo.isBuy)
                 newSL = GetATRTrailStop(true, tradeInfo.highestPrice);
             else
                 newSL = GetATRTrailStop(false, tradeInfo.lowestPrice);
             break;
-            
+
         case TRAIL_HYBRID:
             {
                 // Use the better of EMA21 or ATR trailing.
@@ -277,14 +278,14 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
                 }
             }
             break;
-            
+
         case TRAIL_STRUCTURE:
             // For structure trailing, we need swing points
             // This would require integration with structure engine
             newSL = GetEMA21TrailStop(tradeInfo.isBuy);  // Fallback to EMA21
             break;
     }
-    
+
     return newSL;
 }
 
@@ -293,28 +294,28 @@ double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
     // sell positions close at ASK - tracking their extreme off BID
     // understates adverse excursion by the spread.
     double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
-    
+
     // Update highest/lowest
     if(tradeInfo.isBuy)
         tradeInfo.highestPrice = MathMax(tradeInfo.highestPrice, lastPrice);
     else
         tradeInfo.lowestPrice = MathMin(tradeInfo.lowestPrice, lastPrice);
-    
+
     // Check for breakeven first
     if(!tradeInfo.atBreakeven && ShouldMoveToBreakeven(tradeInfo))
     {
         double beStop = CalculateBreakevenStop(tradeInfo);
-        
+
         if((tradeInfo.isBuy && beStop > tradeInfo.currentSL) || (!tradeInfo.isBuy && beStop < tradeInfo.currentSL))
         {
             tradeInfo.atBreakeven = true;
             return beStop;
         }
     }
-    
+
     // Calculate trailing stop
     double newSL = CalculateNewSL(tradeInfo);
-    
+
     // Only move stop in favor of trade
     if(tradeInfo.isBuy)
     {
@@ -326,14 +327,14 @@ double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
         if(newSL < tradeInfo.currentSL)
             return newSL;
     }
-    
+
     return tradeInfo.currentSL;  // No change
 }
 
 bool CTrendTrailingStop::ShouldExitEarly(const STradeTrailInfo &tradeInfo)
 {
     if(m_emaSystem == NULL) return false;
-    
+
     // Exit early if fast EMA crosses medium EMA (trend weakening)
     if(tradeInfo.isBuy)
     {

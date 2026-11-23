@@ -196,8 +196,10 @@ public:
         if(structureAligned)
             score += 0.08;
 
-        // Fast CHOCH: a recent structure shift in the breakout direction
-        if(m_structureAnalyzer.DetectFastCHOCH())
+        // Fast CHOCH: a recent structure shift in the breakout direction - a break
+        // against the trade side must not add to its confidence.
+        bool chochBullish = false;
+        if(m_structureAnalyzer.DetectFastCHOCH(chochBullish) && chochBullish == bullishBreakout)
             score += 0.07;
 
         confidence = MathMin(0.95, score);

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from train_common import ASSET_CLASS_IDS, ASSET_CLASS_NAMES, compute_test_ic, load_split, save_pickle
+from train_common import ASSET_CLASS_IDS, ASSET_CLASS_NAMES, load_split_full, report_trained_model, save_train_meta
 
 
 ASSET_CLASS_NAME = "indices"
@@ -23,7 +23,7 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("xgboost is required for train_indices_xgboost.py") from exc
 
-    X_tr, X_va, X_te, y_tr, y_va, y_te, metadata = load_split(
+    X_tr, X_va, X_te, y_tr, y_va, y_te, ts_tr, ts_va, ts_te, metadata = load_split_full(
         args.csv,
         seq_len=args.seq_len,
         k=args.k,
@@ -47,15 +47,10 @@ def main() -> None:
     model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
 
     pkl_output = args.output or f"{ASSET_CLASS_NAME}_xgboost.pkl"
-    save_pickle(model, pkl_output)
-
-    preds = model.predict_proba(X_te)
-    test_ic = compute_test_ic(preds, y_te)
-    print(
-        f"trained=indices_xgboost asset_class={ASSET_CLASS_NAME}({ASSET_CLASS_ID}) "
-        f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "
-        f"test_ic={float(test_ic):.4f} pkl={pkl_output}"
-    )
+    report_trained_model(model, X_te, y_te, pkl_output,
+                         f"indices_xgboost asset_class={ASSET_CLASS_NAME}({ASSET_CLASS_ID})",
+                         metadata)
+    save_train_meta(pkl_output, ts_tr, ts_va, seq_len=args.seq_len, k=args.k, vert=args.vert, asset_class=ASSET_CLASS_ID)
 
 
 if __name__ == "__main__":

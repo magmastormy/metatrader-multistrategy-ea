@@ -147,7 +147,7 @@ public:
         virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
                         {
                         EnsureADXHandle(symbol);
-                
+
                         // Symbol changed and reinit failed: pass the lot through unchanged
                         if(symbol != m_symbol)
                             return baseLot;
@@ -236,7 +236,7 @@ public:
 
         double effectiveAlpha, effectiveBeta;
         double confidenceWeight = MathMax(0.0, MathMin(1.0, confidence));
-        
+
         if(confidenceWeight > 0.0)
         {
             double priorWeight = 1.0 - confidenceWeight;
@@ -337,16 +337,16 @@ private:
         string strategyName;
         CEquityCurveManager* manager;
         bool ownsManager; // Whether we own the manager (need to delete)
-        
+
         SStrategyEquityCurve() : strategyName(""), manager(NULL), ownsManager(false) {}
-        SStrategyEquityCurve(const string name, CEquityCurveManager* mgr, bool own = false) 
+        SStrategyEquityCurve(const string name, CEquityCurveManager* mgr, bool own = false)
             : strategyName(name), manager(mgr), ownsManager(own) {}
         ~SStrategyEquityCurve() { if(ownsManager && manager != NULL) delete manager; }
     };
-    
+
     SStrategyEquityCurve m_strategyCurves[];
     int m_curveCount;
-    
+
     // Default equity curve manager (fallback for unknown strategies)
     CEquityCurveManager* m_defaultManager;
     bool m_ownsDefaultManager;
@@ -362,14 +362,14 @@ private:
     }
 
 public:
-    CEquityCurveLotModifier() : 
+    CEquityCurveLotModifier() :
         m_curveCount(0),
         m_defaultManager(NULL),
         m_ownsDefaultManager(false)
     {}
 
     // Injects an existing manager; ownership is not taken by this ctor
-    CEquityCurveLotModifier(CEquityCurveManager* ecm) : 
+    CEquityCurveLotModifier(CEquityCurveManager* ecm) :
         m_curveCount(0),
         m_defaultManager(ecm),
         m_ownsDefaultManager(false)
@@ -414,7 +414,7 @@ public:
                 return;
             }
         }
-        
+
         int newSize = m_curveCount + 1;
         ArrayResize(m_strategyCurves, newSize);
         m_strategyCurves[m_curveCount] = SStrategyEquityCurve(strategyName, manager, own);
@@ -446,7 +446,7 @@ public:
     {
         // AdjustLotSize only receives a symbol, so the strategy curve is inferred, never passed in
         CEquityCurveManager* curve = m_defaultManager;
-        
+
         // Heuristic: strategy name matched as a substring of the symbol
         for(int i = 0; i < m_curveCount; i++)
         {
@@ -456,7 +456,7 @@ public:
                 break;
             }
         }
-        
+
         if(curve == NULL)
             return baseLot;
 
@@ -482,7 +482,7 @@ private:
     int    m_atrHandle;
     string m_atrSymbol;
     int    m_atrPeriod;
-    
+
     double GetATRVolatility(const string symbol)
     {
         if(m_atrHandle == INVALID_HANDLE || m_atrSymbol != symbol)
@@ -499,25 +499,25 @@ private:
             if(m_atrHandle == INVALID_HANDLE)
                 return 0.0;
         }
-        
+
         double atr[];
         ArraySetAsSeries(atr, true);
         if(CopyBuffer(m_atrHandle, 0, 0, m_volatilityLookback, atr) <= 0)
             return 0.0;
-        
+
         double sumATR = 0.0;
         int count = MathMin(m_volatilityLookback, ArraySize(atr));
         for(int i = 0; i < count; i++)
             sumATR += atr[i];
         double avgATR = sumATR / count;
-        
+
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double price = SymbolInfoDouble(symbol, SYMBOL_BID);
         if(price <= 0.0) return 0.0;
-        
+
         double dailyVol = avgATR / price;
         double annualVol = dailyVol * MathSqrt(252.0);
-        
+
         return annualVol;
     }
 
@@ -561,17 +561,17 @@ public:
         double currentVol = GetATRVolatility(symbol);
         if(currentVol <= 0.0)
             return baseLot; // No data, pass through unchanged
-        
+
         double volRatio = m_volatilityTarget / currentVol;
-        
+
         // Vol ratio clamped to 0.25x-2.0x
         volRatio = MathMax(0.25, MathMin(2.0, volRatio));
-        
+
         double adjusted = baseLot * volRatio;
-        
+
         PrintFormat("[VOL-TARGET-MODIFIER] %s | currentVol=%.4f | target=%.4f | ratio=%.2f | lot %.2f->%.2f",
                     symbol, currentVol, m_volatilityTarget, volRatio, baseLot, adjusted);
-        
+
         return adjusted;
     }
 

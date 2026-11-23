@@ -14,28 +14,28 @@ private:
     CFeedForwardNN m_model;
     CLabelEncoder m_labelEncoder;
     CTrainingMetrics m_metrics;
-    
+
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
-    
+
 public:
     CModelEvaluator() {}
-    
+
     bool LoadModel(const string symbol, const ENUM_TIMEFRAMES timeframe)
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
-        
+
         if(!m_model.LoadCheckpoint(symbol, timeframe))
         {
             PrintFormat("[MQH-EVAL] Failed to load model for %s %s", symbol, EnumToString(timeframe));
             return false;
         }
-        
+
         PrintFormat("[MQH-EVAL] Model loaded successfully for %s %s", symbol, EnumToString(timeframe));
         return true;
     }
-    
+
     bool Evaluate(const double &features[][], const int &labels[], const int count,
                   const string outputFile = "")
     {
@@ -44,12 +44,12 @@ public:
             Print("[MQH-EVAL] No evaluation data provided");
             return false;
         }
-        
+
         double totalLoss = 0.0;
         int correct = 0;
         int confusionMatrix[3][3];
         ArrayInitialize(confusionMatrix, 0);
-        
+
         for(int i = 0; i < count; i++)
         {
             double inputVec[];
@@ -73,9 +73,9 @@ public:
             if(predictedClass >= 0 && predictedClass < 3 && actualClass >= 0 && actualClass < 3)
                 confusionMatrix[actualClass][predictedClass]++;
         }
-        
+
         m_metrics.UpdateMetrics(confusionMatrix, 3, totalLoss / (double)count, count);
-        
+
         Print("=== Model Evaluation Results ===");
         Print(StringFormat("Total Samples: %d", count));
         Print(StringFormat("Loss: %.6f", totalLoss / (double)count));
@@ -84,18 +84,18 @@ public:
         Print(StringFormat("Recall: %.4f", m_metrics.GetRecall()));
         Print(StringFormat("F1 Score: %.4f", m_metrics.GetF1Score()));
         m_metrics.PrintConfusionMatrix();
-        
+
         if(outputFile != "")
             m_metrics.SaveMetrics(outputFile);
-        
+
         return true;
     }
-    
+
     void EvaluateWithConfidence(const double &features[][], const int &labels[], const int count)
     {
         double totalWeightedCorrect = 0.0;
         double totalConfidence = 0.0;
-        
+
         for(int i = 0; i < count; i++)
         {
             double inputVec[];
@@ -113,11 +113,11 @@ public:
 
             totalConfidence += prob;
         }
-        
+
         double confidenceWeightedAccuracy = totalConfidence > 0 ? totalWeightedCorrect / totalConfidence : 0.0;
         Print(StringFormat("Confidence-Weighted Accuracy: %.4f", confidenceWeightedAccuracy));
     }
-    
+
     void GenerateReport(const string filename)
     {
         int fh = FileOpen(filename, FILE_WRITE | FILE_COMMON);
@@ -126,12 +126,12 @@ public:
             PrintFormat("[MQH-EVAL] Failed to open report file: %s", filename);
             return;
         }
-        
+
         FileWriteString(fh, "=== Model Evaluation Report ===\r\n");
         FileWriteString(fh, StringFormat("Generated: %s\r\n", TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS)));
         FileWriteString(fh, StringFormat("Symbol: %s\r\n", m_symbol));
         FileWriteString(fh, StringFormat("Timeframe: %s\r\n\r\n", EnumToString(m_timeframe)));
-        
+
         FileWriteString(fh, "=== Metrics ===\r\n");
         FileWriteString(fh, StringFormat("Loss: %.6f\r\n", m_metrics.GetLoss()));
         FileWriteString(fh, StringFormat("Accuracy: %.4f\r\n", m_metrics.GetAccuracy()));
@@ -139,7 +139,7 @@ public:
         FileWriteString(fh, StringFormat("Recall: %.4f\r\n", m_metrics.GetRecall()));
         FileWriteString(fh, StringFormat("F1 Score: %.4f\r\n", m_metrics.GetF1Score()));
         FileWriteString(fh, StringFormat("Total Samples: %d\r\n\r\n", m_metrics.GetTotalSamples()));
-        
+
         int confusionMatrix[3][3];
         m_metrics.GetConfusionMatrix(confusionMatrix);
         FileWriteString(fh, "=== Confusion Matrix ===\r\n");
@@ -148,11 +148,11 @@ public:
         FileWriteString(fh, StringFormat("Actual -1: %3d %3d %3d\r\n", confusionMatrix[0][0], confusionMatrix[0][1], confusionMatrix[0][2]));
         FileWriteString(fh, StringFormat("Actual  0: %3d %3d %3d\r\n", confusionMatrix[1][0], confusionMatrix[1][1], confusionMatrix[1][2]));
         FileWriteString(fh, StringFormat("Actual +1: %3d %3d %3d\r\n", confusionMatrix[2][0], confusionMatrix[2][1], confusionMatrix[2][2]));
-        
+
         FileClose(fh);
         PrintFormat("[MQH-EVAL] Report saved to: %s", filename);
     }
-    
+
     CTrainingMetrics GetMetrics() { return m_metrics; }
     CFeedForwardNN    GetModel() { return m_model; }
 };

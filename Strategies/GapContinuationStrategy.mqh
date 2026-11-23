@@ -6,13 +6,13 @@
 // opinions instead of one.
 //
 // Shape:
-//   - The gap (today's open vs yesterday's close) must be at least 0.4 ATR - smaller is noise - and
-//     at most 3 ATR, because a gap that large has already booked the move.
-//   - The trend must agree: the last close is on the same side of EMA(50) as the gap.
-//   - The gap must still hold: the last closed bar closed on the gap's side of today's open.
-//   - Only inside the first `m_earlyHours` hours of the day; after that the continuation is a trend
-//     trade the other rows already cover, and this row's premise (the open) is stale.
-//   - Stop 1.5 ATR, target 3.0 ATR: 2R by construction.
+// - The gap (today's open vs yesterday's close) must be at least 0.4 ATR - smaller is noise - and
+// at most 3 ATR, because a gap that large has already booked the move.
+// - The trend must agree: the last close is on the same side of EMA(50) as the gap.
+// - The gap must still hold: the last closed bar closed on the gap's side of today's open.
+// - Only inside the first `m_earlyHours` hours of the day; after that the continuation is a trend
+// trade the other rows already cover, and this row's premise (the open) is stale.
+// - Stop 1.5 ATR, target 3.0 ATR: 2R by construction.
 #ifndef GAP_CONTINUATION_STRATEGY_MQH
 #define GAP_CONTINUATION_STRATEGY_MQH
 

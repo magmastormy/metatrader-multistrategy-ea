@@ -18,7 +18,7 @@ struct STrendState
     double      slope;              // EMA slope
     int         consistency;        // Bars maintaining trend
     double      momentum;           // Short-term momentum
-    
+
     STrendState() : isUptrend(false), isDowntrend(false), isRanging(true),
                     strength(0), slope(0), consistency(0), momentum(0) {}
 };
@@ -40,14 +40,14 @@ class CMultiEMASystem
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     int                 m_ema8Handle;       // Momentum EMA
     int                 m_ema21Handle;      // Swing trend EMA
     int                 m_ema50Handle;      // Intermediate trend EMA
     int                 m_ema200Handle;     // Major trend EMA
     int                 m_adxHandle;        // ADX for strength
     int                 m_atrHandle;        // ATR for slope normalization
-    
+
     // EMA values (current and previous for crossover detection)
     double              m_ema8[10];
     double              m_ema21[10];
@@ -57,28 +57,28 @@ private:
     double              m_atr[1];
     double              m_plusDI[1];
     double              m_minusDI[1];
-    
+
     STrendState         m_currentTrend;
     ENUM_EMA_ALIGNMENT  m_alignment;
     int                 m_consistentBars;
-    
+
     // Internal methods
     bool                UpdateEMAValues();
     void                CalculateTrendState();
     void                CalculateAlignment();
-    
+
 public:
                         CMultiEMASystem();
                        ~CMultiEMASystem();
-    
+
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe);
     void                Deinit();
-    
+
     void                Update();
-    
+
     STrendState         GetTrendState() const { return m_currentTrend; }
     ENUM_EMA_ALIGNMENT  GetAlignment() const { return m_alignment; }
-    
+
     // EMA values
     double              GetEMA8(int shift = 0) const { return (shift < 10) ? m_ema8[shift] : 0; }
     double              GetEMA21(int shift = 0) const { return (shift < 10) ? m_ema21[shift] : 0; }
@@ -87,7 +87,7 @@ public:
     double              GetADX() const { return m_adx[0]; }
     double              GetPlusDI() const { return m_plusDI[0]; }
     double              GetMinusDI() const { return m_minusDI[0]; }
-    
+
     // Crossover detection
     bool                HasGoldenCross8_21();    // 8 crosses above 21
     bool                HasDeathCross8_21();     // 8 crosses below 21
@@ -95,18 +95,18 @@ public:
     bool                HasDeathCross21_50();    // 21 crosses below 50
     bool                HasGoldenCross50_200();  // 50 crosses above 200
     bool                HasDeathCross50_200();   // 50 crosses below 200
-    
+
     bool                IsStrongUptrend();
     bool                IsStrongDowntrend();
     bool                IsPerfectBullAlignment();
     bool                IsPerfectBearAlignment();
     bool                IsAboveAllEMAs(double price);
     bool                IsBelowAllEMAs(double price);
-    
+
     // Pullback detection
     bool                IsPullbackTo21EMA(double price, double toleranceAtrFactor = 0.5);
     bool                IsPullbackTo50EMA(double price, double toleranceAtrFactor = 0.5);
-    
+
     // Slope calculation
     double              GetEMASlope(int emaPeriod, int barsBack = 3);
 };
@@ -142,7 +142,7 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
     m_timeframe = timeframe;
-    
+
     // Create indicator handles via CIndicatorManager (owned by singleton, do NOT release individually)
     m_ema8Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 8, 0, MODE_EMA, PRICE_CLOSE);
     m_ema21Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
@@ -150,7 +150,7 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     m_ema200Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
     m_adxHandle = CIndicatorManager::Instance().GetADXHandle(symbol, timeframe, 14);
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, 14);
-    
+
     if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE ||
        m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE ||
        m_adxHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
@@ -158,10 +158,10 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
         Print("[MultiEMA] Failed to create indicator handles");
         return false;
     }
-    
+
     // Initial update
     Update();
-    
+
     return true;
 }
 
@@ -212,7 +212,7 @@ bool CMultiEMASystem::UpdateEMAValues()
 void CMultiEMASystem::CalculateTrendState()
 {
     STrendState prevState = m_currentTrend;
-    
+
     // Perfect uptrend: 8 > 21 > 50 > 200 and all rising
     m_currentTrend.isUptrend = (
         m_ema8[0] > m_ema21[0] &&
@@ -220,7 +220,7 @@ void CMultiEMASystem::CalculateTrendState()
         m_ema50[0] > m_ema200[0] &&
         m_ema8[0] > m_ema8[1]  // 8 EMA rising
     );
-    
+
     // Perfect downtrend: 8 < 21 < 50 < 200 and all falling
     m_currentTrend.isDowntrend = (
         m_ema8[0] < m_ema21[0] &&
@@ -228,17 +228,17 @@ void CMultiEMASystem::CalculateTrendState()
         m_ema50[0] < m_ema200[0] &&
         m_ema8[0] < m_ema8[1]  // 8 EMA falling
     );
-    
+
     m_currentTrend.isRanging = (!m_currentTrend.isUptrend && !m_currentTrend.isDowntrend);
-    
+
     m_currentTrend.strength = m_adx[0];
-    
+
     // Calculate 21 EMA slope
     if(m_ema21[2] > 0)
         m_currentTrend.slope = (m_ema21[0] - m_ema21[2]) / m_ema21[2];
     else
         m_currentTrend.slope = 0;
-    
+
     // Momentum (8 EMA direction)
     // guarded - the array is zero-initialized during indicator
     // warmup and a 0 denominator produced inf/NaN in a downstream-read field.
@@ -246,7 +246,7 @@ void CMultiEMASystem::CalculateTrendState()
         m_currentTrend.momentum = (m_ema8[0] - m_ema8[1]) / m_ema8[1];
     else
         m_currentTrend.momentum = 0.0;
-    
+
     // Track consistency
     if((m_currentTrend.isUptrend && prevState.isUptrend) ||
        (m_currentTrend.isDowntrend && prevState.isDowntrend))
@@ -257,7 +257,7 @@ void CMultiEMASystem::CalculateTrendState()
     {
         m_consistentBars = 0;
     }
-    
+
     m_currentTrend.consistency = m_consistentBars;
 }
 
@@ -266,7 +266,7 @@ void CMultiEMASystem::CalculateAlignment()
     bool ema8Rising = (m_ema8[0] > m_ema8[1]);
     bool ema21Rising = (m_ema21[0] > m_ema21[1]);
     bool ema50Rising = (m_ema50[0] > m_ema50[1]);
-    
+
     // Perfect bull: all aligned and rising
     if(m_ema8[0] > m_ema21[0] && m_ema21[0] > m_ema50[0] && m_ema50[0] > m_ema200[0])
     {
@@ -303,7 +303,7 @@ void CMultiEMASystem::Update()
 {
     if(!UpdateEMAValues())
         return;
-    
+
     CalculateTrendState();
     CalculateAlignment();
 }
@@ -361,13 +361,13 @@ bool CMultiEMASystem::IsPerfectBearAlignment()
 
 bool CMultiEMASystem::IsAboveAllEMAs(double price)
 {
-    return (price > m_ema8[0] && price > m_ema21[0] && 
+    return (price > m_ema8[0] && price > m_ema21[0] &&
             price > m_ema50[0] && price > m_ema200[0]);
 }
 
 bool CMultiEMASystem::IsBelowAllEMAs(double price)
 {
-    return (price < m_ema8[0] && price < m_ema21[0] && 
+    return (price < m_ema8[0] && price < m_ema21[0] &&
             price < m_ema50[0] && price < m_ema200[0]);
 }
 
@@ -393,7 +393,7 @@ double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
 {
     double current = 0, past = 0;
     int idx = MathMin(barsBack, 9);
-    
+
     switch(emaPeriod)
     {
         case 8:  current = m_ema8[0]; past = m_ema8[idx]; break;
@@ -402,7 +402,7 @@ double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
         case 200: current = m_ema200[0]; past = m_ema200[idx]; break;
         default: return 0;
     }
-    
+
     double atr = m_atr[0];
     if(atr > 0 && past > 0)
     {
@@ -410,7 +410,7 @@ double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
         double rawDiff = current - past;
         return (rawDiff / atr) / (double)barsBack;  // Slope is ATR-change per bar
     }
-    
+
     return 0;
 }
 

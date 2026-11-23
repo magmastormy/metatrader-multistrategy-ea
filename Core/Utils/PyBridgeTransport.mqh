@@ -87,9 +87,9 @@ void CPyBridgeTransport::Configure(const string &endpoint, ENUM_PYTHON_BRIDGE_MO
 bool CPyBridgeTransport::CompleteInitialization()
 {
    m_initialized = true;
-   
+
    LogBridgeState("Python bridge initialized with endpoint: " + m_endpoint);
-   
+
    // Attempt initial health check — skip during init to avoid blocking WebRequest
    // Health check will happen on first timer tick instead
    if(m_mode != PYTHON_BRIDGE_OFF)
@@ -102,14 +102,14 @@ bool CPyBridgeTransport::CompleteInitialization()
       m_state = PYTHON_BRIDGE_DISCONNECTED;
       LogBridgeState("Python bridge disabled by configuration");
    }
-   
+
    return true;
 }
 
 // Shutdown banner (uses the counters owned by this module)
 void CPyBridgeTransport::LogShutdown()
 {
-   LogBridgeState("Python bridge shutting down | requests=" + IntegerToString(m_request_count) + 
+   LogBridgeState("Python bridge shutting down | requests=" + IntegerToString(m_request_count) +
                     " success=" + IntegerToString(m_success_count) + " errors=" + IntegerToString(m_error_count));
 }
 
@@ -132,40 +132,40 @@ bool CPyBridgeTransport::SendHttpRequest(const string &method, const string &url
 {
    if(!m_initialized)
       return false;
-   
+
    string headers = "Content-Type: application/json\r\n";
    uchar request_array[];
    uchar response_array[];
    string response_headers;
-   
+
    // Convert post data to uchar array (only for POST/PUT with data)
    if(post_data != "")
    {
       if(StringToCharArray(post_data, request_array) < 0)
          return false;
-      
+
       // Trim null terminator
       ArrayResize(request_array, ArraySize(request_array) - 1);
    }
-   
+
    // Send request
    int res = WebRequest(method, url, headers, m_request_timeout,
                        request_array, response_array, response_headers);
-   
+
    if(res == -1)
    {
       int err = ::GetLastError();
       LogBridgeState("HTTP request failed: " + IntegerToString(err), ERROR_LEVEL_ERROR);
       return false;
    }
-   
+
    if(res >= 400)
    {
       m_state = PYTHON_BRIDGE_DISCONNECTED;
       LogBridgeState("HTTP " + IntegerToString(res) + " from " + url, ERROR_LEVEL_ERROR);
       return false;
    }
-   
+
    // Convert response to string
    response = CharArrayToString(response_array);
    return true;
@@ -181,8 +181,8 @@ void CPyBridgeTransport::LogBridgeState(string message, ENUM_ERROR_LEVEL level)
       case PYTHON_BRIDGE_CONNECTED:    state_str = "CONNECTED";    break;
       case PYTHON_BRIDGE_ERROR:        state_str = "ERROR";        break;
    }
-   CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level, 
-                                    "PythonBridge [" + state_str + "]", 
+   CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level,
+                                    "PythonBridge [" + state_str + "]",
                                     message, 0);
 }
 

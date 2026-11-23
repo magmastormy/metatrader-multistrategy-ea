@@ -12,6 +12,19 @@
 #define CORE_DASHBRIDGE_TRANSPORT_MQH
 
 // Dashboard Bridge Transport / Connection State
+
+// Commands the transport will route to a registered handler. Anything else is
+// rejected with an error ack so it cannot retry-loop forever.
+#define DASH_CMD_PAUSE            "pause"
+#define DASH_CMD_RESUME           "resume"
+#define DASH_CMD_EMERGENCY_STOP   "emergency_stop"
+
+class IDashCommandHandler
+{
+public:
+   virtual bool ExecuteCommand(const string &cmdType) { return false; }
+};
+
 class CDashBridgeTransport
 {
 private:
@@ -20,7 +33,7 @@ private:
    bool                m_controlEnabled;    // Whether control channel is enabled
    int                 m_pushInterval;      // Push interval in seconds
    int                 m_requestTimeout;
-   int                 m_pushTimeout;       // Push-specific timeout (ms) — Issue #34
+   int                 m_pushTimeout;       // Push-specific timeout (ms) —
    datetime            m_lastPushTime;      // Last successful state push
    datetime            m_lastPollTime;      // Last command poll time
    bool                m_pushInProgress;    // Guard against stacked pushes
@@ -28,9 +41,11 @@ private:
    int                 m_pushSuccessCount;
    int                 m_pushErrorCount;    // Failed pushes
    bool                m_connected;         // Whether server is reachable
+   string              m_apiKey;            // Optional X-Api-Key token for authenticated servers
    string              m_lastError;         // Last error message
    datetime            m_lastErrorLogTime;  // Throttle error logs
    bool                m_initialized;       // Initialized flag
+   IDashCommandHandler *m_commandHandler;   // Executes whitelisted control commands
    int                 m_consecutiveFailures; // Pushes that failed since the last success
    datetime            m_retryAfter;        // Pushes are refused until this time (backoff)
 
@@ -48,7 +63,8 @@ public:
    // Lifecycle
    bool              Initialize(const string &endpoint, bool enabled = true,
                                 bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000);
+                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000,
+                                const string apiKey = "");
    void              Shutdown();
 
    // Operations — BeginPush() must succeed before the payload is built so
@@ -68,6 +84,7 @@ public:
    datetime          GetLastPushTime() const { return m_lastPushTime; }
 
    void              SetEnabled(bool enabled) { m_enabled = enabled; }
+   void              SetCommandHandler(IDashCommandHandler *handler) { m_commandHandler = handler; }
 };
 
 CDashBridgeTransport::CDashBridgeTransport()
@@ -77,7 +94,7 @@ CDashBridgeTransport::CDashBridgeTransport()
    m_controlEnabled = false;
    m_pushInterval = 5;
    m_requestTimeout = 1000;
-   m_pushTimeout = 5000;  // Default 5s push timeout (Issue #34)
+   m_pushTimeout = 5000;  // Default 5s push timeout
    m_lastPushTime = 0;
    m_lastPollTime = 0;
    m_pushCount = 0;
@@ -87,6 +104,7 @@ CDashBridgeTransport::CDashBridgeTransport()
    m_lastError = "";
    m_lastErrorLogTime = 0;
    m_initialized = false;
+   m_commandHandler = NULL;
    m_pushInProgress = false;
    m_consecutiveFailures = 0;
    m_retryAfter = 0;
@@ -94,9 +112,11 @@ CDashBridgeTransport::CDashBridgeTransport()
 
 bool CDashBridgeTransport::Initialize(const string &endpoint, bool enabled,
                                       bool controlEnabled, int pushIntervalSec,
-                                      int requestTimeoutMs, int pushTimeoutMs)
+                                      int requestTimeoutMs, int pushTimeoutMs,
+                                      const string apiKey)
 {
    m_endpoint = endpoint;
+   m_apiKey = apiKey;
    m_enabled = enabled;
    m_controlEnabled = controlEnabled;
    m_pushInterval = pushIntervalSec;
@@ -176,6 +196,8 @@ bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &u
       return false;
 
    string headers = "Content-Type: application/json\r\n";
+   if(m_apiKey != "")
+      headers += "X-Api-Key: " + m_apiKey + "\r\n";
    uchar request_array[];
    uchar response_array[];
    string response_headers;
@@ -188,7 +210,7 @@ bool CDashBridgeTransport::SendHttpRequest(const string &method, const string &u
    }
 
    // Use push timeout for POST (state push), request timeout for GET (health, commands)
-   int effectiveTimeout = (timeoutMs > 0) ? timeoutMs : 
+   int effectiveTimeout = (timeoutMs > 0) ? timeoutMs :
                           ((method == "POST") ? m_pushTimeout : m_requestTimeout);
 
    int res = WebRequest(method, url, headers, effectiveTimeout,
@@ -346,13 +368,16 @@ bool CDashBridgeTransport::PollCommands()
                bool handled = HandleDashboardCommand(cmdType);
                if(!handled)
                {
-                  PrintFormat("[DASHBOARD-CMD] Rejected unknown command type: %s", cmdType);
+                  PrintFormat("[DASHBOARD-CMD] Rejected command type: %s", cmdType);
                }
 
-               // Acknowledge the command only after handler runs
+               // Acknowledge with the execution result; an unhandled command is
+               // acked as an error so the server clears it instead of re-delivering.
                string ackUrl = m_endpoint + "/api/control/ack/" + cmdId;
+               string ackBody = handled ? "{\"result\":\"ok\"}"
+                                        : "{\"result\":\"error\",\"detail\":\"unhandled or failed command\"}";
                string ackResponse;
-               SendHttpRequest("POST", ackUrl, "", ackResponse, m_pushTimeout);
+               SendHttpRequest("POST", ackUrl, ackBody, ackResponse, m_pushTimeout);
             }
 
             searchPos = cmdEnd + 1;
@@ -371,26 +396,20 @@ void CDashBridgeTransport::LogState(string message, bool isError)
    Print(prefix + message);
 }
 
-// Route dashboard commands to EA actions. Only safe, idempotent commands allowed.
+// Route dashboard commands to the registered handler. Only the whitelisted
+// command types are forwarded; everything else is rejected so the caller can
+// ack it with an error result instead of retrying forever.
 bool CDashBridgeTransport::HandleDashboardCommand(const string &cmdType)
 {
-   if(cmdType == "pause")
+   if(cmdType != DASH_CMD_PAUSE && cmdType != DASH_CMD_RESUME &&
+      cmdType != DASH_CMD_EMERGENCY_STOP)
+      return false;
+   if(m_commandHandler == NULL)
    {
-      Print("[DASHBOARD-CMD] Pausing trading via dashboard command");
-      return true;
+      PrintFormat("[DASHBOARD-CMD] No command handler registered, rejecting: %s", cmdType);
+      return false;
    }
-   if(cmdType == "resume")
-   {
-      Print("[DASHBOARD-CMD] Resuming trading via dashboard command");
-      return true;
-   }
-   if(cmdType == "emergency_stop")
-   {
-      Print("[DASHBOARD-CMD] Emergency stop requested via dashboard");
-      return true;
-   }
-   // Unknown command types are rejected
-   return false;
+   return m_commandHandler.ExecuteCommand(cmdType);
 }
 
 // Should log error (throttled to every 60s)

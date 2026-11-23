@@ -26,7 +26,7 @@ class CGridRecoveryExecution
 private:
    CUnifiedRiskManager*      m_riskManager;
    CTradeManager*            m_tradeManager;    // Only trade execution path (sends and closes)
-   CAIAdapter*               m_aiAdapter;       // L10-018: AI adapter for voting
+   CAIAdapter*               m_aiAdapter;       // AI adapter for voting
 
 public:
    CGridRecoveryExecution() :
@@ -39,8 +39,8 @@ public:
    void Configure(CUnifiedRiskManager *pRiskManager, CTradeManager *pTradeManager, CAIAdapter *pAIAdapter)
    {
       m_riskManager    = pRiskManager;
-      m_tradeManager   = pTradeManager;  // L10-014: Store TradeManager for dynamic slippage
-      m_aiAdapter      = pAIAdapter;     // L10-018: Store AI adapter
+      m_tradeManager   = pTradeManager;  // Store TradeManager for dynamic slippage
+      m_aiAdapter      = pAIAdapter;     // Store AI adapter
    }
 
 // Pre-trade risk validation via UnifiedRiskManager
@@ -81,7 +81,7 @@ public:
       return true;
    }
 
-// L10-018: AI-VOTE logging
+// AI-VOTE logging
    void LogAIVote(const string symbol, int direction)
    {
       if(m_aiAdapter != NULL)
@@ -130,7 +130,7 @@ public:
          // which take a POSITION ticket. ResultOrder() is the ORDER ticket and differs from it on a
          // hedging account, so a level tracked by order ticket can never be selected or closed -
          // the position then has no exit owner at all, because engine-tagged comments are excluded
-         // from lifecycle management (Batch 170).
+         // from lifecycle management.
          ticketOut = FindLevelPositionTicket(symbol, magic);
          if(ticketOut == 0)
          {

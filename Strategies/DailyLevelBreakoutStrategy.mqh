@@ -7,10 +7,10 @@
 // answering different questions, and this one is the only row that reads a higher timeframe at all.
 //
 // Shape:
-//   - Break must clear the level by 0.10 ATR, so a one-tick poke through a round number is not a break.
-//   - ADX(14) >= 20 on the crossing bar: a level break without expansion is a level touch with slippage.
-//   - A close already 1.5 ATR past the level is refused - that is chase risk, not breakout risk.
-//   - Stop 1.6 ATR, target 2.8 ATR: 1.75R by construction.
+// - Break must clear the level by 0.10 ATR, so a one-tick poke through a round number is not a break.
+// - ADX(14) >= 20 on the crossing bar: a level break without expansion is a level touch with slippage.
+// - A close already 1.5 ATR past the level is refused - that is chase risk, not breakout risk.
+// - Stop 1.6 ATR, target 2.8 ATR: 1.75R by construction.
 #ifndef DAILY_LEVEL_BREAKOUT_STRATEGY_MQH
 #define DAILY_LEVEL_BREAKOUT_STRATEGY_MQH
 

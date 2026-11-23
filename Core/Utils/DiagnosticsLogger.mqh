@@ -128,12 +128,12 @@ void CDiagnosticsLogger::LogCritical(string message)
 {
    if(m_logLevel < 1)
       return;
-   
+
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogError(m_component, message, "CRITICAL", CJsonLogger::GetCorrelationId(), "");
    }
-   
+
    WriteToFile("[CRITICAL] " + message);
 }
 
@@ -141,12 +141,12 @@ void CDiagnosticsLogger::LogNormal(string message)
 {
    if(m_logLevel < 2)
       return;
-   
+
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogInfo(m_component, message, "NORMAL", CJsonLogger::GetCorrelationId(), "");
    }
-   
+
    WriteToFile("[NORMAL] " + message);
 }
 
@@ -154,12 +154,12 @@ void CDiagnosticsLogger::LogVerbose(string message)
 {
    if(m_logLevel < 3)
       return;
-   
+
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogDebug(m_component, message, "VERBOSE", CJsonLogger::GetCorrelationId(), "");
    }
-   
+
    WriteToFile("[VERBOSE] " + message);
 }
 
@@ -172,7 +172,7 @@ void CDiagnosticsLogger::WriteToFile(string message)
    {
       // RotateIfNeeded can close and reopen m_fileHandle; re-check it before writing.
       RotateIfNeeded();
-      
+
       if(m_fileHandle != INVALID_HANDLE)
       {
          FileSeek(m_fileHandle, 0, SEEK_END);
@@ -221,19 +221,19 @@ void CDiagnosticsLogger::RotateIfNeeded()
 {
    if(!m_enabled || m_fileHandle == INVALID_HANDLE)
       return;
-   
+
    bool needRotate = false;
-   
+
    if(m_lineCount >= MAX_LINES_PER_FILE)
       needRotate = true;
-   
+
    if(m_fileSizeBytes >= MAX_FILE_SIZE_BYTES)
       needRotate = true;
-   
+
    datetime now = TimeCurrent();
    if(m_fileCreationTime > 0 && (now - m_fileCreationTime) >= (MAX_FILE_AGE_DAYS * 86400))
       needRotate = true;
-   
+
    if(needRotate)
    {
       int rotationIdx = 1;
@@ -246,13 +246,13 @@ void CDiagnosticsLogger::RotateIfNeeded()
          FileClose(handle);
          rotationIdx++;
       }
-      
+
       FileClose(m_fileHandle);
-      
+
       string currentName = m_filePath;
       string rotatedName = GetRotatedFileName(rotationIdx);
       FileMove(currentName, FILE_COMMON, rotatedName, FILE_COMMON);
-      
+
       m_fileHandle = FileOpen(m_filePath,
                               FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
       if(m_fileHandle != INVALID_HANDLE)
@@ -268,7 +268,7 @@ void CDiagnosticsLogger::RotateIfNeeded()
          m_enabled = false;
          Print("[DIAG-LOGGER] ERROR: Failed to reopen log file after rotation");
       }
-      
+
       CleanupOldFiles();
    }
 }
@@ -316,7 +316,7 @@ private:
 
 public:
     CErrorAggregator() : m_errorCount(0), m_logger(NULL), m_lastAggregateLog(0), m_aggregateIntervalSec(300) {}
-    
+
     void Initialize(CDiagnosticsLogger* logger, int intervalSec = 300)
     {
         m_logger = logger;
@@ -324,7 +324,7 @@ public:
         ArrayResize(m_errors, 50);
         // ArrayInitialize not supported for struct arrays in MQL5 - elements are default-initialized on resize
     }
-    
+
     void RecordError(const string errorCode, const string context = "")
     {
         int idx = FindError(errorCode);
@@ -340,15 +340,15 @@ public:
             m_errors[idx].firstOccurrence = TimeCurrent();
             m_errorCount++;
         }
-        
+
         m_errors[idx].count++;
         m_errors[idx].lastOccurrence = TimeCurrent();
         if(StringLen(context) > 0)
             m_errors[idx].lastContext = context;
-        
+
         CheckAndLogAggregate();
     }
-    
+
     int FindError(const string errorCode) const
     {
         for(int i = 0; i < m_errorCount; i++)
@@ -358,7 +358,7 @@ public:
         }
         return -1;
     }
-    
+
     void CheckAndLogAggregate()
     {
         datetime now = TimeCurrent();
@@ -368,12 +368,12 @@ public:
             m_lastAggregateLog = now;
         }
     }
-    
+
     void LogAggregate()
         {
             if(m_logger == NULL || m_errorCount == 0)
                 return;
-        
+
             string summary = "[ERROR-AGGREGATE] Periodic error summary (last " + IntegerToString(m_aggregateIntervalSec) + "s):";
             for(int i = 0; i < m_errorCount; i++)
             {
@@ -384,13 +384,13 @@ public:
                         summary += " | Context: " + m_errors[i].lastContext;
                 }
             }
-        
+
             // Dual sink: JSON through CJsonLogger plus the diagnostics-file critical log.
             CJsonLogger::LogError("ERROR-AGGREGATOR", summary, "ERROR_AGGREGATE", CJsonLogger::GetCorrelationId(), "");
-        
+
             m_logger.LogCritical(summary);
         }
-    
+
     void Reset()
     {
         for(int i = 0; i < m_errorCount; i++)

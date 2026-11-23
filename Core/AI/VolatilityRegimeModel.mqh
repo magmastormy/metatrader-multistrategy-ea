@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| VolatilityRegimeModel.mqh                                        |
-//| The volatility/regime predictor the features can actually carry.  |
+//| VolatilityRegimeModel.mqh |
+//| The volatility/regime predictor the features can actually carry. |
 //+------------------------------------------------------------------+
 #ifndef CORE_AI_VOLATILITY_REGIME_MODEL_MQH
 #define CORE_AI_VOLATILITY_REGIME_MODEL_MQH
@@ -9,31 +9,31 @@
 // ---------------
 // Two batches of measurement, on 164,035 labelled rows, settled what the 70-feature
 // vector is good for:
-//   * as a directional target it is noise - every barrier geometry from 0.5 to 3.0 ATR
-//     measured between -0.032 and +0.006 edge, and all 114 exported columns were worse
-//     than the 70-feature vector (-0.0273), so the information is absent, not misplaced;
-//   * as a volatility target it carries real signal - "does the next 5 bars' mean true
-//     range exceed the trailing 20-bar median", measured +4.16 points over the majority
-//     baseline with 70.8% precision at confidence >= 0.60.
+// * as a directional target it is noise - every barrier geometry from 0.5 to 3.0 ATR
+// measured between -0.032 and +0.006 edge, and all 114 exported columns were worse
+// than the 70-feature vector (-0.0273), so the information is absent, not misplaced;
+// * as a volatility target it carries real signal - "does the next 5 bars' mean true
+// range exceed the trailing 20-bar median", measured +4.16 points over the majority
+// baseline with 70.8% precision at confidence >= 0.60.
 // The MLP the EA can execute (70-32-16-8-3, 2963 params) kept only +0.35 points of that;
 // a boosted tree on the same rows keeps +1.0 to +5.4 points per symbol, so the model is
 // trained where it wins and exported as plain trees (Tools/nn_vol_model_export.py).
 //
 // Contract
 // --------
-//   * artifact: <Common>\Files\EAModels\NN\<SanitizedSymbol>_<int tf>_vol.csv
-//   * score = base + learningRate * sum(leaf values along each tree's decision path)
-//   * probability expansion = 1 / (1 + exp(-score))
-//   * NOTHING here chooses a direction. Two readers consume one number through
-//     VolReg_RiskScale(): the entry gate in EAOrchestrator (veto only at an extreme reading)
-//     and the risk-per-trade seam in CandidateBuilder (half risk in the confident band).
-//     Both fail open on a missing/stale/unreadable model - a volatility model that cannot
-//     be loaded must never be able to stop the book or resize it.
-//   * the artifact is not a `.bin` checkpoint and is never read by CNeuralNetworkStrategy:
-//     the directional net and this model have different targets and must not share a slot.
+// * artifact: <Common>\Files\EAModels\NN\<SanitizedSymbol>_<int tf>_vol.csv
+// * score = base + learningRate * sum(leaf values along each tree's decision path)
+// * probability expansion = 1 / (1 + exp(-score))
+// * NOTHING here chooses a direction. Two readers consume one number through
+// VolReg_RiskScale(): the entry gate in EAOrchestrator (veto only at an extreme reading)
+// and the risk-per-trade seam in CandidateBuilder (half risk in the confident band).
+// Both fail open on a missing/stale/unreadable model - a volatility model that cannot
+// be loaded must never be able to stop the book or resize it.
+// * the artifact is not a `.bin` checkpoint and is never read by CNeuralNetworkStrategy:
+// the directional net and this model have different targets and must not share a slot.
 
 #include "NNModelStorage.mqh"
-#include "../../AIModules/AIConfig.mqh"   // FEATURE_VECTOR_SIZE - resolved by include order until Batch 278
+#include "../../AIModules/AIConfig.mqh"   // FEATURE_VECTOR_SIZE - resolved by include order
 
 #define VOLREG_MAX_MODELS        32     // one entry per traded symbol; 13 live + headroom
 #define VOLREG_RETRY_SECONDS     300    // after a failed load, wait this long before retrying
@@ -72,7 +72,7 @@ SVolRegimeModel g_volRegModels[VOLREG_MAX_MODELS];
 int            g_volRegCount = 0;
 
 //+------------------------------------------------------------------+
-//| Locate an existing entry for the symbol, -1 when absent.          |
+//| Locate an existing entry for the symbol, -1 when absent. |
 //+------------------------------------------------------------------+
 int VolReg_Find(const string symbol)
 {
@@ -91,8 +91,8 @@ string VolReg_FileName(const string symbol, const ENUM_TIMEFRAMES timeframe)
 }
 
 //+------------------------------------------------------------------+
-//| Read the exported tree ensemble. Returns false on anything odd -  |
-//| the caller then leaves entries alone.                             |
+//| Read the exported tree ensemble. Returns false on anything odd - |
+//| the caller then leaves entries alone. |
 //+------------------------------------------------------------------+
 bool VolReg_Load(const string symbol)
 {
@@ -274,7 +274,7 @@ void VolReg_Feed(const string symbol, const double &features[])
 }
 
 //+------------------------------------------------------------------+
-//| -1.0 = no model, no evaluation, or a stale reading: no veto.       |
+//| -1.0 = no model, no evaluation, or a stale reading: no veto. |
 //+------------------------------------------------------------------+
 double VolReg_Probability(const string symbol)
 {
@@ -289,15 +289,15 @@ double VolReg_Probability(const string symbol)
 }
 
 //+------------------------------------------------------------------+
-//| One number, one meaning, two readers.                             |
-//|   -1.0 = nothing known                  -> leave the trade as it is|
-//|    0.0 = extreme compression           -> do not enter at all     |
-//|    0.5 = confident compression         -> enter at half risk      |
-//|    1.0 = otherwise                     -> unchanged               |
-//| The point of the half-size band is that a veto teaches the book    |
+//| One number, one meaning, two readers. |
+//| -1.0 = nothing known -> leave the trade as it is|
+//| 0.0 = extreme compression -> do not enter at all |
+//| 0.5 = confident compression -> enter at half risk |
+//| 1.0 = otherwise -> unchanged |
+//| The point of the half-size band is that a veto teaches the book |
 //| nothing: this EA has taken zero orders for thirteen batches, and a |
-//| model allowed only to subtract entries would keep it at zero. Half  |
-//| risk still produces trades to measure.                              |
+//| model allowed only to subtract entries would keep it at zero. Half |
+//| risk still produces trades to measure. |
 //+------------------------------------------------------------------+
 double VolReg_RiskScale(const string symbol)
 {

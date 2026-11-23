@@ -26,31 +26,31 @@ private:
     int    m_fileHandle;
     string m_logPath;
     long   m_sequence;
-    
+
     // Async write buffer
     CArrayObj* m_buffer;
     datetime m_lastFlush;
     int    m_flushIntervalMs;
     int    m_maxBuffer;
-    
+
     long   m_accountLogin;
     string m_eaVersion;
-    
+
 
 public:
-    CStructuredLogger() : m_enabled(false), m_fileHandle(INVALID_HANDLE), m_sequence(0), 
+    CStructuredLogger() : m_enabled(false), m_fileHandle(INVALID_HANDLE), m_sequence(0),
                           m_lastFlush(0), m_flushIntervalMs(100), m_maxBuffer(1000),
-                          m_accountLogin(0), m_eaVersion("2.000") 
+                          m_accountLogin(0), m_eaVersion("2.000")
     {
         m_buffer = new CArrayObj();
     }
-    
+
     ~CStructuredLogger() {
         FlushBuffer();
         if(m_fileHandle != INVALID_HANDLE) FileClose(m_fileHandle);
         if(CheckPointer(m_buffer) == POINTER_DYNAMIC) delete m_buffer;
     }
-    
+
     // Call once from OnInit.
     void Init(string prefix = "EA") {
         if(m_enabled) return;
@@ -79,12 +79,12 @@ public:
                         fileName, GetLastError());
         }
     }
-    
+
     // Call from OnDeinit.
     void Shutdown() {
         if(!m_enabled) return;
         FlushBuffer();
-        WriteRaw("{\"evt\":\"SESSION_END\",\"acct\":" + IntegerToString(m_accountLogin) + 
+        WriteRaw("{\"evt\":\"SESSION_END\",\"acct\":" + IntegerToString(m_accountLogin) +
                  ",\"ts\":" + IntegerToString(TimeCurrent() * 1000) + "}");
         if(m_fileHandle != INVALID_HANDLE) {
             FileClose(m_fileHandle);
@@ -93,37 +93,37 @@ public:
         m_enabled = false;
         Print("[STRUCTLOG] Shutdown complete");
     }
-    
-    void Log(string eventType, string message = "", string symbol = "", 
+
+    void Log(string eventType, string message = "", string symbol = "",
              double value1 = 0, double value2 = 0, long value3 = 0, string corrId = "")
     {
         if(!m_enabled) return;
-        
+
         string json = BuildJSON(eventType, message, symbol, value1, value2, value3, corrId);
         m_buffer.Add(new CStringObj(json));
-        
+
         // Auto-flush on buffer full or interval
         ulong now = GetMicrosecondCount() / 1000;
         if(m_buffer.Total() >= m_maxBuffer || now - m_lastFlush > (ulong)m_flushIntervalMs)
             FlushBuffer();
     }
-    
+
     void LogError(string context, string error, int code = 0, string corrId = "") {
         Log("ERROR", error, context, 0, 0, code, corrId);
     }
-    
+
     void LogWarning(string context, string warning, string corrId = "") {
         Log("WARNING", warning, context, 0, 0, 0, corrId);
     }
-    
+
     void LogInfo(string context, string message, string corrId = "") {
         Log("INFO", message, context, 0, 0, 0, corrId);
     }
-    
+
     void LogSpreadSpike(string symbol, double current, double average, string corrId = "") {
         Log("SPREAD_SPIKE", "", symbol, current, average, 0, corrId);
     }
-    
+
     // Direct write + flush, bypassing the buffer; used by the session markers.
     void WriteRaw(string json) {
         if(!m_enabled || m_fileHandle == INVALID_HANDLE) return;
@@ -138,7 +138,7 @@ private:
         m_sequence++;
         ulong timestamp = (ulong)(TimeCurrent() * 1000 + (GetMicrosecondCount() % 1000));
         string sym = (symbol != "" ? symbol : _Symbol);
-        
+
         string json = "{";
         json += "\"ts\":" + IntegerToString((long)timestamp) + ",";
         json += "\"seq\":" + IntegerToString(m_sequence) + ",";
@@ -156,10 +156,10 @@ private:
         json += "}";
         return json;
     }
-    
+
     void FlushBuffer() {
         if(!m_enabled || m_fileHandle == INVALID_HANDLE || m_buffer.Total() == 0) return;
-        
+
         for(int i = 0; i < m_buffer.Total(); i++) {
             CObject* obj = m_buffer.At(i);
             if(obj != NULL) {

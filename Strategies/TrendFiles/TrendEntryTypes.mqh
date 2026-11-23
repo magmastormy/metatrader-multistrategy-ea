@@ -28,7 +28,7 @@ struct STrendEntrySignal
     double                  stopLoss;
     double                  takeProfit;
     string                  reason;
-    
+
     STrendEntrySignal() : type(ENTRY_NONE), direction(TRADE_SIGNAL_NONE),
                           confidence(0), entryPrice(0), stopLoss(0),
                           takeProfit(0), reason("") {}
@@ -39,16 +39,16 @@ class CTrendEntryTypes
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     // Reference to EMA system
     CMultiEMASystem*    m_emaSystem;
     bool                m_ownEmaSystem;
-    
+
     // Configuration
     double              m_pullbackTolerance;    // Pips tolerance for pullback
     int                 m_minConsistencyBars;   // Min bars for continuation entry
     double              m_minADXForContinuation;
-    
+
     // Internal methods
     bool                HasBullishRejection();
     bool                HasBearishRejection();
@@ -56,26 +56,26 @@ private:
     bool                HasBearishMomentum();
     double              GetATR(int period = 14);
     int                 m_atrHandle;
-    
+
 public:
                         CTrendEntryTypes();
                        ~CTrendEntryTypes();
-    
+
     bool                Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
                                   CMultiEMASystem* emaSystem = NULL);
     void                Deinit();
-    
+
     void                Update();
-    
+
     // Entry detection
     STrendEntrySignal   GetEarlyTrendEntry();
     STrendEntrySignal   GetPullbackEntry();
     STrendEntrySignal   GetContinuationEntry();
     STrendEntrySignal   GetClassicCrossEntry();
-    
+
     // Best entry selection
     STrendEntrySignal   GetBestEntry();
-    
+
     // Configuration
     void                SetPullbackTolerance(double pips) { m_pullbackTolerance = pips; }
     void                SetMinConsistencyBars(int bars) { m_minConsistencyBars = bars; }
@@ -104,7 +104,7 @@ bool CTrendEntryTypes::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
 {
     m_symbol = symbol;
     m_timeframe = timeframe;
-    
+
     if(emaSystem != NULL)
     {
         m_emaSystem = emaSystem;
@@ -119,10 +119,10 @@ bool CTrendEntryTypes::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
             m_ownEmaSystem = true;
         }
     }
-    
+
     if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); }
     m_atrHandle = iATR(m_symbol, m_timeframe, 14);
-    
+
     return (m_emaSystem != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
@@ -133,7 +133,7 @@ void CTrendEntryTypes::Deinit()
         delete m_emaSystem;
         m_emaSystem = NULL;
     }
-    
+
     if(m_atrHandle != INVALID_HANDLE)
     {
         IndicatorRelease(m_atrHandle);
@@ -151,7 +151,7 @@ double CTrendEntryTypes::GetATR(int period)
 {
     int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
-    
+
     double atr[];
     ArraySetAsSeries(atr, true);
     // closed-bar discipline â€?shift 1 (last completed bar),
@@ -161,7 +161,7 @@ double CTrendEntryTypes::GetATR(int period)
         if(handle != m_atrHandle) IndicatorRelease(handle);
         return 0;
     }
-    
+
     if(handle != m_atrHandle) IndicatorRelease(handle);
     return atr[0];
 }
@@ -172,20 +172,20 @@ bool CTrendEntryTypes::HasBullishRejection()
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double high1 = iHigh(m_symbol, m_timeframe, 1);
     double low1 = iLow(m_symbol, m_timeframe, 1);
-    
+
     double body = MathAbs(close1 - open1);
     double lowerWick = MathMin(open1, close1) - low1;
     double upperWick = high1 - MathMax(open1, close1);
-    
+
     // Pin bar: long lower wick, small body
     bool isPinBar = (lowerWick > body * 2.0 && upperWick < body * 0.5);
-    
+
     // Bullish engulfing
     double open2 = iOpen(m_symbol, m_timeframe, 2);
     double close2 = iClose(m_symbol, m_timeframe, 2);
-    bool isEngulfing = (close2 < open2) && (close1 > open1) && 
+    bool isEngulfing = (close2 < open2) && (close1 > open1) &&
                        (close1 > open2) && (open1 < close2);
-    
+
     return (isPinBar || isEngulfing);
 }
 
@@ -195,20 +195,20 @@ bool CTrendEntryTypes::HasBearishRejection()
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double high1 = iHigh(m_symbol, m_timeframe, 1);
     double low1 = iLow(m_symbol, m_timeframe, 1);
-    
+
     double body = MathAbs(close1 - open1);
     double lowerWick = MathMin(open1, close1) - low1;
     double upperWick = high1 - MathMax(open1, close1);
-    
+
     // Pin bar: long upper wick, small body
     bool isPinBar = (upperWick > body * 2.0 && lowerWick < body * 0.5);
-    
+
     // Bearish engulfing
     double open2 = iOpen(m_symbol, m_timeframe, 2);
     double close2 = iClose(m_symbol, m_timeframe, 2);
-    bool isEngulfing = (close2 > open2) && (close1 < open1) && 
+    bool isEngulfing = (close2 > open2) && (close1 < open1) &&
                        (close1 < open2) && (open1 > close2);
-    
+
     return (isPinBar || isEngulfing);
 }
 
@@ -217,7 +217,7 @@ bool CTrendEntryTypes::HasBullishMomentum()
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double close2 = iClose(m_symbol, m_timeframe, 2);
     double close3 = iClose(m_symbol, m_timeframe, 3);
-    
+
     // 3 consecutive higher closes
     return (close1 > close2 && close2 > close3);
 }
@@ -227,7 +227,7 @@ bool CTrendEntryTypes::HasBearishMomentum()
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double close2 = iClose(m_symbol, m_timeframe, 2);
     double close3 = iClose(m_symbol, m_timeframe, 3);
-    
+
     // 3 consecutive lower closes
     return (close1 < close2 && close2 < close3);
 }
@@ -237,10 +237,10 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
 {
     STrendEntrySignal signal;
     if(m_emaSystem == NULL) return signal;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double atr = GetATR(14);
-    
+
     // Check for 8/21 crossover with 50/200 alignment
     bool goldenCross = m_emaSystem.HasGoldenCross8_21();
     bool deathCross = m_emaSystem.HasDeathCross8_21();
@@ -284,7 +284,7 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
                 signal.confidence += 0.05;
         }
     }
-    
+
     return signal;
 }
 
@@ -293,19 +293,19 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
 {
     STrendEntrySignal signal;
     if(m_emaSystem == NULL) return signal;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double close1 = iClose(m_symbol, m_timeframe, 1);  // Use completed bar for structure validation
     double atr = GetATR(14);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
-    
+
     STrendState trend = m_emaSystem.GetTrendState();
-    
+
     // Only in established trends
     if(!trend.isUptrend && !trend.isDowntrend)
         return signal;
-    
+
     // Check if close1 was at 21 EMA
     // the raw distance-in-points test against 15 POINTS (=1.5 pips
     // on 5-digit FX, ~0.15 price units on synthetics priced in hundreds)
@@ -321,7 +321,7 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
 
     if(distance > tolerancePoints)
         return signal;
-    
+
     if(trend.isUptrend && ema21 > ema50)
     {
         // Bullish pullback - look for rejection at 21 EMA
@@ -334,7 +334,7 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
             signal.stopLoss = ema21 - (atr * 1.5);
             signal.takeProfit = price + (atr * 3.5);
             signal.reason = "Bullish pullback to 21 EMA with rejection";
-            
+
             // Boost for strong trend
             if(trend.strength > 30)
                 signal.confidence += 0.05;
@@ -352,12 +352,12 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
             signal.stopLoss = ema21 + (atr * 1.5);
             signal.takeProfit = price - (atr * 3.5);
             signal.reason = "Bearish pullback to 21 EMA with rejection";
-            
+
             if(trend.strength > 30)
                 signal.confidence += 0.05;
         }
     }
-    
+
     return signal;
 }
 
@@ -366,22 +366,22 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
 {
     STrendEntrySignal signal;
     if(m_emaSystem == NULL) return signal;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double atr = GetATR(14);
-    
+
     STrendState trend = m_emaSystem.GetTrendState();
-    
+
     // Only in very strong, consistent trends
     if(trend.strength < m_minADXForContinuation)
         return signal;
-    
+
     if(trend.consistency < m_minConsistencyBars)
         return signal;
-    
+
     double ema8 = m_emaSystem.GetEMA8(1);  // Check against completed EMA
     double close1 = iClose(m_symbol, m_timeframe, 1);
-    
+
     if(trend.isUptrend && close1 > ema8)
     {
         // Price above 8 EMA in strong uptrend - add to position
@@ -393,9 +393,9 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
             signal.entryPrice = price;
             signal.stopLoss = ema8 - (atr * 1.0);
             signal.takeProfit = price + (atr * 4.0);
-            signal.reason = StringFormat("Continuation in strong uptrend (ADX: %.1f, %d bars)", 
+            signal.reason = StringFormat("Continuation in strong uptrend (ADX: %.1f, %d bars)",
                                          trend.strength, trend.consistency);
-            
+
             // Extra boost for very strong trends
             if(trend.strength > 45)
                 signal.confidence += 0.05;
@@ -412,14 +412,14 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
             signal.entryPrice = price;
             signal.stopLoss = ema8 + (atr * 1.0);
             signal.takeProfit = price - (atr * 4.0);
-            signal.reason = StringFormat("Continuation in strong downtrend (ADX: %.1f, %d bars)", 
+            signal.reason = StringFormat("Continuation in strong downtrend (ADX: %.1f, %d bars)",
                                          trend.strength, trend.consistency);
-            
+
             if(trend.strength > 45)
                 signal.confidence += 0.05;
         }
     }
-    
+
     return signal;
 }
 
@@ -428,14 +428,14 @@ STrendEntrySignal CTrendEntryTypes::GetClassicCrossEntry()
 {
     STrendEntrySignal signal;
     if(m_emaSystem == NULL) return signal;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double atr = GetATR(14);
-    
+
     // Check for 50/200 crossover (classic golden/death cross)
     bool goldenCross = m_emaSystem.HasGoldenCross50_200();
     bool deathCross = m_emaSystem.HasDeathCross50_200();
-    
+
     if(goldenCross)
     {
         signal.type = ENTRY_CLASSIC_CROSS;
@@ -456,23 +456,23 @@ STrendEntrySignal CTrendEntryTypes::GetClassicCrossEntry()
         signal.takeProfit = price - (atr * 5.0);
         signal.reason = "50/200 Death Cross (major trend change)";
     }
-    
+
     return signal;
 }
 
 STrendEntrySignal CTrendEntryTypes::GetBestEntry()
 {
     STrendEntrySignal signals[4];
-    
+
     // Get all entry types
     signals[0] = GetEarlyTrendEntry();
     signals[1] = GetPullbackEntry();
     signals[2] = GetContinuationEntry();
     signals[3] = GetClassicCrossEntry();
-    
+
     // Find best signal
     STrendEntrySignal bestSignal;
-    
+
     for(int i = 0; i < 4; i++)
     {
         if(signals[i].direction != TRADE_SIGNAL_NONE &&
@@ -481,7 +481,7 @@ STrendEntrySignal CTrendEntryTypes::GetBestEntry()
             bestSignal = signals[i];
         }
     }
-    
+
     return bestSignal;
 }
 

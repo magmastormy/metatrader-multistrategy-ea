@@ -17,13 +17,13 @@ string CEnhancedErrorHandler::FormatErrorMessage(const ENUM_ERROR_SEVERITY sever
         case ERROR_FATAL:    severityStr = "FATAL"; break;
         default:             severityStr = "UNKNOWN";
     }
-    
+
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     string component = (context.component != "") ? context.component : "GLOBAL";
     string errSymbol = (context.symbol != "") ? context.symbol : "N/A";
     string operation = (context.operation != "") ? context.operation : "N/A";
     string details = (context.additionalInfo != "") ? context.additionalInfo : "No details";
-    
+
     return StringFormat("[%s] %s | %s | %s | %s | %d | %s",
         timestamp,
         severityStr,
@@ -59,7 +59,7 @@ bool CEnhancedErrorHandler::IsRecoverableError(const int errorCode)
         6, 8, 64, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
         141, 145, 146, 147, 148, 149, 150, 151
     };
-    
+
     for(int i = 0; i < ArraySize(recoverableErrors); i++) {
         if(errorCode == recoverableErrors[i]) {
             return true;

@@ -194,8 +194,11 @@ public:
         if(structureAligned)
             score += m_structureBonus;
 
-        bool fastCHOCH = m_structureAnalyzer.DetectFastCHOCH();
-        if(fastCHOCH)
+        // The bonus only counts a break in the trade's own direction: a downside
+        // CHoCH must not inflate a long's confidence.
+        bool chochBullish = false;
+        bool fastCHOCH = m_structureAnalyzer.DetectFastCHOCH(chochBullish);
+        if(fastCHOCH && chochBullish == bullish)
             score += m_chochBonus;
 
         bool cisdDisplacement = m_structureAnalyzer.DetectCISDDisplacement();
@@ -211,7 +214,9 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        // A long fills at the ask; pricing its stop distance off the bid understated it by the spread
+        double currentPrice = (bullish) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                        : SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
 
         double slPrice, tpPrice, slDistance;

@@ -7,16 +7,16 @@
 // who did not yet know the day's direction, which is why its break is a decision rather than a drift.
 //
 // Shape:
-//   - The range is fixed at `m_rangeMinutes` after the day open, and only closed bars inside that
-//     window contribute to it; nothing is evaluated before the window closes, so the range cannot
-//     change under a signal already taken.
-//   - The break must clear the range edge by 0.1 ATR (a one-tick poke is a touch, not a break) and
-//     must not be more than 1.5 ATR past the edge (that is chase risk, already booked).
-//   - ADX(14) >= 18 on the crossing bar: a break without expansion is a range extension that will
-//     revert.
-//   - Refuses more than `m_activeHours` hours after the range closes; by then the opening range is
-//     history and the trade on offer belongs to the trend rows.
-//   - Stop 1.2 ATR, target 2.4 ATR: 2R by construction.
+// - The range is fixed at `m_rangeMinutes` after the day open, and only closed bars inside that
+// window contribute to it; nothing is evaluated before the window closes, so the range cannot
+// change under a signal already taken.
+// - The break must clear the range edge by 0.1 ATR (a one-tick poke is a touch, not a break) and
+// must not be more than 1.5 ATR past the edge (that is chase risk, already booked).
+// - ADX(14) >= 18 on the crossing bar: a break without expansion is a range extension that will
+// revert.
+// - Refuses more than `m_activeHours` hours after the range closes; by then the opening range is
+// history and the trade on offer belongs to the trend rows.
+// - Stop 1.2 ATR, target 2.4 ATR: 2R by construction.
 #ifndef OPENING_RANGE_BREAKOUT_STRATEGY_MQH
 #define OPENING_RANGE_BREAKOUT_STRATEGY_MQH
 

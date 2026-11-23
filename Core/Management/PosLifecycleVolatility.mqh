@@ -138,18 +138,44 @@ public:
             newSL = NormalizeDouble(newSL, digits);
             newTP = NormalizeDouble(newTP, digits);
 
-            // Only modify if significantly different (avoid excessive modifications)
-            double slDiff = MathAbs(newSL - currentSL);
-            double tpDiff = MathAbs(newTP - currentTP);
+            // Tighten-only: the candidate SL/TP and the breakeven/trailing managers may already
+            // hold a better level than the open-anchored ATR recomputation. Writing the recomputed
+            // level unconditionally could move a stop AWAY from price (loosening risk) or push a
+            // target farther out (lowering exit odds). Each leg is replaced only when it improves,
+            // and a fresh SL must still sit on the protective side of the current price.
+            double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+            double effSL = currentSL;
+            double effTP = currentTP;
+            bool slChanges = false;
+            bool tpChanges = false;
+
+            if(type == POSITION_TYPE_BUY)
+            {
+                bool slValid = (newSL < currentPrice);
+                bool tpValid = (newTP > currentPrice);
+                if(slValid && (currentSL == 0.0 || newSL > currentSL)) { effSL = newSL; slChanges = true; }
+                if(tpValid && (currentTP == 0.0 || newTP < currentTP)) { effTP = newTP; tpChanges = true; }
+            }
+            else
+            {
+                bool slValid = (newSL > currentPrice);
+                bool tpValid = (newTP < currentPrice);
+                if(slValid && (currentSL == 0.0 || newSL < currentSL)) { effSL = newSL; slChanges = true; }
+                if(tpValid && (currentTP == 0.0 || newTP > currentTP)) { effTP = newTP; tpChanges = true; }
+            }
+
+            if(!slChanges && !tpChanges)
+                continue;
+
             double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
             if(point <= 0) point = 0.00001;
 
-            if(slDiff > 10 * point || tpDiff > 10 * point || currentSL == 0 || currentTP == 0)
+            if(MathAbs(effSL - currentSL) > 10 * point || MathAbs(effTP - currentTP) > 10 * point)
             {
-                if(tradeManager.ModifyPosition(ticket, newSL, newTP))
+                if(tradeManager.ModifyPosition(ticket, effSL, effTP))
                 {
                     PrintFormat("[DYNAMIC-SLTP] %s | ticket=%d | SL=%.5f -> %.5f | TP=%.5f -> %.5f | ATR=%.5f | regime=%d",
-                                symbol, ticket, currentSL, newSL, currentTP, newTP, atr, regime.regime);
+                                symbol, ticket, currentSL, effSL, currentTP, effTP, atr, regime.regime);
                 }
             }
         }

@@ -78,7 +78,7 @@ private:
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
-    ulong m_pendingExplicitMagic;            // Batch 152 (T-01): absolute magic for the next send (0 = derive base+offset)
+    ulong m_pendingExplicitMagic;            // (T-01): absolute magic for the next send (0 = derive base+offset)
     int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
     double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
     double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
@@ -332,9 +332,9 @@ public:
     }
 
         bool Initialize(const long magicNumber = 12345, const string expertName = "MultiStrategyEA");
-    
+
         void Deinit();
-    
+
     CPositionSizer* GetPositionSizer() const { return m_positionSizer; }
 
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); UpdatePerSymbolSlippage(m_slippage); }
@@ -691,14 +691,14 @@ bool CTradeManager::Initialize(const long magicNumber,
     void CTradeManager::Deinit()
     {
         CleanupPersistedAsyncTrades();
-    
+
         m_atrCache.Reset();
-    
+
         m_asyncExecutor.FreePending();
         m_symbolRegistry.FreeMagicOffsets();
 
         m_confirmationQueue.Clear();
-    
+
         Print("[TRADE-MANAGER] Deinit complete - async trades cleaned up");
             }
 
@@ -1281,7 +1281,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                           : (ulong)(m_magicNumber + (long)GetMagicOffsetForSymbol(symbolName));
         symbolTrade.SetExpertMagicNumber(shipMagic);
         m_pendingExplicitMagic = 0;
-        
+
         bool sendAccepted = false;
         ulong sendStartUs = GetMicrosecondCount();
         if(orderType == ORDER_TYPE_BUY)
@@ -1626,9 +1626,9 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
             }
         }
     }
-    
+
     double netProfit = profit - commission - swap;
-    
+
     m_tradeStats.RecordTrade(isWin, netProfit);
 
     // Legacy backward-compatibility mirrors â€?intentionally retained here
@@ -1881,7 +1881,7 @@ bool CTradeManager::OpenPosition(const string symbol,
                              : m_lastTradeResult.order;
         JournalTradeOpen(journalTicket, symbol, orderType, journalVolume,
                          journalPrice, journalSL, journalTP, journalMagic, "entry");
-        
+
         if(journalTicket > 0)
             AddEAOwnedPosition(journalTicket);
     }

@@ -287,15 +287,21 @@ public:
         double guardPoint = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         long guardSpreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
         double guardSpread = (guardPoint > 0) ? (double)guardSpreadPoints * guardPoint : 0.0;
-        if(!CSignalGuards::IsSignalTradable(bestEntry.entryPrice, bestEntry.stopLoss, bestEntry.takeProfit, guardSpread))
+        // Entry types anchor entryPrice on SYMBOL_BID for both directions; a BUY fills at ASK, so
+        // distances measured off BID understate the real stop distance by the spread.
+        double execPrice = (bestEntry.direction == TRADE_SIGNAL_BUY)
+                           ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                           : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        if(execPrice <= 0.0) execPrice = bestEntry.entryPrice;
+        if(!CSignalGuards::IsSignalTradable(execPrice, bestEntry.stopLoss, bestEntry.takeProfit, guardSpread))
             return RejectSignal("TREND_NOT_TRADABLE");
 
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = (bestEntry.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
         request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-        request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-        request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(execPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - execPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";

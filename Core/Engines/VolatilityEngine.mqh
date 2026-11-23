@@ -60,7 +60,7 @@ private:
     int m_bbPeriod;
     double m_bbDeviation;
     int m_hvPeriod;
-    
+
     int m_handleATR;
     int m_handleBB;
     int m_handleStdDev;
@@ -74,11 +74,11 @@ private:
     datetime m_lastBarTime;  // Bar-change detection: skip recalc if bar hasn't changed
     datetime m_lastSuccessfulIndicatorCopy;  // When BB/ATR were last copied from indicator handles
     int m_bbStalenessThresholdBars;  // Max bars before fallback is considered stale
-    
+
     VolatilityMetrics m_metrics;
     VolatilityMetrics m_lastValidMetrics;
     CSignalDiagnostics* m_diagnostics;
-    
+
     ENUM_VOLATILITY_STATE DetermineState(double atrPercent);
     double CalculateHistoricalVolatility(const string symbol, ENUM_TIMEFRAMES tf);
     void ResetHandles();
@@ -100,26 +100,26 @@ private:
                               const ENUM_TIMEFRAMES timeframe,
                               const string reasonTag,
                               const int errorCode);
-    
+
 public:
     CVolatilityEngine();
     ~CVolatilityEngine();
-    
+
     bool Initialize(int atrPeriod = 14, int bbPeriod = 20, CSignalDiagnostics* diag = NULL);
     bool UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe);
-    
+
     ENUM_VOLATILITY_STATE GetVolatilityState() const { return m_metrics.state; }
     double GetATR() const { return m_metrics.atr; }
     double GetATRPercent() const { return m_metrics.atrPercent; }
     bool IsVolatilityHigh() const { return m_metrics.state >= VOLATILITY_HIGH; }
     bool IsVolatilityExpanding() const { return m_metrics.isExpanding; }
-    
+
     bool ShouldTradeInCurrentVolatility(double maxVolatility = 3.0);
     double GetVolatilityAdjustedStopLoss(double baseStop);
     double GetVolatilityAdjustedTakeProfit(double baseTp);
-    
+
     void Reset();
-    
+
     // ATR Validation Test - Call during init to verify calculation correctness
     bool ValidateAtrCalculation(const string symbol, const ENUM_TIMEFRAMES timeframe);
 };
@@ -188,7 +188,7 @@ bool CVolatilityEngine::EnsureHandles(const string symbol, ENUM_TIMEFRAMES timef
     // Resolve PERIOD_CURRENT to actual chart timeframe
     if(timeframe == PERIOD_CURRENT || timeframe == 0)
         timeframe = Period();
-    
+
     bool handlesReady = (m_handleATR != INVALID_HANDLE &&
                          m_handleBB != INVALID_HANDLE &&
                          m_handleStdDev != INVALID_HANDLE);
@@ -366,20 +366,20 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
             int atrWindow = MathMin(period, copied - startIndex - 1);
             if(atrWindow <= 0)
                 return 0.0;
-    
+
             double atrSum = 0.0;
             for(int i = 0; i < atrWindow; i++)
             {
                 int idx = startIndex + i;
                 if(idx + 1 >= copied)
                     break;
-            
+
                 double rangeHighLow = rates[idx].high - rates[idx].low;
                 double rangeHighClose = MathAbs(rates[idx].high - rates[idx + 1].close);
                 double rangeLowClose = MathAbs(rates[idx].low - rates[idx + 1].close);
                 atrSum += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
             }
-    
+
             if(atrWindow > 0)
                 return atrSum / (double)atrWindow;
             else
@@ -505,7 +505,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     int calculatedBarsBB = BarsCalculated(m_handleBB);
     int calculatedBarsATR = BarsCalculated(m_handleATR);
     int calculatedBarsStdDev = BarsCalculated(m_handleStdDev);
-    
+
     if(availableBars < minBars ||
        calculatedBarsBB < minBars ||
        calculatedBarsATR < minBars ||
@@ -528,7 +528,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     ArraySetAsSeries(atr, true);
 
     ResetLastError();
-    
+
     // HIGH FIX: Validate handles are valid before attempting copy
     if(m_handleATR == INVALID_HANDLE || m_handleBB == INVALID_HANDLE || m_handleStdDev == INVALID_HANDLE)
     {
@@ -543,7 +543,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     int lowerRet = CopyBuffer(m_handleBB, 2, 0, 1, bb_lower);
     int stdDevRet = CopyBuffer(m_handleStdDev, 0, 0, 1, stddev);
     int copyErr = GetLastError();
-    
+
     // HIGH FIX: Improved error detection with specific failure reasons
     if(atrRet <= 0)
     {
@@ -585,7 +585,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     m_metrics.atr = atr[0];
 
-    // Batch104-C1: ATR sanity validation -corrupted multi-symbol indicator handles
+    // ATR sanity validation -corrupted multi-symbol indicator handles
     // can return values 1000x-100000x too high (e.g., 115783 for USDJPY instead of ~0.16).
     // If ATR exceeds 10x the asset price, the data is clearly corrupted.
     bool atrCorrupted = false;
@@ -687,7 +687,7 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
                     symbol, EnumToString(timeframe), requiredBars, copied);
         return false;
     }
-    
+
     // Use shared ATR calculation helper
     double atrValue = CalculateAtrFromRates(rates, m_atrPeriod, 0, copied);
     if(atrValue <= 0.0 || !MathIsValidNumber(atrValue))
@@ -696,7 +696,7 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
                     symbol, EnumToString(timeframe), atrValue);
         return false;
     }
-    
+
     PrintFormat("[ATR-VALIDATE] %s %s | PASSED | window=%d | atr=%.5f",
                 symbol, EnumToString(timeframe), m_atrPeriod, atrValue);
     return true;

@@ -18,16 +18,16 @@ private:
     {
         string symUpper = symbol;
         StringToUpper(symUpper);
-        
+
         for(int i = 0; i < ArraySize(activePairs); i++)
         {
             string existingUpper = activePairs[i];
             StringToUpper(existingUpper);
-            
+
             // Exact match already handled by ContainsSymbol
             if(symUpper == existingUpper)
                 continue;
-            
+
             // For Deriv synthetic indices: compare the index number/name
             if(StringFind(symUpper, "VOLATILITY") >= 0 && StringFind(existingUpper, "VOLATILITY") >= 0)
             {
@@ -65,20 +65,20 @@ private:
                 string symQuote = StringSubstr(symUpper, StringLen(symUpper) - 3, 3);
                 string existingBase = StringSubstr(existingUpper, 0, 3);
                 string existingQuote = StringSubstr(existingUpper, StringLen(existingUpper) - 3, 3);
-                
+
                 // Same base and quote = same pair (e.g., EURUSD vs EURUSDm)
                 if(symBase == existingBase && symQuote == existingQuote)
                     return true;
-                
+
                 // Same base, different quote = cross pair (not similar for our purposes)
                 // Same quote, different base = major/cross (not similar)
             }
-            
+
             return false;
         }
         return false;
     }
-    
+
     static int ExtractVolatilityIndex(const string sym)
     {
         int pos = StringFind(sym, "VOLATILITY");
@@ -91,7 +91,7 @@ private:
         string numStr = StringSubstr(rest, 0, endPos);
         return (int)StringToInteger(numStr);
     }
-    
+
     static int ExtractBoomCrashIndex(const string sym)
     {
         int pos = StringFind(sym, "BOOM");
@@ -105,7 +105,7 @@ private:
         string numStr = StringSubstr(rest, 0, endPos);
         return (int)StringToInteger(numStr);
     }
-    
+
     static int ExtractJumpIndex(const string sym)
     {
         int pos = StringFind(sym, "JUMP");
@@ -237,17 +237,17 @@ public:
             }
 
             long spread = SymbolInfoInteger(sym, SYMBOL_SPREAD);
-            
+
             // Allow higher spread threshold for synthetic symbols (Deriv indices trade 24/7 with wider spreads)
             long effectiveMaxSpread = config.maxSpreadPoints;
             if(isSynthetic)
             {
                 effectiveMaxSpread = config.maxSpreadPoints * 10;  // 10x multiplier for synthetics (e.g., 1500 -> 15000)
             }
-            
+
             if(spread > effectiveMaxSpread)
             {
-                PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points) %s", 
+                PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points) %s",
                             sym, spread, effectiveMaxSpread, isSynthetic ? "(synthetic)" : "");
                 rejectedCount++;
                 ArrayResize(rejectedSymbols, rejectedCount);
@@ -257,7 +257,7 @@ public:
 
             if(config.enableVolumeCheck)
             {
-                // Tick-volume liquidity filter (Issue #31): Use CopyTickVolume to verify minimum liquidity
+                // Tick-volume liquidity filter: Use CopyTickVolume to verify minimum liquidity
                 long tickVol[];
                 ArraySetAsSeries(tickVol, true);
                 int copied = CopyTickVolume(sym, PERIOD_D1, 0, 20, tickVol);
@@ -268,17 +268,17 @@ public:
                     for(int v = 0; v < count; v++)
                         avgTickVol += tickVol[v];
                     avgTickVol /= count;
-                    
+
                     if(avgTickVol < config.minDailyVolumeLots)
                     {
-                        PrintFormat("[SYMBOLS] Symbol %s rejected - avg tick volume %lld below minimum %lld", 
+                        PrintFormat("[SYMBOLS] Symbol %s rejected - avg tick volume %lld below minimum %lld",
                                     sym, avgTickVol, config.minDailyVolumeLots);
                         rejectedCount++;
                         ArrayResize(rejectedSymbols, rejectedCount);
                         rejectedSymbols[rejectedCount - 1] = sym;
                         continue;
                     }
-                    PrintFormat("[SYMBOLS] Symbol %s - avg tick volume %lld OK (min %lld)", 
+                    PrintFormat("[SYMBOLS] Symbol %s - avg tick volume %lld OK (min %lld)",
                                 sym, avgTickVol, config.minDailyVolumeLots);
                 }
                 else

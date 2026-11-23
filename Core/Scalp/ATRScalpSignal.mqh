@@ -103,7 +103,7 @@ public:
             double fastCurr = emaFastBuf[0], fastPrev = emaFastBuf[1];
             double slowCurr = emaSlowBuf[0], slowPrev = emaSlowBuf[1];
 
-            // Batch 152 (S-M-02): stamp the bar a cross is detected on. The old
+            // (S-M-02): stamp the bar a cross is detected on. The old
             // code latched the direction forever, so EvaluateScalpSignal could
             // trade a cross from hours ago as if it were fresh.
             if(fastPrev <= slowPrev && fastCurr > slowCurr)
@@ -134,7 +134,7 @@ public:
 // Returns 0=none, 1=BUY, -1=SELL
    int EvaluateScalpSignal(SATRScalpSymbolState &state, const SATRScalpingConfig &config)
    {
-      // Must have a fresh EMA crossover - Batch 152 (S-M-02): the cross must
+      // Must have a fresh EMA crossover - (S-M-02): the cross must
       // have been detected on the current M1 bar, not latched from earlier.
       int crossDir = state.lastEmaCrossDirection;
       if(crossDir == 0)

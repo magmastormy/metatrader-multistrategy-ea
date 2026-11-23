@@ -19,7 +19,7 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../../IndicatorManager.mqh"
 
-// CDiagMgrHeartbeat �?stateless heartbeat emitters and math
+// CDiagMgrHeartbeat - stateless heartbeat emitters and math
 class CDiagMgrHeartbeat
 {
 public:

@@ -54,8 +54,8 @@ enum ENUM_STRATEGY_TYPE
 {
     STRATEGY_MOMENTUM = 1,
     STRATEGY_TREND = 2,
-    // STRATEGY_FIBONACCI = 3 �?REMOVED: merged into Support/Resistance as confluence module
-    // STRATEGY_ELLIOTT_WAVE = 4 �?REMOVED: subjective pattern recognition, unsuitable for automation
+    // STRATEGY_FIBONACCI = 3 - REMOVED: merged into Support/Resistance as confluence module
+    // STRATEGY_ELLIOTT_WAVE = 4 - REMOVED: subjective pattern recognition, unsuitable for automation
     STRATEGY_SUPPORT_RESISTANCE = 5,
     STRATEGY_CANDLESTICK = 7,
     STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy
@@ -286,7 +286,7 @@ double ClampRiskPercentGlobal(double riskPercent)
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
-// Drawdown state �?single source of truth for all drawdown queries
+// Drawdown state - single source of truth for all drawdown queries
 // (Phase 2.1: Defined here to break circular include dependency)
 struct SDrawdownState
 {
@@ -348,7 +348,7 @@ struct SConsensusDecisionContext
     int confluence;                 // Number of concurring strategies
     string reason;                  // Decision reason
     ENUM_STRATEGY_CLUSTER dominantCluster; // Dominant cluster for this decision
-    
+
     // Default constructor
     SConsensusDecisionContext() :
         symbol(""),
@@ -376,7 +376,7 @@ struct SConsensusDecisionContext
         reason(""),
         dominantCluster(STRATEGY_CLUSTER_NONE)
     {}
-    
+
     // Copy constructor
     SConsensusDecisionContext(const SConsensusDecisionContext &other) :
         symbol(other.symbol),
@@ -404,7 +404,7 @@ struct SConsensusDecisionContext
         reason(other.reason),
         dominantCluster(other.dominantCluster)
     {}
-    
+
     // Assignment operator
     void operator=(const SConsensusDecisionContext &other)
     {
@@ -446,7 +446,7 @@ struct SValidationResult
     double correlationRisk;
     bool requiresAdjustment;       // Whether adjustment is required
     ENUM_ERROR_LEVEL severity;
-    
+
     // Additional fields used by AdvancedSignalValidator
     bool isValid;                  // Signal validity
     double qualityScore;
@@ -457,7 +457,7 @@ struct SValidationResult
     bool passedTimeFilter;
     bool passedVolatilityFilter;
     bool passedSessionFilter;
-    
+
     // Default constructor
     SValidationResult() :
         approved(false),
@@ -479,7 +479,7 @@ struct SValidationResult
         passedVolatilityFilter(false),
         passedSessionFilter(false)
     {}
-    
+
     // Copy constructor
     SValidationResult(const SValidationResult &other) :
         approved(other.approved),
@@ -501,7 +501,7 @@ struct SValidationResult
         passedVolatilityFilter(other.passedVolatilityFilter),
         passedSessionFilter(other.passedSessionFilter)
     {}
-    
+
     // Assignment operator
     void operator=(const SValidationResult &other)
     {
@@ -537,7 +537,7 @@ struct SRiskMetrics
     int totalPositions;           // Total open positions
     double correlation;           // Average position correlation
     bool emergencyStop;           // Emergency stop flag
-    
+
     // Default constructor
     SRiskMetrics() :
         totalRisk(0.0),
@@ -549,7 +549,7 @@ struct SRiskMetrics
         correlation(0.0),
         emergencyStop(false)
     {}
-    
+
     // Copy constructor
     SRiskMetrics(const SRiskMetrics &other) :
         totalRisk(other.totalRisk),
@@ -561,7 +561,7 @@ struct SRiskMetrics
         correlation(other.correlation),
         emergencyStop(other.emergencyStop)
     {}
-    
+
     // Assignment operator
     void operator=(const SRiskMetrics &other)
     {
@@ -620,13 +620,13 @@ struct SEnhancedTradeSignal
     bool passedTimeFilter;
     bool passedVolatilityFilter;
     bool passedSessionFilter;
-    
+
     // Additional fields for AI signals
     double buyProbability;
     double sellProbability;
     double uncertainty;                  // Uncertainty value
     double riskAdjustedSize;             // Risk adjusted position size
-    
+
     // Default constructor
     SEnhancedTradeSignal() :
         signal(TRADE_SIGNAL_NONE),
@@ -649,7 +649,7 @@ struct SEnhancedTradeSignal
         riskAdjustedSize(0.0)
     {
     }
-    
+
     // Copy constructor
     SEnhancedTradeSignal(const SEnhancedTradeSignal &other) :
         signal(other.signal),
@@ -672,7 +672,7 @@ struct SEnhancedTradeSignal
         riskAdjustedSize(other.riskAdjustedSize)
     {
     }
-    
+
     // Assignment operator
     void operator=(const SEnhancedTradeSignal &other)
     {
@@ -740,7 +740,7 @@ int g_logLevel = LOG_LEVEL_ERROR;
 #define LOG_IF12(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
 
 // Users must use LOG_IF0, LOG_IF1, etc. explicitly based on number of format args
-// Wrap in { } if used in if-else context: if(cond) { LOG_IF1(...); } else { ... }
+// Wrap in { } if used in if-else context: if(cond) { LOG_IF1(...); } else {... }
 
 #endif // CORE_ENUMS_MQH
 

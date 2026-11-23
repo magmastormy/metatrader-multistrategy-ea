@@ -5,11 +5,11 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .config import SERVER_HOST, SERVER_PORT, CORS_ORIGINS, COMMAND_PURGE_INTERVAL
+from .config import SERVER_HOST, SERVER_PORT, CORS_ORIGINS, COMMAND_PURGE_INTERVAL, API_TOKEN
 from .state_manager import StateManager
 
 logger = logging.getLogger("dashboard")
@@ -25,6 +25,10 @@ class StatePushBody(BaseModel):
 class CommandBody(BaseModel):
     type: str
     params: dict = {}
+
+class AckBody(BaseModel):
+    result: str = "ok"
+    detail: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +46,14 @@ app.add_middleware(
 )
 
 state_manager = StateManager()
+
+
+async def require_api_key(request: Request):
+    """Require X-Api-Key on EA write/control routes when EA_DASHBOARD_TOKEN is set."""
+    if not API_TOKEN:
+        return
+    if request.headers.get("x-api-key") != API_TOKEN:
+        raise HTTPException(status_code=401, detail="missing or invalid API key")
 
 # WebSocket client tracking
 _ws_clients: set[WebSocket] = set()
@@ -86,7 +98,7 @@ async def _broadcast(message: dict) -> None:
 # REST endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/state")
+@app.post("/state", dependencies=[Depends(require_api_key)])
 async def receive_state(request: Request):
     """Receive EA state push."""
     raw = await request.body()
@@ -180,24 +192,27 @@ async def get_alerts(limit: int = 50):
 # Control endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/api/control/command")
+@app.post("/api/control/command", dependencies=[Depends(require_api_key)])
 async def queue_command(body: CommandBody):
     cmd_id = await state_manager.add_command(body.type, body.params)
     return {"id": cmd_id, "type": body.type, "params": body.params}
 
 
-@app.get("/api/control/commands")
+@app.get("/api/control/commands", dependencies=[Depends(require_api_key)])
 async def get_pending_commands():
     commands = await state_manager.get_pending_commands()
     return {"commands": commands}
 
 
-@app.post("/api/control/ack/{cmd_id}")
-async def ack_command(cmd_id: str):
+@app.post("/api/control/ack/{cmd_id}", dependencies=[Depends(require_api_key)])
+async def ack_command(cmd_id: str, body: Optional[AckBody] = None):
     found = await state_manager.acknowledge_command(cmd_id)
     if not found:
         raise HTTPException(status_code=404, detail="Command not found")
-    return {"status": "acknowledged"}
+    result = body.result if body else "ok"
+    if result != "ok":
+        print(f"[CONTROL] Command {cmd_id} acked with error: {body.detail if body else ''}")
+    return {"status": "acknowledged", "result": result}
 
 
 # ---------------------------------------------------------------------------

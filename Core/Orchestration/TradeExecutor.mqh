@@ -22,7 +22,7 @@ private:
     CTradeAttributionManager* m_attributionManager;
     CPositionManager* m_positionManager;
     CNeuralNetRegistry* m_neuralNetRegistry;
-    
+
     struct SPendingConfirmation
     {
         ulong orderTicket;
@@ -34,15 +34,15 @@ private:
         int checkAttempts;
         bool isActive;
         STradeCandidate candidate; // Original candidate for attribution
-        
+
         SPendingConfirmation() : orderTicket(0), symbol(""), orderType(ORDER_TYPE_BUY),
                                 expectedPrice(0), volume(0), sentAt(0), checkAttempts(0), isActive(false) {}
     };
-    
+
     SPendingConfirmation m_pendingConfirmations[];
     int m_pendingCount;
     int m_maxPending;
-    
+
 public:
     struct SExecutionResult
     {
@@ -54,20 +54,20 @@ public:
         double filledVolume;
         uint retcode;
         string reason;
-        
+
         SExecutionResult() : executed(false), confirmed(false), dealTicket(0), orderTicket(0),
                             filledPrice(0), filledVolume(0), retcode(0) {}
     };
-    
+
     CTradeExecutor() : m_tradeManager(NULL), m_attributionManager(NULL), m_positionManager(NULL),
                        m_neuralNetRegistry(NULL), m_pendingCount(0), m_maxPending(50)
     {
         ArrayResize(m_pendingConfirmations, m_maxPending);
     }
-    
+
     ~CTradeExecutor() {}
-    
-    void SetDependencies(CTradeManager* tm, CTradeAttributionManager* att, 
+
+    void SetDependencies(CTradeManager* tm, CTradeAttributionManager* att,
                          CPositionManager* psm, CNeuralNetRegistry* nnReg)
     {
         m_tradeManager = tm;
@@ -75,16 +75,16 @@ public:
         m_positionManager = psm;
         m_neuralNetRegistry = nnReg;
     }
-    
+
     // Main execution entry point
     SExecutionResult Execute(const STradeCandidate &candidate, const string corrId = "")
     {
         // Set correlation ID for structured logging
         if(corrId != "")
             CJsonLogger::SetCorrelationId(corrId);
-        
+
         SExecutionResult result;
-        
+
         if(candidate.lotSize <= 0)
         {
             result.reason = "Invalid lot size";
@@ -105,7 +105,7 @@ public:
 
         // Build comment with metadata (includes correlation ID for lineage)
         string comment = BuildExecutionComment(candidate, corrId);
-        
+
         // Execute market order
         bool executed = m_tradeManager.OpenPosition(
             candidate.symbol,
@@ -116,20 +116,20 @@ public:
             candidate.takeProfitPips,
             comment
         );
-        
+
         if(!executed)
         {
             result.retcode = m_tradeManager.GetLastRetcode();
             result.reason = GetTradeErrorDescription(m_tradeManager.GetLastRetcode());
-            CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED", 
-                StringFormat("retcode=%u reason=%s", result.retcode, result.reason), 
+            CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED",
+                StringFormat("retcode=%u reason=%s", result.retcode, result.reason),
                 0.0, candidate.lotSize, corrId);
             CJsonLogger::ClearCorrelationId();
             return result;
         }
-        
+
         result.executed = true;
-        
+
         STradeExecutionReceipt receipt;
         m_tradeManager.GetLastExecutionReceipt(receipt);
         result.orderTicket = receipt.orderTicket;
@@ -137,35 +137,35 @@ public:
         result.filledPrice = receipt.averagePrice;
         result.filledVolume = receipt.filledVolume;
         result.retcode = receipt.retcode;
-        
+
         // Log trade open via structured JSON logger
-        CJsonLogger::LogTradeOpen(candidate.symbol, 
+        CJsonLogger::LogTradeOpen(candidate.symbol,
             (candidate.orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL",
             candidate.lotSize, candidate.stopLossPips, candidate.takeProfitPips,
             candidate.strategyRole, candidate.clusterCode, corrId);
-        
+
         QueueConfirmation(candidate, result);
-        
+
         CJsonLogger::ClearCorrelationId();
         return result;
     }
-    
+
     // Check pending confirmations (call from OnTick)
     void CheckPendingConfirmations()
     {
         if(m_pendingCount <= 0) return;
-        
+
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
-        
+
         for(int i = m_pendingCount - 1; i >= 0; i--)
         {
             if(!m_pendingConfirmations[i].isActive) continue;
-            
+
             m_pendingConfirmations[i].checkAttempts++;
-            
+
             bool resolved = false;
-            
+
             if(HistorySelect(historyFrom, historyTo))
             {
                 int totalDeals = HistoryDealsTotal();
@@ -173,32 +173,32 @@ public:
                 {
                     ulong dealTicket = HistoryDealGetTicket(d);
                     if(dealTicket == 0) continue;
-                    
+
                     string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
                     if(dealSymbol != m_pendingConfirmations[i].symbol) continue;
-                    
+
                     ulong dealOrderTicket = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
                     if(dealOrderTicket != m_pendingConfirmations[i].orderTicket) continue;
-                    
+
                     double dealPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
                     double dealVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
                     ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
-                    
+
                     PrintFormat("[EXECUTION-CONFIRMED] %s | order=%I64u | deal=%I64u | price=%.5f | volume=%.2f | type=%s | attempts=%d",
                                 dealSymbol, m_pendingConfirmations[i].orderTicket, dealTicket,
                                 dealPrice, dealVolume, EnumToString(dealType), m_pendingConfirmations[i].checkAttempts);
-                    
+
                     RecordAttribution(m_pendingConfirmations[i].candidate, dealTicket, dealPrice, dealVolume);
-                    
+
                     RecordPositionState(dealTicket, m_pendingConfirmations[i].candidate, dealPrice, dealVolume);
-                    
+
                     MapToNeuralNetPrediction(m_pendingConfirmations[i].candidate, dealTicket);
-                    
+
                     resolved = true;
                     break;
                 }
             }
-            
+
             if(resolved || m_pendingConfirmations[i].checkAttempts >= 5)
             {
                 if(!resolved)
@@ -207,12 +207,12 @@ public:
                                 m_pendingConfirmations[i].symbol, m_pendingConfirmations[i].orderTicket,
                                 m_pendingConfirmations[i].checkAttempts);
                 }
-                
+
                 RemovePendingAt(i);
             }
         }
     }
-    
+
     void QueueConfirmation(const STradeCandidate &candidate, const SExecutionResult &result)
     {
         if(m_pendingCount >= m_maxPending)
@@ -220,7 +220,7 @@ public:
             Print("[TRADE-EXECUTOR] WARNING: Pending confirmation queue full, dropping oldest");
             RemovePendingAt(0);
         }
-        
+
         int idx = m_pendingCount;
         if(idx < ArraySize(m_pendingConfirmations))
         {
@@ -236,23 +236,25 @@ public:
             m_pendingCount++;
         }
     }
-    
+
     void RemovePendingAt(int index)
     {
         if(index < 0 || index >= m_pendingCount) return;
-        
+
         for(int i = index; i < m_pendingCount - 1; i++)
             m_pendingConfirmations[i] = m_pendingConfirmations[i + 1];
-        
-        m_pendingConfirmations[m_pendingCount].isActive = false;
-        m_pendingConfirmations[m_pendingCount].orderTicket = 0;
+
+        // Last valid slot after the shift is m_pendingCount - 1; clearing
+        // m_pendingCount itself wrote one past the array when the queue was full.
+        m_pendingConfirmations[m_pendingCount - 1].isActive = false;
+        m_pendingConfirmations[m_pendingCount - 1].orderTicket = 0;
         m_pendingCount--;
     }
-    
+
     void RecordAttribution(const STradeCandidate &candidate, ulong dealTicket, double price, double volume)
     {
         if(m_attributionManager == NULL) return;
-        
+
         // the summary CSV used to be stored as a single-element
         // array ("would split by comma" was never implemented), so every
         // attribution row carried one malformed "S1,S3,AI:x" string instead
@@ -260,7 +262,7 @@ public:
         string contributors[];
         if(m_attributionManager != NULL && candidate.contributorSummary != "")
             m_attributionManager.SplitContributors(candidate.contributorSummary, contributors);
-        
+
         m_attributionManager.RecordPositionAttribution(
             dealTicket,
             candidate.symbol,
@@ -274,11 +276,11 @@ public:
             contributors
         );
     }
-    
+
     void RecordPositionState(ulong dealTicket, const STradeCandidate &candidate, double price, double volume)
     {
         if(m_positionManager == NULL) return;
-        
+
         // Find the position ticket
         ulong positionTicket = 0;
         if(HistorySelect(TimeCurrent() - 3600, TimeCurrent() + 60))
@@ -295,7 +297,7 @@ public:
                 }
             }
         }
-        
+
         if(positionTicket > 0)
         {
             m_positionManager.RegisterPositionState(
@@ -311,11 +313,11 @@ public:
             );
         }
     }
-    
+
     void MapToNeuralNetPrediction(const STradeCandidate &candidate, ulong dealTicket)
     {
         if(m_neuralNetRegistry == NULL) return;
-        
+
         CNeuralNetworkStrategy* nn = m_neuralNetRegistry.GetNeuralNet(candidate.symbol);
         if(nn != NULL)
         {
@@ -323,7 +325,7 @@ public:
             // nn.MapDealToPrediction(dealTicket, candidate);
         }
     }
-    
+
     string BuildExecutionComment(const STradeCandidate &candidate, const string corrId = "")
     {
         // Format: EA|CLUSTER|RISK|SL|TP|ROLE|CID|STRAT
@@ -333,13 +335,13 @@ public:
         if(corrId != "" && StringLen(corrId) >= 8) {
             cidShort = StringSubstr(corrId, StringLen(corrId) - 8);
         }
-        
+
         string stratCode = "UNK";
         // Extract primary strategy from contributor summary
         if(candidate.contributorSummary != "") {
             // Parse first contributor from CSV
             int comma = StringFind(candidate.contributorSummary, ",");
-            string firstContributor = (comma >= 0) ? StringSubstr(candidate.contributorSummary, 0, comma) 
+            string firstContributor = (comma >= 0) ? StringSubstr(candidate.contributorSummary, 0, comma)
                                                   : candidate.contributorSummary;
             // Map common names to codes
             if(StringFind(firstContributor, "Momentum") >= 0) stratCode = "MOM";
@@ -369,8 +371,8 @@ public:
             else if(StringFind(firstContributor, "Spike") >= 0) stratCode = "SPK";
             else if(StringFind(firstContributor, "Grid") >= 0) stratCode = "GRID";
         }
-        
-        string baseComment = StringFormat("EA|%s|%.0f|%.1f|%.1f|%s|%s|%s", 
+
+        string baseComment = StringFormat("EA|%s|%.0f|%.1f|%.1f|%s|%s|%s",
                                     candidate.clusterCode,
                                     candidate.riskPercent,
                                     candidate.stopLossPips,
@@ -378,16 +380,16 @@ public:
                                     candidate.strategyRole,
                                     cidShort,
                                     stratCode);
-        
+
         // Include prediction ID in comment for NN training linkage
         if(candidate.predictionId != "" && m_attributionManager != NULL)
         {
             return m_attributionManager.BuildTradeCommentWithPrediction(baseComment, candidate.predictionId);
         }
-        
+
         return baseComment;
     }
-    
+
     string GetTradeErrorDescription(int errorCode)
     {
         // this table used invented retcode mappings (e.g. 10008

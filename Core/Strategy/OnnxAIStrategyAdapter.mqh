@@ -39,11 +39,11 @@ private:
     ulong           m_noneVotes;
     datetime        m_lastVoteLogTime;
     datetime        m_voteWindowStart;  // Rolling vote window start time
-    
+
     // Feature pipeline for centralized feature engineering
     CFeaturePipelineONNX* m_featurePipeline;
     bool              m_ownsPipeline;
-    
+
     // Direction calibration rolling window (last 20 predictions)
     int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
@@ -51,12 +51,12 @@ private:
     uint m_lastCalibrationWarningTick;  // Throttle calibration warning logs (GetTickCount-based, Issue 12.3)
     int  m_consecutiveBiasedVotes;  // Consecutive degenerate-vote counter
     datetime m_lastNoSignalDiagTime; // Throttle NO_SIGNAL diagnostic logs
-    
-    // Configurable direction calibration parameters (L11-009)
+
+    // Configurable direction calibration parameters
     int  m_calibrationWindowSize;    // Window size for direction calibration (default 20)
     double m_calibrationRatioThreshold; // Ratio threshold for degenerate detection (default 0.70)
     int  m_minDirectionalCount;      // Minimum directional signals needed (default 5)
-    
+
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
@@ -67,12 +67,12 @@ private:
         int dirValue = 0;
         if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
-        
+
         m_directionWindow[m_directionWindowIdx] = dirValue;
         m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
         if(m_directionWindowCount < 20)
             m_directionWindowCount++;
-        
+
         // Check and log degenerate detection
         if(IsDirectionDegenerate())
         {
@@ -144,7 +144,7 @@ public:
         m_lastNoSignalDiagTime = 0;
         m_featurePipeline = NULL;
         m_ownsPipeline = false;
-        // Initialize configurable calibration parameters (L11-009)
+        // Initialize configurable calibration parameters
         m_calibrationWindowSize = 20;
         m_calibrationRatioThreshold = 0.70;
         m_minDirectionalCount = 5;
@@ -181,7 +181,7 @@ public:
             m_featurePipeline = new CFeaturePipelineONNX(m_scalerWatchPath);
             m_ownsPipeline = true;
         }
-        
+
         if(m_scaler.LoadParams(m_scalerWatchPath, true))
             PrintFormat("[ONNX] Loaded scaler parameters | features=%d | path=%s",
                         m_scaler.GetFeatureCount(), m_scalerWatchPath);
@@ -192,14 +192,14 @@ public:
     virtual void Deinit(void) override
     {
         m_brain.Deinit();
-        
+
         // Clean up feature pipeline
         if(m_ownsPipeline && m_featurePipeline != NULL)
         {
             delete m_featurePipeline;
             m_featurePipeline = NULL;
         }
-        
+
         m_lastDecisionReasonTag = "ONNX_DEINIT";
     }
 
@@ -207,7 +207,7 @@ public:
     virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
     {
         // The catalog path calls only this, never Init(), so m_brain.Init's own diagnostic cannot run
-        // here - without this branch the only trace was "[AI-MODE] ... initialization failed", which reads
+        // here - without this branch the only trace was "[AI-MODE]... initialization failed", which reads
         // like a corrupt model even when no model bytes were ever supplied.
         if(m_brain.IsLoaded())
         {
@@ -228,7 +228,7 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        
+
         datetime now = TimeCurrent();
         if(now - m_voteWindowStart >= 86400)
         {
@@ -293,7 +293,7 @@ public:
 
         int onnxSignal = m_brain.GetSignal();
         confidence = m_brain.GetConfidence();
-        
+
         // Validate confidence value
         if(!IsValidConfidence(confidence))
         {
@@ -302,7 +302,7 @@ public:
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
-        
+
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         if(onnxSignal == 2 && confidence >= m_minConfidence)
             signal = TRADE_SIGNAL_BUY;
@@ -349,14 +349,14 @@ public:
         LogVoteHeartbeat();
         return signal;
     }
-    
+
     virtual string GetName(void) const override { return "ONNX AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
     virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
-    
+
     virtual bool IsDirectionDegenerate(void) const override
     {
         int windowSize = m_calibrationWindowSize;
@@ -375,7 +375,7 @@ public:
         double sellRatio = (double)sellCount / (double)directionalCount;
         return (buyRatio > m_calibrationRatioThreshold || sellRatio > m_calibrationRatioThreshold);
     }
-    
+
     double GetDirectionalBias(void) const
     {
         int windowSize = m_calibrationWindowSize;
@@ -391,7 +391,7 @@ public:
         if(directionalCount < m_minDirectionalCount) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
-    
+
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
         if(!IsDirectionDegenerate())
@@ -406,26 +406,26 @@ public:
         return baseWeight * 0.70;      // Mild bias: 30% penalty
     }
     virtual bool ValidateParameters(void) override { return m_brain.IsLoaded(); }
-    
+
         virtual bool ValidateRiskManagerInjection(void) const override
         {
             return true; // MT5-native AI adapter: risk gate enforced at execution (CTradeManager pre-trade)
         }
-    
+
         virtual bool ShouldBypassTierConfidenceFloor(void) const override
         {
             return false; // Default: no bypass
         }
-    
+
         virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
-    
-    // Configurable direction calibration setters (L11-009)
+
+    // Configurable direction calibration setters
     virtual void SetCalibrationWindowSize(int size) { m_calibrationWindowSize = MathMax(5, MathMin(size, 20)); }
     virtual void SetCalibrationRatioThreshold(double threshold) { m_calibrationRatioThreshold = MathMax(0.5, MathMin(threshold, 0.95)); }
     virtual void SetMinDirectionalCount(int count) { m_minDirectionalCount = MathMax(1, MathMin(count, 20)); }
-    
+
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {
         signals = (int)m_voteCount;
@@ -449,42 +449,42 @@ public:
     {
         return 1.0 - m_brain.GetConfidence();
     }
-    
+
     virtual bool IsModelHealthy(void) const override
     {
         return m_brain.IsLoaded();
     }
-    
+
     virtual bool IsTraining(void) const override
     {
         return false;
     }
-    
+
     virtual int GetTrainingSteps(void) const override
     {
         return m_brain.IsLoaded() ? 1 : 0;
     }
-    
+
     virtual double GetTemperature(void) const override
     {
         return m_brain.GetTemperature();
     }
-    
+
     virtual void SetTemperature(const double temperature) override
     {
         m_brain.SetTemperature(temperature);
     }
-    
+
     virtual int GetCurrentRegime(void) const override
     {
         return 0;
     }
-    
+
     virtual bool SaveCheckpoint(void) override
     {
         return false;
     }
-    
+
     virtual string GetLastLoadStatus(void) const override
     {
         return m_brain.IsLoaded() ? "LOADED" : "NOT_LOADED";

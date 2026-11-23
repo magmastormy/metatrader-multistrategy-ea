@@ -154,7 +154,7 @@ int CCorrelationEngine::RegisterSymbol(const string symbol)
 
     if(m_symbolCount >= CORR_ENGINE_MAX_SYMBOLS)
     {
-        PrintFormat("[CORR-ENGINE] Symbol registry full (%d) �?cannot register %s",
+        PrintFormat("[CORR-ENGINE] Symbol registry full (%d) - cannot register %s",
                     CORR_ENGINE_MAX_SYMBOLS, symbol);
         return CORR_ENGINE_INVALID_IDX;
     }
@@ -261,7 +261,7 @@ void CCorrelationEngine::Refresh()
 
     datetime now = TimeCurrent();
     bool timeElapsed = (m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec);
-    
+
     if(!timeElapsed && !m_symbolsChanged)
         return;
 

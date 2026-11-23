@@ -16,7 +16,7 @@
 class CATRScalpExit
 {
 private:
-   // Batch 152 (S-H-04): tickets that already took their 1R partial. Without
+   // (S-H-04): tickets that already took their 1R partial. Without
    // this latch every tick re-closed half of the remaining volume. The latch lives in
    // terminal global variables so it survives a restart.
    static string LatchName(const ulong ticket)
@@ -113,8 +113,38 @@ public:
                }
                else
                {
-                  PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
-                              symbol, ticket, halfVol, profitPoints, slDistancePoints);
+                  // CTrade returning true only means the request was accepted. Verify the
+                  // retcode and the post-send volume before treating the partial as done.
+                  uint rc = trade.ResultRetcode();
+                  if(rc != TRADE_RETCODE_DONE && rc != TRADE_RETCODE_DONE_PARTIAL)
+                  {
+                     GlobalVariableDel(LatchName(ticket));
+                     PrintFormat("[ATR-SCALP-PARTIAL-REJECTED] %s | ticket=%I64u | retcode=%u",
+                                 symbol, ticket, rc);
+                  }
+                  else
+                  {
+                     double remaining = 0.0;
+                     bool haveVolume = PositionSelectByTicket(ticket);
+                     if(haveVolume)
+                        remaining = PositionGetDouble(POSITION_VOLUME);
+                     double expected = NormalizeDouble(volume - halfVol, 2);
+                     double tol = stepVol * 1.5;
+                     if(haveVolume && remaining >= volume - tol)
+                     {
+                        // Nothing was closed: safe to release the latch and retry next tick.
+                        GlobalVariableDel(LatchName(ticket));
+                        PrintFormat("[ATR-SCALP-PARTIAL-NOFILL] %s | ticket=%I64u | retcode=%u | vol=%.2f",
+                                    symbol, ticket, rc, remaining);
+                     }
+                     else if(!haveVolume || MathAbs(remaining - expected) <= tol || remaining < volume - tol)
+                     {
+                        // Volume reduced (fully or partially) or the position is already gone.
+                        // Keep the latch: retrying could over-close the remainder.
+                        PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f | retcode=%u | remaining=%.2f",
+                                    symbol, ticket, halfVol, profitPoints, slDistancePoints, rc, remaining);
+                     }
+                  }
                }
             }
          }

@@ -24,7 +24,7 @@ private:
 public:
    CFastScalpPendingOrders() : m_pendingOrderCount(0)
    {
-      // Batch 152 (S-M-04): field-wise reset (string member, see SPendingScalpOrder::Reset)
+      // (S-M-04): field-wise reset (string member, see SPendingScalpOrder::Reset)
       for(int i = 0; i < ArraySize(m_pendingOrders); i++)
          m_pendingOrders[i].Reset();
    }
@@ -170,7 +170,7 @@ public:
       request.deviation = 50;
       request.magic     = magicNumber + MAGIC_ENGINE_FAST_SCALP;
       request.comment   = "SCALP|PEND";
-      // L7-015: honor the symbol's supported fill mode; fall back to RETURN (correct for pending orders) when IOC/FOK unavailable
+      // honor the symbol's supported fill mode; fall back to RETURN (correct for pending orders) when IOC/FOK unavailable
       long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
       request.type_filling = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
                             (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
@@ -267,7 +267,7 @@ public:
       for(int j = index; j < m_pendingOrderCount - 1; j++)
          m_pendingOrders[j] = m_pendingOrders[j + 1];
 
-      // Clear tail slot (field-wise - Batch 152 S-M-04)
+      // Clear tail slot (field-wise - S-M-04)
       m_pendingOrders[m_pendingOrderCount - 1].Reset();
       m_pendingOrderCount--;
    }

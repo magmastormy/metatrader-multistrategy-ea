@@ -32,7 +32,7 @@ struct SSessionInfo
     int             endMinute;
     double          probabilityWeight;
     string          name;
-    
+
     SSessionInfo() : zone(KZ_NONE), startHour(0), startMinute(0),
                      endHour(0), endMinute(0), probabilityWeight(0), name("") {}
 };
@@ -44,11 +44,11 @@ private:
     int             m_brokerGMTOffset;
     int             m_estOffset;        // EST is GMT-5 (or -4 during DST)
     bool            m_useDST;
-    
+
     // Session definitions
     SSessionInfo    m_sessions[9];  // expanded for Silver Bullet windows
     int             m_sessionCount;       // initialized to 8, array holds 9
-    
+
     // Configuration
     bool            m_enableAsian;
     bool            m_enableLondon;
@@ -56,30 +56,30 @@ private:
     bool            m_enableNYPM;
     bool            m_enableOverlap;
     bool            m_enableSilverBullet;     // P2-C: all Silver Bullet windows on/off
-    
+
     // Internal
     void            InitializeSessions();
     int             GetCurrentESTHour();
     int             GetCurrentESTMinute();
     bool            IsInSession(const SSessionInfo &session);
     bool            IsDSTActive();
-    
+
 public:
                     CICTKillZones();
                    ~CICTKillZones();
-    
+
     bool            Initialize(int brokerGMTOffset = 2, bool useDST = true);
-    
+
     // Configuration
     void            EnableSession(ENUM_KILL_ZONE zone, bool enable);
     void            SetBrokerGMTOffset(int offset) { m_brokerGMTOffset = offset; }
-    
+
     // Core methods
     bool            IsInKillZone();
     ENUM_KILL_ZONE  GetCurrentKillZone();
     double          GetKillZoneWeight();
     string          GetKillZoneName();
-    
+
     // Session specific
     bool            IsAsianSession();
     bool            IsLondonSession();
@@ -92,7 +92,7 @@ public:
     bool            IsLondonSilverBullet();
     bool            IsNYAMSilverBullet();
     bool            IsNYPMSilverBullet();
-    
+
     // Best trading windows
     bool            IsHighProbabilityWindow();
     double          GetSessionVolatilityMultiplier();
@@ -127,7 +127,7 @@ void CICTKillZones::InitializeSessions()
     m_sessions[0].endMinute = 0;
     m_sessions[0].probabilityWeight = 0.5;
     m_sessions[0].name = "Asian";
-    
+
     // London Kill Zone (02:00 - 05:00 EST)
     m_sessions[1].zone = KZ_LONDON;
     m_sessions[1].startHour = 2;
@@ -136,7 +136,7 @@ void CICTKillZones::InitializeSessions()
     m_sessions[1].endMinute = 0;
     m_sessions[1].probabilityWeight = 0.85;
     m_sessions[1].name = "London Kill Zone";
-    
+
     // NY AM Kill Zone (08:00 - 11:00 EST)
     m_sessions[2].zone = KZ_NY_AM;
     m_sessions[2].startHour = 8;
@@ -145,7 +145,7 @@ void CICTKillZones::InitializeSessions()
     m_sessions[2].endMinute = 0;
     m_sessions[2].probabilityWeight = 0.95;
     m_sessions[2].name = "NY AM Kill Zone";
-    
+
     // NY PM Session (13:00 - 16:00 EST)
     m_sessions[3].zone = KZ_NY_PM;
     m_sessions[3].startHour = 13;
@@ -154,7 +154,7 @@ void CICTKillZones::InitializeSessions()
     m_sessions[3].endMinute = 0;
     m_sessions[3].probabilityWeight = 0.65;
     m_sessions[3].name = "NY PM Session";
-    
+
     // London-NY Overlap (08:00 - 12:00 EST)
     m_sessions[4].zone = KZ_LONDON_NY;
     m_sessions[4].startHour = 8;
@@ -196,7 +196,7 @@ bool CICTKillZones::Initialize(int brokerGMTOffset, bool useDST)
 {
     m_brokerGMTOffset = brokerGMTOffset;
     m_useDST = useDST;
-    
+
     // Adjust EST offset for DST
     if(m_useDST)
     {
@@ -212,7 +212,7 @@ bool CICTKillZones::Initialize(int brokerGMTOffset, bool useDST)
     {
         m_estOffset = -5;
     }
-    
+
     return true;
 }
 
@@ -237,14 +237,20 @@ int CICTKillZones::GetCurrentESTHour()
 {
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
-    
+
+    // Resolve DST per call: m_estOffset was fixed once in Initialize(), so an EA running
+    // across a US DST transition kept the stale offset until restart.
+    int estOffset = m_estOffset;
+    if(m_useDST)
+        estOffset = IsDSTActive() ? -4 : -5;
+
     // Convert broker time to EST
-    int estHour = dt.hour - m_brokerGMTOffset + m_estOffset;
-    
+    int estHour = dt.hour - m_brokerGMTOffset + estOffset;
+
     // Normalize hour
     if(estHour < 0) estHour += 24;
     if(estHour >= 24) estHour -= 24;
-    
+
     return estHour;
 }
 
@@ -260,10 +266,10 @@ bool CICTKillZones::IsInSession(const SSessionInfo &session)
     int currentHour = GetCurrentESTHour();
     int currentMinute = GetCurrentESTMinute();
     int sessionCurrentTime = currentHour * 60 + currentMinute;
-    
+
     int sessionStartTime = session.startHour * 60 + session.startMinute;
     int endTime = session.endHour * 60 + session.endMinute;
-    
+
     // Handle sessions that cross midnight
     if(endTime < sessionStartTime)
     {
@@ -294,47 +300,47 @@ ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
     // Check overlap first
     if(m_enableOverlap && IsInSession(m_sessions[4]))
         return KZ_LONDON_NY;
-    
+
     // Check NY AM
     if(m_enableNYAM && IsInSession(m_sessions[2]))
         return KZ_NY_AM;
-    
+
     if(m_enableLondon && IsInSession(m_sessions[1]))
         return KZ_LONDON;
-    
+
     // Check NY PM
     if(m_enableNYPM && IsInSession(m_sessions[3]))
         return KZ_NY_PM;
-    
+
     if(m_enableAsian && IsInSession(m_sessions[0]))
         return KZ_ASIAN;
-    
+
     return KZ_NONE;
 }
 
 double CICTKillZones::GetKillZoneWeight()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
-    
+
     for(int i = 0; i < m_sessionCount; i++)
     {
         if(m_sessions[i].zone == zone)
             return m_sessions[i].probabilityWeight;
     }
-    
+
     return 0.0;
 }
 
 string CICTKillZones::GetKillZoneName()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
-    
+
     for(int i = 0; i < m_sessionCount; i++)
     {
         if(m_sessions[i].zone == zone)
             return m_sessions[i].name;
     }
-    
+
     return "No Session";
 }
 
@@ -366,7 +372,7 @@ bool CICTKillZones::IsLondonNYOverlap()
 bool CICTKillZones::IsHighProbabilityWindow()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
-    
+
     // London, NY AM, Overlap, and Silver Bullet windows are highest probability
     return (zone == KZ_LONDON ||
             zone == KZ_NY_AM  ||
@@ -392,93 +398,40 @@ bool CICTKillZones::IsNYPMSilverBullet()   { return IsInSession(m_sessions[7]); 
 // Check if DST is currently active using US DST rules
 // DST starts on second Sunday in March at 2:00 AM EST
 // DST ends on first Sunday in November at 2:00 AM EST
+// Check if DST is currently active using US DST rules, evaluated on GMT.
+// US transitions: second Sunday of March at 07:00 UTC (2:00 AM EST) and first
+// Sunday of November at 06:00 UTC (2:00 AM EDT). The previous version compared
+// broker-time fields against a US-local rule, so the boundary landed on the
+// wrong clock for any broker that is not on GMT.
 bool CICTKillZones::IsDSTActive()
 {
+    datetime gmtNow = TimeCurrent() - (datetime)(m_brokerGMTOffset * 3600);
     MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
-    
-    // If outside DST window months, return false
-    if(dt.mon < 3 || dt.mon > 11)
-        return false;
-    if(dt.mon == 3 || dt.mon == 11)
-    {
-        // Need to check specific dates for March and November
-        int day = dt.day;
-        int dayOfWeek = dt.day_of_week; // 0=Sunday, 1=Monday, etc.
-        
-        if(dt.mon == 3)
-        {
-            // DST starts on second Sunday in March
-            // Find the second Sunday of the month
-            int secondSunday = 0;
-            int sundayCount = 0;
-            
-            // Find the first Sunday
-            int firstDay = 1;
-            MqlDateTime tempDt = {0};
-            tempDt.year = dt.year;
-            tempDt.mon = 3;
-            tempDt.day = firstDay;
-            tempDt.hour = 0;
-            tempDt.min = 0;
-            tempDt.sec = 0;
-            datetime firstMarchTime = StructToTime(tempDt);
-            
-            for(int d = 1; d <= 14; d++)
-            {
-                tempDt.day = d;
-                datetime testTime = StructToTime(tempDt);
-                TimeToStruct(testTime, tempDt);
-                if(tempDt.day_of_week == 0)
-                {
-                    sundayCount++;
-                    if(sundayCount == 2)
-                    {
-                        secondSunday = d;
-                        break;
-                    }
-                }
-            }
-            
-            // DST starts at 2:00 AM EST on second Sunday
-            if(day < secondSunday)
-                return false;
-            if(day == secondSunday && dt.hour < 2)
-                return false;
-        }
-        else if(dt.mon == 11)
-        {
-            // DST ends on first Sunday in November
-            // Find the first Sunday of the month
-            int firstSunday = 0;
-            
-            for(int d = 1; d <= 7; d++)
-            {
-                MqlDateTime tempDt = {0};
-                tempDt.year = dt.year;
-                tempDt.mon = 11;
-                tempDt.day = d;
-                tempDt.hour = 0;
-                tempDt.min = 0;
-                tempDt.sec = 0;
-                datetime testTime = StructToTime(tempDt);
-                TimeToStruct(testTime, tempDt);
-                if(tempDt.day_of_week == 0)
-                {
-                    firstSunday = d;
-                    break;
-                }
-            }
-            
-            // DST ends at 2:00 AM EST on first Sunday
-            if(day > firstSunday)
-                return false;
-            if(day == firstSunday && dt.hour >= 2)
-                return false;
-        }
-    }
-    
-    return true;
+    TimeToStruct(gmtNow, dt);
+    int year = dt.year;
+
+    MqlDateTime probe;
+    probe.year = year; probe.mon = 3; probe.day = 1;
+    probe.hour = 0; probe.min = 0; probe.sec = 0;
+    TimeToStruct(StructToTime(probe), probe);
+    int firstSundayMarch = (probe.day_of_week == 0) ? 1 : (8 - probe.day_of_week);
+    int secondSundayMarch = firstSundayMarch + 7;
+
+    probe.mon = 11;
+    TimeToStruct(StructToTime(probe), probe);
+    int firstSundayNovember = (probe.day_of_week == 0) ? 1 : (8 - probe.day_of_week);
+
+    MqlDateTime dstStartStruct;
+    dstStartStruct.year = year; dstStartStruct.mon = 3; dstStartStruct.day = secondSundayMarch;
+    dstStartStruct.hour = 7; dstStartStruct.min = 0; dstStartStruct.sec = 0;
+    datetime dstStart = StructToTime(dstStartStruct);
+
+    MqlDateTime dstEndStruct;
+    dstEndStruct.year = year; dstEndStruct.mon = 11; dstEndStruct.day = firstSundayNovember;
+    dstEndStruct.hour = 6; dstEndStruct.min = 0; dstEndStruct.sec = 0;
+    datetime dstEnd = StructToTime(dstEndStruct);
+
+    return (gmtNow >= dstStart && gmtNow < dstEnd);
 }
 
 string CICTKillZones::GetSilverBulletName()
@@ -492,7 +445,7 @@ string CICTKillZones::GetSilverBulletName()
 double CICTKillZones::GetSessionVolatilityMultiplier()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
-    
+
     switch(zone)
     {
         case KZ_LONDON_NY:  return 1.5;  // Highest volatility

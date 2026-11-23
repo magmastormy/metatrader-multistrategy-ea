@@ -122,7 +122,7 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
 
     const int MAX_CACHE_STALENESS_BARS = 5;
     bool cacheStale = false;
-    
+
     if(m_cachedContextPrepared)
     {
         datetime currentBar = iTime(symbol, timeframe, 0);
@@ -138,10 +138,10 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
                      m_cachedContextTimeframe == timeframe &&
                      m_cachedContextBarTime == barTime &&
                      m_cachedContextIntrabar == m_intrabarContext);
-    
+
     if(cacheStale && m_cachedContextPrepared)
         {
-            LOG_IF2(LOG_LEVEL_DEBUG, "[PIPELINE-CACHE] Symbol=%s | Cache stale (%d bars old), invalidating", symbol, 
+            LOG_IF2(LOG_LEVEL_DEBUG, "[PIPELINE-CACHE] Symbol=%s | Cache stale (%d bars old), invalidating", symbol,
                         (int)((iTime(symbol, timeframe, 0) - m_cachedContextBarTime) / PeriodSeconds(timeframe)));
             m_cachedContextPrepared = false;
         }
@@ -153,7 +153,7 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
         CStructureEngine* structureEngine = m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL;
         CLiquidityEngine* liquidityEngine = m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL;
         CVolatilityEngine* volatilityEngine = m_mathRegistry ? m_mathRegistry.GetVolatility(symbol) : NULL;
-        
+
         m_lastEvidence.trendReady = (trendEngine != NULL) && trendEngine.UpdateTrend(symbol, timeframe);
         m_lastEvidence.structureReady = (structureEngine != NULL) && structureEngine.DetectSwingPoints(symbol, timeframe);
         m_lastEvidence.liquidityReady = (liquidityEngine != NULL) && liquidityEngine.DetectLiquidityZones(symbol, timeframe);
@@ -163,7 +163,7 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
         RefreshEvidenceFromEngines(m_mathRegistry, m_filters, m_lastEvidence, symbol);
         m_lastEvidence.contextPrepared = true;
         m_lastEvidence.readinessScore = CSignalPipelineWeighter::ComputeReadinessScore(m_filters, m_lastEvidence);
-        
+
         // Cache the complete evidence snapshot
         m_cachedStructuralEvidence = m_lastEvidence;
         m_cachedContextSymbol = symbol;
@@ -185,7 +185,7 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
                                             m_cachedContextBarTime, m_cachedContextPrepared,
                                             m_cachedContextIntrabar, symbol, timeframe);
         }
-        
+
         // Cache hit: Restore complete evidence snapshot from cache
         m_lastEvidence.trendReady = m_cachedStructuralEvidence.trendReady;
         m_lastEvidence.structureReady = m_cachedStructuralEvidence.structureReady;
@@ -206,10 +206,10 @@ static bool RefreshStructuralContext(CMathematicalEngineRegistry* m_mathRegistry
         m_lastEvidence.reuseActive = m_cachedStructuralEvidence.reuseActive;
         m_lastEvidence.stalenessSeconds = m_cachedStructuralEvidence.stalenessSeconds;
         m_lastEvidence.stalenessPenalty = m_cachedStructuralEvidence.stalenessPenalty;
-        
+
         // Recompute readiness score based on restored evidence
         m_lastEvidence.readinessScore = CSignalPipelineWeighter::ComputeReadinessScore(m_filters, m_lastEvidence);
-        
+
         // Note: We do NOT call RefreshEvidenceFromEngines on cache hit to preserve the cached snapshot
         // The regime engine is updated separately in ApplyRegimeAndCostGate if needed
     }

@@ -71,7 +71,7 @@ struct SSafeModePositionState
 class CSafeMode
 {
 private:
-   // L8-019: Callback for position removal notification
+   // Callback for position removal notification
    typedef void (*OnPositionRemovedCallback)(const ulong ticket, const string symbol);
    OnPositionRemovedCallback m_onPositionRemoved;
 
@@ -97,7 +97,7 @@ private:
       {
          if(!m_trackedPositions[i].isActive)
          {
-            // L8-019: Notify owner via callback before removing
+            // Notify owner via callback before removing
             if(m_onPositionRemoved != NULL)
                m_onPositionRemoved(m_trackedPositions[i].ticket, m_trackedPositions[i].symbol);
             for(int j = i; j < m_trackedCount - 1; j++)
@@ -325,7 +325,7 @@ public:
             }
          }
 
-         // 2. Close 25% at 1R profit (reduced from 50% per Issue #25)
+         // 2. Close 25% at 1R profit (reduced from 50%)
          if(!m_trackedPositions[i].partialClosed && profitR >= 1.0)
          {
             double minVol  = SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_MIN);
@@ -365,7 +365,7 @@ public:
                   m_config.maxSpreadATRRatio);
    }
 
-   // L8-019: Set callback for position removal notification
+   // Set callback for position removal notification
    void SetPositionRemovedCallback(OnPositionRemovedCallback callback)
    {
       m_onPositionRemoved = callback;

@@ -155,6 +155,15 @@ public:
             tpPrice = currentPrice - 2.0 * slDistance;
         }
 
+        // Chase cap: a sweep found several bars back can leave the stop multiple ATRs from
+        // the entry; past that the 2R target is a different bet than the sweep that paid for it.
+        if(atr > 0 && slDistance > 3.0 * atr)
+        {
+            SetDecisionReasonTag("TURTLE_STOP_TOO_FAR");
+            confidence = 0.0;
+            return TRADE_SIGNAL_NONE;
+        }
+
         // Unlike the ATR-multiple denominators in the ICT strategies, this one feeds the risk
         // pipeline real price points: distance / SYMBOL_POINT.
         double tpDistance = MathAbs(tpPrice - currentPrice);

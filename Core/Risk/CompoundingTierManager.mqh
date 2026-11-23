@@ -214,7 +214,7 @@ private:
                 case RISK_TIER_PROFESSIONAL:     riskTierName = "PROFESSIONAL"; break;
                 default:                         riskTierName = "UNKNOWN"; break;
             }
-        
+
             string compoundingTierName = "UNKNOWN";
             switch(m_tiers[index].compoundingTier)
             {
@@ -229,7 +229,7 @@ private:
                 case COMPOUNDING_TIER_CAPITAL_PRESERVATION:     compoundingTierName = "CAPITAL_PRESERVATION"; break;
                 default:                                        compoundingTierName = "UNKNOWN"; break;
             }
-        
+
             return compoundingTierName + "/" + riskTierName;
         }
 
@@ -400,21 +400,21 @@ public:
                 // additionally needs equity below 90% of the CURRENT tier's min
                 datetime now = TimeCurrent();
                 const int COOLDOWN_SECONDS = 3600; // 1 hour cooldown between tier changes
-            
+
                 if(now - m_lastTierSwitchTime < COOLDOWN_SECONDS)
                 {
                     m_previousEquity = equity;
                     return false;
                 }
-            
+
                 bool isUpgrade = (newTierIndex > m_currentTierIndex);
                 bool isDowngrade = (newTierIndex < m_currentTierIndex);
-            
+
                 if(isDowngrade)
                 {
                     double tierMinEquity = m_tiers[m_currentTierIndex].minEquity;
                     double hysteresisThreshold = tierMinEquity * 0.90; // 10% buffer
-                
+
                     if(equity >= hysteresisThreshold)
                     {
                         PrintFormat("[COMPOUNDING-TIER] Downgrade blocked by hysteresis | equity=%.2f | threshold=%.2f | tierMin=%.2f",
@@ -423,7 +423,7 @@ public:
                         return false;
                     }
                 }
-            
+
                 int oldIndex = m_currentTierIndex;
                 m_currentTierIndex = newTierIndex;
                 m_switchCount++;
@@ -590,12 +590,12 @@ public:
         {
             if(m_currentTierIndex < 0 || m_currentTierIndex >= m_tierCount)
                 return "UNINITIALIZED";
-        
+
             SCompoundingTierConfig tier = m_tiers[m_currentTierIndex];
             double currentBalance = m_previousEquity;
             double nextMilestone = tier.maxEquity;
             double distToNext = nextMilestone - currentBalance;
-        
+
             return StringFormat("tier=%s | balance=%.2f | next_milestone=%.2f | dist_to_next=%.2f | risk=%.1f%% | maxdd=%.1f%%",
                                 GetTierName(m_currentTierIndex), currentBalance, nextMilestone,
                                 distToNext, tier.riskPerTradeOverride, tier.drawdownCriticalOverride);

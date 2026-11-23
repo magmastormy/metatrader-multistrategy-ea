@@ -12,7 +12,7 @@
 class CEntStrategyQuorumConfig
 {
 private:
-    // L1-007: Health monitor configuration (mirrored for fallback when m_healthMonitor == NULL)
+    // Health monitor configuration (mirrored for fallback when m_healthMonitor == NULL)
     double m_minWinRateThreshold;
     int    m_maxConsecutiveLosses_Limit;
     int    m_rollingWindowSize;
@@ -37,7 +37,7 @@ private:
     bool   m_regimeRelaxActive;
     double m_regimeRelaxFactor;
 
-    // Participation score multiplier formula parameters (L6-008)
+    // Participation score multiplier formula parameters
     double m_participationFormulaBase;
     double m_participationFormulaCoeff;
     double m_participationFormulaMin;

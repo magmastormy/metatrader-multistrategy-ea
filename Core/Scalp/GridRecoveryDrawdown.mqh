@@ -1,5 +1,5 @@
 // Drawdown-based recovery guards: floating grid drawdown accounting
-// and L10-003 equity-floor gates for activation and per-level adds.
+// and equity-floor gates for activation and per-level adds.
 // Extracted verbatim from GridRecoveryEngine.mqh (structural only).
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
@@ -38,7 +38,7 @@ public:
       return (totalDrawdown / equity) * 100.0;
    }
 
-// L10-003: Equity floor check for initial grid activation.
+// Equity floor check for initial grid activation.
 // For initial activation, current equity is used as the baseline;
 // the floor is enforced on subsequent levels via initialEquity.
    static bool PassesActivationEquityFloor(double equityFloorPercent)
@@ -59,7 +59,7 @@ public:
       return true;
    }
 
-// L10-003: Equity floor check when adding a grid level —
+// Equity floor check when adding a grid level —
 // stop the grid if equity dropped below the floor of initialEquity.
    static bool PassesLevelEquityFloor(double initialEquity, double equityFloorPercent, int level)
    {

@@ -4,13 +4,13 @@
 // this class ever emits.
 //
 // Why this shape and not another band test:
-//   - The channel is built from BARS 2..N+1, i.e. it excludes the bar being judged. A breakout
-//     test that includes the judged bar can never be false once the bar closes above its own high.
-//   - The extension cap keeps the voter out of a move that is already 1.5 ATR past the channel;
-//     that is chase risk, not breakout risk, and the existing Volatility Breakout / Range
-//     Compression voters already cover the squeeze-release case this would otherwise duplicate.
-//   - Stops and targets are ATR multiples so the R:R is fixed by construction (1.5 ATR stop /
-//     3.0 ATR target = 2R) instead of inheriting whatever the risk gate would size around.
+// - The channel is built from BARS 2..N+1, i.e. it excludes the bar being judged. A breakout
+// test that includes the judged bar can never be false once the bar closes above its own high.
+// - The extension cap keeps the voter out of a move that is already 1.5 ATR past the channel;
+// that is chase risk, not breakout risk, and the existing Volatility Breakout / Range
+// Compression voters already cover the squeeze-release case this would otherwise duplicate.
+// - Stops and targets are ATR multiples so the R:R is fixed by construction (1.5 ATR stop /
+// 3.0 ATR target = 2R) instead of inheriting whatever the risk gate would size around.
 #ifndef DONCHIAN_BREAKOUT_STRATEGY_MQH
 #define DONCHIAN_BREAKOUT_STRATEGY_MQH
 

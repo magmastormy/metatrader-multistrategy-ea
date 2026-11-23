@@ -23,7 +23,7 @@ struct SSRSignalResult
     string reason;
     bool hasTrendlineConfluence;
     bool hasMultipleTouches;
-    
+
     SSRSignalResult() : signal(TRADE_SIGNAL_NONE), confidence(0), entryPrice(0),
                        stopLoss(0), takeProfit1(0), takeProfit2(0), reason(""),
                        hasTrendlineConfluence(false), hasMultipleTouches(false) {}
@@ -34,17 +34,17 @@ class CSRBounceStrategy
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     CSupportResistanceDetector* m_srDetector;
     CTrendlineDetector*         m_trendDetector;
-    
+
     double              m_minConfidence;
     int                 m_emaFast;
     int                 m_emaSlow;
     int                 m_emaFastHandle;
     int                 m_emaSlowHandle;
     int                 m_atrHandle;
-    
+
     // Internal helpers
     bool                HasBullishRejection();
     bool                HasBearishRejection();
@@ -52,15 +52,15 @@ private:
     bool                IsTrendAlignedBearish();
     double              GetEMA(int handle);
     double              GetATR(int period = 14);
-    
+
 public:
                         CSRBounceStrategy();
                        ~CSRBounceStrategy();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   CSupportResistanceDetector* srDetector,
                                   CTrendlineDetector* trendDetector);
-    
+
     SSRSignalResult     GetSignal();
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
@@ -104,7 +104,7 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     m_emaFastHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_emaFast, 0, MODE_EMA, PRICE_CLOSE);
     m_emaSlowHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_emaSlow, 0, MODE_EMA, PRICE_CLOSE);
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
-    
+
     return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
 }
 
@@ -216,22 +216,22 @@ bool CSRBounceStrategy::HasBullishRejection()
     // passed, mid-bar it fired on candles that could vanish by close.
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
-    
+
     // Pin bar with long lower wick
     double lowerWick = MathMin(rates[0].open, rates[0].close) - rates[0].low;
     double body = MathAbs(rates[0].close - rates[0].open);
     double range = rates[0].high - rates[0].low;
-    
+
     if(range > 0 && lowerWick > body * 2.0 && rates[0].close > rates[0].open)
         return true;
-    
+
     // Bullish engulfing
     if(rates[0].close > rates[0].open &&
        rates[0].close > rates[1].open &&
        rates[0].open < rates[1].close &&
        rates[1].close < rates[1].open)
         return true;
-    
+
     return false;
 }
 
@@ -242,22 +242,22 @@ bool CSRBounceStrategy::HasBearishRejection()
     // closed bar (shift 1) - see HasBullishRejection
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
-    
+
     // Pin bar with long upper wick
     double upperWick = rates[0].high - MathMax(rates[0].open, rates[0].close);
     double body = MathAbs(rates[0].close - rates[0].open);
     double range = rates[0].high - rates[0].low;
-    
+
     if(range > 0 && upperWick > body * 2.0 && rates[0].close < rates[0].open)
         return true;
-    
+
     // Bearish engulfing
     if(rates[0].close < rates[0].open &&
        rates[0].close < rates[1].open &&
        rates[0].open > rates[1].close &&
        rates[1].close > rates[1].open)
         return true;
-    
+
     return false;
 }
 
@@ -281,13 +281,13 @@ bool CSRBounceStrategy::IsTrendAlignedBearish()
 double CSRBounceStrategy::GetEMA(int handle)
 {
     if(handle == INVALID_HANDLE) return 0;
-    
+
     double value[1];
     if(CopyBuffer(handle, 0, 0, 1, value) > 0)
     {
         return value[0];
     }
-    
+
     return 0;
 }
 
@@ -309,23 +309,23 @@ class CSRBreakoutStrategy
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     CSupportResistanceDetector* m_srDetector;
-    
+
     double              m_minConfidence;
     int                 m_atrHandle;
-    
+
     bool                HasVolumeConfirmation();
     double              GetATR(int period = 14);
     bool                FalseBreakoutDetected(int &outDirection);
-    
+
 public:
                         CSRBreakoutStrategy();
                        ~CSRBreakoutStrategy();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   CSupportResistanceDetector* srDetector);
-    
+
     SSRSignalResult     GetSignal();
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
@@ -354,7 +354,7 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
-    
+
     return (m_srDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
@@ -489,12 +489,12 @@ bool CSRBreakoutStrategy::HasVolumeConfirmation()
 {
     long vol0 = iVolume(m_symbol, m_timeframe, 0);
     long vol1 = iVolume(m_symbol, m_timeframe, 1);
-    
+
     long avgVol = 0;
     for(int i = 2; i < 22; i++)
         avgVol += iVolume(m_symbol, m_timeframe, i);
     avgVol /= 20;
-    
+
     return (vol0 > avgVol * 1.5 || vol1 > avgVol * 1.5);
 }
 
@@ -577,25 +577,25 @@ class CTrendlineBounceStrategy
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     CTrendlineDetector*         m_trendDetector;
     CSupportResistanceDetector* m_srDetector;
-    
+
     double              m_minConfidence;
     int                 m_atrHandle;
-    
+
     bool                HasBullishRejection();
     bool                HasBearishRejection();
     double              GetATR(int period = 14);
-    
+
 public:
                         CTrendlineBounceStrategy();
                        ~CTrendlineBounceStrategy();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   CTrendlineDetector* trendDetector,
                                   CSupportResistanceDetector* srDetector);
-    
+
     SSRSignalResult     GetSignal();
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
@@ -627,42 +627,42 @@ bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES t
     // ATR handle managed by CIndicatorManager â€?no IndicatorRelease needed
     m_atrHandle = INVALID_HANDLE;
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
-    
+
     return (m_trendDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
 SSRSignalResult CTrendlineBounceStrategy::GetSignal()
 {
     SSRSignalResult result;
-    
+
     if(m_trendDetector == NULL)
         return result;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     datetime localTime = TimeCurrent();
-    
+
     // Find active trendlines
     for(int i = 0; i < m_trendDetector.GetTrendlineCount(); i++)
     {
         STrendline trendline;
         if(!m_trendDetector.GetTrendline(i, trendline))
             continue;
-        
+
         if(trendline.isBroken || !trendline.isValid)
             continue;
-        
+
         // Project trendline to current time
         double projectedPrice = m_trendDetector.ProjectTrendline(trendline, localTime);
-        
+
         double atr = GetATR(14);
         double tolerance = (atr > 0) ? (atr * 0.20) : (15 * point);
-        
+
         double targetMult = 2.0;
         double stopMult   = 1.0;
         double defaultTarget = (atr > 0) ? (atr * targetMult) : (40 * point);
         double defaultStop   = (atr > 0) ? (atr * stopMult) : (20 * point);
-        
+
         // Check if price at trendline
         if(MathAbs(price - projectedPrice) < tolerance)
         {
@@ -694,16 +694,16 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
                     result.reason = "Trendline resistance bounce";
                 }
             }
-            
+
             if(result.signal != TRADE_SIGNAL_NONE)
             {
                 // Update touches
                 trendline.touches++;
-                
+
                 // Bonus for multiple touches
                 if(trendline.touches >= 4)
                     result.confidence += 0.10;
-                
+
                 // Bonus for S/R confluence
                 if(m_srDetector != NULL)
                 {
@@ -714,15 +714,15 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
                         result.hasTrendlineConfluence = true;
                     }
                 }
-                
+
                 result.confidence = MathMin(1.0, result.confidence);
-                
+
                 if(result.confidence >= m_minConfidence)
                     return result;
             }
         }
     }
-    
+
     result.signal = TRADE_SIGNAL_NONE;
     result.confidence = 0;
     return result;
@@ -732,22 +732,22 @@ bool CTrendlineBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    // Batch 156: closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
+    // closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
-    
+
     double lowerWick = MathMin(rates[0].open, rates[0].close) - rates[0].low;
     double body = MathAbs(rates[0].close - rates[0].open);
-    
+
     if(lowerWick > body * 2.0 && rates[0].close > rates[0].open)
         return true;
-    
+
     if(rates[0].close > rates[0].open &&
        rates[0].close > rates[1].open &&
        rates[0].open < rates[1].close &&
        rates[1].close < rates[1].open)
         return true;
-    
+
     return false;
 }
 
@@ -755,22 +755,22 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    // Batch 156: closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
+    // closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
-    
+
     double upperWick = rates[0].high - MathMax(rates[0].open, rates[0].close);
     double body = MathAbs(rates[0].close - rates[0].open);
-    
+
     if(upperWick > body * 2.0 && rates[0].close < rates[0].open)
         return true;
-    
+
     if(rates[0].close < rates[0].open &&
        rates[0].close < rates[1].open &&
        rates[0].open > rates[1].close &&
        rates[1].close > rates[1].open)
         return true;
-    
+
     return false;
 }
 

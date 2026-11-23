@@ -18,7 +18,7 @@ private:
    int                     m_atrHandles[];         // ATR indicator handles per symbol
    // ATR SMA is computed manually from ATR buffer (MQL5 cannot apply MA to indicator output)
 
-   // Family-specific overrides (Batch 102) â€?held BY VALUE
+   // Family-specific overrides â€?held BY VALUE
    CSpikeHunterOverrides   m_overrides;
 
 public:
@@ -57,7 +57,7 @@ public:
 
    void LogOverridesSummary() const { m_overrides.LogConfigSummary(m_config.minConfluence); }
 
-// Effective (override-aware) parameter resolution (Batch 102)
+// Effective (override-aware) parameter resolution
    double GetEffectiveVelocityMultiplier(int idx) const
    {
       return m_overrides.GetEffectiveVelocityMultiplier(m_symbolStates[idx].symbol, m_config.velocityMultiplier);

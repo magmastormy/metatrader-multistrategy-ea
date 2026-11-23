@@ -22,7 +22,7 @@ class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 // Mirrors CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE 1:1 by
 // ordinal. The nested enum is intentionally LEFT IN PLACE because
 // it is a user-facing MT5 `input` type in MultiStrategyAutonomousEA
-// .mq5 / MultiStrategyTestingEA.mq5 and in OrchestratorConfig; a
+//.mq5 / MultiStrategyTestingEA.mq5 and in OrchestratorConfig; a
 // class declared before the manager cannot name a type nested in
 // it, so the manager forwards the profile as a plain int.
 #define QUORUM_PROFILE_CONSERVATIVE 0
@@ -53,7 +53,7 @@ private:
 
 double CConsensusWeightingConfig::LoadAIBaseWeight(const int index)
 {
-    // Batch 272 fix. `m_aiBaseWeightTime` was never resized with `m_aiBaseWeights`, so the first
+    // fix. `m_aiBaseWeightTime` was never resized with `m_aiBaseWeights`, so the first
     // AI row to reload its baseline indexed a zero-length array - the live journal died with
     // "array out of range in 'ConsensusWeightingConfig.mqh' (69,27)" seconds after attach.
     // Bounds are checked here rather than trusted: an index past the arrays means the caller's

@@ -191,7 +191,7 @@ static double ComputeContextScore(const SPipelineEvidenceSnapshot &m_lastEvidenc
         volatilityScore = 0.78;
     else if(m_lastEvidence.volatilityState == VOLATILITY_EXTREME)
         volatilityScore = 0.52;
-    
+
     // Additional adjustment based on ATR percentage for fine-tuning
     if(m_lastEvidence.atrPercent > 0.0)
     {
@@ -213,7 +213,7 @@ static double ComputeContextScore(const SPipelineEvidenceSnapshot &m_lastEvidenc
             regimeScore = MathMin(MathMax(regimeScore, 0.78), 0.90);
         else if(m_lastEvidence.regimeState == REGIME_CHAOS)
             regimeScore = MathMin(regimeScore, 0.65);
-        
+
         // Adjust for readiness class
         if(m_lastEvidence.readinessClass == "REUSED_SNAPSHOT")
             regimeScore = MathMax(0.65, regimeScore - m_lastEvidence.stalenessPenalty);
@@ -225,14 +225,14 @@ static double ComputeContextScore(const SPipelineEvidenceSnapshot &m_lastEvidenc
     double liquidityWeight = 0.90;
     double volatilityWeight = 1.05;
     double regimeWeight = 1.10;
-    
+
     double totalWeight = trendWeight + structureWeight + liquidityWeight + volatilityWeight + regimeWeight;
-    double weightedTotal = (trendScore * trendWeight) + 
-                          (structureScore * structureWeight) + 
-                          (liquidityScore * liquidityWeight) + 
-                          (volatilityScore * volatilityWeight) + 
+    double weightedTotal = (trendScore * trendWeight) +
+                          (structureScore * structureWeight) +
+                          (liquidityScore * liquidityWeight) +
+                          (volatilityScore * volatilityWeight) +
                           (regimeScore * regimeWeight);
-    
+
     double contextScore = weightedTotal / totalWeight;
     return MathMax(0.0, MathMin(1.0, contextScore));
 }
@@ -243,26 +243,26 @@ static double CalculateQualityScore(double confidence, int confluence, bool pass
                                    double supportRatio)
 {
     double score = 0.0;
-    
+
     // Validate inputs - handle NaN and extreme values
     if(!MathIsValidNumber(confidence) || confidence < 0.0 || confidence > 1.0)
         confidence = 0.0;
-    
+
     // Normalized weights summing to 1.0 (was 0.92, scaled by 1/0.92 = 1.0869565...)
     // Original: confidence=0.20, confluence=0.10, conviction=0.12, readiness=0.08,
-    //           context=0.08, diversity=0.07, cost=0.05, directionalQuality=0.15, supportRatio=0.07
+    // context=0.08, diversity=0.07, cost=0.05, directionalQuality=0.15, supportRatio=0.07
     // Filter bonus removed as ad-hoc component; its weight redistributed
-    
+
     // Confidence component
     score += confidence * 0.2174;
-    
+
     // Confluence component (Biased scale to avoid punishing solo high-quality signals)
     double confluenceScore = 0.0;
     if(confluence == 1) confluenceScore = 0.50;      // Solo signal starts with decent baseline
     else if(confluence == 2) confluenceScore = 0.80;
     else if(confluence >= 3) confluenceScore = 1.0;
     score += confluenceScore * 0.1087;
-    
+
     // Decision-path components with NaN protection
     convictionScore = MathIsValidNumber(convictionScore) ? convictionScore : 0.0;
     readinessScore = MathIsValidNumber(readinessScore) ? readinessScore : 0.0;
@@ -271,7 +271,7 @@ static double CalculateQualityScore(double confidence, int confluence, bool pass
     costScore = MathIsValidNumber(costScore) ? costScore : 0.0;
     directionalQuality = MathIsValidNumber(directionalQuality) ? directionalQuality : 0.0;
     supportRatio = MathIsValidNumber(supportRatio) ? supportRatio : 0.0;
-    
+
     score += MathMax(0.0, MathMin(1.0, convictionScore)) * 0.1304;
     score += MathMax(0.0, MathMin(1.0, readinessScore)) * 0.0870;
     score += MathMax(0.0, MathMin(1.0, contextScore)) * 0.0870;
@@ -279,15 +279,15 @@ static double CalculateQualityScore(double confidence, int confluence, bool pass
     score += MathMax(0.0, MathMin(1.0, costScore)) * 0.0543;
     score += MathMax(0.0, MathMin(1.0, directionalQuality)) * 0.1630;
     score += MathMax(0.0, MathMin(1.0, supportRatio)) * 0.0761;
-    
+
     // Filter component (properly weighted at 5%)
     if(passedFilters)
         score += 1.0 * 0.0543;
-    
+
     // Ensure final score is valid and in range [0, 1]
     if(!MathIsValidNumber(score))
         score = 0.0;
-    
+
     return MathMax(0.0, MathMin(1.0, score));
 }
 };

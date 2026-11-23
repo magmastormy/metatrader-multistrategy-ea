@@ -6,7 +6,285 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Batches 102–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md)
 - Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
 
+## [Unreleased] - 2026-11-23 (batch 3)
+
+### MQL5 - policy literals named, behavior identical
+- `Core/Risk/UnifiedRiskManager.mqh` - the daily/portfolio risk-throttle
+  utilization ladder and per-symbol performance weights are now named
+  `#define` constants (`RISK_THROTTLE_*, PERF_WEIGHT_*`) with audit notes;
+  values unchanged.
+- `Core/Management/PostConsensusValidator.mqh` - ATR warning band and
+  decision-class quality floors are now named constants; values unchanged.
+- `Core/Risk/VPINFilter.mqh` - toxicity bands and regime multipliers are
+  now named constants; values unchanged.
+
+### Python - stacker/trainer consolidation continued
+- `Python/train_common.py` - new `report_trained_model` helper.
+- All ten `train_*.py` scripts (generic + per-asset + Deriv family) now
+  share the predict -> IC -> pickle -> `trained=` tail via
+  `report_trained_model`; asset/family hyperparameters remain local.
+- `train_common.train_oof_stacker` (and both generated Colab cells) now
+  fit the ridge meta-learner on validation rows only
+  (`fit_idx = arange(n_tr, n_total)`), removing the largest in-sample
+  base-prediction contamination. Remaining: base models can still score
+  rows overlapping their own training ranges (needs training-range
+  metadata or true OOF predictions - item 27 stays partial).
+
+Compile-verified (0 errors / 0 warnings, all 8 programs). Not
+performance-measured: needs paired cold-window backtests before any
+P&L claim.
+
+## [Unreleased] - 2026-11-23 (batch 6 - third audit pass)
+
+### MQL5 - correctness fixes from a deep-dive pass
+- **Scratch-close accounting (four sites).** A breakeven close (`netProfit == 0`)
+  was counted as a LOSS everywhere outcomes are classified: `RecordSymbolClose`
+  fed the per-symbol loss-streak brake, `CStrategyPerformanceHealth::
+  UpdatePerformance` incremented failCount/consecutiveLosses and dragged the
+  health score, `CStrategyHealthMonitor::UpdateRecentPerformance` decayed the
+  rolling win-rate, `CTradeStatsTracker::RecordTrade` bucketed it as failed
+  (and derived the outcome from GROSS profit while netting commission/swap -
+  a net loser could count as a win), and `CLiveAuthorityResolver::
+  RecordOutcome` counted it against win-rate/consecutive-losses for AI
+  authority promotion. All five now treat `== 0` as neutral activity:
+  counted as a trade, never as a win or a loss.
+- `Core/Cache/ConsensusCache.mqh` + `PositionLifecycleManager.mqh` - the SRE
+  structural-invalidation check read the manager's LIVE decision context after
+  a cache hit, pairing a <=1s-old cached signal with whatever evaluation ran
+  most recently (e.g. the new-bar entry scan) - wrong `dominantCluster`,
+  wrong structural exits. The cache entry now carries `dominantCluster`.
+- `Core/Management/PosLifecycleVolatility.mqh` - `ManageDynamicSLTP`
+  rewrote SL/TP anchored to OPEN price on every pass, in BOTH directions:
+  it could move a stop AWAY from price (loosening protection the
+  breakeven/trailing managers had already tightened) and push TP farther
+  out. Now tighten-only per leg, with side-of-price validity checks.
+- `Core/Management/PosLifecycleExit.mqh` - partial profit taking was gated
+  on `POSITION_TP != 0` although TP is never used in the calculation; any
+  position without a TP could never take its partial. Gate removed.
+- `AIModules/EnsembleMetaLearner.mqh` - `EnsureModelArrays()` ran on every
+  `ProcessMarketData` call and unconditionally zeroed every model's rolling
+  results ring and `ArrayInitialize`'d the whole regime-performance buffer
+  while leaving the count arrays intact: rolling win-rate/avg-win/avg-loss
+  were recomputed over zeroed slots (permanently corrupted -> broken model
+  weights and Kelly fractions), and the adaptive regime multiplier could
+  only ever read zeros (dead feature pinned at 1.0). Now only NEW slots are
+  initialized. Also: the per-regime ring used one head per MODEL shared
+  across regimes (scattered writes the linear reader never saw) - heads are
+  now per (model, regime); and `RemoveModel` now shifts all parallel stat
+  arrays to match `CArrayObj::Delete`'s element shift (stats previously
+  attached to the wrong models after any removal).
+- `AIModules/NeuralNetworkStrategy.mqh` - constructor seeded the weight-init
+  LCG from `TimeCurrent()`, so every cold run initialised different neural
+  weights and emitted different early predictions on identical ticks (same
+  defect class fixed earlier in MetaLabeler). Now a deterministic
+  per-instance sequence seed.
+
+Compile-verified: `sync_and_compile.ps1 -All -KeepLog` -> OVERALL SUCCESS,
+0 errors / 0 warnings on all eight programs. Correctness fixes only - not
+performance-measured. Note: pyramiding / dynamic-SLTP / partial-profit
+taking have no `Configure*` callers and remain dormant; the fixes above
+keep them correct for when they are wired.
+
+## [Unreleased] - 2026-11-23 (batch 5 - second audit pass)
+
+### MQL5 - correctness fixes from a fresh audit sweep
+- `Core/Engines/TrendEngine.mqh` - `CopyOrFallbackMA` copied 5 bars via
+  `CopyBuffer` into non-series arrays, which land OLDEST-first, while
+  `CTrendStrength`/`CalculateTrendAngle` and the EMA fallback all expect
+  `[0]`=newest. Trend strength/angle ran on a reversed window whenever the
+  indicator path succeeded (the common case); the CopyBuffer branch now
+  reverses to the consumer convention.
+- `Core/Engines/TrendMath.mqh` - `CalculateEmaFallbackSeries` recursed the
+  EMA from newest to oldest (a backwards EMA) and contained a dead first
+  loop; it now seeds from the SMA of the oldest `period` bars and recurses
+  `copied-1 -> 0`, emitting newest-first like the indicator path.
+- `Core/AI/AIFeatureVectorBuilder.mqh` - `ComputeRollingZScoreIndicator`
+  took `values[0]` as "current" from an oldest-first `CopyBuffer`, so the
+  z-score numerator was the OLDEST bar of the window, not the bar at
+  `shift`; now `values[period-1]`. Also guarded the history-preload path
+  against `availableBars == 0` (negative `iTime` shift).
+- `AIModules/OnnxBrain.mqh` + `AIModules/TransformerBrain.mqh` -
+  `m_temperature` was stored by `SetTemperature` but never applied in
+  either softmax; logits are now divided by the clamped temperature
+  (T=1.0 default = identical output).
+- `AIModules/MetaLabeler.mqh` - weight init was seeded with
+  `MathSrand(TimeLocal())`, so identical ticks produced different
+  meta-labeler weights - and different `Approve()` gates - on every run,
+  breaking the deterministic-tester property the batch record relies on.
+  Now seeded deterministically per instance
+  (`1000003 + s_initSeq * 7919`).
+- `Core/Orchestration/TradeExecutor.mqh` - `RemovePendingAt` cleared
+  `m_pendingConfirmations[m_pendingCount]` after the shift, one slot past
+  the last valid element; with a full 50-entry queue that wrote outside
+  the array. Now clears `m_pendingCount - 1`.
+
+Swept and found clean: all multi-element `CopyBuffer`/`CopyClose` sites
+outside the fixes above either set `ArraySetAsSeries` or consume
+order-insensitively; price-side (BID/ASK) usage in Core/ is direction-aware;
+pending-order and breakeven/trailing paths verified.
+
+Compile-verified: `sync_and_compile.ps1` -> OVERALL SUCCESS, 0 errors /
+0 warnings on `MultiStrategyAutonomousEA.ex5`. Correctness fixes only -
+not performance-measured; the NN/meta-labeler changes alter online
+learning behaviour and need paired cold-window backtests before any
+claim.
+
+## [Unreleased] - 2026-11-23 (batch 4)
+
+### Python - single source of truth for shared training primitives (item 25)
+- New `Python/training_core.py` hosts the canonical implementations of
+  `compute_atr`, `triple_barrier_labels` (+numba), `compute_uniqueness_weights`
+  (+numba), `cusum_filter` (+numba), all feature helpers, `build_base_feature_matrix`,
+  `exported_feature_columns`, `add_calendar_features`, `purge_embargo`,
+  `cpcv_folds`, `psr`, `label_horizon_ns`.
+- `data_pipeline.py` and `validate_model.py` now import/re-export them;
+  ~350 lines of duplication removed. `build_feature_matrix` keeps its
+  family_id/asset_class extension signature as a thin wrapper.
+- `mql5_v2.py` stays self-contained for Colab: its copies are auto-vendored
+  blocks spliced by new `Python/sync_mql5_v2.py` (re-run after editing any
+  `@@VENDOR-BEGIN` region in training_core.py).
+- Functions with genuinely different semantics (`prepare_sequences` label
+  indexing, `_split_arrays` embargo handling, `compute_forward_returns`,
+  scaler binary formats) intentionally remain per-file.
+- Incidental correctness: data_pipeline now uses the safe-lag feature
+  builder (no np.roll wrap-around) and backfilled ATR warm-up, matching the
+  hardened mql5_v2 reference; only affects bars below the sequence warm-up.
+
+### Python - stacker training-range metadata (item 27)
+- `train_common.py`: new `load_split_full` (returns split timestamps),
+  `save_train_meta`/`load_train_meta` (`<model>.trainmeta.json` sidecars with
+  n_train + train/val time ranges and split params), and
+  `stacker_fit_indices` (val-region baseline tightened by each base model's
+  recorded `train_end`).
+- All ten `train_*.py` scripts, `train_model.py` (ONNX), and generated Colab
+  cells 5-7 now write sidecars; `train_oof_stacker` and both generated
+  stacker cells fit the ridge via `stacker_fit_indices`.
+- Base models trained on different splits (seq_len/family/asset_class) can
+  no longer leak training rows into the meta-fit. Models without sidecars
+  fall back to the val-only bound with a warning.
+
+All Python files parse; `data_pipeline.build_dataset_splits` smoke-tested
+end-to-end; `stacker_fit_indices` verified against synthetic metadata.
+No MQL5 changes this batch - no recompile needed. Not performance-measured.
+
 ## [Unreleased] - 2026-11-14
+
+### Remaining-work second batch (2026-11-23, compile-verified, NOT yet backtest-measured)
+
+Eleven more `REMAINING_WORK.md` items closed; `sync_and_compile.ps1 -All` -> OVERALL SUCCESS,
+0 errors / 0 warnings on all eight programs. Python-side changes affect future training runs;
+MQL5 changes alter runtime behavior and still need paired cold-window backtests before any
+performance claim.
+
+- `Python/mql5_v2.py`: `prepare_sequences` now emits label-end timestamps; `purge_embargo`/`cpcv_folds`/
+  `run_cpcv` are timestamp span-overlap ports of the reviewed `validate_model` logic (was fixed
+  5-sample count purge that missed gaps between non-contiguous CPCV test groups). Stays
+  self-contained for Colab; `triple_barrier_labels` keeps a sync comment (items 1-3, 24, 25-partial).
+- `Python/train_common.py` + `write_colab.py` generated notebook: stacker `meta_X` is now filled for
+  EVERY row from the already-computed base predictions (was all-zero on the first TimeSeriesSplit
+  block); shape + no-all-zero-row assertions added. Regenerated `train_all_models_colab.ipynb`.
+- `Python/safe_pickle.py` (new): whitelisted-globals `SafeUnpickler`; all executable `pickle.load`
+  sites in `zmq_server.py`, `train_common.py` and the generated notebook now use `safe_pickle_load`
+  (item 28).
+- `Python/zmq_server.py`: `ZMQ_AUTH_TOKEN` env var - when set, non-heartbeat requests must carry a
+  matching `token` field or get `{"error": "Unauthorized"}` (item 29).
+- Dashboard commands actually execute (item 40): `IDashCommandHandler` interface on
+  `CDashBridgeTransport`; `CEAOrchestrator` implements it - `pause`/`resume` drive
+  `PortfolioRiskManager.SetEmergencyMode` (hard entry veto, tracked by `m_dashboardPauseActive`),
+  `emergency_stop` also flattens via `CloseAllPositions`. Ack POST now carries
+  `{"result":"ok"|"error"}`; unknown/failed commands are acked as errors so they cannot retry-loop.
+  Server `/api/control/ack/{id}` accepts the optional result body and logs errors.
+- `Core/Scalp/ATRScalpEntry.mqh` + `ATRScalpingEngine.mqh` + orchestrator wiring (item 43): scalp
+  entries now go through `CTradeManager.OpenPosition` (confirmation queue, per-symbol trade objects,
+  execution metrics, journal) instead of raw `CTrade::Buy/Sell`; SL/TP passed as point distances so
+  stops re-derive from the fill price. Pre-send stop validation and the DONE_PARTIAL position
+  confirmation are kept.
+- `Core/Risk/RiskMarginHealth.mqh` + `RiskValidationPipeline.mqh` (item 13): margin check now
+  computes the true margin DELTA - on netting accounts a same-symbol position is re-sized/closed/
+  reversed by the order (`OrderCalcMargin` before vs after, fail-closed on error), so orders that
+  free margin are no longer rejected and the projected margin level uses `currentMargin + delta`.
+  Hedging keeps the conservative full add.
+- `Python/check_scaler_parity.py` (new, item 5): round-trips `save_scaler_to_bin` through the exact
+  `PipelineScaler.mqh` layout and asserts feature count == `AI_FEATURE_VECTOR_SIZE` (verified 70).
+- Comment hygiene (item 38): `Batch NNN`/`Lx-yyy`/`Issue #N`/`Batch104-C1` tokens stripped from
+  comments in ~99 .mqh/.mq5 files; measurement-table alignment and prose repaired in
+  `SharedEAInputs.mqh`. Eleven legacy non-UTF-8 files were left untouched (IDs remain there).
+
+Still open after this batch: item 19 literal sweep (no `.set` files exist in-repo), item 25 true
+dedupe (mql5_v2 must stay Colab-standalone), item 27 in-sample base predictions (needs base-model
+training ranges), item 36 per-asset `train_*.py` duplication.
+
+
+### Remaining-work partial items closed (2026-11-22, compile-verified, NOT yet backtest-measured)
+
+All eleven PARTIAL items in `REMAINING_WORK.md` were worked; eight are now done, three remain partial
+with narrowed scope. `sync_and_compile.ps1 -All` -> OVERALL SUCCESS, 0 errors / 0 warnings.
+
+- `Python/data_pipeline.py`: test split now purges labels that lack a full `vertical_bars` horizon;
+  `prepare_sequences` asserts output-array alignment; `_scale_splits` fits the scaler per feature across
+  bars (was flattened seq_len*n_features, which could never apply via `CPipelineScaler` at inference).
+- `Python/train_model.py`: CPCV fold models now scale per fold on that fold's fit indices only, instead of
+  reusing the global train scaler.
+- `AIModules/CNeuralTrainingDataManager.mqh`: expired-barrier scan now covers exactly the vertical-bars
+  horizon after entry (was `min(entryShift-1, vertBars)` - wrong window for old entries, whole history for new).
+- `Core/Scalp/ATRScalpExit.mqh`: partial-close latch now verifies retcode DONE/DONE_PARTIAL and post-send
+  POSITION_VOLUME; released on rejected retcodes and confirmed no-fills, kept on verified or ambiguous fills.
+- `Strategies/NYOpenGapStrategy.mqh`: session bars located via `NYOpenFindSessionBar`, which derives the broker
+  offset from each candidate bar's own timestamp (+/-1h standard-offset fallback) instead of reusing the
+  current-time offset for all history.
+- `Core/Management/PostConsensusValidator.mqh` + config plumbing: ATR crisis ceilings 2.5/2.0 are now inputs
+  `InpAtrCrisisCeilingSynthetic`/`InpAtrCrisisCeilingForex` (defaults unchanged).
+- `Core/Engines/AIEngine.mqh` + inputs: external LLM endpoint defaults removed everywhere; enabling the LLM
+  with no endpoint now fails closed instead of targeting localhost:11434.
+- `Python/train_common.py`: new `train_oof_stacker`/`get_onnx_probs`; `train_stacker.py` and
+  `train_deriv_stacker.py` are thin wrappers (behavior preserved).
+- Mojibake: all 57 `�?` sequences across 11 .mqh/.mq5 files replaced with `- `; zero U+FFFD remains.
+- Dashboard auth: `EA_DASHBOARD_TOKEN` env var gates `/state`, `/api/control/command(s)`, `/api/control/ack`
+  via `X-Api-Key`; EA sends it from new `InpDashboardApiKey` input (empty = auth off, loopback bind kept).
+
+
+
+### Strategy signal audit fixes (code review pass, NOT yet backtest-measured)
+
+A read-through of every file in `Strategies/` found and fixed the following. These are correctness fixes, not
+tuning: they change what the strategies emit, so they need paired cold-window runs before any performance claim.
+`sync_and_compile.ps1 -All` -> OVERALL SUCCESS, 0 errors / 0 warnings on all eight programs.
+
+- `VolatilityBreakoutStrategy.mqh`: confidence was passed to `ValidateWithRiskManager` as 0.0 (assigned after the
+  gate call) - same bug MeanReversion already had fixed. Also `BreakoutWithRetest` now requires the retest wick
+  inside a +-0.2% band of the level instead of "anything below level*1.002" (one-sided, scale-dependent).
+- `FVGScalperStrategy.mqh`, `BreakerBlockStrategy.mqh`: stop distances were priced off SYMBOL_BID for both
+  directions; a buy fills at the ask. Now ASK for buys / BID for sells, matching AsianRangeBreak/TurtleSoup.
+- `MarketStructureAnalyzer.mqh`: `HasStructureBreak()` re-fired on every `Update()` while price stayed beyond a
+  swing level, so `HasBMS(n)` stayed true for the whole extended move and `bosCount`/`chochCount`/
+  `consecutiveBMS` inflated. Breaks are now edge-triggered (previous closed bar must have been inside the level).
+  `GetATR()` now reads shift 1 (closed bar) instead of the forming bar. `DetectFastCHOCH` gained a direction-aware
+  overload.
+- `FVGScalperStrategy.mqh`, `AsianRangeBreakStrategy.mqh`: the fast-CHOCH confidence bonus now only counts a
+  break in the trade's own direction.
+- `SessionGapDetector.mqh`: `UpdateFillStatus` scanned the detector timeframe (D1 for both consumers), so an NDOG
+  - whose `openTime` is today's D1 open - could never see a single bar after it and `isFilled`/`isMitigated` stayed
+  frozen at detect-time values. NDOG fill state now scans M15 bars; NWOG keeps D1.
+- `ICTSessionGapStrategy.mqh`: `gap.size` (a daily-scale distance) was compared against the chart-timeframe ATR,
+  making `m_minGapAtr` toothless on low timeframes. Size filters now use a dedicated D1 ATR handle.
+- DST evaluated on the wrong clock in three places: `NYOpenGapStrategy.mqh` (`NYOpenIsUSDaylightTime` stamped the
+  transitions at 02:00 UTC instead of 07:00/06:00 UTC, and the broker offset was rounded to 30 minutes),
+  `LiquidityDetector.mqh` (`IsUSDSTime`, same transition bug), `KillZones.mqh` (`IsDSTActive` compared broker-time
+  fields against a US-local rule - now evaluates on GMT with correct UTC transitions; `GetCurrentESTHour`
+  resolves DST per call instead of using the offset cached once in `Initialize()`).
+- `StatisticalArbitrageStrategy.mqh`: the strategy can never vote (leg2 is never sent) but still ran the
+  correlation lookup, 100 CopyClose bars, OU blending and the risk gate every scan. It now prints its diagnostics
+  and abstains before the risk gate. The spread itself is now a log-price difference - the raw `p1 - p2` form was
+  dominated by the two instruments' price levels.
+- `MeanReversionStrategy.mqh`: entry reference moved from the stale closed-bar close to the live ASK/BID (both the
+  main and synthetic paths), invented TP fallbacks (`slPips * 2.0` / `* 1.5`) removed, dead `GetDynamicTP` call
+  removed.
+- `RangeCompressionBreakout.mqh`: dead `m_volumeHandle` (created, released, never read) removed.
+- `SimpleMomentumStrategy.mqh`: `volFloor` used `MathMin`, letting the price-scaled term weaken the absolute
+  floor; now `MathMax`.
+- `LiquiditySweepStrategy.mqh`, `TurtleSoupStrategy.mqh`: chase cap - a sweep found several bars back could leave
+  the stop multiple ATRs away; both now refuse `stopDistance > 3 * ATR`. LiquiditySweep round-number pip size now
+  follows SYMBOL_DIGITS parity instead of hardcoded 5-digit FX.
 
 ### Batch 298: MEASURED, NOT SHIPPED - removing the last two loss-making rows makes the distribution worse, not better
 
@@ -5122,3 +5400,46 @@ Findings were re-verified against source before editing, and two earlier claims 
 - **OFI/VPIN are off for synthetic-index symbols**, so those symbols lose two veto layers they were exercising on fabricated input; entry counts on synthetics may rise.
 - **Runtime log evidence is still outstanding** for Batches 168–170 (AGENTS.md §5.2 is compile + static review). First live session should confirm: `[MAGIC-AUTHORITY]` coverage lines, `[RISK-MINLOT]` clamped-to-3.0 line once at init, `[INIT] ... dailyRiskBudget=`, `[VOLUME-PROXY]` per symbol, `[STOPS REJECTED]` rare rather than constant, and no scalp position being closed by both authorities.
 - Left open deliberately, by size of risk: engines still send outside `CTradeManager` (no fill verification / dedup / journal there); the ATR-scalp offset 7000 collides with `ASSET_FOREX` and grid's family config inherits profiler offsets, which corrupts cluster and per-symbol attribution *if* those dormant engines are ever wired; walk-forward validation (Batch 167) is not wired into live gating, so no strategy in the live roster has an out-of-sample edge proof; `CSymbolHealthMonitor::IsHealthy`, `MonitorMarginHealth` and `CEquityCurveManager` are still written but unread; `IsHedgingAllowed` returns true without checking the account's margin mode.
+
+## Audit round - execution-side price references and family classification
+
+#### Fixed - bid/ask execution-side measurement
+- **S/R consensus path measured stops off BID for buys.** `StrategySupportResistance` converted the sub-strategies' BID-anchored `entryPrice`/`stopLoss`/`takeProfit` into pip distances and fed them to `IsSignalTradable` and `SetProposedStops`. A BUY fills at ASK, so the stop distance was understated by the spread in both the guard and the proposed stops. Distances and the guard now measure off `execPrice` (ASK for BUY, BID for SELL).
+- **Same defect in the trend path.** `StrategyTrend` + `CTrendEntryTypes`: every entry type anchors `entryPrice`/`takeProfit` on `SYMBOL_BID` for both directions; the consumer now measures guard and pip distances off the execution side.
+- **`TrendTrailingStop::ShouldMoveToBreakeven` priced sells off BID.** The sibling `CalculateTrailingStop` already used the correct side ("sell positions close at ASK"); the breakeven check was missed, so a sell's breakeven triggered ~spread early. Now direction-aware.
+- **`NYOpenGapStrategy` measured SL/TP distances off unconditional BID** for both directions (the BID quote is still used for the NDOG midpoint proximity check, which is analysis-only). Distances and the tradability guard now use a direction-aware `distPrice`.
+- **`StrategyCandlestick` measured pattern geometry off the pattern bar's price.** `patternPrice` is a historical close, not the fill; a drifted market could pass an inverted or understated stop through the gate. Guard and pip distances now measure off live ASK/BID.
+- Verified clean: all eight ATR-stop strategies already use `isBuy ? ASK : BID`; `ICTSessionGapStrategy`, `MeanReversionStrategy` (both paths), `FVGScalper`, `BreakerBlock`, `AsianRangeBreak`, `SimpleMomentum`, `TurtleSoup` already direction-aware; `VolatilityBreakout`/`LiquiditySweep`/`RangeCompression` derive SL/TP from absolute levels so distances are anchor-honest.
+
+#### Fixed - dead family arm
+- **`DERIV_SPOT_VOLATILITY` was unreachable.** "Spot Volatility" symbol names also contain `"VOLATILITY "`, and `IsVolatilitySyntheticSymbolName` ran first in three places, so every spot-vol name classified as plain `DERIV_VOLATILITY`: `CDerivAssetProfiler::DetectFamily`, `DetectFamilyId` in `Core/Utils/Instruments.mqh`, and `GetInstrumentExecutionProfileName` (which returned `SYNTHETIC_VOLATILITY` instead of `SYNTHETIC_SPOT_VOLATILITY`). The specific arm now precedes the generic one in all three. Latent today - no shipped symbol carries `SPOT VOL` - but the profile (grid recovery enabled, family weights 1.3/0.7/0.6/1.4) was dead config.
+
+#### Verified clean this pass
+- `CTradeManager::MoveToBreakeven`/`SetTrailingStop`/`ModifyPosition` - tighten-only ratchets, correct bid/ask sides, broker min-distance normalization.
+- `RiskCircuitBreaker` drawdown math, auto-recovery levels, emergency flatten.
+- `CGridRecoveryEngine` - martingale progression bounded by maxDrawdownPercent, cumulative-lot cap (3x) and equity floor (50%); all family profiles currently disable it except SpotVolatility.
+- `WalkForwardValidator` IS/OOS attribution arrays sized `cAll+1`, every trade accounted exactly once.
+- `CDerivAssetProfiler` profile table - newer Deriv families (Pain, Switch, GainFlip...) intentionally fall through to `DERIV_UNKNOWN` (minimal profile), not a bug.
+
+#### Verification
+- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
+- Caveat: the bid/ask measurement fixes change proposed stop distances by ~spread on BUY signals - correctness fix, needs the paired cold-window batch before any performance claim.
+
+## Remaining-work completion pass
+
+#### Fixed - neural trade-linked labels
+- **Double-counted and sign-biased label counter.** `UpdateTradeResultByPredictionId`/`UpdateTradeResult` incremented `m_tradeLinkedLabels` only when `profitLoss > 0`, while `ResolveBarriers` also increments it for every `linkedToTrade` example at label resolution - so wins counted twice and losses never. The counter is now owned solely by label resolution, which counts every linked outcome once regardless of sign; the update paths only set `linkedToTrade`. Stale comment claiming the path was unwired corrected (it is wired: reserve -> order comment/position map -> close-drain -> `UpdateTradeResultByPredictionId`).
+- **Same-bar double-touch now resolves adverse-first.** `NeuralNetworkStrategy::ResolveBarriers` took `upperHit` before `lowerHit`, so a bar touching both barriers always labelled BUY-class - the opposite of the Python `triple_barrier` stop-first convention (and of `CNeuralTrainingDataManager`, which already tests the stop first). A both-touch bar now resolves to the barrier adverse to the predicted signal (BUY obs -> lower/SELL label, SELL obs -> upper/BUY label), i.e. an ambiguous bar is a loss, matching training-data semantics.
+
+#### Enabled - the measured lot-size cap lever
+- **`InpScaleLotToSymbolBudget` default false -> true** in both EAs. The mechanism (`ApplySymbolBudgetLotCap`) already existed and was correct - shrink the lot to remaining per-symbol budget with broker step/min rounding and a post-round `CalculateTradeRisk` re-check - but was opt-in "experimental". With the default on, a candidate over its symbol allocation is resized instead of dropped whenever the remaining budget can still fund the broker minimum; only genuinely exhausted budgets reject. This is the lever AGENTS.md Batch 298 identified as the only remaining path (deleting symbols measured worse). **Requires the paired cold-window batch before any performance claim** - it changes sizing on every window that does not override the input.
+
+#### Verified already-complete (no change needed)
+- Engine sends: `SpikeHunterExecutor` and `GridRecoveryExecution` already route through `CTradeManager::OpenPosition` with `NormalizeAndValidateStops` + retcode diagnostics; `FastScalpPendingOrders` keeps raw `OrderSend` only because pending orders have no `CTradeManager` path, and it has stop validation + ambiguous-send recovery.
+- Neural label wiring: reserve/release/bind/drain chain fully wired through `TradeExecutor` comment suffix, `UpsertPredictionPositionMap`, and `ProcessClosedPositionsForNNTraining`.
+- Async reconciliation: `OnTradeTransaction` -> `ProcessTradeTransaction`, `OnTimer` -> `CheckAsyncTimeouts` -> quarantine-vs-broker-history reconciliation all wired.
+- Dormant lifecycle features (pyramiding, dynamic SL/TP, partial profit taking) default disabled with no config path - cleanly inert opt-in infrastructure, deliberately not wired to new unmeasured behavior.
+- `AIPerformanceFeedback` record/outcome path remains inert (no callers); neutral-zero metrics keep AI weight adaptation at baseline - documented dormant infrastructure.
+
+#### Verification
+- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.

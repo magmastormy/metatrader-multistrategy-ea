@@ -71,11 +71,11 @@ class CAdvancedOrderBlockDetector
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     SAdvancedOrderBlock m_orderBlocks[];
     int                 m_obCount;
     int                 m_maxOBs;
-    
+
     bool                IsNearSupportLevel(double price);
     bool                IsNearResistanceLevel(double price);
     int                 FindMostRecentSwingHigh(int lookback = 50);
@@ -87,21 +87,21 @@ private:
     long                GetAverageVolume(int startBar, int window);
     bool                IsBullishType(const ENUM_ORDER_BLOCK_TYPE type) const;
     bool                IsBearishType(const ENUM_ORDER_BLOCK_TYPE type) const;
-    
+
 public:
                         CAdvancedOrderBlockDetector();
                        ~CAdvancedOrderBlockDetector();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe);
     void                Update();
     void                ScanForOrderBlocks(int lookback = 50);
-    
+
     bool                DetectBullishSourceOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishSourceOB(SAdvancedOrderBlock &ob);
-    
+
     bool                DetectBullishOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishOB(SAdvancedOrderBlock &ob);
-    
+
     bool                DetectBullishBreakerBlock(SAdvancedOrderBlock &ob);
     bool                DetectBearishBreakerBlock(SAdvancedOrderBlock &ob);
     bool                DetectBullishPropulsionBlock(SAdvancedOrderBlock &ob);
@@ -110,10 +110,10 @@ public:
     bool                DetectBearishRejectionBlock(SAdvancedOrderBlock &ob);
     bool                DetectBullishVacuumBlock(SAdvancedOrderBlock &ob);
     bool                DetectBearishVacuumBlock(SAdvancedOrderBlock &ob);
-    
+
     bool                ValidateOrderBlock(SAdvancedOrderBlock &ob);
     bool                CheckMitigation(SAdvancedOrderBlock &ob);
-    
+
     int                 GetOBCount() const { return m_obCount; }
     bool                GetOrderBlock(int index, SAdvancedOrderBlock &ob);
     int                 FindActiveOBAtPrice(double price, double tolerance);
@@ -154,7 +154,7 @@ bool CAdvancedOrderBlockDetector::Initialize(const string symbol, ENUM_TIMEFRAME
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_obCount = 0;
-    
+
     return true;
 }
 
@@ -172,7 +172,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
 {
     m_obCount = 0;
     ArrayResize(m_orderBlocks, 0);
-    
+
     SAdvancedOrderBlock bullSOB;
     if(DetectBullishSourceOB(bullSOB))
     {
@@ -180,7 +180,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bullSOB;
         m_obCount++;
     }
-    
+
     SAdvancedOrderBlock bearSOB;
     if(DetectBearishSourceOB(bearSOB))
     {
@@ -188,7 +188,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bearSOB;
         m_obCount++;
     }
-    
+
     SAdvancedOrderBlock bullOB;
     if(DetectBullishOB(bullOB))
     {
@@ -196,7 +196,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bullOB;
         m_obCount++;
     }
-    
+
     SAdvancedOrderBlock bearOB;
     if(DetectBearishOB(bearOB))
     {
@@ -204,7 +204,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bearOB;
         m_obCount++;
     }
-    
+
     SAdvancedOrderBlock bullBreaker;
     if(DetectBullishBreakerBlock(bullBreaker))
     {
@@ -212,7 +212,7 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bullBreaker;
         m_obCount++;
     }
-    
+
     SAdvancedOrderBlock bearBreaker;
     if(DetectBearishBreakerBlock(bearBreaker))
     {
@@ -367,7 +367,7 @@ int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
     return impulseStartBar;
 }
 
-// Detect Bullish Source OB �?P1-A Rewrite
+// Detect Bullish Source OB - P1-A Rewrite
 // Algorithm:
 // 1. Find the most recent bullish impulse (3+ strong bullish candles)
 // 2. Starting at the bar just BEFORE the impulse began, walk backward
@@ -431,7 +431,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
     return true;
 }
 
-// Detect Bearish Source OB �?P1-A Rewrite
+// Detect Bearish Source OB - P1-A Rewrite
 bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
 {
     int impulseStartBar = FindImpulseStart(false, 50);  // false = bearish impulse
@@ -446,7 +446,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
         double o = iOpen(m_symbol,  m_timeframe, i);
         double c = iClose(m_symbol, m_timeframe, i);
 
-        if(c > o)  // Bullish candle �?last one before bearish impulse = source OB
+        if(c > o)  // Bullish candle - last one before bearish impulse = source OB
         {
             sourceOBBar = i;
             break;  // first match is the closest to the impulse - see DetectBullishSourceOB
@@ -490,19 +490,19 @@ bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
 {
     int swingHighBar = FindMostRecentSwingHigh();
     if(swingHighBar == -1) return false;
-    
+
     int bestCandle = -1;
     double bestBody = 0;
-    
+
     for(int i = swingHighBar - 5; i <= swingHighBar + 5; i++)
     {
         if(i < 1) continue;
-        
+
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(close >= open) continue; // Must be bearish
-        
+
         double body = open - close;
         if(body > bestBody)
         {
@@ -510,13 +510,13 @@ bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
             bestCandle = i;
         }
     }
-    
+
     if(bestCandle == -1) return false;
-    
+
     // Verify upward movement after OB
     bool hasUpwardMove = false;
     double obTop = iHigh(m_symbol, m_timeframe, bestCandle);
-    
+
     for(int i = bestCandle - 1; i >= 0; i--)
     {
         double close = iClose(m_symbol, m_timeframe, i);
@@ -526,9 +526,9 @@ bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
             break;
         }
     }
-    
+
     if(!hasUpwardMove) return false;
-    
+
     ob.type = OB_CONTINUATION_BULL;
     ob.time = iTime(m_symbol, m_timeframe, bestCandle);
     ob.top = iHigh(m_symbol, m_timeframe, bestCandle);
@@ -538,7 +538,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishOB(SAdvancedOrderBlock &ob)
     ob.midpoint = (ob.top + ob.bottom) / 2.0;
     ob.strength = 0.70;
     ob.timeframe = m_timeframe;
-    
+
     return true;
 }
 
@@ -547,19 +547,19 @@ bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
 {
     int swingLowBar = FindMostRecentSwingLow();
     if(swingLowBar == -1) return false;
-    
+
     int bestCandle = -1;
     double bestBody = 0;
-    
+
     for(int i = swingLowBar - 5; i <= swingLowBar + 5; i++)
     {
         if(i < 1) continue;
-        
+
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(close <= open) continue; // Must be bullish
-        
+
         double body = close - open;
         if(body > bestBody)
         {
@@ -567,12 +567,12 @@ bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
             bestCandle = i;
         }
     }
-    
+
     if(bestCandle == -1) return false;
-    
+
     bool hasDownwardMove = false;
     double obBottom = iLow(m_symbol, m_timeframe, bestCandle);
-    
+
     for(int i = bestCandle - 1; i >= 0; i--)
     {
         double close = iClose(m_symbol, m_timeframe, i);
@@ -582,9 +582,9 @@ bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
             break;
         }
     }
-    
+
     if(!hasDownwardMove) return false;
-    
+
     ob.type = OB_CONTINUATION_BEAR;
     ob.time = iTime(m_symbol, m_timeframe, bestCandle);
     ob.top = iHigh(m_symbol, m_timeframe, bestCandle);
@@ -594,7 +594,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishOB(SAdvancedOrderBlock &ob)
     ob.midpoint = (ob.top + ob.bottom) / 2.0;
     ob.strength = 0.70;
     ob.timeframe = m_timeframe;
-    
+
     return true;
 }
 
@@ -602,10 +602,10 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
 {
     int swingHighBar = FindMostRecentSwingHigh();
     if(swingHighBar == -1) return false;
-    
+
     double oldLow = FindOldLow(swingHighBar + 1, swingHighBar + 50);
     if(oldLow == 0) return false;
-    
+
     bool oldLowBroken = false;
     for(int i = swingHighBar - 1; i >= 0; i--)
     {
@@ -616,12 +616,12 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
             break;
         }
     }
-    
+
     if(!oldLowBroken) return false;
-    
+
     int breakerCandle = -1;
     double bestBody = 0;
-    
+
     for(int i = swingHighBar - 3; i <= swingHighBar + 3; i++)
     {
         if(i <= 0) continue;  // exclude the forming bar from breaker candidacy
@@ -630,7 +630,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
         double close = iClose(m_symbol, m_timeframe, i);
 
         if(close <= open) continue; // Must be bullish
-        
+
         double body = close - open;
         if(body > bestBody)
         {
@@ -638,9 +638,9 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
             breakerCandle = i;
         }
     }
-    
+
     if(breakerCandle == -1) return false;
-    
+
     ob.type = OB_BREAKER_BULL;
     ob.time = iTime(m_symbol, m_timeframe, breakerCandle);
     ob.top = iHigh(m_symbol, m_timeframe, breakerCandle);
@@ -648,7 +648,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
     ob.midpoint = (ob.top + ob.bottom) / 2.0;
     ob.strength = 0.80;
     ob.timeframe = m_timeframe;
-    
+
     return true;
 }
 
@@ -656,10 +656,10 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
 {
     int swingLowBar = FindMostRecentSwingLow();
     if(swingLowBar == -1) return false;
-    
+
     double oldHigh = FindOldHigh(swingLowBar + 1, swingLowBar + 50);
     if(oldHigh == 0) return false;
-    
+
     bool oldHighBroken = false;
     for(int i = swingLowBar - 1; i >= 0; i--)
     {
@@ -670,12 +670,12 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
             break;
         }
     }
-    
+
     if(!oldHighBroken) return false;
-    
+
     int breakerCandle = -1;
     double bestBody = 0;
-    
+
     for(int i = swingLowBar - 3; i <= swingLowBar + 3; i++)
     {
         if(i <= 0) continue;  // exclude the forming bar from breaker candidacy
@@ -684,7 +684,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
         double close = iClose(m_symbol, m_timeframe, i);
 
         if(close >= open) continue; // Must be bearish
-        
+
         double body = open - close;
         if(body > bestBody)
         {
@@ -692,9 +692,9 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
             breakerCandle = i;
         }
     }
-    
+
     if(breakerCandle == -1) return false;
-    
+
     ob.type = OB_BREAKER_BEAR;
     ob.time = iTime(m_symbol, m_timeframe, breakerCandle);
     ob.top = iHigh(m_symbol, m_timeframe, breakerCandle);
@@ -702,7 +702,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
     ob.midpoint = (ob.top + ob.bottom) / 2.0;
     ob.strength = 0.80;
     ob.timeframe = m_timeframe;
-    
+
     return true;
 }
 
@@ -959,7 +959,7 @@ bool CAdvancedOrderBlockDetector::DetectBullishVacuumBlock(SAdvancedOrderBlock &
         long avgVolume = GetAverageVolume(i + 1, 20);
         if(close <= open || range <= (atr * 1.5) || avgVolume <= 0)
             continue;
-        // Batch 157: <30% of average made this class near-unreachable (big ranges
+        // <30% of average made this class near-unreachable (big ranges
         // attract volume); "vacuum" now means materially below-average participation.
         if((double)barVolume >= ((double)avgVolume * 0.65))
             continue;
@@ -1013,7 +1013,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishVacuumBlock(SAdvancedOrderBlock &
         long avgVolume = GetAverageVolume(i + 1, 20);
         if(close >= open || range <= (atr * 1.5) || avgVolume <= 0)
             continue;
-        // Batch 157: <30% of average made this class near-unreachable - see bullish variant
+        // <30% of average made this class near-unreachable - see bullish variant
         if((double)barVolume >= ((double)avgVolume * 0.65))
             continue;
 
@@ -1048,14 +1048,14 @@ bool CAdvancedOrderBlockDetector::DetectBearishVacuumBlock(SAdvancedOrderBlock &
 bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
 {
     if(ob.isValidated) return true;
-    
+
     for(int i = 0; i < 50; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime <= ob.time) break;
-        
+
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(IsBullishType(ob.type))
         {
             if(close > ob.top)
@@ -1073,15 +1073,15 @@ bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
             }
         }
     }
-    
+
     return false;
 }
 
-// Check Mitigation �?P0-B Rewrite
+// Check Mitigation - P0-B Rewrite
 // ICT Rule: OB is mitigated only when a candle CLOSES through the full boundary.
 // Bullish OBs: mitigated when close < bottom.
 // Bearish OBs: mitigated when close > top.
-// CE (midpoint) is NOT a mitigation level �?it is an entry refinement target.
+// CE (midpoint) is NOT a mitigation level - it is an entry refinement target.
 bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
 {
     if(ob.isMitigated) return true;
@@ -1096,7 +1096,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
     ob.mitigationLevel = isBullishOB ? ob.bottom : ob.top;
 
     // Walk forward from OB formation time
-    // Batch 156: skip the forming bar (shift 0) - intrabar pokes were latching
+    // skip the forming bar (shift 0) - intrabar pokes were latching
     // isMitigated/isTested off unclosed candles.
     for(int i = 1; i < 200; i++)
     {
@@ -1126,7 +1126,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
         if(!isBullishOB && priceInOB && barClose < ob.bottom)
             ob.timesRejected++;
 
-        // MITIGATION CHECK �?candle must CLOSE through the far boundary
+        // MITIGATION CHECK - candle must CLOSE through the far boundary
         if(isBullishOB)
         {
             if(barClose < ob.bottom)
@@ -1153,7 +1153,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
         ob.strength = MathMin(1.0, ob.strength + 0.08);  // Multiple rejections = proven zone
 
     if(ob.timesRejected >= 3)
-        ob.isMitigated = true;  // OB exhausted after 3 rejections �?treat as used up
+        ob.isMitigated = true;  // OB exhausted after 3 rejections - treat as used up
 
     return ob.isMitigated;
 }
@@ -1163,7 +1163,7 @@ int CAdvancedOrderBlockDetector::FindMostRecentSwingHigh(int lookback)
     for(int i = 3; i < lookback - 3; i++)
     {
         double high = iHigh(m_symbol, m_timeframe, i);
-        
+
         if(high > iHigh(m_symbol, m_timeframe, i-1) &&
            high > iHigh(m_symbol, m_timeframe, i+1) &&
            high > iHigh(m_symbol, m_timeframe, i-2) &&
@@ -1180,7 +1180,7 @@ int CAdvancedOrderBlockDetector::FindMostRecentSwingLow(int lookback)
     for(int i = 3; i < lookback - 3; i++)
     {
         double low = iLow(m_symbol, m_timeframe, i);
-        
+
         if(low < iLow(m_symbol, m_timeframe, i-1) &&
            low < iLow(m_symbol, m_timeframe, i+1) &&
            low < iLow(m_symbol, m_timeframe, i-2) &&
@@ -1195,57 +1195,57 @@ int CAdvancedOrderBlockDetector::FindMostRecentSwingLow(int lookback)
 double CAdvancedOrderBlockDetector::FindOldLow(int startBar, int endBar)
 {
     double lowestLow = DBL_MAX;
-    
+
     for(int i = startBar; i < endBar; i++)
     {
         double low = iLow(m_symbol, m_timeframe, i);
         if(low < lowestLow)
             lowestLow = low;
     }
-    
+
     return (lowestLow == DBL_MAX) ? 0 : lowestLow;
 }
 
 double CAdvancedOrderBlockDetector::FindOldHigh(int startBar, int endBar)
 {
     double highestHigh = 0;
-    
+
     for(int i = startBar; i < endBar; i++)
     {
         double high = iHigh(m_symbol, m_timeframe, i);
         if(high > highestHigh)
             highestHigh = high;
     }
-    
+
     return highestHigh;
 }
 
 bool CAdvancedOrderBlockDetector::IsNearSupportLevel(double price)
 {
-    // Batch 156: ATR-relative floor - 20*point is ~0.2 absolute on synthetics,
+    // ATR-relative floor - 20*point is ~0.2 absolute on synthetics,
     // permanently false against prices in the hundreds/thousands.
     double tolerance = MathMax(20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT),
                                GetATRValue(14) * 0.25);
 
     double yesterdayLow = iLow(m_symbol, PERIOD_D1, 1);
     if(MathAbs(price - yesterdayLow) < tolerance) return true;
-    
+
     double lastWeekLow = iLow(m_symbol, PERIOD_W1, 1);
     if(MathAbs(price - lastWeekLow) < tolerance) return true;
-    
+
     return false;
 }
 
 bool CAdvancedOrderBlockDetector::IsNearResistanceLevel(double price)
 {
     double tolerance = 20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     double yesterdayHigh = iHigh(m_symbol, PERIOD_D1, 1);
     if(MathAbs(price - yesterdayHigh) < tolerance) return true;
-    
+
     double lastWeekHigh = iHigh(m_symbol, PERIOD_W1, 1);
     if(MathAbs(price - lastWeekHigh) < tolerance) return true;
-    
+
     return false;
 }
 
@@ -1261,7 +1261,7 @@ int CAdvancedOrderBlockDetector::FindActiveOBAtPrice(double price, double tolera
     for(int i = 0; i < m_obCount; i++)
     {
         if(m_orderBlocks[i].isMitigated) continue;
-        
+
         if(price >= m_orderBlocks[i].bottom - tolerance &&
            price <= m_orderBlocks[i].top + tolerance)
         {
@@ -1275,11 +1275,11 @@ int CAdvancedOrderBlockDetector::FindBestBullishOB()
 {
     int bestIndex = -1;
     double bestStrength = 0;
-    
+
     for(int i = 0; i < m_obCount; i++)
     {
         if(m_orderBlocks[i].isMitigated) continue;
-        
+
         if(IsBullishType(m_orderBlocks[i].type))
         {
             if(m_orderBlocks[i].strength > bestStrength)
@@ -1289,7 +1289,7 @@ int CAdvancedOrderBlockDetector::FindBestBullishOB()
             }
         }
     }
-    
+
     return bestIndex;
 }
 
@@ -1297,11 +1297,11 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
 {
     int bestIndex = -1;
     double bestStrength = 0;
-    
+
     for(int i = 0; i < m_obCount; i++)
     {
         if(m_orderBlocks[i].isMitigated) continue;
-        
+
         if(IsBearishType(m_orderBlocks[i].type))
         {
             if(m_orderBlocks[i].strength > bestStrength)
@@ -1311,7 +1311,7 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
             }
         }
     }
-    
+
     return bestIndex;
 }
 
@@ -1328,7 +1328,7 @@ double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
 
     int currentBar = iBars(m_symbol, m_timeframe);
     if(currentBar <= 0)
-        return 0.5;  // Unknown �?return neutral
+        return 0.5;  // Unknown - return neutral
 
     int obBar = iBarShift(m_symbol, m_timeframe, ob.time, false);
     if(obBar < 0)
@@ -1337,11 +1337,11 @@ double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
     int ageBars = obBar;  // How many bars since OB formed
 
     if(ageBars <= 5)
-        return 1.0;   // Fresh �?full weight
+        return 1.0;   // Fresh - full weight
     if(ageBars >= 50)
-        return 0.0;   // Stale �?no weight
+        return 0.0;   // Stale - no weight
 
-    // Linear decay: 1.0 at bar 5 �?0.0 at bar 50
+    // Linear decay: 1.0 at bar 5 - 0.0 at bar 50
     return 1.0 - ((double)(ageBars - 5) / 45.0);
 }
 

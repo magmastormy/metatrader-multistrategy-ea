@@ -27,7 +27,7 @@ private:
     CLabelEncoder m_labelEncoder;
     CTrainingMetrics m_metrics;
     CTrainingMetrics m_trainMetrics;
-    
+
     double m_trainFeatures[][FEATURE_VECTOR_SIZE];
     int m_trainLabels[];
     int m_trainCount;
@@ -35,30 +35,30 @@ private:
     double m_valFeatures[][FEATURE_VECTOR_SIZE];
     int m_valLabels[];
     int m_valCount;
-    
+
     double m_bestValLoss;
     int m_bestEpoch;
     int m_earlyStopCounter;
     int m_earlyStopPatience;
     double m_earlyStopMinDelta;
     bool m_earlyStopTriggered;
-    
+
     int m_totalEpochs;
     int m_currentEpoch;
     int m_batchSize;
-    
+
     string m_logFile;
     int m_logHandle;
-    
+
     int m_progressUpdateInterval;
-    
+
 public:
     CTrainingSession() : m_bestValLoss(1e10), m_bestEpoch(0), m_earlyStopCounter(0),
                          m_earlyStopPatience(50), m_earlyStopMinDelta(0.000001), m_earlyStopTriggered(false),
                          m_totalEpochs(500), m_currentEpoch(0), m_batchSize(32),
                          m_logFile(""), m_logHandle(INVALID_HANDLE), m_progressUpdateInterval(10),
                          m_model_ptr(NULL) {}
-    
+
     void SetConfig(const STrainingConfig &config)
     {
         m_totalEpochs = config.epochs;
@@ -75,7 +75,7 @@ public:
         if(m_logHandle != INVALID_HANDLE)
             FileWriteString(m_logHandle, logLine + "\r\n");
     }
-    
+
     bool Train(CFeedForwardNN &model, const double &trainFeatures[][], const int &trainLabels[], const int trainCount,
                const double &valFeatures[][], const int &valLabels[], const int valCount)
     {
@@ -159,18 +159,18 @@ public:
             m_earlyStopCounter = 0;
             return false;
         }
-        
+
         m_earlyStopCounter++;
-        
+
         if(m_earlyStopCounter >= m_earlyStopPatience)
         {
             m_earlyStopTriggered = true;
             return true;
         }
-        
+
         return false;
     }
-    
+
     void Finalize()
     {
         LogMessage(StringFormat("Training completed | stop=%s | bestEpoch=%d | bestValLoss=%.6f",
@@ -192,10 +192,10 @@ public:
             m_logHandle = INVALID_HANDLE;
         }
     }
-    
+
     CTrainingMetrics GetTrainMetrics() const { return m_trainMetrics; }
     CTrainingMetrics GetValMetrics() const { return m_metrics; }
-    
+
 private:
     CFeedForwardNN *m_model_ptr;
 

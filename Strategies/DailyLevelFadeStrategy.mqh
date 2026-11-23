@@ -8,10 +8,10 @@
 // consensus.
 //
 // Shape:
-//   - The pierce must be on the last closed bar (bar 1), so the failure is fresh.
-//   - The pierce depth is capped at 1.0 ATR: deeper than that is a trend day, not a false break.
-//   - The close must be back inside by 0.2 ATR, so a close sitting exactly on the level is not a fade.
-//   - The stop sits 0.5 ATR beyond the spike extreme, so the risk is defined by the thing that failed.
+// - The pierce must be on the last closed bar (bar 1), so the failure is fresh.
+// - The pierce depth is capped at 1.0 ATR: deeper than that is a trend day, not a false break.
+// - The close must be back inside by 0.2 ATR, so a close sitting exactly on the level is not a fade.
+// - The stop sits 0.5 ATR beyond the spike extreme, so the risk is defined by the thing that failed.
 #ifndef DAILY_LEVEL_FADE_STRATEGY_MQH
 #define DAILY_LEVEL_FADE_STRATEGY_MQH
 

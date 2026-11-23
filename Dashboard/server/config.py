@@ -1,5 +1,10 @@
 """Dashboard server configuration."""
 
+import os
+
+# Shared secret for EA write/control routes. Empty = auth disabled (local dev).
+API_TOKEN = os.environ.get("EA_DASHBOARD_TOKEN", "")
+
 # Server settings
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765

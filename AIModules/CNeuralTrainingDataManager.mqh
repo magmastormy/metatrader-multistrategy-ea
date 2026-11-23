@@ -37,7 +37,7 @@ public:
 };
 #endif // CBarrierLabelResolver_MQH
 
-// ENHANCEMENT: Neural network buffer size constants (Batch 93)
+// ENHANCEMENT: Neural network buffer size constants
 #ifndef NN_MAX_TRAINING_EXAMPLES
 #define NN_MAX_TRAINING_EXAMPLES 2000
 #endif
@@ -168,11 +168,11 @@ public:
         if(ArraySize(metaInput) >= ML_INPUT)
             for(int i = 0; i < ML_INPUT; i++)
                 m_trainingBuffer[idx].metaInput[i] = metaInput[i];
-        
+
         m_trainHead++;
         if(m_trainCount < NN_MAX_TRAINING_EXAMPLES)
             m_trainCount++;
-        
+
         return idx;
     }
 
@@ -180,22 +180,22 @@ public:
     {
         if(m_trainCount < batchSize)
             return false;
-        
+
         // Resize both dimensions upfront
         ArrayResize(inputs, batchSize, maxFeatures);
         ArrayResize(labels, batchSize);
-        
+
         for(int b = 0; b < batchSize; b++)
         {
             int idx = (m_trainHead - batchSize + b) % NN_MAX_TRAINING_EXAMPLES;
             if(idx < 0) idx += NN_MAX_TRAINING_EXAMPLES;
-            
+
             // Copy features to pre-sized row
             for(int i = 0; i < maxFeatures && i < FEATURE_VECTOR_SIZE; i++)
                 inputs[b][i] = m_trainingBuffer[idx].inputs[i];
             labels[b] = m_trainingBuffer[idx].labelClass;
         }
-        
+
         return true;
     }
 
@@ -223,11 +223,11 @@ public:
         if(ArraySize(metaInput) >= ML_INPUT)
             for(int i = 0; i < ML_INPUT; i++)
                 m_barrierBuffer[idx].metaInput[i] = metaInput[i];
-        
+
         m_barrierHead++;
         if(m_barrierCount < NN_MAX_PERSISTED_SAMPLES)
             m_barrierCount++;
-        
+
         return idx;
     }
 
@@ -247,19 +247,25 @@ public:
             if(symbol != "" && m_barrierBuffer[i].entryBarTime > 0)
             {
                 int entryShift = iBarShift(symbol, timeframe, m_barrierBuffer[i].entryBarTime, false);
-                int firstShift = MathMin(entryShift - 1, m_barrierVertBars);
                 int hitLabel = 0;
-                // Walk completed bars from entry forward in time; the stop is tested first so a bar touching both barriers counts as a loss.
-                for(int s = firstShift; s >= 1 && hitLabel == 0; s--)
+                // Scan only the vertical-bars horizon after entry: a bar at shift s is
+                // (entryShift - s) bars after the entry bar, so iterating s downward walks
+                // forward in time. Shift 0 is the forming bar and is excluded.
+                if(entryShift >= 1)
                 {
-                    double high = iHigh(symbol, timeframe, s);
-                    double low = iLow(symbol, timeframe, s);
-                    if(high <= 0 || low <= 0)
-                        continue;
-                    if(low <= m_barrierBuffer[i].lowerBarrier)
-                        hitLabel = 1;
-                    else if(high >= m_barrierBuffer[i].upperBarrier)
-                        hitLabel = 2;
+                    int oldestShift = MathMax(1, entryShift - m_barrierVertBars);
+                    // The stop is tested first so a bar touching both barriers counts as a loss.
+                    for(int s = entryShift - 1; s >= oldestShift && hitLabel == 0; s--)
+                    {
+                        double high = iHigh(symbol, timeframe, s);
+                        double low = iLow(symbol, timeframe, s);
+                        if(high <= 0 || low <= 0)
+                            continue;
+                        if(low <= m_barrierBuffer[i].lowerBarrier)
+                            hitLabel = 1;
+                        else if(high >= m_barrierBuffer[i].upperBarrier)
+                            hitLabel = 2;
+                    }
                 }
                 if(hitLabel != 0)
                 {

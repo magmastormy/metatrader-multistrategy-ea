@@ -161,7 +161,7 @@ public:
     {
         if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
             m_timeframe = Period();
-        
+
         double closes[];
         ArraySetAsSeries(closes, true);
         int copied = CopyClose(m_symbol, m_timeframe, 0, m_lookbackPeriod, closes);

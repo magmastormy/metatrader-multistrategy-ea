@@ -709,9 +709,10 @@ private:
         }
 
         double maxLogit = MathMax(logits[0], MathMax(logits[1], logits[2]));
-        double exp0 = MathExp(logits[0] - maxLogit);
-        double exp1 = MathExp(logits[1] - maxLogit);
-        double exp2 = MathExp(logits[2] - maxLogit);
+        const double temp = MathMax(0.1, m_temperature);
+        double exp0 = MathExp((logits[0] - maxLogit) / temp);
+        double exp1 = MathExp((logits[1] - maxLogit) / temp);
+        double exp2 = MathExp((logits[2] - maxLogit) / temp);
         double sumExp = exp0 + exp1 + exp2;
         if(sumExp <= 1e-12)
             return false;
@@ -742,10 +743,11 @@ private:
                 maxLogit = score;
         }
 
+        const double temp = MathMax(0.1, m_temperature);
         double sumExp = 0.0;
         for(int c = 0; c < 10; c++)
         {
-            probabilities[c] = MathExp(logits[c] - maxLogit);
+            probabilities[c] = MathExp((logits[c] - maxLogit) / temp);
             sumExp += probabilities[c];
         }
         if(sumExp <= 1e-12)
@@ -1239,13 +1241,13 @@ public:
         }
 
         FileClose(fh);
-        
+
         if(!ValidateWeights())
         {
             PrintFormat("[TRANSFORMER] %s Checkpoint validation FAILED: NaN/Inf detected in weights", filePath);
             return false;
         }
-        
+
         return true;
     }
 };

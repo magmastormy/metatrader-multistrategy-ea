@@ -14,7 +14,7 @@
 class CGridRecoverySequence
 {
 public:
-// Batch 117: Use price SMA (not ATR SMA) for direction determination
+// Use price SMA (not ATR SMA) for direction determination
 // Compute 50-bar price SMA to determine mean-reversion direction
    static int DetermineGridDirection(const string symbol, double bid, double ask)
    {

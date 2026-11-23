@@ -458,15 +458,21 @@ private:
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
         double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
-        if(!CSignalGuards::IsSignalTradable(patternPrice, sl, tp, spreadPrice))
+        // patternPrice is the pattern bar's price, not the fill: measure the tradability guard and
+        // the pip distances off the live execution side so a drifted market cannot smuggle an
+        // inverted or understated stop through the gate.
+        double execPrice = isBullish ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                     : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        if(execPrice <= 0.0) execPrice = patternPrice;
+        if(!CSignalGuards::IsSignalTradable(execPrice, sl, tp, spreadPrice))
             return RejectSignal("CANDLE_NOT_TRADABLE");
 
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = isBullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
         request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-        request.stopLossPips = (sl > 0) ? MathAbs(patternPrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-        request.takeProfitPips = (tp > 0) ? MathAbs(tp - patternPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.stopLossPips = (sl > 0) ? MathAbs(execPrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (tp > 0) ? MathAbs(tp - execPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";

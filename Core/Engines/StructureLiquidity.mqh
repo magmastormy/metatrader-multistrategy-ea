@@ -30,7 +30,7 @@ bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
 {
     if(index < 2 || index >= ArraySize(rates) - 1)
         return false;
-    
+
     // Check for sweep above previous high
     if(ArraySize(swingHighs) > 0)
     {
@@ -40,12 +40,12 @@ bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
             // Wick above but close below = potential sweep
             double wickSize = rates[index].high - MathMax(rates[index].open, rates[index].close);
             double bodySize = MathAbs(rates[index].close - rates[index].open);
-            
+
             if(wickSize > bodySize * 2) // Strong rejection wick
                 return true;
         }
     }
-    
+
     // Check for sweep below previous low
     if(ArraySize(swingLows) > 0)
     {
@@ -55,12 +55,12 @@ bool CStructureLiquidity::DetectLiquiditySweep(const MqlRates &rates[],
             // Wick below but close above = potential sweep
             double wickSize = MathMin(rates[index].open, rates[index].close) - rates[index].low;
             double bodySize = MathAbs(rates[index].close - rates[index].open);
-            
+
             if(wickSize > bodySize * 2) // Strong rejection wick
                 return true;
         }
     }
-    
+
     return false;
 }
 

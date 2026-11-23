@@ -14,39 +14,39 @@ private:
         string                    symbol;
         CChartDrawingManager*     drawingManager;
         int                       objectCount;
-        
+
         SDrawingEntry() : symbol(""), drawingManager(NULL), objectCount(0) {}
-        
+
         ~SDrawingEntry()
         {
             if(CheckPointer(drawingManager) == POINTER_DYNAMIC) { delete drawingManager; drawingManager = NULL; }
         }
     };
-    
+
     SDrawingEntry m_entries[];
     int m_entryCount;
-    
+
     public:
     CDrawingManagerRegistry() : m_entryCount(0) { ArrayResize(m_entries, 0); }
     ~CDrawingManagerRegistry() { Clear(); }
-    
+
     void Clear()
     {
         ArrayResize(m_entries, 0);
         m_entryCount = 0;
     }
-    
+
     int Count() const { return m_entryCount; }
-    
+
     CChartDrawingManager* GetOrCreateManager(const string symbol, ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT, const string prefix = "")
     {
         if(symbol == "") return NULL;
-        
+
         int idx = GetIndex(symbol);
         if(idx < 0) return NULL;
-        
+
         SDrawingEntry entry = m_entries[idx];
-        
+
         if(entry.drawingManager == NULL)
         {
             entry.drawingManager = new CChartDrawingManager();
@@ -57,16 +57,16 @@ private:
             }
             m_entries[idx] = entry;
         }
-        
+
         return entry.drawingManager;
     }
-    
+
     CChartDrawingManager* GetManager(const string symbol)
     {
         int idx = GetIndex(symbol, false);
         return (idx >= 0) ? m_entries[idx].drawingManager : NULL;
     }
-    
+
     void ReleaseSymbol(const string symbol)
     {
         int idx = GetIndex(symbol, false);
@@ -78,7 +78,7 @@ private:
             m_entryCount--;
         }
     }
-    
+
     void UpdateObjectCounts()
     {
         for(int i = 0; i < m_entryCount; i++)
@@ -89,27 +89,27 @@ private:
             }
         }
     }
-    
+
     int GetIndex(const string symbol, bool createIfMissing = true)
     {
         for(int i = 0; i < m_entryCount; i++)
             if(m_entries[i].symbol == symbol) return i;
-        
+
         if(!createIfMissing) return -1;
-        
+
         int idx = m_entryCount;
         ArrayResize(m_entries, idx + 1);
         m_entries[idx].symbol = symbol;
         m_entryCount++;
         return idx;
     }
-    
+
     void RegisterAll(CChartDrawingManager* &managers[], const string &symbols[], int count)
     {
         for(int i = 0; i < count; i++)
         {
             if(symbols[i] == "") continue;
-            
+
             int idx = GetIndex(symbols[i], true);
             if(idx >= 0 && managers[i] != NULL)
             {

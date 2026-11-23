@@ -11,8 +11,8 @@
 // Encapsulates detection, tracking, and remediation of positions
 // that lack stop-loss protection. Implements a 3-attempt
 // escalation protocol before forced closure.
-// L5-022 FIX: Pass min/max magic directly to Initialize()
-// L5-023 FIX: Context-aware escalation (position size, DD, vol)
+// FIX: Pass min/max magic directly to Initialize()
+// FIX: Context-aware escalation (position size, DD, vol)
 class CUnprotectedPositionTracker
 {
 private:
@@ -25,7 +25,7 @@ private:
     int                  m_remediationIntervalSec;
     int                  m_maxRestoreAttempts;
 
-    // L5-023: Context-aware escalation parameters
+    // Context-aware escalation parameters
     double               m_maxPositionSizeForEscalation; // Max position size (lots) before aggressive escalation
     double               m_maxDrawdownForEscalation;     // Max drawdown % before aggressive escalation
     double               m_volatilityThreshold;          // ATR threshold for high volatility
@@ -61,7 +61,7 @@ public:
         m_maxRestoreAttempts      = MathMax(1, maxRestoreAttempts);
     }
 
-// Set context-aware escalation parameters (L5-023)
+// Set context-aware escalation parameters
     void SetEscalationContext(double maxPositionSizeLots, double maxDrawdownPct, double volatilityATRThreshold)
     {
         m_maxPositionSizeForEscalation = MathMax(0.01, maxPositionSizeLots);
@@ -237,7 +237,7 @@ public:
                 continue;
             }
 
-            // L5-023: Calculate context-aware escalation parameters
+            // Calculate context-aware escalation parameters
             double profitPct = 0.0;
             if(openPrice > 0.0)
             {
@@ -246,10 +246,10 @@ public:
                 else
                     profitPct = (openPrice - currentPrice) / openPrice * 100.0;
             }
-            
+
             datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
             int minutesHeld = (int)((nowTime - openTime) / 60);
-            
+
             // Get ATR for volatility-aware SL distance
             double atr = 0.0;
             CIndicatorManager* indMgr = CIndicatorManager::Instance();
@@ -263,35 +263,35 @@ public:
                         atr = atrBuf[0];
                 }
             }
-            
+
             double fallbackStopPoints = BuildFallbackStopPoints(symbol, currentPrice);
-            
-            // L5-023: Adjust fallback distance based on context
+
+            // Adjust fallback distance based on context
             // High volatility = wider SL
             if(atr > 0.0 && atr > m_volatilityThreshold)
             {
                 double atrPoints = atr / SymbolInfoDouble(symbol, SYMBOL_POINT);
                 fallbackStopPoints = MathMax(fallbackStopPoints, atrPoints * 1.5);
             }
-            
+
             // Large losing position = faster escalation
             bool isLargeLoss = (profitPct < -m_maxDrawdownForEscalation && volume > m_maxPositionSizeForEscalation);
             bool isOldPosition = (minutesHeld > 480); // 8 hours
-            
+
             double fallbackTakeProfitPoints = fallbackStopPoints * 2.0;
             ENUM_ORDER_TYPE syntheticOrderType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
             double newSL = m_tradeManager.CalculateStopLoss(symbol, syntheticOrderType, currentPrice, fallbackStopPoints);
             double newTP = m_tradeManager.CalculateTakeProfit(symbol, syntheticOrderType, currentPrice, fallbackTakeProfitPoints);
 
             // --- Attempt 1: Standard SL at fallback distance ---
-            // L5-023: For large losing positions, skip to faster escalation
+            // For large losing positions, skip to faster escalation
             bool skipStandardSL = isLargeLoss || isOldPosition;
-            
+
             if(!skipStandardSL && newSL > 0.0 && m_tradeManager.ModifyPosition(ticket, newSL, newTP))
             {
                 restoredCount++;
                 ClearTicket(ticket);
-                PrintFormat("[RISK-UNPROTECTED] Escalation-1: Standard SL applied | ticket=%I64u | SL=%.5f | P&L=%.2f%% | vol=%.2f", 
+                PrintFormat("[RISK-UNPROTECTED] Escalation-1: Standard SL applied | ticket=%I64u | SL=%.5f | P&L=%.2f%% | vol=%.2f",
                             ticket, newSL, profitPct, volume);
                 continue;
             }
@@ -319,7 +319,7 @@ public:
             {
                 restoredCount++;
                 ClearTicket(ticket);
-                PrintFormat("[RISK-UNPROTECTED] Escalation-2: Broker-min SL applied | ticket=%I64u | SL=%.5f | P&L=%.2f%% | vol=%.2f", 
+                PrintFormat("[RISK-UNPROTECTED] Escalation-2: Broker-min SL applied | ticket=%I64u | SL=%.5f | P&L=%.2f%% | vol=%.2f",
                             ticket, minSL, profitPct, volume);
                 continue;
             }
@@ -329,9 +329,9 @@ public:
             SetAttempts(ticket, attempts);
             restoreFailedCount++;
 
-            // L5-023: Force close for large losses regardless of attempt count
+            // Force close for large losses regardless of attempt count
             bool forceClose = isLargeLoss && isOldPosition;
-            
+
             if(forceClose || attempts >= m_maxRestoreAttempts)
             {
                 string reason = forceClose ? "SL remediation: large loss, old position" : "SL remediation escalation: all attempts failed";

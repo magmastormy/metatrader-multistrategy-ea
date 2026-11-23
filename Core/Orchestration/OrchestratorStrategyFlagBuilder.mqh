@@ -117,7 +117,7 @@ public:
 
                     // No print here: this builder runs once per scan per symbol, and the family/flags it
                     // reports are static for the symbol. The same information is printed once at init
-                    // ([DERIV-PROFILER] family=... -> ... enabled) and per symbol by [WIRE-STATUS];
+                    // ([DERIV-PROFILER] family=... ->... enabled) and per symbol by [WIRE-STATUS];
                     // repeating it every scan was pure journal I/O, not telemetry.
                 }
                 else

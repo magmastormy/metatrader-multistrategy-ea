@@ -17,10 +17,10 @@
 #include "..\Risk\SafeModeConfig.mqh"
 #include "..\..\IndicatorManager.mqh"
 
-// Phase H �?extracted lifecycle modules (complete types required:
+// Phase H - extracted lifecycle modules (complete types required:
 // they are owned BY VALUE by CPositionLifecycleManager below).
-// PosLifecyclePyramid.mqh    defines CPyramidState      (public type, re-exported)
-// PosLifecycleVolatility.mqh defines CVolatilityRegime  (public type, re-exported)
+// PosLifecyclePyramid.mqh defines CPyramidState (public type, re-exported)
+// PosLifecycleVolatility.mqh defines CVolatilityRegime (public type, re-exported)
 #include "PosLifecycleMagicFilter.mqh"
 #include "PosLifecyclePyramid.mqh"
 #include "PosLifecycleVolatility.mqh"
@@ -209,7 +209,7 @@ public:
         return NULL;
     }
 
-    //--- Main entry point �?replaces ManageOpenPositionsIfNeeded()
+    //--- Main entry point - replaces ManageOpenPositionsIfNeeded()
     void ManagePositions()
     {
         if(!m_initialized || PositionsTotal() <= 0)
@@ -234,7 +234,7 @@ public:
             ManageMaxHoldTime();
     }
 
-    //--- Signal Reversal Exit (SRE) �?high-speed scalp logic
+    //--- Signal Reversal Exit (SRE) - high-speed scalp logic
     bool CheckSignalReversalExit()
     {
         if(!m_sreEnabled)
@@ -257,10 +257,26 @@ public:
             double confidence = 0;
             int confluence = 0;
             ENUM_TRADE_SIGNAL currentSignal;
-            if(!m_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence))
+            // The dominant cluster travels inside the cache entry: on a hit, the manager's live
+            // decision context may already belong to a different evaluation (e.g. the new-bar entry
+            // scan that ran after the intrabar eval), which would pair this signal with the wrong
+            // cluster and fire structural exits on a decision that never happened.
+            int decisionCluster = -1;
+            bool haveDecisionContext = false;
+            if(!m_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence, decisionCluster))
             {
                 currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
-                m_consensusCache.Store(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence);
+                SConsensusDecisionContext freshContext;
+                if(manager.GetLastDecisionContext(freshContext))
+                {
+                    decisionCluster = (int)freshContext.dominantCluster;
+                    haveDecisionContext = true;
+                }
+                m_consensusCache.Store(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence, decisionCluster);
+            }
+            else
+            {
+                haveDecisionContext = (decisionCluster >= 0);
             }
 
             bool reversalDetected = false;
@@ -302,7 +318,7 @@ public:
                     {
                         if(!hasBreathingRoom || lossR > 0.50)
                         {
-                            // Issue 9 fix: SRE profit guard �?only trigger signal reversal
+                            // Issue 9 fix: SRE profit guard - only trigger signal reversal
                             // exit when position is in profit or still near entry. If the
                             // position has drifted deep into loss (>25% of SL distance),
                             // skip SRE and let structural invalidation or hard SL decide.
@@ -334,10 +350,9 @@ public:
 
                 if(m_structuralInvalidationEnabled && !reversalDetected && !sreHeldByEarlierAbstain)
                 {
-                    SConsensusDecisionContext context;
-                    if(manager.GetLastDecisionContext(context))
+                    if(haveDecisionContext)
                     {
-                        if(context.dominantCluster == STRUCTURE_CLUSTER && confidence >= 0.45)
+                        if((ENUM_STRATEGY_CLUSTER)decisionCluster == STRUCTURE_CLUSTER && confidence >= 0.45)
                         {
                             if(lossR > 0.10 || !inLoss)
                             {
@@ -371,7 +386,7 @@ public:
         if(m_lastManageTimeMs != 0 && (nowMs - m_lastManageTimeMs) < 500)
             return;
 
-        // I2: Check regime state �?pause trailing in ranging markets
+        // I2: Check regime state - pause trailing in ranging markets
         bool pauseTrailing = false;
         if(m_regimeEngine != NULL)
         {
@@ -401,10 +416,10 @@ public:
                 bool isBuy = (type == POSITION_TYPE_BUY);
                 double buffer = m_breakevenBufferPts * point;
 
-                // Only move to breakeven �?no trailing in ranging market
+                // Only move to breakeven - no trailing in ranging market
                 if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
                 {
-                    // Batch 116: SL at openPrice + buffer (full offset), not buffer * 0.1
+                    // SL at openPrice + buffer (full offset), not buffer * 0.1
                     double newSL = NormalizeDouble(openPrice + buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
                     if(newSL > currentSL)
                     {
@@ -415,7 +430,7 @@ public:
                 }
                 else if(!isBuy && currentPrice <= openPrice - buffer && (currentSL > openPrice || currentSL == 0))
                 {
-                    // Batch 116: SL at openPrice - buffer (full offset), not buffer * 0.1
+                    // SL at openPrice - buffer (full offset), not buffer * 0.1
                     double newSL = NormalizeDouble(openPrice - buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
                     if(newSL < currentSL || currentSL == 0)
                     {
@@ -428,7 +443,7 @@ public:
         }
         else
         {
-            // Normal mode �?full BE + trailing
+            // Normal mode - full BE + trailing
             m_tradeManager.ManageAllPositions(m_breakevenBufferPts,
                                               m_trailingDistancePts,
                                               m_trailingStepPoints,
@@ -445,7 +460,7 @@ public:
         m_lastManageTimeMs = nowMs;
     }
 
-    // AGGRESSIVE: Pyramiding management �?delegated to CPosLifecyclePyramid
+    // AGGRESSIVE: Pyramiding management - delegated to CPosLifecyclePyramid
     void ManagePyramiding()
     {
         m_pyramid.ManagePyramiding(m_tradeManager, m_magicNumber, MagicMax());
@@ -466,7 +481,7 @@ public:
         m_pyramid.CleanupPyramidStates();
     }
 
-    // AGGRESSIVE: Dynamic SL/TP management �?delegated to CPosLifecycleVolatility
+    // AGGRESSIVE: Dynamic SL/TP management - delegated to CPosLifecycleVolatility
     void ManageDynamicSLTP()
     {
         m_volatility.ManageDynamicSLTP(m_tradeManager, m_symbols, m_symbolCount,
@@ -493,7 +508,7 @@ public:
         return CPosLifecycleVolatility::GetATR(symbol, period);
     }
 
-    // EXECUTION REFINEMENT: Loss minimization management �?delegated to CPosLifecycleLossGuard
+    // EXECUTION REFINEMENT: Loss minimization management - delegated to CPosLifecycleLossGuard
     void ManageLossMinimization()
     {
         m_lossGuard.ManageLossMinimization(m_tradeManager, m_magicNumber, MagicMax());
@@ -506,13 +521,13 @@ public:
         m_lossGuard.SetDailyRiskBudgetPercent(percent);
     }
 
-    // EXECUTION REFINEMENT: Partial profit taking management �?delegated to CPosLifecycleExit
+    // EXECUTION REFINEMENT: Partial profit taking management - delegated to CPosLifecycleExit
     void ManagePartialProfitTaking()
     {
         m_exitRules.ManagePartialProfitTaking(m_tradeManager, m_magicNumber, MagicMax());
     }
 
-    // Issue #44: Maximum position hold time management �?delegated to CPosLifecycleExit
+    // Maximum position hold time management - delegated to CPosLifecycleExit
     void ManageMaxHoldTime()
     {
         m_exitRules.ManageMaxHoldTime(m_tradeManager, m_magicNumber, MagicMax());

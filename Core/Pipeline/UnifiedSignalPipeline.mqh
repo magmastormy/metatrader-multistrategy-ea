@@ -23,9 +23,9 @@ private:
 
     // Injected from the EA: not allocated or freed by this class
     CSessionWeightManager* m_sessionWeightManager;
-    
+
     SignalFilterSettings m_filters;
-    
+
     string m_lastEvaluatedSymbol;
     bool m_intrabarContext;
     bool m_lastRegimeSnapshotValid;
@@ -40,17 +40,17 @@ private:
         datetime m_cachedContextBarTime;
         bool m_cachedContextPrepared;
         bool m_cachedContextIntrabar;
-    
-    
+
+
     bool m_budgetExhausted;
     datetime m_budgetExhaustedTime;
     datetime m_budgetExhaustedResetTime; // Daily reset time (midnight)
-    
+
     int m_filterOrderMap[7]; // Maps filter index to execution order
-    
+
     int m_regimeGateLogCounter;
     int m_regimeGateLogInterval;
-    
+
     void ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe);
     void RefreshEvidenceFromEngines(const string symbol);
@@ -73,17 +73,17 @@ private:
                                 double &confidence,
                                 string &vetoReasonTag);
     void LogFilterResult(const string filter, bool passed, const string reason);
-    
+
     void BuildFilterOrderMap();
-    
+
     void CheckBudgetExhaustedAutoClear();
-    
+
 public:
     CUnifiedSignalPipeline();
     ~CUnifiedSignalPipeline();
-    
+
     bool Initialize(SignalFilterSettings &settings);
-    
+
     // rawSignal is the voter's own GetSignal answer: this filter chain must not poll the strategy a
     // second time, because a per-bar or cooldown guard inside the strategy reads the repeat call as a new
     // scan and returns NONE, destroying the vote the caller already held.
@@ -91,20 +91,20 @@ public:
                                    ENUM_TIMEFRAMES timeframe,
                                    const ENUM_TRADE_SIGNAL rawSignal,
                                    double &confidence);
-    
+
     void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
     void SetIntrabarContext(const bool intrabarContext) { m_intrabarContext = intrabarContext; }
     void SetSessionWeightManager(CSessionWeightManager* mgr) { m_sessionWeightManager = mgr; }
     void ApplyFilterPreset(ENUM_FILTER_PRESET preset);
-    
+
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
     string GetLastFilterName() const { return m_lastFilterName; }
 
     // Spread cutoff called by CPostConsensusValidator; the ratio gate itself is in CSignalPipelineFilter
         bool ApplySpreadFilter(const string symbol, double &spreadScore, double overrideThreshold = -1.0, double atrValue = -1.0);
         void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
-    
+
         CTrendEngine* GetTrendEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetTrend(symbol) : NULL; }
         CStructureEngine* GetStructureEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetStructure(symbol) : NULL; }
         CLiquidityEngine* GetLiquidityEngine(const string symbol) { return m_mathRegistry ? m_mathRegistry.GetLiquidity(symbol) : NULL; }
@@ -155,10 +155,10 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
         Print("[UnifiedSignalPipeline] ERROR: Invalid filter settings, using defaults");
         return false;
     }
-    
+
     m_filters = settings;
     BuildFilterOrderMap();
-    
+
     Print("[UnifiedSignalPipeline] Initialized with filters: Trend=", m_filters.trend.enabled,
           " Volatility=", m_filters.volatility.enabled,
           " Liquidity=", m_filters.liquidity.enabled,
@@ -178,7 +178,7 @@ void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
         Print("[UnifiedSignalPipeline] WARNING: Invalid filter settings ignored");
         return;
     }
-    
+
     m_filters = settings;
     BuildFilterOrderMap();
     // Sole call site of ConfigureCostLimits: it reconfigures m_lastEvaluatedSymbol's regime engine only
@@ -198,7 +198,7 @@ void CUnifiedSignalPipeline::BuildFilterOrderMap()
 {
     for(int i = 0; i < 7; i++)
         m_filterOrderMap[i] = -1;
-    
+
     // where filterIndex: 0=RegimeCostGate, 1=Trend, 2=Volatility, 3=Liquidity, 4=Structure, 5=Time, 6=Session
     for(int i = 0; i < m_filters.filterOrder.filterOrderCount && i < 7; i++)
     {
@@ -212,16 +212,16 @@ void CUnifiedSignalPipeline::CheckBudgetExhaustedAutoClear()
 {
     if(!m_budgetExhausted)
         return;
-    
+
     // Auto-clear boundary is the server-time day start (TimeCurrent() % 86400)
     datetime currentTime = TimeCurrent();
     datetime currentDate = currentTime - TimeCurrent() % 86400; // Start of current day
-    
+
     if(m_budgetExhaustedResetTime == 0)
     {
         m_budgetExhaustedResetTime = currentDate + 86400; // Next midnight
     }
-    
+
     if(currentTime >= m_budgetExhaustedResetTime)
     {
         m_budgetExhausted = false;
@@ -285,10 +285,10 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
     ENUM_TRADE_SIGNAL signal = rawSignal;
 
     RefreshStructuralContext(symbol, timeframe);
-    
+
     // Gate order is m_filters.filterOrder's sequence; the first veto short-circuits every later gate
     bool passed = true;
-    
+
     for(int order = 0; order < m_filters.filterOrder.filterOrderCount && order < 7 && passed; order++)
     {
         int filterIdx = -1;
@@ -300,10 +300,10 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
                 break;
             }
         }
-        
+
         if(filterIdx == -1)
             continue;
-        
+
         bool filterEnabled = false;
         switch(filterIdx)
         {
@@ -315,13 +315,13 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
             case 5: filterEnabled = m_filters.session.enableTimeFilter; break;
             case 6: filterEnabled = m_filters.session.enableSessionFilter; break;
         }
-        
+
         if(!filterEnabled)
             continue;
-        
+
         bool filterPassed = false;
         string vetoReason = "";
-        
+
         switch(filterIdx)
         {
             case 0: // RegimeCostGate
@@ -348,14 +348,14 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
                 filterPassed = ApplySessionFilter(symbol);
                 break;
         }
-        
+
         if(!filterPassed)
         {
             passed = false;
             break;
         }
     }
-    
+
     m_lastEvidence.contextScore = ComputeContextScore(signal);
     m_lastEvidence.readinessScore = ComputeReadinessScore();
 
@@ -455,7 +455,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
                     m_intrabarContext ? "true" : "false");
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, effectiveMinConfidence));
     m_lastEvidence.effectiveMinConfidence = m_lastEffectiveMinConfidence;
-    
+
     // Soft band: within 0.06 of the threshold, context >= 0.62 and readiness >= 0.65 attenuate confidence instead of vetoing
     if(confidence < effectiveMinConfidence)
     {
@@ -475,7 +475,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
         }
         else
         {
-            LogFilterResult("ConfidenceFilter", false, 
+            LogFilterResult("ConfidenceFilter", false,
                            StringFormat("%s | Confidence %.2f below minimum %.2f (effective: %.2f)",
                                         thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
             passed = false;
@@ -483,7 +483,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
     }
     else if(confidence >= effectiveMinConfidence && confidence < baseMinConfidence)
     {
-        LogFilterResult("ConfidenceFilter", true, 
+        LogFilterResult("ConfidenceFilter", true,
                        StringFormat("%s | PASSED with adjusted threshold - Confidence: %.2f (min: %.2f, effective: %.2f)",
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
@@ -497,13 +497,13 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(const string symbol,
         double adjustedConfidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend * stalenessBlend));
         confidence = adjustedConfidence;
     }
-    
+
     if(!passed)
     {
         signal = TRADE_SIGNAL_NONE;
         confidence = 0;
     }
-    
+
     return signal;
 }
 // Every gate below forwards into CSignalPipelineFilter/Weighter/Normalizer: no veto logic lives in this file

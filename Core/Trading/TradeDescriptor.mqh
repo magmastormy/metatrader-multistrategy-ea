@@ -3,7 +3,7 @@
 // All members are static pure functions - no instance state.
 // Bodies are verbatim copies; the original `const` qualifier on
 // OrderTypeFromString was dropped because MQL5 does not permit
-// `static ... const` methods.
+// `static... const` methods.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict
@@ -38,7 +38,7 @@ public:
             case TRADE_RETCODE_POSITION_CLOSED:  return "Position closed";
             case TRADE_RETCODE_TRADE_DISABLED:   return "Trading disabled";
             case TRADE_RETCODE_HEDGE_PROHIBITED: return "Hedging prohibited";
-            // Batch 152 (T-11): async/partial/connection outcomes were falling
+            // (T-11): async/partial/connection outcomes were falling
             // through to "Unknown error" although they are routine live results.
             case TRADE_RETCODE_PLACED:           return "Order placed";
             case TRADE_RETCODE_DONE_PARTIAL:     return "Partial fill";

@@ -24,34 +24,34 @@ public:
     static SRetryConfig m_defaultRetryConfig;
     static int m_retryAttempts[100];
     static datetime m_lastRetryTime[100];
-    
+
     static SErrorAggregation m_errorAggregations[50];
     static int m_aggregationCount;
     static int m_aggregationWindowSeconds;
     static bool m_aggregationEnabled;
-    
+
 public:
     static CEnhancedErrorHandler* GetInstance();
     static bool IsGracefulDegradationEnabled();
     static bool ShouldDisableComponent(const string componentName);
-    
+
     static void LogError(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context);
     static void LogError(const SErrorContext &context);
     static void LogError(const ENUM_ERROR_SEVERITY severity, const string component, const string message, const int errorCode = 0);
     static void LogTradeError(const string symbol, const ENUM_ORDER_TYPE orderType, const double volume, const string errorMessage);
     static void WriteToLog(const string message);
-    
+
     static void LogVerbose(const ENUM_LOG_VERBOSITY level, const string message);
     static void LogDebug(const string component, const string message);
-    
+
     static int FindComponentIndex(const string componentName);
     static string GetSeverityString(const ENUM_ERROR_SEVERITY severity);
     static string FormatErrorMessage(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context);
-    
+
     static bool IsRecoverableError(const int errorCode);
     static ENUM_ERROR_SEVERITY GetErrorSeverity(const int errorCode);
     static bool HandleMT5Error(const string context = "");
-    
+
     static void RegisterComponent(const string componentName);
     static void UpdateComponentHealth(const string componentName, const ENUM_COMPONENT_STATUS status, const string statusMessage = "");
     static void UpdateComponentHealthBySeverity(const string component, const ENUM_ERROR_SEVERITY severity);
@@ -63,14 +63,14 @@ public:
     static void CleanupOldRetryData();
     static void GetErrorStats(int &infoCount, int &warningCount,
                               int &recoverableCount, int &criticalCount, int &fatalCount);
-    
+
     static void SetVerbosityLevel(ENUM_LOG_VERBOSITY level);
     static ENUM_LOG_VERBOSITY GetVerbosityLevel();
     static void SetAggregationEnabled(bool enabled);
     static void SetAggregationWindow(int seconds);
     static void GetAggregatedErrors(SErrorAggregation &aggregations[], int &count);
     static void ClearAggregations();
-    
+
     static bool Initialize(const string logFileName, const ENUM_ERROR_SEVERITY minLevel = ERROR_INFO);
     static void Shutdown();
     static void DestroyInstance();
@@ -134,7 +134,7 @@ bool CEnhancedErrorHandler::Initialize(const string logFileName, const ENUM_ERRO
         m_componentHealth[i].lastHealthCheck = 0;
         m_componentHealth[i].performanceScore = 0.0;
     }
-    
+
     ArrayInitialize(m_retryAttempts, 0);
     ArrayInitialize(m_lastRetryTime, 0);
     // Cannot use ArrayInitialize with struct - initialize manually
@@ -204,10 +204,10 @@ void CEnhancedErrorHandler::DestroyInstance()
                 FileClose(handle);
             }
         }
-        
+
         delete m_instance;
         m_instance = NULL;
-        
+
         // Reset static members
         m_logFile = "";
         m_loggingEnabled = false;

@@ -23,9 +23,9 @@ void OnStart()
 {
     Print("=== MQH Hyperparameter Tuner ===");
     PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
-    
+
     CHyperparameterOptimizer tuner;
-    
+
     if(useDefaultCandidates)
     {
         tuner.AddDefaultCandidates();
@@ -41,16 +41,16 @@ void OnStart()
         customCandidate.hiddenLayer3Size = 8;
         customCandidate.epochs = 100;
         customCandidate.name = "Custom_Default";
-        
+
         tuner.AddCandidate(customCandidate);
     }
-    
+
     PrintFormat("[MQH-TUNER] Starting hyperparameter tuning with %d candidates", tuner.GetResultCount());
-    
+
     if(tuner.RunTuning(symbolName, g_timeframe, dataFile, g_valRatio, g_testRatio))
     {
         SHyperparameterSet bestParams = tuner.GetBestParameters();
-        
+
         Print("\n=== Best Parameters ===");
         PrintFormat("Name: %s", bestParams.name);
         PrintFormat("Learning Rate: %.6f", bestParams.learningRate);
@@ -61,21 +61,21 @@ void OnStart()
                     bestParams.hiddenLayer2Size,
                     bestParams.hiddenLayer3Size);
         PrintFormat("Epochs: %d", bestParams.epochs);
-        
+
         string resultsFile = StringFormat("HyperparameterResults_%s_%s_%s.csv",
                                           symbolName,
                                           EnumToString(g_timeframe),
                                           TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
-        
+
         tuner.SaveResults(resultsFile);
-        
+
         PrintFormat("[MQH-TUNER] Tuning results saved to: %s", resultsFile);
-        
+
         string bestParamsFile = StringFormat("BestParameters_%s_%s_%s.txt",
                                              symbolName,
                                              EnumToString(g_timeframe),
                                              TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
-        
+
         int fh = FileOpen(bestParamsFile, FILE_WRITE | FILE_COMMON);
         if(fh != INVALID_HANDLE)
         {
@@ -91,7 +91,7 @@ void OnStart()
             FileWriteString(fh, StringFormat("hiddenLayer3=%d\r\n", bestParams.hiddenLayer3Size));
             FileWriteString(fh, StringFormat("epochs=%d\r\n", bestParams.epochs));
             FileClose(fh);
-            
+
             PrintFormat("[MQH-TUNER] Best parameters saved to: %s", bestParamsFile);
         }
     }
@@ -99,6 +99,6 @@ void OnStart()
     {
         Print("[MQH-TUNER] Hyperparameter tuning failed");
     }
-    
+
     Print("\n=== MQH Hyperparameter Tuning Complete ===");
 }

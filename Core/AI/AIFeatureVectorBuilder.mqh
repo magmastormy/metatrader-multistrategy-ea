@@ -90,29 +90,29 @@ private:
             // Attempt to preload more historical data if insufficient
             static datetime s_lastPreloadAttempt = 0;
             datetime now = TimeCurrent();
-            
+
             // Try to load more history (limit attempts to avoid spam)
-            if(s_lastPreloadAttempt == 0 || (now - s_lastPreloadAttempt) >= 60)
+            if(availableBars > 0 && (s_lastPreloadAttempt == 0 || (now - s_lastPreloadAttempt) >= 60))
             {
                 PrintFormat("[AI-FEATURE] Preloading history for %s %s | available=%d | required=%d | deficit=%d",
                             symbol, EnumToString(timeframe), availableBars, requiredBars, requiredBars - availableBars);
-                
+
                 // Request additional bars from server
                 int barsToRequest = requiredBars - availableBars + 100; // Add buffer
                 datetime preloadStartTime = iTime(symbol, timeframe, MathMin(availableBars - 1, 1000));
-                
+
                 // Force history download by requesting older data
                 MqlDateTime dtStart;
                 TimeToStruct(preloadStartTime, dtStart);
                 dtStart.day -= 30; // Go back 30 days
                 datetime newStartTime = StructToTime(dtStart);
-                
+
                 // CopyRates will trigger history download if needed
                 MqlRates tempRates[];
                 int copied = CopyRates(symbol, timeframe, newStartTime, 1, tempRates);
-                
+
                 s_lastPreloadAttempt = now;
-                
+
                 // Recheck after preload attempt
                 availableBars = Bars(symbol, timeframe);
                 if(availableBars >= requiredBars)
@@ -122,7 +122,7 @@ private:
                     return true;
                 }
             }
-            
+
             static datetime s_lastHistoryLog = 0;
             if(s_lastHistoryLog == 0 || (now - s_lastHistoryLog) >= 60)
             {
@@ -298,7 +298,8 @@ private:
         if(CopyBuffer(handle, 0, shift, period, values) < period)
             return 0.0;
 
-        double current = values[0];
+        // Non-series copy lands OLDEST-first: values[period-1] is the bar at `shift`.
+        double current = values[period - 1];
         double sum = 0.0;
         double sumSq = 0.0;
         for(int i = 0; i < period; i++)
@@ -408,7 +409,7 @@ private:
                 // Check if it's a synthetic asset class that has spike profiles
                 return IsSyntheticAssetClass(profile.assetClass);
             }
-    
+
         // Fallback to string matching if profiler not available
         return (StringFind(symbol, "Volatility") >= 0 ||
                 StringFind(symbol, "Boom") >= 0 ||
@@ -729,13 +730,13 @@ public:
         bool currBearish = (close < open && close < (prev2Open + prev2Close) / 2.0);
         features[64] = (prev2Bullish && prev1Small && currBearish) ? 1.0 : 0.0;
 
-        // [65] Stochastic %K zone [-1,1]  (0..100 -> -1..1): overbought > +0.4, oversold < -0.4
+        // [65] Stochastic %K zone [-1,1] (0..100 -> -1..1): overbought > +0.4, oversold < -0.4
         features[65] = (stochK - 50.0) / 50.0;
         // [66] Stochastic %D (signal) zone [-1,1]
         features[66] = (stochD - 50.0) / 50.0;
         // [67] Stochastic slope (K - D) normalized [-1,1]: oscillator momentum
         features[67] = MathMax(-1.0, MathMin(1.0, (stochK - stochD) / 50.0));
-        // [68] RSI(14) zone [-1,1]  (0..1 -> -1..1): encodes overbought/oversold REGIME
+        // [68] RSI(14) zone [-1,1] (0..1 -> -1..1): encodes overbought/oversold REGIME
         features[68] = (rsi14 - 0.5) * 2.0;
         // [69] MACD histogram slope (current - lag1), normalized by ATR: momentum of the MACD
         features[69] = macdHistNorm - ((atr14 > 1e-9) ? (macdLag1 / (atr14 + 1e-9)) : 0.0);
@@ -800,7 +801,7 @@ public:
     static string GetFeatureNamesStatic()
     {
         string names = "";
-        string featureNames[70] = 
+        string featureNames[70] =
         {
             "logRet", "normRet", "closePosInRange", "logVolume", "atrRatio",
             "closeVsEma8", "closeVsEma21", "closeVsEma50", "ema8VsEma21", "ema21VsEma50",

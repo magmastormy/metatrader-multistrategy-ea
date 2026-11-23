@@ -9,7 +9,7 @@
 #include "../Core/Management/EntStrategyTypes.mqh"   // TradeSignalToString - the diag line at ~:1833 prints it
 #include "../Core/AI/NNModelStorage.mqh"
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
-#include "../Core/AI/VolatilityRegimeModel.mqh"   // Batch 277: fed here, read by the entry gate
+#include "../Core/AI/VolatilityRegimeModel.mqh"   // fed here, read by the entry gate
 #include "TransformerBrain.mqh"
 #include "MetaLabeler.mqh"
 #include "CNeuralCore.mqh"
@@ -212,7 +212,7 @@ public:
         for(int i = 0; i < 4; i++)
             out[i] = m_probs[i];
     }
-    
+
     int GetCurrentRegime() const
     {
         // Return index of highest probability regime
@@ -530,12 +530,12 @@ private:
         // Only resize if current size doesn't match required size
         int currentSizeM = ArraySize(m_adamM);
         int currentSizeV = ArraySize(m_adamV);
-        
+
         if(currentSizeM != total)
             ArrayResize(m_adamM, total);
         if(currentSizeV != total)
             ArrayResize(m_adamV, total);
-        
+
         ArrayInitialize(m_adamM, 0.0);
         ArrayInitialize(m_adamV, 0.0);
         m_adamStep = 0;
@@ -566,23 +566,23 @@ private:
     void UpdateNormalizationStats(const double &rawFeatures[], const int size)
     {
         m_featureCount++;
-        
+
         // Use EMA decay for adaptive normalization
         // This allows the normalization statistics to adapt to changing market conditions
         double alpha = m_normalizationDecay;
-        
+
         for(int i = 0; i < size; i++)
         {
             double delta = rawFeatures[i] - m_featureMean[i];
-            
+
             // Update mean with EMA
             m_featureMean[i] = (1.0 - alpha) * m_featureMean[i] + alpha * rawFeatures[i];
-            
+
             // Update variance with Welford's algorithm combined with EMA
             double delta2 = rawFeatures[i] - m_featureMean[i];
             m_featureM2[i] = (1.0 - alpha) * m_featureM2[i] + alpha * delta * delta2;
         }
-        
+
         if(m_featureCount >= NN_MIN_NORMALIZATION_SAMPLES)
             m_normalizationReady = true;
     }
@@ -632,7 +632,7 @@ private:
         {
             UpdateNormalizationStats(rawFeatures, FEATURE_VECTOR_SIZE);
             m_lastNormalizationBarTime = barTime;
-            
+
             // Log raw features every 20 bars for AI visualization
             m_featureLogCounter++;
             if(m_featureLogCounter % 20 == 0)
@@ -641,7 +641,7 @@ private:
                                                      TimeToString(barTime, TIME_DATE|TIME_MINUTES),
                                                      rawFeatures[0], rawFeatures[8], rawFeatures[9], rawFeatures[10]);
                 Print(featureSummary);
-                
+
                 // Log key normalized features
                 string normSummary = StringFormat("[FEATURES-NORM] F0=%.3f | F8=%.3f | F15=%.3f | F25=%.3f",
                                                   normalizedFeatures[0], normalizedFeatures[8],
@@ -1064,7 +1064,15 @@ private:
             }
 
             int directionalLabel = -1;
-            if(upperHit)
+            if(upperHit && lowerHit)
+            {
+                // Same-bar double touch: resolve adverse-first to match the Python
+                // triple_barrier stop-first convention. For a BUY observation the lower
+                // barrier is the stop, for SELL the upper is - the ambiguous bar is a loss,
+                // not a coin-flip win for whichever side the if-chain reached first.
+                directionalLabel = (m_barrierBuffer[i].signalClass == 1) ? 2 : 1;
+            }
+            else if(upperHit)
                 directionalLabel = 1;  // BUY class
             else if(lowerHit)
                 directionalLabel = 2;  // SELL class
@@ -1542,31 +1550,31 @@ private:
 
         ulong storedChecksum = (ulong)FileReadLong(fh);
         ulong computedChecksum = ComputeCheckpointChecksum();
-        
+
         FileClose(fh);
-        
+
         if(storedChecksum != computedChecksum)
         {
             m_lastLoadStatus = "REJECTED_CHECKSUM_MISMATCH";
-            PrintFormat("[NEURAL-NET] %s Checkpoint checksum mismatch: stored=0x%016llX, computed=0x%016llX", 
+            PrintFormat("[NEURAL-NET] %s Checkpoint checksum mismatch: stored=0x%016llX, computed=0x%016llX",
                        m_symbol, storedChecksum, computedChecksum);
             return false;
         }
-        
+
         if(!m_enableOnlineTraining)
             m_enableSelfLabeling = false;
         else if(!persistedOnlineTraining)
             m_enableSelfLabeling = false;
         else
             m_enableSelfLabeling = m_enableSelfLabeling && persistedSelfLabeling;
-        
+
         if(!ValidateWeights())
         {
             m_lastLoadStatus = "REJECTED_INVALID_WEIGHTS";
             PrintFormat("[NEURAL-NET] %s Checkpoint validation FAILED: NaN/Inf detected in weights", m_symbol);
             return false;
         }
-        
+
         m_lastLoadStatus = "LOADED";
         return true;
     }
@@ -1574,7 +1582,13 @@ private:
 public:
     CNeuralNetworkStrategy()
     {
-        m_randomState = (uint)((ulong)TimeCurrent() * 2654435761ULL);
+        // Deterministic per-instance seed: a TimeCurrent() seed made every cold run initialise
+        // different weights (and therefore emit different early predictions) on identical ticks,
+        // breaking tester reproducibility. Construction order is fixed, so a sequence counter
+        // gives each instance stable, distinct weights across runs.
+        static int s_initSeq = 0;
+        s_initSeq++;
+        m_randomState = (uint)(1000003 + s_initSeq * 7919);
         m_initialized = false;
         m_enableOnlineTraining = true;
         m_enableSelfLabeling = true;
@@ -1807,7 +1821,7 @@ public:
         if(!ExtractFeatures(normalizedFeatures, rawFeatures))
             return TRADE_SIGNAL_NONE;
 
-        // Batch 277: the 70-feature vector carries no directional information (measured at
+        // the 70-feature vector carries no directional information (measured at
         // noise level at every barrier geometry) but does carry volatility-regime
         // information (+1.0 to +5.4 points per symbol). This is where those features exist,
         // so this is the only place that can feed the regime model; the reader is the
@@ -1925,9 +1939,9 @@ public:
         {
             if(m_barrierBuffer[i].predictionId != predictionId)
                 continue;
+            // linkedToTrade is what ResolveBarriers counts once the label resolves; the
+            // counter is not touched here or wins would count twice and losses never.
             m_barrierBuffer[i].linkedToTrade = true;
-            if(profitLoss > 0.0)
-                m_tradeLinkedLabels++;
             return true;
         }
         return false;
@@ -1940,8 +1954,6 @@ public:
             if(m_barrierBuffer[i].entryBarTime <= tradeTime && !m_barrierBuffer[i].resolved)
             {
                 m_barrierBuffer[i].linkedToTrade = true;
-                if(profitLoss > 0.0)
-                    m_tradeLinkedLabels++;
                 return true;
             }
         }
@@ -1956,13 +1968,12 @@ public:
             return;
         if(m_tradeLinkedLabels < AI_MIN_TRADE_LINKED_LABELS)
         {
-            // Bootstrap exception: the trade-linked label path (ReservePredictionForSignal ->
-            // UpdateTradeResult*) is not currently wired into the trade-execution flow, so
-            // m_tradeLinkedLabels stays 0 and this gate would permanently block training.
-            // Training is what lets the network exit cold-start (>= NN_MIN_NORMALIZATION_SAMPLES
-            // resolved labels) and emit trusted signals; trusted signals being traded is what would
-            // accrue trade-linked labels. Requiring them first is a deadlock. Allow bootstrap
-            // training on self-labeled barrier/HOLD data and log the gap so it can be wired later.
+            // Bootstrap exception: trade-linked labels accrue through the wired path
+            // (ReservePredictionForSignal -> order comment | position map -> UpdateTradeResultByPredictionId),
+            // but only for trades a neural-net contributor actually took. Until enough of those exist,
+            // requiring them first deadlocks cold-start: training is what produces trusted signals,
+            // and trusted signals being traded is what accrues the labels. Allow bootstrap training on
+            // self-labeled barrier/HOLD data; the wired path counts every linked outcome.
             static datetime s_lastGateLog = 0;
             if(s_lastGateLog == 0 || (TimeCurrent() - s_lastGateLog) >= 300)
             {
@@ -2025,7 +2036,7 @@ public:
     {
         return SaveCheckpointAtomic(true);
     }
-    
+
     // Wrapper for adapter compatibility
     bool SaveCheckpoint()
     {

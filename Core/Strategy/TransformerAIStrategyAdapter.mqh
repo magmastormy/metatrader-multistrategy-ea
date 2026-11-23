@@ -39,13 +39,13 @@ private:
     double m_minConfidence;
     bool m_ownsTransformer;  // Track ownership for proper cleanup
     datetime m_voteWindowStart;  // Rolling vote window start time
-    
+
     // Direction calibration rolling window (last 20 predictions)
     int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
     int  m_directionWindowCount; // Number of filled slots (0..20)
     datetime m_lastCalibrationWarningTime;  // Throttle calibration warning logs
-    
+
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
@@ -56,12 +56,12 @@ private:
         int dirValue = 0;
         if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
-        
+
         m_directionWindow[m_directionWindowIdx] = dirValue;
         m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
         if(m_directionWindowCount < 20)
             m_directionWindowCount++;
-        
+
         // Check and log degenerate detection
         if(IsDirectionDegenerate())
         {
@@ -96,7 +96,7 @@ private:
         }
         return !success;
     }
-    
+
     bool InferenceFailed()
     {
         m_noneVotes++;
@@ -175,7 +175,7 @@ public:
         m_lastCalibrationWarningTime = 0;
         ArrayInitialize(m_directionWindow, 0);
     }
-    
+
     void SetSharedTransformer(CTransformerBrain* transformer)
     {
         // Only delete if we own the current transformer
@@ -186,7 +186,7 @@ public:
         m_transformer = transformer;
         m_ownsTransformer = false;  // Now using shared transformer
     }
-    
+
     virtual ~CTransformerAIStrategyAdapter()
     {
         if(m_ownsTransformer && m_transformer != NULL)
@@ -248,7 +248,7 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        
+
         datetime now = TimeCurrent();
         if(now - m_voteWindowStart >= 86400)
         {
@@ -306,7 +306,7 @@ public:
             double pSell = predictions[2];
 
             double directionalConfidence = MathMax(pBuy, pSell);
-            
+
             // Validate prediction values
             if(!IsValidConfidence(pNone) || !IsValidConfidence(pBuy) || !IsValidConfidence(pSell))
             {
@@ -317,7 +317,7 @@ public:
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
             }
-            
+
             confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
 
             if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= m_minConfidence)
@@ -352,14 +352,14 @@ public:
         LogVoteHeartbeat();
         return signal;
     }
-    
+
     virtual string GetName(void) const override { return "Transformer AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
     virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
-    
+
     virtual bool IsDirectionDegenerate(void) const override
     {
         if(m_directionWindowCount < 20)
@@ -375,7 +375,7 @@ public:
         double sellRatio = (double)sellCount / (double)windowSize;
         return (buyRatio > 0.80 || sellRatio > 0.80);
     }
-    
+
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
         if(IsDirectionDegenerate())
@@ -387,12 +387,12 @@ public:
         {
             return true; // MT5-native AI adapter: risk gate enforced at execution (CTradeManager pre-trade)
         }
-    
+
         virtual bool ShouldBypassTierConfidenceFloor(void) const override
         {
             return false; // Default: no bypass
         }
-    
+
         virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
@@ -421,45 +421,45 @@ public:
         if(m_transformer == NULL) return 0.5;
         return 1.0 - m_cachedConfidence;
     }
-    
+
     virtual bool IsModelHealthy(void) const override
     {
         return (m_transformer != NULL);
     }
-    
+
     virtual bool IsTraining(void) const override
     {
         return false;
     }
-    
+
     virtual int GetTrainingSteps(void) const override
     {
         return 0;
     }
-    
+
     virtual double GetTemperature(void) const override
     {
         return (m_transformer != NULL) ? m_transformer.GetTemperature() : 1.0;
     }
-    
+
     virtual void SetTemperature(const double temperature) override
     {
         if(m_transformer != NULL)
             m_transformer.SetTemperature(temperature);
     }
-    
+
     virtual int GetCurrentRegime(void) const override
     {
         return -1;
     }
-    
+
     virtual bool SaveCheckpoint(void) override
     {
         if(m_transformer == NULL || !m_ownsTransformer)
             return false;
         return m_transformer.SaveHeadState(NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe, TRANSFORMER_CHECKPOINT_VERSION));
     }
-    
+
     virtual string GetLastLoadStatus(void) const override
     {
         return (m_transformer != NULL) ? "LOADED" : "NOT_INITIALIZED";

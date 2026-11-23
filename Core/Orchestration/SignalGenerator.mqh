@@ -19,11 +19,11 @@ private:
     CConsensusCache* m_consensusCache;
 
     int m_evalBudgetPerCycle;
-    
+
     // Pending symbols queue (when budget exceeded)
     string m_pendingSymbols[];
     int m_pendingCount;
-    
+
     // Fair rotation index for the signal evaluation budget
     int m_evalStartIndex;
 
@@ -46,17 +46,17 @@ public:
         SConsensusDecisionContext decisionContext;
         bool valid;
         string vetoReason;
-        
+
         SSignalResult() : signal(TRADE_SIGNAL_NONE), confidence(0), confluence(0), valid(false) {}
     };
-    
+
     CSignalGenerator() : m_managerCount(0), m_consensusCache(NULL),
                              m_evalBudgetPerCycle(8),
                              m_pendingCount(0), m_dormantCount(0), m_evalStartIndex(0),
                              m_dormancyStrikeBars(3), m_dormancyCooldownMinutes(30)
         {
         }
-    
+
     ~CSignalGenerator() {}
 
     // The scan budget is InpMaxSignalEvaluationsPerCycle; the dormancy park is the operator's, because a
@@ -69,7 +69,7 @@ public:
         PrintFormat("[SCAN-POLICY] evalBudget=%d per cycle | dormancy: %d no-signal bars -> %d min park",
                     m_evalBudgetPerCycle, m_dormancyStrikeBars, m_dormancyCooldownMinutes);
     }
-    
+
     void Initialize(CEnterpriseStrategyManager* &managers[], string &symbols[], int count, CConsensusCache* cache)
     {
         m_managerCount = count;
@@ -86,7 +86,7 @@ public:
         ArrayResize(m_pendingSymbols, count);
         Print("[SignalGenerator] Initialized with ", count, " symbol managers");
     }
-    
+
                 bool GenerateSignals(ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], const string corrId = "")
                 {
                     ulong startTime = GetMicrosecondCount();
@@ -99,7 +99,7 @@ public:
                         CompactDormantEntries();
                         s_lastDormantCompact = now;
                     }
-                
+
                     // Single-threaded loop: the per-cycle eval budget below is the only throttle.
 
                 ArrayResize(results, m_managerCount);
@@ -151,7 +151,7 @@ public:
 
                     EvaluateSymbol(i, manager, evalMode, results, signalsGenerated, evaluationsUsed, corrId);
                 }
-        
+
                 // Requeue is gated on evaluationsUsed, never on signalsGenerated: signalsGenerated <=
                 // evaluationsUsed always, so gating on it would let starved symbols skip the queue.
                 for(int i = 0; i < m_managerCount; i++)
@@ -165,10 +165,10 @@ public:
                         }
                     }
                 }
-        
+
                                         ulong elapsed = GetMicrosecondCount() - startTime;
                                         CJsonLogger::LogPerformance("SignalGenerator", "GenerateSignals_us", (double)elapsed, corrId);
-        
+
                 static datetime s_lastBudgetLog = 0;
                 if(TimeCurrent() - s_lastBudgetLog >= 60)
                 {
@@ -177,10 +177,10 @@ public:
                                evalBudget, evaluationsUsed, signalsGenerated, m_pendingCount);
                     s_lastBudgetLog = TimeCurrent();
                 }
-        
+
                 return signalsGenerated > 0;
             }
-    
+
     void SelectSymbolsForEval(ENUM_SIGNAL_EVAL_MODE evalMode, int budget, bool &selected[], int &selectedCount)
         {
             selectedCount = 0;
@@ -204,7 +204,7 @@ public:
             // fewer than budget slots were available.
             m_evalStartIndex = (m_evalStartIndex + scanned) % m_managerCount;
         }
-    
+
     void RecordDormancyWarning(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
@@ -219,7 +219,7 @@ public:
             m_dormantCooldownUntil[idx] = 0;
             m_dormantCount++;
         }
-        
+
         m_dormantWarningCount[idx]++;
         if(m_dormantWarningCount[idx] >= m_dormancyStrikeBars)
         {
@@ -228,7 +228,7 @@ public:
                         symbol, m_dormantWarningCount[idx], m_dormancyCooldownMinutes);
         }
     }
-    
+
     void ClearDormancyWarning(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
@@ -240,7 +240,7 @@ public:
             RemoveDormantEntry(symbol);
         }
     }
-    
+
     // Periodic compact: remove stale dormancy entries past cooldown
     void CompactDormantEntries()
     {
@@ -253,7 +253,7 @@ public:
             }
         }
     }
-    
+
     bool IsInDormantCooldown(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
@@ -271,26 +271,26 @@ public:
         }
         return true;
     }
-    
+
     int FindDormantIndex(const string symbol)
     {
         for(int i = 0; i < m_dormantCount; i++)
             if(m_dormantSymbols[i] == symbol) return i;
         return -1;
     }
-    
+
     void RemoveDormantEntry(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
         if(idx < 0) return;
-        
+
         for(int i = idx; i < m_dormantCount - 1; i++)
         {
             m_dormantSymbols[i] = m_dormantSymbols[i + 1];
             m_dormantWarningCount[i] = m_dormantWarningCount[i + 1];
             m_dormantCooldownUntil[i] = m_dormantCooldownUntil[i + 1];
         }
-        
+
         m_dormantCount--;
         if(m_dormantCount > 0)
         {
@@ -304,16 +304,16 @@ public:
             ArrayFree(m_dormantWarningCount);
             ArrayFree(m_dormantCooldownUntil);
         }
-        
+
         PrintFormat("[DORMANT-REMOVED] %s | entry removed from tracking", symbol);
     }
-    
+
     void GetAggregateFunnel(ulong &signalsGenerated, ulong &afterPipeline, ulong &afterQuorum)
     {
         signalsGenerated = 0;
         afterPipeline = 0;
         afterQuorum = 0;
-        
+
         for(int i = 0; i < m_managerCount; i++)
         {
             if(m_managers[i] != NULL)
@@ -327,7 +327,7 @@ public:
             }
         }
     }
-    
+
         int FindManagerIndex(const string symbol) const
         {
             for(int i = 0; i < m_managerCount; i++)

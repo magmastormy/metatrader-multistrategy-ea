@@ -39,10 +39,10 @@ private:
     int m_adxPeriod;
     double m_trendThreshold;
     double m_strongTrendThreshold;
-    
+
     TrendState m_currentTrend;
     MTFTrendState m_mtfTrend;
-    
+
     int m_handleMAFast;
     int m_handleMAMedium;
     int m_handleMASlow;
@@ -57,9 +57,9 @@ private:
     // Extracted collaborators (owned by value)
     CTrendAdxHealth m_adxHealth;
     CTrendReadiness m_readiness;
-    
+
     CSignalDiagnostics* m_diagnostics;
-    
+
     bool InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool IndicatorsReadyForRead(int minBars);
     void ReleaseIndicators();
@@ -106,20 +106,20 @@ private:
                           bool &fallbackUsed);
     double CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timeframe, int period);
     ENUM_TREND_TYPE DetermineTrendType(double strength, double angle, double adx);
-    
+
 public:
     CTrendEngine();
     ~CTrendEngine();
-    
+
     double CalculateAtrFallback(const string symbol, ENUM_TIMEFRAMES timeframe, const int period) const;
-    
+
     bool Initialize(int maFast = 20, int maMedium = 50, int maSlow = 200,
                    int adxPeriod = 14, CSignalDiagnostics* diagnostics = NULL);
-    
+
     bool UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe);
-    bool UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf, 
+    bool UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf,
                        ENUM_TIMEFRAMES mtf, ENUM_TIMEFRAMES ltf);
-    
+
     ENUM_TREND_TYPE GetCurrentTrend() const { return m_currentTrend.type; }
     TrendState GetTrendState() const { return m_currentTrend; }
     MTFTrendState GetMTFTrendState() const { return m_mtfTrend; }
@@ -128,7 +128,7 @@ public:
     double GetMomentum() const { return m_currentTrend.momentum; }
     STrendReadinessSnapshot GetReadinessSnapshot() const { return m_readiness.GetSnapshot(); }
     void SetReadinessReuseTtlSeconds(const int seconds) { m_readiness.SetReuseTtlSeconds(seconds); }
-    
+
     bool IsTrendBullish() const;
     bool IsTrendBearish() const;
     bool IsStrongTrend() const;
@@ -137,14 +137,14 @@ public:
     bool IsTrendDecelerating() const { return m_currentTrend.isDecelerating; }
     bool IsMTFAligned() const { return m_mtfTrend.isAligned; }
     double GetMTFAlignment() const { return m_mtfTrend.alignment; }
-    
+
     bool ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES timeframe);
-    
+
     TrendState AnalyzeTrend(const string symbol, ENUM_TIMEFRAMES timeframe);
     double CalculateTrendStrength(double &ma_fast[], double &ma_medium[], double &ma_slow[], double adx);
     double CalculateTrendAngle(double &ma[], int period);
-    
+
     void Reset();
 };
 
@@ -182,15 +182,15 @@ bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
     m_maPeriodSlow = maSlow;
     m_adxPeriod = adxPeriod;
     m_diagnostics = diagnostics;
-    
+
     Reset();
-    
+
     if(m_diagnostics != NULL)
     {
         Print("[TrendEngine] Initialized | MA: ", maFast, "/", maMedium, "/", maSlow,
               " | ADX: ", adxPeriod);
     }
-    
+
     return true;
 }
 
@@ -198,7 +198,7 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
 {
     // Resolve PERIOD_CURRENT to actual chart timeframe
     ENUM_TIMEFRAMES resolvedTimeframe = (timeframe == PERIOD_CURRENT || timeframe == 0) ? Period() : timeframe;
-    
+
     bool useAdxModel = UsesAdxTrendModel(symbol);
     bool handlesReady = (m_handleMAFast != INVALID_HANDLE &&
                          m_handleMAMedium != INVALID_HANDLE &&
@@ -213,16 +213,16 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
         ReleaseIndicators();
         m_indicatorSymbol = symbol;
         m_indicatorTimeframe = resolvedTimeframe;
-    
+
         m_handleMAFast = iMA(symbol, resolvedTimeframe, m_maPeriodFast, 0, MODE_EMA, PRICE_CLOSE);
         if(m_handleMAFast == INVALID_HANDLE)
         {
             if(m_diagnostics != NULL)
-                m_diagnostics.LogStrategyError("TrendEngine", "MA_FAST_INIT_FAILED", 
+                m_diagnostics.LogStrategyError("TrendEngine", "MA_FAST_INIT_FAILED",
                                               "Failed to create fast MA indicator");
             return false;
         }
-    
+
         m_handleMAMedium = iMA(symbol, resolvedTimeframe, m_maPeriodMedium, 0, MODE_EMA, PRICE_CLOSE);
         if(m_handleMAMedium == INVALID_HANDLE)
         {
@@ -232,7 +232,7 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
                                               "Failed to create medium MA indicator");
             return false;
         }
-    
+
         m_handleMASlow = iMA(symbol, resolvedTimeframe, m_maPeriodSlow, 0, MODE_EMA, PRICE_CLOSE);
         if(m_handleMASlow == INVALID_HANDLE)
         {
@@ -242,7 +242,7 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
                                               "Failed to create slow MA indicator");
             return false;
         }
-    
+
         if(useAdxModel)
         {
             m_handleADX = iADX(symbol, resolvedTimeframe, m_adxPeriod);
@@ -257,7 +257,7 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
         }
         else
             m_handleADX = INVALID_HANDLE;
-    
+
         m_handleATR = iATR(symbol, resolvedTimeframe, 14);
     if(m_handleATR == INVALID_HANDLE)
     {
@@ -269,14 +269,14 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
     }
 
     m_readiness.ClearConsecutiveFaults();
-    
+
     return true;
 }
 
 bool CTrendEngine::IndicatorsReadyForRead(int minBars)
 {
     bool useAdxModel = UsesAdxTrendModel(m_indicatorSymbol);
-    
+
     if(useAdxModel && m_adxHealth.IsReinitPending())
     {
         if(!m_adxHealth.TryCompleteReinit(m_indicatorSymbol, m_indicatorTimeframe, m_handleADX, minBars))
@@ -286,7 +286,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
             return false;
         }
     }
-    
+
     if(m_handleMAFast == INVALID_HANDLE ||
        m_handleMAMedium == INVALID_HANDLE ||
        m_handleMASlow == INVALID_HANDLE ||
@@ -486,7 +486,17 @@ bool CTrendEngine::CopyOrFallbackMA(const string symbol,
 {
     ResetLastError();
     if(handle != INVALID_HANDLE && CopyBuffer(handle, 0, 0, 5, output) == 5)
+    {
+        // Non-series CopyBuffer lands OLDEST-first ([0]=shift 4, [4]=shift 0) while
+        // consumers and the EMA fallback expect [0]=newest - reverse to match.
+        for(int i = 0; i < 2; i++)
+        {
+            double tmp = output[i];
+            output[i] = output[4 - i];
+            output[4 - i] = tmp;
+        }
         return true;
+    }
 
     if(CalculateEmaFallbackSeries(symbol, timeframe, period, 5, output))
     {
@@ -524,25 +534,25 @@ void CTrendEngine::ReleaseIndicators()
         IndicatorRelease(m_handleMAFast);
         m_handleMAFast = INVALID_HANDLE;
     }
-    
+
     if(m_handleMAMedium != INVALID_HANDLE)
     {
         IndicatorRelease(m_handleMAMedium);
         m_handleMAMedium = INVALID_HANDLE;
     }
-    
+
     if(m_handleMASlow != INVALID_HANDLE)
     {
         IndicatorRelease(m_handleMASlow);
         m_handleMASlow = INVALID_HANDLE;
     }
-    
+
     if(m_handleADX != INVALID_HANDLE)
     {
         IndicatorRelease(m_handleADX);
         m_handleADX = INVALID_HANDLE;
     }
-    
+
     if(m_handleATR != INVALID_HANDLE)
     {
         IndicatorRelease(m_handleATR);
@@ -559,7 +569,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     int minBars = MathMax(m_maPeriodSlow + 5, m_adxPeriod + 5);
     if(!IndicatorsReadyForRead(minBars))
         return false;
-    
+
     double ma_fast[5], ma_medium[5], ma_slow[5];
     double adx[1], plusDI[1], minusDI[1], atr[1];
     adx[0] = -1.0;
@@ -568,7 +578,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     atr[0] = 0.0;
     bool atrFallbackUsed = false;
     bool maFallbackUsed = false;
-    
+
     if(!CopyOrFallbackMA(symbol, timeframe, m_handleMAFast, m_maPeriodFast, "MA_FAST_FALLBACK", ma_fast, maFallbackUsed) ||
        !CopyOrFallbackMA(symbol, timeframe, m_handleMAMedium, m_maPeriodMedium, "MA_MEDIUM_FALLBACK", ma_medium, maFallbackUsed) ||
        !CopyOrFallbackMA(symbol, timeframe, m_handleMASlow, m_maPeriodSlow, "MA_SLOW_FALLBACK", ma_slow, maFallbackUsed))
@@ -585,7 +595,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         }
         return TryReuseLastGoodTrend(symbol, timeframe, "MA_BUFFER_COPY_FAILED");
     }
-    
+
     bool adxValid = !useAdxModel;
     string adxModeLabel = useAdxModel ? "VALID" : "BYPASSED";
     if(useAdxModel)
@@ -598,7 +608,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         if(adxReadinessTag != "")
             SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, adxReadinessTag, false, 0);
     }
-    
+
     ResetLastError();
     if(CopyBuffer(m_handleATR, 0, 0, 1, atr) != 1)
     {
@@ -634,31 +644,31 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
             return TryReuseLastGoodTrend(symbol, timeframe, "ATR_BUFFER_COPY_FAILED");
         }
     }
-    
+
     double effectiveAdx = useAdxModel ? (adxValid ? adx[0] : 0.0) : -1.0;
 
     m_currentTrend.strength = CalculateTrendStrength(ma_fast, ma_medium, ma_slow, effectiveAdx);
-    
+
     m_currentTrend.angle = CalculateTrendAngle(ma_medium, 5);
-    
+
     m_currentTrend.momentum = CalculateMomentum(symbol, timeframe, 14);
-    
+
     m_currentTrend.volatility = atr[0];
-    
+
     m_currentTrend.type = DetermineTrendType(m_currentTrend.strength, m_currentTrend.angle, effectiveAdx);
     if(useAdxModel && !adxValid)
         m_currentTrend.type = TREND_RANGING;
-    
+
     double prevMomentum = m_currentTrend.momentum;
     double currMomentum = CalculateMomentum(symbol, timeframe, 7);
     m_currentTrend.isAccelerating = currMomentum > prevMomentum && m_currentTrend.strength > 50;
     m_currentTrend.isDecelerating = currMomentum < prevMomentum && m_currentTrend.strength < 50;
-    
+
     m_currentTrend.lastUpdate = TimeCurrent();
     m_readiness.RecordGoodTrend(m_currentTrend);
     if(!atrFallbackUsed && !maFallbackUsed)
         SetReadinessState(TREND_READINESS_HEALTHY, "HEALTHY", false, 0);
-    
+
     if(m_diagnostics != NULL)
     {
         datetime nowTime = TimeCurrent();
@@ -673,7 +683,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
             m_lastTrendLogTime = nowTime;
         }
     }
-    
+
     return true;
 }
 
@@ -683,9 +693,9 @@ bool CTrendEngine::UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf,
     m_mtfTrend.htf = AnalyzeTrend(symbol, htf);
     m_mtfTrend.mtf = AnalyzeTrend(symbol, mtf);
     m_mtfTrend.ltf = AnalyzeTrend(symbol, ltf);
-    
+
     CTrendMTF::ComputeAlignment(m_mtfTrend);
-    
+
     if(m_diagnostics != NULL)
     {
         string msg = StringFormat("MTF Alignment: %.1f%% | HTF: %s | MTF: %s | LTF: %s",
@@ -695,29 +705,29 @@ bool CTrendEngine::UpdateMTFTrend(const string symbol, ENUM_TIMEFRAMES htf,
                                 EnumToString(m_mtfTrend.ltf.type));
         Print("[TrendEngine] ", msg);
     }
-    
+
     return true;
 }
 
 TrendState CTrendEngine::AnalyzeTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     TrendState state;
-    
+
     TrendState savedState = m_currentTrend;
     STrendReadinessRestorePoint savedReadiness = m_readiness.Capture();
-    
+
     if(UpdateTrend(symbol, timeframe))
     {
         state = m_currentTrend;
     }
-    
+
     m_currentTrend = savedState;
     m_readiness.Restore(savedReadiness);
-    
+
     return state;
 }
 
-double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium[], 
+double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium[],
                                            double &ma_slow[], double adx)
 {
     return CTrendStrength::Calculate(ma_fast, ma_medium, ma_slow, adx,
@@ -764,7 +774,7 @@ bool CTrendEngine::ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES
 {
     if(!UpdateTrend(symbol, timeframe))
         return false;
-    
+
     if(m_currentTrend.strength > 50 && !m_currentTrend.isDecelerating)
     {
         if((IsTrendBullish() && m_currentTrend.momentum > 0) ||
@@ -773,7 +783,7 @@ bool CTrendEngine::ConfirmTrendContinuation(const string symbol, ENUM_TIMEFRAMES
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -781,7 +791,7 @@ bool CTrendEngine::DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES time
 {
     if(!UpdateTrend(symbol, timeframe))
         return false;
-    
+
     if(m_currentTrend.strength < 40 && m_currentTrend.isDecelerating)
     {
         if((IsTrendBullish() && m_currentTrend.momentum < -5) ||
@@ -790,7 +800,7 @@ bool CTrendEngine::DetectTrendReversal(const string symbol, ENUM_TIMEFRAMES time
             return true;
         }
     }
-    
+
     return false;
 }
 

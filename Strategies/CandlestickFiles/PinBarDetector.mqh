@@ -30,18 +30,18 @@ private:
     double m_minWickRatio;
     double m_maxBodyRatio;
     double m_minRangeATR;
-    
+
 public:
     CPinBarDetector() : m_analyzer(NULL), m_minWickRatio(2.5), m_maxBodyRatio(0.33), m_minRangeATR(0.5) {}
-    
+
     void SetAnalyzer(CCandleAnalyzer* analyzer) { m_analyzer = analyzer; }
-    
+
     bool DetectPinBar(int barIndex, SPinBar &pinBar)
     {
         if(m_analyzer == NULL) return false;
-        
+
         SCandleProperties candle = m_analyzer.AnalyzeCandle(barIndex);
-        
+
         double atr = m_analyzer.GetATR(14);
         // fail CLOSED during ATR warmup like the other detectors
         if(atr <= 0 || candle.totalRange < atr * m_minRangeATR)
@@ -51,7 +51,7 @@ public:
             return false;
 
         // BULLISH PIN BAR (Hammer)
-        // Batch 156: the opposite-wick test used body*0.5, which is
+        // the opposite-wick test used body*0.5, which is
         // unsatisfiable as the body approaches zero - the purest pins (the
         // whole point of the pattern) could never qualify. Bound it by range
         // instead so near-zero-body pins stay detectable.
@@ -61,7 +61,7 @@ public:
             double closePosition = (candle.close - candle.low) / candle.totalRange;
             if(closePosition < 0.75)
                 return false;
-            
+
             pinBar.type = PIN_BAR_BULLISH;
             pinBar.time = candle.time;
             pinBar.nosePrice = candle.low;
@@ -70,10 +70,10 @@ public:
             pinBar.bodySize = candle.body;
             pinBar.strength = CalculatePinBarStrength(candle, true);
             pinBar.atKeyLevel = false;
-            
+
             return true;
         }
-        
+
         // BEARISH PIN BAR (Shooting Star)
         else if(candle.upperWick >= candle.body * m_minWickRatio &&
                 candle.lowerWick < MathMax(candle.body * 0.5, candle.totalRange * 0.12))
@@ -81,7 +81,7 @@ public:
             double closePosition = (candle.close - candle.low) / candle.totalRange;
             if(closePosition > 0.25)
                 return false;
-            
+
             pinBar.type = PIN_BAR_BEARISH;
             pinBar.time = candle.time;
             pinBar.nosePrice = candle.high;
@@ -90,40 +90,40 @@ public:
             pinBar.bodySize = candle.body;
             pinBar.strength = CalculatePinBarStrength(candle, false);
             pinBar.atKeyLevel = false;
-            
+
             return true;
         }
-        
+
         return false;
     }
-    
+
 private:
     double CalculatePinBarStrength(SCandleProperties &candle, bool isBullish)
     {
         double strength = 0.50;
-        
-        double wickRatio = isBullish ? 
-            (candle.lowerWick / (candle.body + 0.000001)) : 
+
+        double wickRatio = isBullish ?
+            (candle.lowerWick / (candle.body + 0.000001)) :
             (candle.upperWick / (candle.body + 0.000001));
-        
+
         if(wickRatio >= 4.0)
             strength += 0.20;
         else if(wickRatio >= 3.0)
             strength += 0.15;
         else if(wickRatio >= 2.5)
             strength += 0.10;
-        
+
         if(candle.bodyRatio < 0.15)
             strength += 0.15;
         else if(candle.bodyRatio < 0.25)
             strength += 0.10;
-        
+
         double closePosition = (candle.close - candle.low) / candle.totalRange;
         if(isBullish && closePosition > 0.85)
             strength += 0.10;
         else if(!isBullish && closePosition < 0.15)
             strength += 0.10;
-        
+
         return MathMin(1.0, strength);
     }
 };

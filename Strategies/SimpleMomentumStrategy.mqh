@@ -47,17 +47,17 @@ private:
     {
         int requiredBars = minBars + 1;
         int maxBars = MathMax(requiredBars, 5); // Fetch extra for safety
-        
+
         double fastBuffer[];
         double slowBuffer[];
-        
+
         if(!SafeCopyBuffer(m_fastHandle, 0, 1, maxBars, fastBuffer) ||
            !SafeCopyBuffer(m_slowHandle, 0, 1, maxBars, slowBuffer))
         {
             PrintFormat("[MOMENTUM] Failed to fetch %d bars for crossover validation", maxBars);
             return false;
         }
-        
+
         // Non-series copies land OLDEST-first: the cross bar is maxBars-1, older bars walk
         // backwards. Indexing up from 0 reads pre-cross bars and rejects every valid cross.
         for(int k = 0; k < minBars; k++)
@@ -84,8 +84,8 @@ private:
                 }
             }
         }
-        
-        PrintFormat("[MOMENTUM] Crossover CONFIRMED for %d bars (direction=%s)", 
+
+        PrintFormat("[MOMENTUM] Crossover CONFIRMED for %d bars (direction=%s)",
                    minBars, direction > 0 ? "BULLISH" : "BEARISH");
         return true;
     }
@@ -97,7 +97,7 @@ private:
         if(CopyClose(m_symbol, m_timeframe, 1, 6, priceBuffer) < 6 ||
            !SafeCopyBuffer(m_rsiHandle, 0, 1, 6, rsiBuffer))
             return false; // fail closed: needs 6 closed bars; short history gives no veto
-        
+
         // Non-series copies land OLDEST-first: index 5 is the newest closed bar, so price
         // must make the fresh extreme at [5] against [5 - lookback], RSI the opposite.
         for(int lookback = 3; lookback <= 5; lookback++)
@@ -128,7 +128,7 @@ private:
                 }
             }
         }
-        
+
         return false;
     }
 
@@ -350,7 +350,7 @@ private:
     {
         double fastBuffer[3];
 
-        // Closed bars, oldest-first: [0]=shift 3 .. [2]=shift 1; reversed history made ROC reward deceleration.
+        // Closed bars, oldest-first: [0]=shift 3.. [2]=shift 1; reversed history made ROC reward deceleration.
         if(!SafeCopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer)) return false;
 
         emaNow = fastBuffer[2];
@@ -458,7 +458,7 @@ public:
     {
         m_minScalpTimeframe = minTf;
         m_maxScalpTimeframe = maxTf;
-        PrintFormat("[MOMENTUM] Scalp timeframe bounds set: %s to %s", 
+        PrintFormat("[MOMENTUM] Scalp timeframe bounds set: %s to %s",
                    EnumToString(m_minScalpTimeframe), EnumToString(m_maxScalpTimeframe));
     }
 
@@ -473,7 +473,7 @@ public:
             {
                 PrintFormat("[MOMENTUM-WARNING] Scalping mode on %s timeframe may produce inconsistent signals. ",
                            EnumToString(m_timeframe));
-                PrintFormat("  Recommended: %s to %s for scalping.", 
+                PrintFormat("  Recommended: %s to %s for scalping.",
                            EnumToString(m_minScalpTimeframe), EnumToString(m_maxScalpTimeframe));
                 return false;
             }
@@ -484,7 +484,7 @@ public:
             {
                 PrintFormat("[MOMENTUM-WARNING] Trend-following mode on %s timeframe may produce false signals. ",
                            EnumToString(m_timeframe));
-                PrintFormat("  Recommended: %s or higher for trend-following strategies.", 
+                PrintFormat("  Recommended: %s or higher for trend-following strategies.",
                            EnumToString(PERIOD_M5));
                 return false;
             }
@@ -525,7 +525,7 @@ public:
 
                 // The ATR floor is an absolute price value, so it must match the symbol scale
                 if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
-                    m_minVolatility = 0.05; 
+                    m_minVolatility = 0.05;
                 else
                     m_minVolatility = 0.0005;
 
@@ -552,7 +552,7 @@ public:
 
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("MOMENTUM_DISABLED_OR_UNINIT");
-        
+
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
            m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
@@ -596,7 +596,10 @@ public:
             avgATR += atrWindow[i];
         avgATR /= 9.0;
         double close1Vol = iClose(m_symbol, m_timeframe, 1);
-        double volFloor = MathMin(m_minVolatility, close1Vol * 0.0001);
+        // Floor, not ceiling: MathMin let the price-scaled term lower the absolute
+        // minimum, so the gate was weaker than configured on cheap symbols and the
+        // scaled term never mattered on expensive ones.
+        double volFloor = MathMax(m_minVolatility, close1Vol * 0.0001);
         if(curATR < volFloor)
         {
             return RejectSignal("MOMENTUM_LOW_VOLATILITY");
@@ -613,7 +616,7 @@ public:
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         bool crossedUp = (diffNow > threshold && diffPrev <= threshold);
         bool crossedDown = (diffNow < -threshold && diffPrev >= -threshold);
-        
+
         if(crossedUp)
         {
             if(m_minConfirmationBars > 1)
@@ -674,10 +677,10 @@ public:
 
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
-        
+
         if(HasRSIDivergence(signal))
             return RejectSignal("MOMENTUM_DIVERGENCE_DETECTED");
-            
+
         if(signal == TRADE_SIGNAL_BUY && rsi > m_rsiOverbought)
             return RejectSignal("MOMENTUM_RSI_OVERBOUGHT");
 
@@ -708,7 +711,7 @@ public:
         if(signal != TRADE_SIGNAL_NONE)
         {
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
-            
+
             // curATR against this symbol's own recent ATR average; an FX-scale absolute floor read ~100x on synthetics.
             double atrRatio = (avgATR > 0.0) ? curATR / avgATR : 1.0;
             if(atrRatio > 2.0)
@@ -723,7 +726,7 @@ public:
                 PrintFormat("[MOMENTUM-VOL] Elevated volatility | ATR ratio=%.2f | Confidence adjusted to %.1f%%",
                            atrRatio, momentumConfidence * 100);
             }
-            
+
             momentumConfidence *= rocMultiplier;
 
             double freshnessMod = GetMomentumFreshnessConfidence(signal);
@@ -764,7 +767,7 @@ public:
             double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
             if(!CSignalGuards::IsSignalTradable(currentPrice, slPrice, tpPrice, spreadPrice))
                 return RejectSignal("MOMENTUM_NOT_TRADABLE");
-            
+
             // CalculateSize clamps to SYMBOL_VOLUME_MAX and applies margin checks
             double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
                             if(m_positionSizer != NULL)
@@ -788,16 +791,16 @@ public:
             SetProposedStops(request.stopLossPips, request.takeProfitPips);
             if(!ValidateWithRiskManager(request, "MOMENTUM", confidence))
                 return TRADE_SIGNAL_NONE;
-            
+
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
             m_lastSignalTimestamp = TimeCurrent();
             m_signalsGenerated++;
             RecordSignal();
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
-            
+
             // [CONSENSUS-DIAG] is a mandated log signature (AGENTS.md section 6); do not drop it.
             LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, macdConfirmed ? "YES" : "NO", strongTrend ? "STRONG" : "WEAK"), confidence);
-            
+
             PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",
                        m_symbol,
                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",

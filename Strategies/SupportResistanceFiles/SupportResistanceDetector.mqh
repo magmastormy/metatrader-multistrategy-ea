@@ -35,7 +35,7 @@ struct SSupportResistance
     bool roleReversed;
     ENUM_TIMEFRAMES timeframe;
     bool isSupport;
-    
+
     SSupportResistance() : price(0), type(SR_SWING_HIGH_LOW), createdTime(0),
                           touches(1), strength(0.5), isBroken(false),
                           roleReversed(false), timeframe(PERIOD_CURRENT), isSupport(true) {}
@@ -50,10 +50,10 @@ private:
     int                 m_levelCount;
     int                 m_maxLevels;
     int                 m_atrHandle;
-    
+
     double              m_clusterTolerance;
     int                 m_swingStrength;
-    
+
     // Internal methods
     void                DetectSwingLevels(int lookback);
     void                DetectPsychologicalLevels();
@@ -62,7 +62,7 @@ private:
     void                CalculateStrength();
     void                UpdateTouches();
     double              GetAtrValue() const;
-    
+
     void                AddLevel(double price, ENUM_SR_TYPE type, bool isSupport, datetime barTime = 0)
     {
         // Dynamic resize - always ensure capacity
@@ -70,7 +70,7 @@ private:
         {
             ArrayResize(m_levels, m_levelCount + 50); // Add capacity in chunks of 50
         }
-        
+
         m_levels[m_levelCount].price = price;
         m_levels[m_levelCount].type = type;
         m_levels[m_levelCount].createdTime = (barTime > 0) ? barTime : TimeCurrent();
@@ -79,27 +79,27 @@ private:
         m_levels[m_levelCount].isSupport = isSupport;
         m_levelCount++;
     }
-    
+
 public:
                         CSupportResistanceDetector();
                        ~CSupportResistanceDetector();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   double clusterPips = 20, int swingStrength = 3);
-    
+
     void                DetectLevels(int lookback = 200);
     void                Update();
-    
+
     int                 GetLevelCount() const { return m_levelCount; }
     bool                GetLevel(int index, SSupportResistance &level);
     int                 FindNearestLevel(double price, double tolerancePips = 15);
     int                 FindNearestSupport(double price);
     int                 FindNearestResistance(double price);
-    
+
     bool                IsAtSupportLevel(double price, double tolerancePips = 15);
     bool                IsAtResistanceLevel(double price, double tolerancePips = 15);
     bool                HasRoleReversed(double price);
-    
+
     bool                DetectBreakout(double price, int &brokenLevelIndex);
 };
 
@@ -135,11 +135,11 @@ bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_levelCount = 0;
 
     m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
-    
+
     // ENHANCEMENT: Detect both significant and frequently-tested levels
     // Lower significance threshold from 0.30 ATR to 0.20 ATR for more touch points
     // Increase lookback from 200 to 300 bars for deeper historical context
-    
+
     return (m_atrHandle != INVALID_HANDLE);
 }
 
@@ -160,23 +160,23 @@ void CSupportResistanceDetector::DetectLevels(int lookback)
 {
     m_levelCount = 0;
     ArrayResize(m_levels, 0);
-    
+
     // ENHANCEMENT: Increased default lookback from 200 to 300 for deeper historical context
     int effectiveLookback = MathMax(lookback, 300);
-    
+
     // 1. Swing-based S/R
     DetectSwingLevels(effectiveLookback);
-    
+
     DetectPsychologicalLevels();
-    
+
     // 3. Daily/Weekly levels
     DetectTimeframeLevels();
-    
+
     // 4. Cluster nearby levels
     ClusterLevels();
-    
+
     CalculateStrength();
-    
+
     UpdateTouches();
 }
 
@@ -188,13 +188,13 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
     ArraySetAsSeries(time, true);
-    
+
     if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
     if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
     if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
-    
+
     int str = m_swingStrength;
-    
+
     // SIGNIFICANCE FILTER
     double atr = GetAtrValue();
     double minSwingSize = (atr > 0) ? atr * 0.20 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);  // LOWERED from 0.30 to 0.20
@@ -211,7 +211,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
                 break;
             }
         }
-        
+
         if(isSwingHigh)
         {
             double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
@@ -221,7 +221,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
             }
         }
     }
-    
+
     // Find swing lows (support)
     for(int i = str; i < lookback - str; i++)
     {
@@ -234,7 +234,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
                 break;
             }
         }
-        
+
         if(isSwingLow)
         {
             double neighborAvgLow = (low[i-1] + low[i+1]) / 2.0;
@@ -244,11 +244,11 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
             }
         }
     }
-    
+
     // ENHANCEMENT: Detect additional touch-point levels (less strict criteria)
     // These capture frequently-tested but smaller swings that act as micro S/R
     double touchPointThreshold = (atr > 0) ? atr * 0.12 : 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingHigh = true;
@@ -260,7 +260,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
                 break;
             }
         }
-        
+
         if(isSwingHigh)
         {
             double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
@@ -274,7 +274,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
             }
         }
     }
-    
+
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingLow = true;
@@ -286,7 +286,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
                 break;
             }
         }
-        
+
         if(isSwingLow)
         {
             double neighborAvgLow = (low[i-1] + low[i+1]) / 2.0;
@@ -304,18 +304,18 @@ void CSupportResistanceDetector::DetectPsychologicalLevels()
 {
     double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
-    
+
     double roundFactor = (digits == 5 || digits == 3) ? 100.0 : 1000.0;
     double roundLevel = MathRound(lastPrice * roundFactor) / roundFactor;
     double step = (digits == 5 || digits == 3) ? 0.01 : 0.001;
-    
+
     for(int i = -5; i <= 5; i++)
     {
         double level = roundLevel + (i * step);
-        
+
         // Dynamic array - no hard limit, but cap for performance
         if(m_levelCount >= 500) break; // Soft cap at 500 for performance
-        
+
         bool exists = false;
         for(int j = 0; j < m_levelCount; j++)
         {
@@ -325,7 +325,7 @@ void CSupportResistanceDetector::DetectPsychologicalLevels()
                 break;
             }
         }
-        
+
         if(!exists && level > 0)
         {
             AddLevel(level, SR_PSYCHOLOGICAL, (level < lastPrice));
@@ -338,45 +338,45 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
     // Yesterday's high/low
     double yesterdayHigh = iHigh(m_symbol, PERIOD_D1, 1);
     double yesterdayLow = iLow(m_symbol, PERIOD_D1, 1);
-    
+
     if(yesterdayHigh > 0)
     {
         AddLevel(yesterdayHigh, SR_DAILY_HIGH_LOW, false);
         m_levels[m_levelCount-1].strength = 0.75;
     }
-    
+
     if(yesterdayLow > 0)
     {
         AddLevel(yesterdayLow, SR_DAILY_HIGH_LOW, true);
         m_levels[m_levelCount-1].strength = 0.75;
     }
-    
+
     // Previous week high/low
     double lastWeekHigh = iHigh(m_symbol, PERIOD_W1, 1);
     double lastWeekLow = iLow(m_symbol, PERIOD_W1, 1);
-    
+
     if(lastWeekHigh > 0)
     {
         AddLevel(lastWeekHigh, SR_WEEKLY_HIGH_LOW, false);
         m_levels[m_levelCount-1].strength = 0.85;
     }
-    
+
     if(lastWeekLow > 0)
     {
         AddLevel(lastWeekLow, SR_WEEKLY_HIGH_LOW, true);
         m_levels[m_levelCount-1].strength = 0.85;
     }
-    
+
     // Previous month high/low
     double lastMonthHigh = iHigh(m_symbol, PERIOD_MN1, 1);
     double lastMonthLow = iLow(m_symbol, PERIOD_MN1, 1);
-    
+
     if(lastMonthHigh > 0)
     {
         AddLevel(lastMonthHigh, SR_MONTHLY_HIGH_LOW, false);
         m_levels[m_levelCount-1].strength = 0.90;
     }
-    
+
     if(lastMonthLow > 0)
     {
         AddLevel(lastMonthLow, SR_MONTHLY_HIGH_LOW, true);
@@ -388,7 +388,7 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
 void CSupportResistanceDetector::ClusterLevels()
 {
     double tolerance = m_clusterTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         for(int j = i + 1; j < m_levelCount; j++)
@@ -402,15 +402,15 @@ void CSupportResistanceDetector::ClusterLevels()
                 {
                     m_levels[i].price = m_levels[j].price;  // Keep j's price
                 }
-                
+
                 m_levels[i].touches += m_levels[j].touches;
                 m_levels[i].strength = MathMax(m_levels[i].strength, m_levels[j].strength);
                 // DO NOT average the price
-                
+
                 // Remove j by shifting
                 for(int k = j; k < m_levelCount - 1; k++)
                     m_levels[k] = m_levels[k + 1];
-                
+
                 m_levelCount--;
                 ArrayResize(m_levels, m_levelCount);
                 j--;
@@ -425,7 +425,7 @@ void CSupportResistanceDetector::CalculateStrength()
     for(int i = 0; i < m_levelCount; i++)
     {
         double strength = 0.5;
-        
+
         switch(m_levels[i].type)
         {
             case SR_MONTHLY_HIGH_LOW:
@@ -444,7 +444,7 @@ void CSupportResistanceDetector::CalculateStrength()
                 strength = 0.60;
                 break;
         }
-        
+
         // Increase strength for multiple touches
         strength += (m_levels[i].touches - 1) * 0.05;
         strength = MathMin(1.0, strength);
@@ -460,7 +460,7 @@ void CSupportResistanceDetector::CalculateStrength()
                 strength *= decayFactor;
             }
         }
-        
+
         m_levels[i].strength = MathMax(0.3, strength);
     }
 }
@@ -470,16 +470,16 @@ void CSupportResistanceDetector::UpdateTouches()
 {
     double atr = GetAtrValue();
     double tolerance = (atr > 0) ? atr * 0.15 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
     int copied = CopyRates(m_symbol, m_timeframe, 1, 100, rates);
     if(copied <= 0) return;
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         int touches = 0;
-        
+
         for(int j = 0; j < copied; j++)
         {
             if(MathAbs(rates[j].high - m_levels[i].price) < tolerance ||
@@ -488,7 +488,7 @@ void CSupportResistanceDetector::UpdateTouches()
                 touches++;
             }
         }
-        
+
         m_levels[i].touches = MathMax(1, touches);
     }
 }
@@ -502,7 +502,7 @@ bool CSupportResistanceDetector::GetLevel(int index, SSupportResistance &level)
 {
     if(index < 0 || index >= m_levelCount)
         return false;
-    
+
     level = m_levels[index];
     return true;
 }
@@ -512,7 +512,7 @@ int CSupportResistanceDetector::FindNearestLevel(double price, double toleranceP
     double tolerance = tolerancePips * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double minDistance = DBL_MAX;
     int nearestIndex = -1;
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         double distance = MathAbs(price - m_levels[i].price);
@@ -522,7 +522,7 @@ int CSupportResistanceDetector::FindNearestLevel(double price, double toleranceP
             nearestIndex = i;
         }
     }
-    
+
     return nearestIndex;
 }
 
@@ -530,7 +530,7 @@ int CSupportResistanceDetector::FindNearestSupport(double price)
 {
     double minDistance = DBL_MAX;
     int nearestIndex = -1;
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         if(m_levels[i].price < price)
@@ -543,7 +543,7 @@ int CSupportResistanceDetector::FindNearestSupport(double price)
             }
         }
     }
-    
+
     return nearestIndex;
 }
 
@@ -551,7 +551,7 @@ int CSupportResistanceDetector::FindNearestResistance(double price)
 {
     double minDistance = DBL_MAX;
     int nearestIndex = -1;
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         if(m_levels[i].price > price)
@@ -564,7 +564,7 @@ int CSupportResistanceDetector::FindNearestResistance(double price)
             }
         }
     }
-    
+
     return nearestIndex;
 }
 
@@ -593,12 +593,12 @@ bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIn
     // intrabar transient mark m_levels[].isBroken permanently.
     if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) < 3)
         return false;
-    
+
     for(int i = 0; i < m_levelCount; i++)
     {
         if(m_levels[i].isBroken)
             continue;
-        
+
         // Resistance breakout
         if(!m_levels[i].isSupport)
         {
@@ -622,7 +622,7 @@ bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIn
             }
         }
     }
-    
+
     return false;
 }
 
@@ -645,7 +645,7 @@ bool CSupportResistanceDetector::HasRoleReversed(double price)
             }
         }
     }
-    
+
     return false;
 }
 

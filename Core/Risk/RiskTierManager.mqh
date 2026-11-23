@@ -22,7 +22,7 @@ struct SClusterAllocation
 struct STierConfig
 {
    double riskPerTradePct;      // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
-   double maxRiskPerTradeOverride;  // L5-006: explicit max risk per trade override
+   double maxRiskPerTradeOverride;  // explicit max risk per trade override
    double dailyRiskPct;         // Blueprint 10.4: 0-100 scale
    double portfolioRiskPct;     // Blueprint 10.4: 0-100 scale
    int    maxPositions;         // Max concurrent positions
@@ -48,7 +48,7 @@ private:
         {
             STierConfig c;
             c.riskPerTradePct        = 0.5;   // Blueprint 10.4: 0-100 scale
-            c.maxRiskPerTradeOverride = 1.0;  // L5-006: 2x riskPerTradePct
+            c.maxRiskPerTradeOverride = 1.0;  // 2x riskPerTradePct
             c.dailyRiskPct        = 2.0;
             c.portfolioRiskPct    = 6.0;
             c.maxPositions        = 3;
@@ -71,7 +71,7 @@ private:
         {
             STierConfig c;
             c.riskPerTradePct        = 1.0;
-            c.maxRiskPerTradeOverride = 2.0;  // L5-006: 2x riskPerTradePct
+            c.maxRiskPerTradeOverride = 2.0;  // 2x riskPerTradePct
             c.dailyRiskPct        = 5.0;
             c.portfolioRiskPct    = 15.0;
             c.maxPositions        = 5;
@@ -94,7 +94,7 @@ private:
         {
             STierConfig c;
             c.riskPerTradePct        = 2.0;
-            c.maxRiskPerTradeOverride = 4.0;  // L5-006: 2x riskPerTradePct
+            c.maxRiskPerTradeOverride = 4.0;  // 2x riskPerTradePct
             c.dailyRiskPct        = 10.0;
             c.portfolioRiskPct    = 30.0;
             c.maxPositions        = 8;
@@ -117,7 +117,7 @@ private:
         {
             STierConfig c;
             c.riskPerTradePct        = 5.0;
-            c.maxRiskPerTradeOverride = 10.0;  // L5-006: 2x riskPerTradePct
+            c.maxRiskPerTradeOverride = 10.0;  // 2x riskPerTradePct
             c.dailyRiskPct        = 25.0;
             c.portfolioRiskPct    = 80.0;
             c.maxPositions        = 12;
@@ -143,7 +143,7 @@ private:
         c.riskPerTradePct     = 4.0;
         // this preset omitted the override - ApplyTierOverrides wrote
         // maxRiskPerTradePercent=0 and adaptive sizing collapsed to its floor.
-        c.maxRiskPerTradeOverride = 8.0;  // L5-006: 2x riskPerTradePct (mirrors CompoundingTierManager)
+        c.maxRiskPerTradeOverride = 8.0;  // 2x riskPerTradePct (mirrors CompoundingTierManager)
         c.dailyRiskPct        = 12.0;
         c.portfolioRiskPct    = 20.0;
         c.maxPositions        = 2;
@@ -166,7 +166,7 @@ private:
             {
                 STierConfig c;
                 c.riskPerTradePct        = 5.0;
-                c.maxRiskPerTradeOverride = 10.0;  // L5-006: 2x riskPerTradePct
+                c.maxRiskPerTradeOverride = 10.0;  // 2x riskPerTradePct
                 c.dailyRiskPct        = 14.0;
                 c.portfolioRiskPct    = 25.0;
                 c.maxPositions        = 3;
@@ -189,7 +189,7 @@ private:
             {
                 STierConfig c;
                 c.riskPerTradePct        = 1.0;
-                c.maxRiskPerTradeOverride = 2.0;   // L5-006: 2x riskPerTradePct
+                c.maxRiskPerTradeOverride = 2.0;   // 2x riskPerTradePct
                 c.dailyRiskPct        = 5.0;
                 c.portfolioRiskPct    = 15.0;
                 c.maxPositions        = 5;
@@ -212,7 +212,7 @@ private:
                 {
                     STierConfig c;
                     c.riskPerTradePct        = 2.5;
-                    c.maxRiskPerTradeOverride = 5.0;   // L5-006: 2x riskPerTradePct
+                    c.maxRiskPerTradeOverride = 5.0;   // 2x riskPerTradePct
                     c.dailyRiskPct        = 8.0;
                     c.portfolioRiskPct    = 18.0;
                     c.maxPositions        = 4;
@@ -235,7 +235,7 @@ private:
                 {
                     STierConfig c;
                     c.riskPerTradePct        = 0.75;
-                    c.maxRiskPerTradeOverride = 1.5;   // L5-006: 2x riskPerTradePct
+                    c.maxRiskPerTradeOverride = 1.5;   // 2x riskPerTradePct
                     c.dailyRiskPct        = 3.0;
                     c.portfolioRiskPct    = 10.0;
                     c.maxPositions        = 4;
@@ -418,10 +418,10 @@ private:
         SClusterAllocation GetClusterAllocation() const { return m_config.clusterAllocation; }
 
 // Validate cluster allocation sums to 100%
-// L5-014: Ensure cluster allocation percentages sum to 100%
+// Ensure cluster allocation percentages sum to 100%
         void ValidateClusterAllocation() const
         {
-            double sum = m_config.clusterAllocation.trendPct 
+            double sum = m_config.clusterAllocation.trendPct
                          + m_config.clusterAllocation.meanReversionPct
                          + m_config.clusterAllocation.structurePct
                          + m_config.clusterAllocation.scalpPct;

@@ -167,8 +167,8 @@ public:
         bool strongBar = (bodySize > m_bodyATRRatio * atr[0]);
 
         //--- Condition 4: RSI confirmation
-        //    BUY: RSI > 55 (momentum confirmation)
-        //    SELL: RSI < 45 (momentum confirmation)
+        // BUY: RSI > 55 (momentum confirmation)
+        // SELL: RSI < 45 (momentum confirmation)
         bool rsiConfirmed = false;
         if(direction == TRADE_SIGNAL_BUY && rsi[0] > 55.0)
             rsiConfirmed = true;
@@ -195,8 +195,8 @@ public:
 
         confidence = MathMin(confidence, 0.90);
 
-        //    TP: 2.0 * ATR(14)
-        //    SL: BB middle band distance from current price
+        // TP: 2.0 * ATR(14)
+        // SL: BB middle band distance from current price
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slDistance = MathAbs(closePrice - bbMiddle[0]);
         double tpDistance = m_tpATRRatio * atr[0];

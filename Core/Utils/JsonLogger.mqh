@@ -21,7 +21,7 @@ struct SJsonLogEntry
     string eventType;           // Event type (HEARTBEAT, TRADE, SIGNAL, RISK, AI, etc.)
     string symbol;              // Symbol (if applicable)
     string jsonData;            // Additional structured data as JSON
-    
+
     SJsonLogEntry() {
         timestamp = "";
         level = "INFO";
@@ -39,7 +39,7 @@ class CCorrelationIdGenerator
 private:
     static ulong m_sequence;
     static datetime m_lastReset;
-    
+
 public:
     static string Generate(const string prefix = "EA") {
         datetime now = TimeCurrent();
@@ -50,18 +50,18 @@ public:
         m_sequence++;
         return StringFormat("%s-%d-%06I64u", prefix, (int)now, m_sequence);
     }
-    
+
     static string GenerateForTrade(const string symbol, const ENUM_TRADE_SIGNAL signal) {
         datetime now = TimeCurrent();
         string sigStr = (signal == TRADE_SIGNAL_BUY) ? "B" : (signal == TRADE_SIGNAL_SELL) ? "S" : "N";
         return StringFormat("TRD-%s-%s-%d-%06I64u", symbol, sigStr, (int)now, m_sequence++);
     }
-    
+
     static string GenerateForSignal(const string symbol, const string strategy) {
         datetime now = TimeCurrent();
         return StringFormat("SIG-%s-%s-%d-%06I64u", symbol, strategy, (int)now, m_sequence++);
     }
-    
+
     static string GenerateForAI(const string symbol, const string aiType) {
         datetime now = TimeCurrent();
         return StringFormat("AI-%s-%s-%d-%06I64u", symbol, aiType, (int)now, m_sequence++);
@@ -81,20 +81,20 @@ private:
         MAX_FILE_AGE_DAYS = 1,
         MAX_RETAINED_FILES = 7
     };
-    
+
     // State variables
     static bool m_enabled;
     static string m_logFile;
     static ENUM_LOG_VERBOSITY m_minVerbosity;
     static string m_currentCorrelationId;
     static int m_logCount;
-    
+
     // Log rotation tracking
     static long m_fileSizeBytes;
     static int m_lineCount;
     static datetime m_fileCreationTime;
     static int m_rotationIndex;
-    
+
     static string EscapeJson(const string &value) {
         string escaped = value;
         StringReplace(escaped, "\\", "\\\\");
@@ -106,7 +106,7 @@ private:
         // They are rarely used in practice, skip them
         return escaped;
     }
-    
+
     // Format timestamp as ISO 8601
     static string FormatTimestamp(datetime time = 0) {
         if(time == 0) time = TimeCurrent();
@@ -114,7 +114,7 @@ private:
         StringReplace(dateStr, ".", "-");
         return dateStr + "." + IntegerToString(TimeCurrent() % 1000, 3) + "Z";
     }
-    
+
     // Get base log file name without rotation suffix
     static string GetBaseFileName() {
         if(m_logFile == "") return "";
@@ -122,7 +122,7 @@ private:
         if(lastDot < 0) return m_logFile;
         return StringSubstr(m_logFile, 0, lastDot + 4);
     }
-    
+
     static string GetRotatedFileName(int rotationIndex) {
         string base = GetBaseFileName();
         if(base == "") return "";
@@ -130,7 +130,7 @@ private:
         StringReplace(dateStr, ".", "_");
         return base + "_" + dateStr + "_" + IntegerToString(rotationIndex) + ".log";
     }
-    
+
     // Clean up old rotated files
     static void CleanupOldFiles() {
         for(int i = MAX_RETAINED_FILES + 1; i <= MAX_RETAINED_FILES + 10; i++)
@@ -143,23 +143,23 @@ private:
             FileDelete(rotatedName);
         }
     }
-    
+
     // Rotate log file if needed
     static void RotateIfNeeded() {
         if(!m_enabled || m_logFile == "") return;
-        
+
         bool needRotate = false;
-        
+
         if(m_lineCount >= MAX_LINES_PER_FILE)
             needRotate = true;
-        
+
         if(m_fileSizeBytes >= MAX_FILE_SIZE_BYTES)
             needRotate = true;
-        
+
         datetime now = TimeCurrent();
         if(m_fileCreationTime > 0 && (now - m_fileCreationTime) >= (MAX_FILE_AGE_DAYS * 86400))
             needRotate = true;
-        
+
         if(needRotate)
         {
             // Find next rotation index
@@ -173,49 +173,49 @@ private:
                 FileClose(handle);
                 rotationIdx++;
             }
-            
+
             // Close current file handle if open (we open/close per write, so just rename)
             string currentName = m_logFile;
             string rotatedName = GetRotatedFileName(rotationIdx);
             FileMove(currentName, FILE_COMMON, rotatedName, FILE_COMMON);
-            
+
             // Reset tracking
             m_fileSizeBytes = 0;
             m_lineCount = 0;
             m_fileCreationTime = TimeCurrent();
-            
+
             // Create new file with header
             int handle = FileOpen(m_logFile, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
             if(handle != INVALID_HANDLE) {
                 FileWriteString(handle, "# JSON Log rotated at " + FormatTimestamp() + "\n");
                 FileClose(handle);
             }
-            
+
             CleanupOldFiles();
         }
     }
-    
+
     // Write to log file
     static void WriteToFile(const string jsonLine) {
         if(!m_enabled || m_logFile == "")
             return;
-        
+
         // Check rotation before writing
         RotateIfNeeded();
-        
+
         int handle = FileOpen(m_logFile, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
         if(handle != INVALID_HANDLE) {
             FileSeek(handle, 0, SEEK_END);
             FileWriteString(handle, jsonLine + "\n");
             FileClose(handle);
-            
+
             // Update tracking
             m_logCount++;
             m_lineCount++;
             m_fileSizeBytes = (long)FileSize(handle);
         }
     }
-    
+
     static string BuildJsonLine(const SJsonLogEntry &entry) {
         string json = "{";
         json += "\"timestamp\":\"" + entry.timestamp + "\",";
@@ -236,22 +236,22 @@ public:
         m_minVerbosity = minVerbosity;
         m_enabled = true;
         m_logCount = 0;
-        
+
         // Create log file with header
         int handle = FileOpen(m_logFile, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
         if(handle != INVALID_HANDLE) {
             FileWriteString(handle, "# JSON Log started at " + FormatTimestamp() + "\n");
             FileClose(handle);
         }
-        
+
         Print("[JSON-LOGGER] Initialized: " + logFile + " (verbosity=" + EnumToString(minVerbosity) + ")");
         return true;
     }
-    
+
     // Shutdown logger
         static void Shutdown() {
             if(!m_enabled) return;
-        
+
             // Write final log entry
             SJsonLogEntry shutdownEntry;
             shutdownEntry.timestamp = FormatTimestamp();
@@ -262,51 +262,51 @@ public:
             shutdownEntry.eventType = "SHUTDOWN";
             shutdownEntry.symbol = "";
             shutdownEntry.jsonData = "{\"total_logs\":" + IntegerToString(m_logCount) + "}";
-        
+
             string jsonLine = BuildJsonLine(shutdownEntry);
             WriteToFile(jsonLine);
-        
+
             // Reset static members
             m_enabled = false;
             m_logFile = "";
             m_minVerbosity = VERBOSITY_NORMAL;
             m_currentCorrelationId = "";
             m_logCount = 0;
-        
+
             Print("[JSON-LOGGER] Shutdown complete.");
         }
-    
+
     // Set correlation ID for current context
     static void SetCorrelationId(const string correlationId) {
         m_currentCorrelationId = correlationId;
     }
-    
+
     static void ClearCorrelationId() {
         m_currentCorrelationId = "";
     }
-    
+
     // Get current correlation ID
         static string GetCorrelationId() {
             return m_currentCorrelationId;
         }
-    
+
         // Get log statistics
         static int GetLogCount() { return m_logCount; }
         static long GetFileSizeBytes() { return m_fileSizeBytes; }
         static int GetLineCount() { return m_lineCount; }
-    
+
         static bool IsEnabled() { return m_enabled; }
-    
+
     // Log with full entry
     static void Log(const SJsonLogEntry &entry) {
         if(!m_enabled) return;
-        
+
         int entryVerbosity = 0;
         if(entry.level == "DEBUG") entryVerbosity = VERBOSITY_DEBUG;
         else if(entry.level == "INFO") entryVerbosity = VERBOSITY_NORMAL;
         else if(entry.level == "WARNING") entryVerbosity = VERBOSITY_WARNING;
         else if(entry.level == "ERROR" || entry.level == "CRITICAL") entryVerbosity = VERBOSITY_ERRORS_ONLY;
-        
+
         // ENUM_LOG_VERBOSITY is ordered by importance: SILENT 0, ERRORS_ONLY 1, WARNING 2, NORMAL 3,
         // VERBOSE 4, DEBUG 5. `minVerbosity` is the most verbose level that may be emitted, so an entry
         // is kept when its own level is at or below that ceiling. The previous test was `entry < min`,
@@ -314,20 +314,20 @@ public:
         // the journal carried 113,844 per-cycle DEBUG lines while a real error had no reader.
         if(m_minVerbosity == VERBOSITY_SILENT) return;
         if(entryVerbosity > (int)m_minVerbosity) return;
-        
+
         // Use current correlation ID if not set in entry
         SJsonLogEntry e = entry;
         if(e.correlationId == "" && m_currentCorrelationId != "")
             e.correlationId = m_currentCorrelationId;
         if(e.timestamp == "")
             e.timestamp = FormatTimestamp();
-        
+
         string jsonLine = BuildJsonLine(e);
         WriteToFile(jsonLine);
-        
+
         // Also print to standard log for compatibility - but only when the level is louder than INFO.
         // A measured 24 h window logged 13,590 "[INFO] <component> | <message>" lines, and every one of
-        // them was a duplicate: the caller already PrintFormat's its own "[TAG] ..." line for the same
+        // them was a duplicate: the caller already PrintFormat's its own "[TAG]..." line for the same
         // event, so the journal carried the event twice and the structured JSONL carried it once more.
         // INFO and DEBUG stay in the JSONL (that is the durable record); the journal only gets what a
         // human has to read mid-run.
@@ -338,12 +338,12 @@ public:
             if(e.symbol != "") logPrefix += " | sym=" + e.symbol;
             Print(logPrefix);
         }
-        
+
         m_logCount++;
     }
-    
+
     // Convenience methods
-    static void LogInfo(const string component, const string message, 
+    static void LogInfo(const string component, const string message,
                         const string eventType = "", const string symbol = "",
                         const string correlationId = "", const string jsonData = "{}") {
         SJsonLogEntry entry;
@@ -356,7 +356,7 @@ public:
         entry.jsonData = jsonData;
         Log(entry);
     }
-    
+
     static void LogWarning(const string component, const string message,
                            const string eventType = "", const string symbol = "",
                            const string correlationId = "", const string jsonData = "{}") {
@@ -370,7 +370,7 @@ public:
         entry.jsonData = jsonData;
         Log(entry);
     }
-    
+
     static void LogError(const string component, const string message,
                          const string eventType = "", const string symbol = "",
                          const string correlationId = "", const string jsonData = "{}") {
@@ -384,7 +384,7 @@ public:
         entry.jsonData = jsonData;
         Log(entry);
     }
-    
+
     static void LogDebug(const string component, const string message,
                          const string eventType = "", const string symbol = "",
                          const string correlationId = "", const string jsonData = "{}") {
@@ -398,12 +398,12 @@ public:
         entry.jsonData = jsonData;
         Log(entry);
     }
-    
+
     // Specialized logging for common event types
     static void LogHeartbeat(const string component, const string jsonData) {
         LogInfo(component, "Heartbeat", "HEARTBEAT", "", m_currentCorrelationId, jsonData);
     }
-    
+
     static void LogTradeOpen(const string symbol, const ENUM_TRADE_SIGNAL signal,
                              const double lot, const double price,
                              const string strategy, const string correlationId,
@@ -450,7 +450,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     static void LogTradeClose(const string symbol, const double profit,
                               const string correlationId, const string jsonData = "{}") {
         SJsonLogEntry entry;
@@ -460,7 +460,7 @@ public:
         entry.eventType = "TRADE_CLOSE";
         entry.symbol = symbol;
         entry.correlationId = correlationId;
-        
+
         string data = "{";
         data += "\"profit\":" + DoubleToString(profit, 2);
         data += jsonData == "{}" ? "" : "," + StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
@@ -468,7 +468,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     static void LogSignal(const string symbol, const ENUM_TRADE_SIGNAL signal,
                           const double confidence, const string strategy,
                           const string correlationId, const string jsonData = "{}") {
@@ -479,7 +479,7 @@ public:
         entry.eventType = "SIGNAL";
         entry.symbol = symbol;
         entry.correlationId = correlationId;
-        
+
         string data = "{";
         data += "\"signal\":\"" + (signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL") + "\",";
         data += "\"confidence\":" + DoubleToString(confidence, 4) + ",";
@@ -489,7 +489,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     // Both risk-event entry points hardcoded level "WARNING", so a measured 24 h window logged 3,000+
     // "[WARNING] RISK | Risk event: APPROVED" lines - normal flow printed at the severity reserved for
     // something a human must look at. Severity now follows the event: an approval is the risk machinery
@@ -542,7 +542,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     static void LogAIEvent(const string symbol, const string aiType,
                            const string event, const double confidence,
                            const string correlationId, const string jsonData = "{}") {
@@ -553,7 +553,7 @@ public:
         entry.eventType = "AI_EVENT";
         entry.symbol = symbol;
         entry.correlationId = correlationId;
-        
+
         string data = "{";
         data += "\"ai_type\":\"" + EscapeJson(aiType) + "\",";
         data += "\"event\":\"" + EscapeJson(event) + "\",";
@@ -563,7 +563,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     static void LogConsensus(const string symbol, const string event,
                              const double confidence, const int confluence,
                              const string correlationId, const string jsonData = "{}") {
@@ -574,7 +574,7 @@ public:
         entry.eventType = "CONSENSUS";
         entry.symbol = symbol;
         entry.correlationId = correlationId;
-        
+
         string data = "{";
         data += "\"event\":\"" + EscapeJson(event) + "\",";
         data += "\"confidence\":" + DoubleToString(confidence, 4) + ",";
@@ -584,7 +584,7 @@ public:
         entry.jsonData = data;
         Log(entry);
     }
-    
+
     static void LogPerformance(const string component, const string metric,
                                const double value, const string correlationId,
                                const string jsonData = "{}") {
@@ -595,7 +595,7 @@ public:
         entry.eventType = "PERFORMANCE";
         entry.symbol = "";
         entry.correlationId = correlationId;
-        
+
         string data = "{";
         data += "\"metric\":\"" + EscapeJson(metric) + "\",";
         data += "\"value\":" + DoubleToString(value, 6);

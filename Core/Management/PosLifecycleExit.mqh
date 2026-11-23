@@ -110,9 +110,6 @@ public:
             double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
             double currentVolume = PositionGetDouble(POSITION_VOLUME);
-            double currentTP = PositionGetDouble(POSITION_TP);
-
-            if(currentTP == 0) continue;
 
             double profitDistance = 0.0;
             if(type == POSITION_TYPE_BUY)

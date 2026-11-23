@@ -35,12 +35,12 @@ private:
     CTrendlineDetector*         m_trendDetector;
     CFibConfluence*             m_fibModule;  // Fibonacci confluence helper
     int                         m_atrHandle;  // Cached ATR handle from CIndicatorManager
-    
+
     CSRBounceStrategy*          m_bounceStrategy;
     CSRBreakoutStrategy*        m_breakoutStrategy;
     CTrendlineBounceStrategy*   m_trendlineStrategy;
     CChartDrawingManager*       m_drawingManager;
-    
+
         CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
 
     // Per-symbol engine references (not owned)
@@ -51,15 +51,15 @@ private:
     int                         m_lastBarProcessed;
     int                         m_drawBarCounter;  // Throttle drawing
     bool                        m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
-    
+
     int                         m_signalsGenerated;
     int                         m_levelsDetected;
     int                         m_trendlinesDetected;
-    
+
 public:
                                 CStrategySupportResistance(const string name = "S/R Strategy v1.0", int magic = 0);
     virtual                    ~CStrategySupportResistance();
-    
+
     virtual bool                Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override;
     virtual void                Deinit() override;
     virtual void                OnTick() override;
@@ -70,16 +70,16 @@ public:
 
     void SetHurstEngine(CHurstEngine* engine) { m_hurstEngine = engine; }
     void SetVPINFilter(CVPINFilter* filter) { m_vpinFilter = filter; }
-    
+
 private:
     double                      ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence);
-    
+
     void                        SetMode(ENUM_SR_STRATEGY_MODE mode) { m_mode = mode; }
     void                        SetMinConfidence(double conf) { m_minConfidence = conf; }
-    
+
     int                         GetLevelCount() const { return m_levelsDetected; }
     int                         GetTrendlineCount() const { return m_trendlinesDetected; }
-    
+
 private:
     void                        Cleanup();
     void                        DrawLevels();
@@ -136,21 +136,21 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
         return false;
-    
+
     m_srDetector = new CSupportResistanceDetector();
     if(m_srDetector == NULL || !m_srDetector.Initialize(symbol, timeframe, 20, 3))
     {
         Print("[S/R v1.0] Failed to initialize S/R Detector");
         return false;
     }
-    
+
     m_trendDetector = new CTrendlineDetector();
     if(m_trendDetector == NULL || !m_trendDetector.Initialize(symbol, timeframe, 3, 10))
     {
         Print("[S/R v1.0] Failed to initialize Trendline Detector");
         return false;
     }
-    
+
     m_fibModule = new CFibConfluence();
     if(m_fibModule != NULL)
     {
@@ -163,7 +163,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     {
         Print("[S/R v1.0] WARNING: Failed to create cached ATR handle for Fib confluence");
     }
-    
+
     m_bounceStrategy = new CSRBounceStrategy();
     if(m_bounceStrategy == NULL || !m_bounceStrategy.Initialize(symbol, timeframe, m_srDetector, m_trendDetector))
     {
@@ -171,7 +171,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         return false;
     }
     m_bounceStrategy.SetMinConfidence(m_minConfidence);
-    
+
     m_breakoutStrategy = new CSRBreakoutStrategy();
     if(m_breakoutStrategy == NULL || !m_breakoutStrategy.Initialize(symbol, timeframe, m_srDetector))
     {
@@ -179,7 +179,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         return false;
     }
     m_breakoutStrategy.SetMinConfidence(m_minConfidence);
-    
+
     m_trendlineStrategy = new CTrendlineBounceStrategy();
     if(m_trendlineStrategy == NULL || !m_trendlineStrategy.Initialize(symbol, timeframe, m_trendDetector, m_srDetector))
     {
@@ -187,13 +187,13 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         return false;
     }
     m_trendlineStrategy.SetMinConfidence(m_minConfidence);
-    
+
     m_srDetector.DetectLevels(300);  // Increased from 200 to 300 for deeper historical context
     m_trendDetector.DetectTrendlines(100);
-    
+
     m_levelsDetected = m_srDetector.GetLevelCount();
     m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
-    
+
     m_drawingManager = new CChartDrawingManager();
     if(m_drawingManager != NULL)
     {
@@ -209,7 +209,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         config.enableSignalMarkers = false;
         m_drawingManager.SetConfiguration(config);
     }
-    
+
     m_logger = new CSubsystemLogger();
     if(m_logger != NULL)
     {
@@ -217,16 +217,16 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         m_logger.Log(LOG_DRAWING, StringFormat("[INIT] S/R Strategy initialized | Symbol=%s TF=%s Levels=%d Trendlines=%d",
                                                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected));
     }
-    
+
     // Risk manager arrives through CStrategyBase::Init(); with none injected the gate below is skipped (fail-open).
         if(GetUnifiedRiskManager() != NULL)
             Print("[S/R v1.0] UnifiedRiskManager successfully injected - trades will pass through validation gate");
         else
             Print("[S/R v1.0] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
-    
+
     PrintFormat("[S/R v1.0] Strategy initialized for %s on %s | Levels: %d | Trendlines: %d",
                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected);
-    
+
     return true;
 }
 
@@ -247,24 +247,24 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
 {
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
         return;
-    
+
     int currentBar = iBars(m_symbol, m_timeframe);
     if(currentBar == m_lastBarProcessed)
         return;
     m_lastBarProcessed = currentBar;
-    
+
     if(m_srDetector != NULL)
     {
         m_srDetector.Update();
         m_levelsDetected = m_srDetector.GetLevelCount();
     }
-    
+
     if(m_trendDetector != NULL)
     {
         m_trendDetector.Update();
         m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     }
-    
+
     static int s_diagBarCount = 0;
     s_diagBarCount++;
     if(s_diagBarCount % 10 == 0 && m_logger != NULL)
@@ -274,7 +274,7 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
                                                 m_levelsDetected, m_trendlinesDetected,
                                                 (m_drawingManager != NULL) ? "READY" : "NULL"));
     }
-    
+
     // Regular cleanup to prevent object accumulation
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
@@ -293,7 +293,7 @@ void CStrategySupportResistance::DrawLevels()
     if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
         return;
     if(m_srDetector == NULL || m_drawingManager == NULL) return;
-    
+
     SSupportResistance levels[];
     int count = 0;
     for(int i = 0; i < m_srDetector.GetLevelCount(); i++)
@@ -306,14 +306,14 @@ void CStrategySupportResistance::DrawLevels()
             count++;
         }
     }
-    
+
     static int s_drawLevelCount = 0;
     s_drawLevelCount++;
     if(s_drawLevelCount % 5 == 0 && m_logger != NULL)
     {
         m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-LEVELS] Total=%d PassedFilter=%d WillDraw=%d StrengthThreshold=0.4",
                                                 m_srDetector.GetLevelCount(), count, MathMin(count, 8)));
-        
+
         if(count > 0)
         {
             string levelDetails = "";
@@ -331,30 +331,30 @@ void CStrategySupportResistance::DrawLevels()
             m_logger.Log(LOG_DRAWING, StringFormat("[LEVEL-DETAILS] %s", levelDetails));
         }
     }
-    
+
     // Note: ArraySort sorts ascending by default, so we reverse after sorting
     ArraySort(levels);
     ArrayReverse(levels);
-    
+
     int drawCount = MathMin(count, 8); // Cap S/R levels to top 8
-    
+
     for(int i = 0; i < drawCount; i++)
     {
         SSupportResistance level = levels[i];
         color levelColor = level.isSupport ? clrDodgerBlue : clrCrimson;
-        
+
         if(level.isBroken)
             levelColor = clrGray;
         else if(level.roleReversed)
             levelColor = clrGold;
-        
+
         string label = StringFormat("%s %.0f%% (T:%d)",
                                     level.isSupport ? "Sup" : "Res",
                                     level.strength * 100.0,
                                     level.touches);
-        
+
         bool drawn = m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
-        
+
         if(i == 0 && s_drawLevelCount % 10 == 0 && m_logger != NULL)
         {
             m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-RESULT] Level=%.5f Color=%s Label='%s' Success=%s",
@@ -371,7 +371,7 @@ void CStrategySupportResistance::DrawTrendlines()
     if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
         return;
     if(m_trendDetector == NULL || m_drawingManager == NULL) return;
-    
+
     STrendline lines[];
     int count = 0;
     for(int i = 0; i < m_trendDetector.GetTrendlineCount(); i++)
@@ -384,32 +384,32 @@ void CStrategySupportResistance::DrawTrendlines()
             count++;
         }
     }
-    
+
     // Note: ArraySort sorts ascending by default, so we reverse after sorting
     ArraySort(lines);
     ArrayReverse(lines);
-    
+
     int drawCount = MathMin(count, 6); // Cap Trendlines to top 6
-    
+
     for(int i = 0; i < drawCount; i++)
     {
         STrendline trendline = lines[i];
         color lineColor = (trendline.type == TRENDLINE_SUPPORT) ? clrLimeGreen : clrOrangeRed;
-        
+
         if(trendline.isBroken)
             lineColor = clrGray;
-        
+
         ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DOT : STYLE_SOLID;
-        
+
         m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
                                         trendline.point2Time, trendline.point2Price,
                                         lineColor, 1, style);
-        
+
         string label = StringFormat("%s %.0f%% (T:%d)",
                                     trendline.type == TRENDLINE_SUPPORT ? "TL Sup" : "TL Res",
                                     trendline.strength * 100.0,
                                     trendline.touches);
-                                    
+
         m_drawingManager.DrawTextLabel(trendline.point2Time, trendline.point2Price, label, lineColor, 8, ANCHOR_LEFT);
     }
 }
@@ -418,13 +418,13 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
 {
     confidence = 0.0;
     SetDecisionReasonTag("SR_UNSET");
-    
+
     if(!m_is_enabled || !m_is_initialized)
     {
         SetDecisionReasonTag("SR_DISABLED_OR_UNINIT");
         return TRADE_SIGNAL_NONE;
     }
-    
+
     if(m_srDetector != NULL) m_srDetector.Update();
     if(m_trendDetector != NULL) m_trendDetector.Update();
 
@@ -449,11 +449,11 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             return TRADE_SIGNAL_NONE;
         }
     }
-    
+
     SSRSignalResult bestResult;
     bestResult.signal = TRADE_SIGNAL_NONE;
     bestResult.confidence = 0;
-    
+
     if((m_mode == SR_MODE_BOUNCE || m_mode == SR_MODE_ALL) && m_bounceStrategy != NULL)
     {
         SSRSignalResult bounceResult = m_bounceStrategy.GetSignal();
@@ -462,7 +462,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             bestResult = bounceResult;
         }
     }
-    
+
     if((m_mode == SR_MODE_BREAKOUT || m_mode == SR_MODE_ALL) && m_breakoutStrategy != NULL)
     {
         SSRSignalResult breakoutResult = m_breakoutStrategy.GetSignal();
@@ -471,7 +471,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             bestResult = breakoutResult;
         }
     }
-    
+
     if((m_mode == SR_MODE_TRENDLINE || m_mode == SR_MODE_ALL) && m_trendlineStrategy != NULL)
     {
         SSRSignalResult trendlineResult = m_trendlineStrategy.GetSignal();
@@ -480,16 +480,16 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             bestResult = trendlineResult;
         }
     }
-    
+
     if(bestResult.signal != TRADE_SIGNAL_NONE)
     {
         confidence = bestResult.confidence;
-        
+
         if(m_fibModule != NULL && m_srDetector != NULL)
         {
             confidence = ApplyFibConfluence(bestResult.signal, bestResult.entryPrice, confidence);
         }
-        
+
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -506,10 +506,18 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         long spreadPoints = SymbolInfoInteger(m_symbol, SYMBOL_SPREAD);
         double spreadPrice = (point > 0) ? (double)spreadPoints * point : 0.0;
-        if(!CSignalGuards::IsSignalTradable(bestResult.entryPrice, bestResult.stopLoss, bestResult.takeProfit1, spreadPrice))
+        // The S/R sub-strategies anchor entryPrice/stopLoss/takeProfit on SYMBOL_BID for both
+        // directions. A BUY fills at ASK, so measuring distances off BID understates the real
+        // stop/target distance by the spread - in the tradability guard and in the pip values
+        // the candidate builder turns into actual stops. Measure off the execution side.
+        double execPrice = (bestResult.signal == TRADE_SIGNAL_BUY)
+                           ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                           : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        if(execPrice <= 0.0) execPrice = bestResult.entryPrice;
+        if(!CSignalGuards::IsSignalTradable(execPrice, bestResult.stopLoss, bestResult.takeProfit1, spreadPrice))
             return RejectSignal("SR_NOT_TRADABLE");
-        request.stopLossPips = (point > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / point : 0;
-        request.takeProfitPips = (point > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / point : 0;
+        request.stopLossPips = (point > 0) ? MathAbs(execPrice - bestResult.stopLoss) / point : 0;
+        request.takeProfitPips = (point > 0) ? MathAbs(bestResult.takeProfit1 - execPrice) / point : 0;
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";
@@ -517,16 +525,16 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "SR", confidence))
             return TRADE_SIGNAL_NONE;
-        
+
         // Consensus logging (AGENTS.md requirement)
         string signalType = "";
         if(m_mode == SR_MODE_BOUNCE) signalType = "Bounce";
         else if(m_mode == SR_MODE_BREAKOUT) signalType = "Breakout";
         else if(m_mode == SR_MODE_TRENDLINE) signalType = "Trendline";
         else signalType = "Mixed";
-        
+
         LogConsensusDiag(bestResult.signal, StringFormat("Mode: %s", signalType), confidence, bestResult.hasTrendlineConfluence ? " [+TL Confluence]" : "");
-        
+
         PrintFormat("[S/R v1.0] %s: %s | Conf: %.1f%% | %s%s",
                    m_symbol,
                    bestResult.signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
@@ -538,7 +546,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     {
         SetDecisionReasonTag("SR_NO_SIGNAL");
     }
-    
+
     return bestResult.signal;
 }
 

@@ -66,7 +66,7 @@ from scipy.stats import spearmanr
 from tqdm import tqdm
 import struct
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 import pickle
@@ -177,10 +177,6 @@ class TradingDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx], self.weights[idx], self.returns[idx]
 
-def _safe_lag(x: np.ndarray, periods: int, fill_value: float = 0.0) -> np.ndarray:
-    """Safe lag without np.roll wrap-around."""
-    return pd.Series(x, dtype=np.float64).shift(periods, fill_value=fill_value).to_numpy(dtype=np.float64)
-
 def save_scaler_v2(scaler: RobustScaler, output_path: str):
     """Versioned binary scaler for MT5 with magic header."""
     output = Path(output_path)
@@ -193,7 +189,14 @@ def save_scaler_v2(scaler: RobustScaler, output_path: str):
         f.write(struct.pack(f'<{n}d', *scaler.center_))
         f.write(struct.pack(f'<{n}d', *scaler.scale_))
 
-def compute_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14):
+# @@VENDOR-SLOT core_atr_labels
+def compute_atr(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    period: int = 14,
+    backfill_first_period: bool = True,
+) -> np.ndarray:
     tr = np.maximum(
         high[1:] - low[1:],
         np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])),
@@ -203,13 +206,20 @@ def compute_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: in
         atr[period] = tr[:period].mean()
         for i in range(period + 1, len(close)):
             atr[i] = (atr[i - 1] * (period - 1) + tr[i - 1]) / period
-    # Backfill first period bars with simple mean to avoid zeros
-    atr[:period] = tr[:period].mean() if len(tr) >= period else tr.mean()
+    if backfill_first_period:
+        # Fill the warm-up bars so downstream ratios never divide by a literal 0.
+        atr[:period] = tr[:period].mean() if len(tr) >= period else tr.mean()
     return atr
 
-def triple_barrier_labels(close: np.ndarray, high: np.ndarray, low: np.ndarray,
-                          atr: np.ndarray, k: float = 1.5, vertical_bars: int = 20):
-    """Pure Python triple barrier (Numba version below if available)."""
+
+def _triple_barrier_labels_py(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    atr: np.ndarray,
+    k: float,
+    vertical_bars: int,
+) -> np.ndarray:
     n = len(close)
     labels = np.zeros(n, dtype=np.int8)
     for i in range(n - vertical_bars):
@@ -218,6 +228,8 @@ def triple_barrier_labels(close: np.ndarray, high: np.ndarray, low: np.ndarray,
         upper = close[i] + k * atr[i]
         lower = close[i] - k * atr[i]
         for j in range(i + 1, min(i + vertical_bars + 1, n)):
+            # Stop is checked first: when one bar touches both barriers, the
+            # conservative outcome is the loss.
             if low[j] <= lower:
                 labels[i] = -1
                 break
@@ -226,7 +238,9 @@ def triple_barrier_labels(close: np.ndarray, high: np.ndarray, low: np.ndarray,
                 break
     return labels
 
+
 if HAS_NUMBA:
+
     @njit
     def _triple_barrier_numba(close, high, low, atr, k, vertical_bars):
         n = len(close)
@@ -245,27 +259,57 @@ if HAS_NUMBA:
                     break
         return labels
 
-    def triple_barrier_labels(close, high, low, atr, k=1.5, vertical_bars=20):
+    def triple_barrier_labels(
+        close: np.ndarray,
+        high: np.ndarray,
+        low: np.ndarray,
+        atr: np.ndarray,
+        k: float = 1.5,
+        vertical_bars: int = 20,
+    ) -> np.ndarray:
         return _triple_barrier_numba(close, high, low, atr, k, vertical_bars)
 
-def compute_uniqueness_weights(event_indices: List[int], vertical_bars: int, total_bars: int):
+else:
+
+    def triple_barrier_labels(
+        close: np.ndarray,
+        high: np.ndarray,
+        low: np.ndarray,
+        atr: np.ndarray,
+        k: float = 1.5,
+        vertical_bars: int = 20,
+    ) -> np.ndarray:
+        return _triple_barrier_labels_py(close, high, low, atr, k, vertical_bars)
+# @@VENDOR-SLOT-END core_atr_labels
+
+# @@VENDOR-SLOT core_weights
+def _compute_uniqueness_weights_py(
+    event_indices: Sequence[int],
+    vertical_bars: int,
+    total_bars: int,
+) -> np.ndarray:
     event_indices = np.asarray(event_indices, dtype=np.int32)
     if len(event_indices) == 0:
         return np.zeros(0, dtype=np.float32)
+
     concurrency = np.zeros(total_bars, dtype=np.float32)
     for idx in event_indices:
         end = min(int(idx) + vertical_bars, total_bars)
-        concurrency[int(idx):end] += 1.0
+        concurrency[int(idx) : end] += 1.0
+
     raw_weights = np.zeros(len(event_indices), dtype=np.float32)
     for i, idx in enumerate(event_indices):
         end = min(int(idx) + vertical_bars, total_bars)
-        raw_weights[i] = np.mean(1.0 / np.maximum(concurrency[int(idx):end], 1e-9))
+        raw_weights[i] = np.mean(1.0 / np.maximum(concurrency[int(idx) : end], 1e-9))
+
     total = raw_weights.sum()
     if total > 1e-9:
         raw_weights = raw_weights / total * len(event_indices)
     return raw_weights
 
+
 if HAS_NUMBA:
+
     @njit
     def _uniq_weights_numba(event_indices, vertical_bars, total_bars):
         concurrency = np.zeros(total_bars, dtype=np.float32)
@@ -288,11 +332,25 @@ if HAS_NUMBA:
             weights = weights / total * len(event_indices)
         return weights
 
-    def compute_uniqueness_weights(event_indices, vertical_bars, total_bars):
+    def compute_uniqueness_weights(
+        event_indices: Sequence[int],
+        vertical_bars: int,
+        total_bars: int,
+    ) -> np.ndarray:
         arr = np.asarray(event_indices, dtype=np.int32)
         if len(arr) == 0:
             return np.zeros(0, dtype=np.float32)
         return _uniq_weights_numba(arr, vertical_bars, total_bars)
+
+else:
+
+    def compute_uniqueness_weights(
+        event_indices: Sequence[int],
+        vertical_bars: int,
+        total_bars: int,
+    ) -> np.ndarray:
+        return _compute_uniqueness_weights_py(event_indices, vertical_bars, total_bars)
+# @@VENDOR-SLOT-END core_weights
 
 def compute_forward_returns(open_: np.ndarray, event_indices: List[int], holding_bars: int = 10):
     """Realistic forward returns: enter at next open, exit after holding_bars."""
@@ -306,9 +364,12 @@ def compute_forward_returns(open_: np.ndarray, event_indices: List[int], holding
         returns[i] = (exit_price - entry) / max(entry, 1e-10)
     return returns
 
-def cusum_filter(close: np.ndarray, threshold_multiplier: float = 1.0, atr: Optional[np.ndarray] = None):
-    if atr is None:
-        atr = np.ones(len(close), dtype=np.float64)
+# @@VENDOR-SLOT core_cusum
+def _cusum_filter_py(
+    close: np.ndarray,
+    threshold_multiplier: float,
+    atr: np.ndarray,
+) -> List[int]:
     events: List[int] = []
     s_pos, s_neg = 0.0, 0.0
     for i in range(1, len(close)):
@@ -324,7 +385,9 @@ def cusum_filter(close: np.ndarray, threshold_multiplier: float = 1.0, atr: Opti
             s_neg = 0.0
     return events
 
+
 if HAS_NUMBA:
+
     @njit
     def _cusum_numba(close, threshold_multiplier, atr):
         events = []
@@ -342,12 +405,34 @@ if HAS_NUMBA:
                 s_neg = 0.0
         return events
 
-    def cusum_filter(close, threshold_multiplier=1.0, atr=None):
+    def cusum_filter(
+        close: np.ndarray,
+        threshold_multiplier: float = 1.0,
+        atr: Optional[np.ndarray] = None,
+    ) -> List[int]:
         if atr is None:
             atr = np.ones(len(close), dtype=np.float64)
         return _cusum_numba(close, threshold_multiplier, atr)
 
-def _ema(x: np.ndarray, period: int):
+else:
+
+    def cusum_filter(
+        close: np.ndarray,
+        threshold_multiplier: float = 1.0,
+        atr: Optional[np.ndarray] = None,
+    ) -> List[int]:
+        if atr is None:
+            atr = np.ones(len(close), dtype=np.float64)
+        return _cusum_filter_py(close, threshold_multiplier, atr)
+# @@VENDOR-SLOT-END core_cusum
+
+# @@VENDOR-SLOT core_features
+def _safe_lag(x: np.ndarray, periods: int, fill_value: float = 0.0) -> np.ndarray:
+    """Safe lag without np.roll wrap-around."""
+    return pd.Series(x, dtype=np.float64).shift(periods, fill_value=fill_value).to_numpy(dtype=np.float64)
+
+
+def _ema(x: np.ndarray, period: int) -> np.ndarray:
     alpha = 2.0 / (period + 1)
     result = np.empty_like(x, dtype=np.float64)
     result[0] = x[0]
@@ -355,62 +440,93 @@ def _ema(x: np.ndarray, period: int):
         result[i] = alpha * x[i] + (1 - alpha) * result[i - 1]
     return result
 
-def _sma(x: np.ndarray, period: int):
+
+def _sma(x: np.ndarray, period: int) -> np.ndarray:
     return pd.Series(x).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64)
 
-def _rsi(close: np.ndarray, period: int):
+
+def _rsi(close: np.ndarray, period: int) -> np.ndarray:
     delta = np.diff(close, prepend=close[0]).astype(np.float64)
     avg_gain = _ema(np.maximum(delta, 0.0), period)
     avg_loss = _ema(np.maximum(-delta, 0.0), period)
     rs = avg_gain / (avg_loss + 1e-9)
     return (100.0 - 100.0 / (1.0 + rs)) / 100.0
 
-def _bb_pct_b(close: np.ndarray, period: int = 20, mult: float = 2.0):
+
+def _bb_pct_b(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
     mid = _sma(close, period)
     std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).to_numpy(dtype=np.float64)
     upper = mid + mult * std
     lower = mid - mult * std
     return (close - lower) / (upper - lower + 1e-9)
 
-def _bb_width(close: np.ndarray, period: int = 20, mult: float = 2.0):
+
+def _bb_width(close: np.ndarray, period: int = 20, mult: float = 2.0) -> np.ndarray:
     mid = _sma(close, period)
     std = pd.Series(close).rolling(period, min_periods=1).std(ddof=0).fillna(0).to_numpy(dtype=np.float64)
     return (2 * mult * std) / (mid + 1e-9)
 
-def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int = 9):
+
+def _macd_hist_norm(close: np.ndarray, fast: int = 12, slow: int = 26, sig: int = 9) -> np.ndarray:
     macd = _ema(close, fast) - _ema(close, slow)
     signal = _ema(macd, sig)
     hist = macd - signal
-    atr = compute_atr(np.maximum(close, np.roll(close, 1)), np.minimum(close, np.roll(close, 1)), close, 14)
+    atr = compute_atr(
+        np.maximum(close, np.roll(close, 1)),
+        np.minimum(close, np.roll(close, 1)),
+        close,
+        14,
+    )
     return hist / (atr + 1e-9)
 
-def _rolling_zscore(x: np.ndarray, period: int):
+
+def _rolling_zscore(x: np.ndarray, period: int) -> np.ndarray:
     series = pd.Series(x.astype(np.float64))
     mean = series.rolling(period, min_periods=2).mean()
     std = series.rolling(period, min_periods=2).std(ddof=0)
     return ((series - mean) / (std + 1e-9)).fillna(0.0).to_numpy(dtype=np.float64)
 
-def _cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14):
+
+def _cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
     tp = (high + low + close) / 3.0
     sma = _sma(tp, period)
     tp_series = pd.Series(tp)
-    mad = tp_series.rolling(period, min_periods=1).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True).fillna(1e-9).to_numpy(dtype=np.float64)
+    mad = (
+        tp_series.rolling(period, min_periods=1)
+        .apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+        .fillna(1e-9)
+        .to_numpy(dtype=np.float64)
+    )
     return (tp - sma) / (0.015 * mad + 1e-9) / 200.0
 
-def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14):
+
+def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14) -> np.ndarray:
     log_hl = np.log((high + 1e-9) / (low + 1e-9)) ** 2
     factor = 1.0 / (4.0 * np.log(2))
-    return np.sqrt(pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64))
+    return np.sqrt(
+        pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().to_numpy(dtype=np.float64)
+    )
 
-def build_feature_matrix(open_: np.ndarray, high: np.ndarray, low: np.ndarray,
-                         close: np.ndarray, volume: np.ndarray):
+
+def build_base_feature_matrix(
+    open_: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray,
+) -> np.ndarray:
+    """The 57-column base feature matrix shared by every pipeline.
+
+    Uses ``_safe_lag`` (no ``np.roll`` wrap-around) for all lagged features;
+    calendar slots 18-21 are zero placeholders filled by
+    ``add_calendar_features``.
+    """
     n = len(close)
     log_ret = np.concatenate([[0.0], np.log(close[1:] / (close[:-1] + 1e-12))])
     atr14 = compute_atr(high, low, close, 14)
     atr50 = compute_atr(high, low, close, 50)
     atr5 = compute_atr(high, low, close, 5)
 
-    # Safe lags — no wrap-around
     lag_ret_1 = _safe_lag(log_ret, 1)
     lag_ret_5 = _safe_lag(log_ret, 5)
     lag_ret_10 = _safe_lag(log_ret, 10)
@@ -449,10 +565,10 @@ def build_feature_matrix(open_: np.ndarray, high: np.ndarray, low: np.ndarray,
         atr14 / (atr50 + 1e-9),
         _parkinson_vol(high, low, 14),
         volume / (_sma(volume.astype(np.float64), 20) + 1e-9),
-        np.zeros(n),   # 18: calendar sin(dow) — injected later
-        np.zeros(n),   # 19: calendar cos(dow)
-        np.zeros(n),   # 20: calendar sin(hod)
-        np.zeros(n),   # 21: calendar cos(hod)
+        np.zeros(n, dtype=np.float64),  # 18: calendar sin(dow) - injected later
+        np.zeros(n, dtype=np.float64),  # 19: calendar cos(dow)
+        np.zeros(n, dtype=np.float64),  # 20: calendar sin(hod)
+        np.zeros(n, dtype=np.float64),  # 21: calendar cos(hod)
         lag_ret_1,
         lag_ret_5,
         lag_ret_20,
@@ -486,35 +602,44 @@ def build_feature_matrix(open_: np.ndarray, high: np.ndarray, low: np.ndarray,
         (close - _ema(close, 100)) / (atr50 + 1e-9),
         _rolling_zscore(volume.astype(np.float64), 50),
         atr50 / (atr14 + 1e-9),
-        np.zeros(n),   # 55: placeholder
-        np.ones(n),    # 56: bias feature
+        np.zeros(n, dtype=np.float64),  # 55: placeholder
+        np.ones(n, dtype=np.float64),   # 56: bias feature
     ]
     features = np.column_stack(cols).astype(np.float32)
     return np.nan_to_num(features, nan=0.0, posinf=3.0, neginf=-3.0)
 
-def exported_feature_columns(frame: pd.DataFrame):
-    feature_cols = [col for col in frame.columns if col.startswith('feature_')]
-    def sort_key(name: str):
+
+def exported_feature_columns(frame: pd.DataFrame) -> List[str]:
+    feature_cols = [col for col in frame.columns if col.startswith("feature_")]
+
+    def sort_key(name: str) -> int:
         try:
-            return int(name.split('_')[1])
+            return int(name.split("_")[1])
         except (IndexError, ValueError):
-            return 10 ** 9
+            return 10**9
+
     return sorted(feature_cols, key=sort_key)
 
-def add_calendar_features(features: np.ndarray, timestamps: pd.DatetimeIndex):
-    """Always overwrite calendar slots 18-21 from timestamps."""
+
+def add_calendar_features(features: np.ndarray, timestamps: pd.DatetimeIndex) -> np.ndarray:
+    """Overwrite calendar slots 18-21 from timestamps."""
     dow = timestamps.dayofweek.values / 6.0
     hod = timestamps.hour.values / 23.0
-    features[:, 18] = np.sin(2 * np.pi * dow).astype(np.float32)
-    features[:, 19] = np.cos(2 * np.pi * dow).astype(np.float32)
-    features[:, 20] = np.sin(2 * np.pi * hod).astype(np.float32)
-    features[:, 21] = np.cos(2 * np.pi * hod).astype(np.float32)
+    features[:, 18] = np.sin(2 * np.pi * dow)
+    features[:, 19] = np.cos(2 * np.pi * dow)
+    features[:, 20] = np.sin(2 * np.pi * hod)
+    features[:, 21] = np.cos(2 * np.pi * hod)
     return features
+# @@VENDOR-SLOT-END core_features
+
+# mql5_v2 has no family/asset-class extras; the 57-col base matrix is the full feature set.
+build_feature_matrix = build_base_feature_matrix
 
 def prepare_sequences(features: np.ndarray, labels: np.ndarray, weights: np.ndarray,
                       returns: np.ndarray, timestamps: np.ndarray,
-                      seq_len: int, sample_indices: List[int]):
-    X, y, w, r, ts = [], [], [], [], []
+                      seq_len: int, sample_indices: List[int], vertical_bars: int = 0):
+    X, y, w, r, ts, le = [], [], [], [], [], []
+    n_bars = len(timestamps)
     for idx, sample_idx in enumerate(sample_indices):
         if sample_idx < seq_len:
             continue
@@ -524,16 +649,20 @@ def prepare_sequences(features: np.ndarray, labels: np.ndarray, weights: np.ndar
         w.append(float(weights[idx]))
         r.append(float(returns[idx]))
         ts.append(timestamps[end - 1])
+        # Label at bar `end` resolves over bars end+1..end+vertical_bars.
+        le.append(timestamps[min(end + vertical_bars, n_bars - 1)])
     return (
         np.asarray(X, dtype=np.float32),
         np.asarray(y, dtype=np.int64),
         np.asarray(w, dtype=np.float32),
         np.asarray(r, dtype=np.float32),
         np.asarray(ts),
+        np.asarray(le),
     )
 
 def _split_arrays_purged(X: np.ndarray, y: np.ndarray, weights: np.ndarray,
                          returns: np.ndarray, timestamps: np.ndarray,
+                         label_ends: np.ndarray,
                          label_bars: np.ndarray,
                          train_ratio: float, val_ratio: float,
                          vertical_bars: int, embargo: int):
@@ -553,7 +682,7 @@ def _split_arrays_purged(X: np.ndarray, y: np.ndarray, weights: np.ndarray,
     test_sel = idx[val_end:n - embargo]
 
     def take(sel):
-        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel])
+        return (X[sel], y[sel], weights[sel], returns[sel], timestamps[sel], label_ends[sel])
 
     return take(train_sel), take(val_sel), take(test_sel)
 
@@ -625,12 +754,13 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
         weights = compute_uniqueness_weights(label_indices, vertical_bars, len(close))
         returns = compute_forward_returns(open_, label_indices, holding_bars=vertical_bars)
         timestamps = sym_df['date'].to_numpy()
-        X, y, w, r, ts = prepare_sequences(features, labels, weights, returns, timestamps,
-                                           seq_len=seq_len, sample_indices=label_indices)
+        X, y, w, r, ts, le = prepare_sequences(features, labels, weights, returns, timestamps,
+                                           seq_len=seq_len, sample_indices=label_indices,
+                                           vertical_bars=vertical_bars)
         if len(X) < 48:
             continue
         kept_label_bars = np.asarray([s - 1 for s in label_indices if s >= seq_len], dtype=np.int64)
-        train, val, test = _split_arrays_purged(X, y, w, r, ts, kept_label_bars, train_ratio, val_ratio,
+        train, val, test = _split_arrays_purged(X, y, w, r, ts, le, kept_label_bars, train_ratio, val_ratio,
                                                 vertical_bars, embargo)
         train_parts.append(train)
         val_parts.append(val)
@@ -646,9 +776,9 @@ def build_dataset_splits(df: pd.DataFrame, seq_len: int = 60, k: float = 1.5,
 
 def _scale_splits(train: Tuple[np.ndarray, ...], val: Tuple[np.ndarray, ...],
                   test: Tuple[np.ndarray, ...], scaler_output: Optional[str] = None):
-    X_tr, y_tr, w_tr, r_tr, ts_tr = train
-    X_va, y_va, w_va, r_va, ts_va = val
-    X_te, y_te, w_te, r_te, ts_te = test
+    X_tr, y_tr, w_tr, r_tr, ts_tr, le_tr = train
+    X_va, y_va, w_va, r_va, ts_va, le_va = val
+    X_te, y_te, w_te, r_te, ts_te, le_te = test
     scaler = RobustScaler(quantile_range=(5.0, 95.0))
     B, T, F = X_tr.shape
     # Scale per-feature across all timesteps (preserves temporal structure)
@@ -660,9 +790,9 @@ def _scale_splits(train: Tuple[np.ndarray, ...], val: Tuple[np.ndarray, ...],
     if scaler_output:
         save_scaler_v2(scaler, scaler_output)
     return (
-        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr),
-        (transform(X_va), y_va, w_va, r_va, ts_va),
-        (transform(X_te), y_te, w_te, r_te, ts_te),
+        (transform(X_tr), y_tr, w_tr, r_tr, ts_tr, le_tr),
+        (transform(X_va), y_va, w_va, r_va, ts_va, le_va),
+        (transform(X_te), y_te, w_te, r_te, ts_te, le_te),
         scaler,
     )
 
@@ -827,37 +957,96 @@ def compute_turbulence(current_returns: np.ndarray, historical_returns: np.ndarr
 # 7. CPCV Validation — Proper Implementation
 # ==============================================
 
-def purge_embargo(train_idx, test_idx, purge=5, embargo=5):
-    t0, t1 = test_idx.min(), test_idx.max()
-    mask = (train_idx < t0 - purge) | (train_idx > t1 + embargo)
-    return train_idx[mask]
+def _to_ns(values):
+    return np.asarray(pd.to_datetime(pd.Series(values)).astype('int64') // 10 ** 9, dtype=np.int64) * 10 ** 9
 
-def cpcv_folds(n, n_splits=6, n_test=2, purge=5, embargo=5):
+
+# @@VENDOR-SLOT core_cpcv
+def purge_embargo(
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    starts_ns: np.ndarray,
+    horizon_ns: int,
+    embargo_ns: int = 0,
+    ends_ns: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Drop training samples whose label span overlaps any test span.
+
+    When ``ends_ns`` (actual per-sample label-end timestamps) is provided, overlap is
+    tested on the true spans [start, end]; otherwise each span is approximated as
+    [start, start + horizon_ns].
+    """
+    if ends_ns is None:
+        ends_ns = starts_ns + horizon_ns
+    order = np.argsort(starts_ns[test_idx])
+    test_starts = starts_ns[test_idx][order]
+    test_ends = ends_ns[test_idx][order]
+    # prefix maximum of test ends: a train span can only overlap a test whose start
+    # precedes the train end, and among those the largest test end decides overlap.
+    prefix_max_end = np.maximum.accumulate(test_ends)
+
+    s = starts_ns[train_idx]
+    e = ends_ns[train_idx]
+    hi = np.searchsorted(test_starts, e + embargo_ns, side="right") - 1
+    overlaps = np.zeros(len(train_idx), dtype=bool)
+    valid = hi >= 0
+    overlaps[valid] = prefix_max_end[np.clip(hi[valid], 0, len(prefix_max_end) - 1)] >= s[valid] - embargo_ns
+    return train_idx[~overlaps]
+
+
+def cpcv_folds(
+    starts_ns: np.ndarray,
+    horizon_ns: int,
+    n_splits: int = 6,
+    n_test: int = 2,
+    embargo_ns: int = 0,
+    ends_ns: Optional[np.ndarray] = None,
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    from itertools import combinations
+
+    n = len(starts_ns)
     groups = np.array_split(np.arange(n), n_splits)
-    folds = []
+    folds: List[Tuple[np.ndarray, np.ndarray]] = []
     for test_groups in combinations(range(n_splits), n_test):
         test_idx = np.concatenate([groups[i] for i in test_groups])
         train_idx = np.concatenate([groups[i] for i in range(n_splits) if i not in test_groups])
-        train_idx = purge_embargo(train_idx, test_idx, purge, embargo)
+        train_idx = purge_embargo(train_idx, test_idx, starts_ns, horizon_ns, embargo_ns, ends_ns)
         folds.append((train_idx, test_idx))
     return folds
 
-def psr(sharpe_ratios, sr_ref=0.0):
+
+def psr(sharpe_ratios: np.ndarray, sr_ref: float = 0.0) -> float:
     from scipy.stats import norm
+
     mu = sharpe_ratios.mean()
     sig = sharpe_ratios.std(ddof=1) + 1e-9
     z = (mu - sr_ref) / sig * np.sqrt(len(sharpe_ratios))
     return float(norm.cdf(z))
+
+
+def label_horizon_ns(timestamps: np.ndarray, vertical_bars: int) -> int:
+    ts = np.unique(np.asarray(timestamps, dtype="datetime64[ns]").astype(np.int64))
+    diffs = np.diff(ts)
+    diffs = diffs[diffs > 0]
+    if len(diffs) == 0:
+        raise ValueError("Cannot infer bar spacing from timestamps for CPCV purging.")
+    return int(np.median(diffs)) * int(vertical_bars)
+# @@VENDOR-SLOT-END core_cpcv
 
 def apply_costs(gross_returns, cost_bps=1.0):
     """Subtract round-trip cost in return space."""
     cost = 2.0 * cost_bps / 10000.0
     return gross_returns - cost
 
-def run_cpcv(model_factory, X, y, bar_returns, n_splits=6, annualization=252.0,
+def run_cpcv(model_factory, X, y, bar_returns, timestamps, label_ends,
+             n_splits=6, annualization=252.0,
              cost_bps=1.0, epochs=20, batch_size=64, device='cpu'):
     """Proper CPCV: trains a fresh model from scratch on each fold."""
-    folds = cpcv_folds(len(X), n_splits=n_splits)
+    starts_ns = _to_ns(timestamps)
+    ends_ns = _to_ns(label_ends)
+    # Canonical signature: horizon_ns is unused because ends_ns (true label-end
+    # timestamps) is always provided here.
+    folds = cpcv_folds(starts_ns, horizon_ns=0, n_splits=n_splits, ends_ns=ends_ns)
     sharpes = []
     for fold_idx, (train_idx, test_idx) in enumerate(folds):
         print(f'  CPCV fold {fold_idx + 1}/{len(folds)} ...')
@@ -1346,6 +1535,8 @@ cpcv_result = run_cpcv(
     X=train_split[0],
     y=train_split[1],
     bar_returns=train_split[3],
+    timestamps=train_split[4],
+    label_ends=train_split[5],
     n_splits=CFG.CPCV_SPLITS,
     annualization=metadata.annualization,
     cost_bps=CFG.COST_BPS,

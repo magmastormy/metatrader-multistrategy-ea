@@ -37,77 +37,77 @@ void OnStart()
 {
     Print("=== MQH Model Trainer ===");
     PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
-    
+
     CCSVDataLoader dataLoader;
     CDataPreprocessor preprocessor;
     CLabelEncoder labelEncoder;
     CFeedForwardNN model;
     CTrainingSession trainer;
-    
+
     PrintFormat("[MQH-TRAINER] Loading data from: %s", dataFile);
-    
+
     if(!dataLoader.Load(dataFile))
     {
         Print("[MQH-TRAINER] Failed to load data file");
         return;
     }
-    
+
     int totalRows = dataLoader.GetTotalRowCount();
     PrintFormat("[MQH-TRAINER] Total rows loaded: %d", totalRows);
-    
+
     if(totalRows == 0)
     {
         Print("[MQH-TRAINER] No data available");
         return;
     }
-    
+
     double allFeatures[][FEATURE_VECTOR_SIZE];
     int labels[];
     int count = 0;
-    
+
     if(!dataLoader.LoadAllRows(allFeatures, labels, count))
     {
         Print("[MQH-TRAINER] Failed to load rows");
         return;
     }
-    
+
     PrintFormat("[MQH-TRAINER] Features loaded: %d samples x %d features", count, FEATURE_VECTOR_SIZE);
-    
+
     preprocessor.SetSplitRatio(g_valRatio, g_testRatio);
     preprocessor.SplitData(allFeatures, labels, count);
-    
+
     PrintFormat("[MQH-TRAINER] Split: Train=%d, Val=%d, Test=%d",
                 preprocessor.GetTrainCount(),
                 preprocessor.GetValCount(),
                 preprocessor.GetTestCount());
-    
+
     preprocessor.NormalizeData();
     Print("[MQH-TRAINER] Data normalized");
-    
+
     if(!model.Initialize(hiddenLayer1, hiddenLayer2, hiddenLayer3))
     {
         Print("[MQH-TRAINER] Failed to initialize model");
         return;
     }
-    
+
     model.SetLearningRate(g_learningRate);
     model.SetL2Regularization(l2Regularization);
-    
+
     PrintFormat("[MQH-TRAINER] Model architecture: %d -> %d -> %d -> %d -> %d",
                 FEATURE_VECTOR_SIZE,
                 hiddenLayer1,
                 hiddenLayer2,
                 hiddenLayer3,
                 3);
-    
+
     STrainingConfig config;
     config.epochs = g_epochs;
     config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
     config.logInterval = 10;
-    
+
     trainer.SetConfig(config);
-    
+
     double trainFeatures[][FEATURE_VECTOR_SIZE];
     int trainLabels[];
     preprocessor.GetTrainData(trainFeatures, trainLabels);
@@ -115,24 +115,24 @@ void OnStart()
     double valFeatures[][FEATURE_VECTOR_SIZE];
     int valLabels[];
     preprocessor.GetValData(valFeatures, valLabels);
-    
+
     Print("[MQH-TRAINER] Starting training...");
-    
+
     trainer.Train(model, trainFeatures, trainLabels, preprocessor.GetTrainCount(),
                   valFeatures, valLabels, preprocessor.GetValCount());
-    
+
     Print("[MQH-TRAINER] Training complete");
-    
+
     CTrainingMetrics trainMetrics = trainer.GetTrainMetrics();
     CTrainingMetrics valMetrics = trainer.GetValMetrics();
-    
+
     Print("\n=== Training Results ===");
     Print("--- Training Metrics ---");
     trainMetrics.PrintAllMetrics();
-    
+
     Print("\n--- Validation Metrics ---");
     valMetrics.PrintAllMetrics();
-    
+
     if(saveModel)
     {
         if(model.SaveCheckpoint(symbolName, g_timeframe))
@@ -140,20 +140,20 @@ void OnStart()
         else
             Print("[MQH-TRAINER] Failed to save model");
     }
-    
+
     double testFeatures[][FEATURE_VECTOR_SIZE];
     int testLabels[];
     preprocessor.GetTestData(testFeatures, testLabels);
-    
+
     if(preprocessor.GetTestCount() > 0)
     {
         Print("\n--- Testing on Holdout Set ---");
-        
+
         double totalLoss = 0.0;
         int correct = 0;
         int confusionMatrix[3][3];
         ArrayInitialize(confusionMatrix, 0);
-        
+
         for(int i = 0; i < preprocessor.GetTestCount(); i++)
         {
             double inputVec[];
@@ -169,32 +169,32 @@ void OnStart()
             double outputs[];
             model.GetOutputs(inputVec, outputs);
             totalLoss += CNeuralCore::CrossEntropyLoss(outputs, 3, actualClass);
-            
+
             if(predictedClass == actualClass)
                 correct++;
-            
+
             if(predictedClass >= 0 && predictedClass < 3 && actualClass >= 0 && actualClass < 3)
                 confusionMatrix[actualClass][predictedClass]++;
         }
-        
+
         double testAccuracy = (double)correct / (double)preprocessor.GetTestCount();
         double testLoss = totalLoss / (double)preprocessor.GetTestCount();
-        
+
         PrintFormat("Test Accuracy: %.4f", testAccuracy);
         PrintFormat("Test Loss: %.6f", testLoss);
-        
+
         CTrainingMetrics testMetrics;
         testMetrics.UpdateMetrics(confusionMatrix, 3, testLoss, preprocessor.GetTestCount());
         testMetrics.PrintConfusionMatrix();
-        
+
         string reportFile = StringFormat("ModelReport_%s_%s_%s.txt",
                                          symbolName,
                                          EnumToString(g_timeframe),
                                          TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         testMetrics.SaveMetrics(reportFile);
-        
+
         PrintFormat("[MQH-TRAINER] Test report saved to: %s", reportFile);
     }
-    
+
     Print("\n=== MQH Model Training Complete ===");
 }

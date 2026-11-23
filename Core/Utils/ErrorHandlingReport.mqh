@@ -13,16 +13,16 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const S
         Print("[ERROR] Invalid error severity level: ", EnumToString(severity));
         return;
     }
-    
+
     if((int)severity < (int)m_minLogLevel) {
         return;
     }
-    
+
     if(m_aggregationEnabled && severity >= ERROR_WARNING)
     {
         bool found = false;
         datetime cutoff = TimeCurrent() - m_aggregationWindowSeconds;
-        
+
         for(int i = 0; i < m_aggregationCount; i++)
         {
             if(m_errorAggregations[i].errorCode == context.errorCode)
@@ -40,7 +40,7 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const S
                 }
             }
         }
-        
+
         if(!found && m_aggregationCount < 50)
         {
             m_errorAggregations[m_aggregationCount].errorCode = context.errorCode;
@@ -53,18 +53,18 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const S
             m_aggregationCount++;
         }
     }
-    
+
     if(severity >= ERROR_WARNING) {
         m_errorCount[severity]++;
         m_lastError = TimeCurrent();
-        
+
         if(context.component != "") {
             CEnhancedErrorHandler::UpdateComponentHealthBySeverity(context.component, severity);
         }
     }
-    
+
     string errorMsg = CEnhancedErrorHandler::FormatErrorMessage(severity, context);
-    
+
     if(m_loggingEnabled && m_logFile != "") {
         int fileHandle = FileOpen(m_logFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI, '\t');
         if(fileHandle != INVALID_HANDLE) {
@@ -75,11 +75,11 @@ void CEnhancedErrorHandler::LogError(const ENUM_ERROR_SEVERITY severity, const S
             Print("[ERROR] Failed to write to log file: ", GetLastError(), " - ", errorMsg);
         }
     }
-    
+
     if(severity >= ERROR_CRITICAL) {
         Print(errorMsg);
     }
-    
+
     if(severity == ERROR_FATAL) {
         m_emergencyMode = true;
     }
@@ -108,7 +108,7 @@ void CEnhancedErrorHandler::LogVerbose(const ENUM_LOG_VERBOSITY level, const str
 {
     if(level > m_verbosityLevel)
         return;
-    
+
     string levelStr;
     switch(level)
     {
@@ -120,7 +120,7 @@ void CEnhancedErrorHandler::LogVerbose(const ENUM_LOG_VERBOSITY level, const str
         case VERBOSITY_DEBUG: levelStr = "DEBUG"; break;
         default: levelStr = "UNKNOWN"; break;
     }
-    
+
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     PrintFormat("[%s] [%s] %s", timestamp, levelStr, message);
 }
@@ -129,7 +129,7 @@ void CEnhancedErrorHandler::LogDebug(const string component, const string messag
 {
     if(m_verbosityLevel < VERBOSITY_DEBUG)
         return;
-    
+
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     PrintFormat("[%s] [DEBUG] [%s] %s", timestamp, component, message);
 }

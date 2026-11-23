@@ -2,7 +2,7 @@
 // Extracted from Core/Trading/TradeManager.mqh in Phase D T1.
 // All members are static pure functions - no instance state.
 // Bodies are verbatim copies; the original `const` qualifiers were
-// dropped because MQL5 does not permit `static ... const` methods.
+// dropped because MQL5 does not permit `static... const` methods.
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property strict

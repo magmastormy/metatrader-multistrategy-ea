@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from train_common import compute_test_ic, export_onnx, load_split, save_pickle
+from train_common import export_onnx, load_split_full, report_trained_model, save_train_meta
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     except ImportError as exc:  # pragma: no cover
         raise SystemExit("lightgbm is required for train_lgbm.py") from exc
 
-    X_tr, X_va, X_te, y_tr, y_va, y_te, metadata = load_split(
+    X_tr, X_va, X_te, y_tr, y_va, y_te, ts_tr, ts_va, ts_te, metadata = load_split_full(
         args.csv, seq_len=args.seq_len, k=args.k, vert=args.vert
     )
 
@@ -47,14 +47,8 @@ def main() -> None:
     )
 
     pkl_output = args.pkl_output or str(Path(args.output).with_suffix(".pkl"))
-    save_pickle(model, pkl_output)
-
-    preds = model.predict(X_te)
-    test_ic = compute_test_ic(preds, y_te)
-    print(
-        f"trained=lgbm samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "
-        f"test_ic={float(test_ic):.4f} pkl={pkl_output}"
-    )
+    report_trained_model(model, X_te, y_te, pkl_output, "lgbm", metadata)
+    save_train_meta(pkl_output, ts_tr, ts_va, seq_len=args.seq_len, k=args.k, vert=args.vert)
 
     export_onnx(
         "lightgbm",

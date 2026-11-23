@@ -17,7 +17,7 @@ private:
     bool   m_visible;
     datetime m_lastUpdate;
     int    m_updateIntervalSec;
-    
+
     // Cached metrics
     double m_portfolioRiskPct;
     double m_dailyRiskPct;
@@ -30,7 +30,7 @@ private:
     double m_equity;
     double m_balance;
     double m_unrealizedPnl;
-    
+
     // Thresholds for color coding
     struct SThresholds {
         double portfolioRiskWarn, portfolioRiskCrit;
@@ -39,11 +39,11 @@ private:
         double marginWarn, marginCrit;
         int positionsWarn, positionsCrit;
     } m_thresholds;
-    
+
     // Object names array for cleanup
     string m_objectNames[50];
     int    m_objectCount;
-    
+
     // External input for max positions (set via init)
     int    m_maxPositionsTotal;
 
@@ -58,11 +58,11 @@ public:
         m_thresholds.marginWarn = 70; m_thresholds.marginCrit = 85;
         m_thresholds.positionsWarn = -1; m_thresholds.positionsCrit = -1; // Set dynamically
     }
-    
+
     ~CRiskDashboardPanel() {
         Destroy();
     }
-    
+
     // Initialize panel on chart
     void Init(long chartId, int corner = CORNER_RIGHT_UPPER, int xOffset = 10, int yOffset = 10, int maxPositionsTotal = 10) {
         m_chartId = chartId;
@@ -70,19 +70,19 @@ public:
         m_xOffset = xOffset;
         m_yOffset = yOffset;
         m_maxPositionsTotal = maxPositionsTotal;
-        
+
         // Set dynamic position thresholds
         m_thresholds.positionsWarn = (int)(m_maxPositionsTotal * 0.7);
         m_thresholds.positionsCrit = (int)(m_maxPositionsTotal * 0.9);
-        
+
         CreateObjects();
         UpdateAll();
         Print("[RISK-DASH] Initialized on chart ", chartId);
     }
-    
+
     // Update metrics from orchestrator
-    void UpdateMetrics(double portfolioRisk, double dailyRisk, double dd, 
-                       int posTotal, int posLimit, double marginPct, double freeMarg, 
+    void UpdateMetrics(double portfolioRisk, double dailyRisk, double dd,
+                       int posTotal, int posLimit, double marginPct, double freeMarg,
                        string mode, double equity = 0, double balance = 0, double unrealized = 0) {
         m_portfolioRiskPct = portfolioRisk;
         m_dailyRiskPct = dailyRisk;
@@ -96,7 +96,7 @@ public:
         m_balance = balance;
         m_unrealizedPnl = unrealized;
     }
-    
+
     // Update thresholds (call when config changes)
     void UpdateThresholds(double portWarn, double portCrit, double dailyWarn, double dailyCrit,
                           double ddWarn, double ddCrit, double marginWarn, double marginCrit) {
@@ -105,25 +105,25 @@ public:
         m_thresholds.drawdownWarn = ddWarn; m_thresholds.drawdownCrit = ddCrit;
         m_thresholds.marginWarn = marginWarn; m_thresholds.marginCrit = marginCrit;
     }
-    
+
     // Called from OnTimer
     void OnTimer() {
         if(!m_visible) return;
         if(TimeCurrent() - m_lastUpdate < m_updateIntervalSec) return;
         UpdateAll();
     }
-    
+
     // Show/hide panel
-    void SetVisible(bool v) { 
-        m_visible = v; 
-        UpdateVisibility(); 
+    void SetVisible(bool v) {
+        m_visible = v;
+        UpdateVisibility();
     }
-    
+
     bool IsVisible() const { return m_visible; }
-    
+
     // Toggle visibility
     void Toggle() { SetVisible(!m_visible); }
-    
+
     // Cleanup
     void Destroy() {
         if(m_chartId == 0) return;
@@ -137,19 +137,19 @@ private:
     // Create all chart objects
     void CreateObjects() {
         m_objectCount = 0;
-        
+
         // Background panel (rectangle label)
         AddRectLabel("BG", m_xOffset, m_yOffset, 280, 220, clrBlack, clrGray);
-        
+
         // Title bar
         AddRectLabel("TITLE_BG", m_xOffset, m_yOffset, 280, 24, clrDimGray, clrDimGray);
-        
+
         // Title text
         AddLabel("TITLE", "RISK DASHBOARD", 10, 3, 260, 20, clrWhite, 11);
-        
+
         // Close button (X)
         AddLabel("CLOSE", "X", 255, 3, 20, 20, clrGray, 10);
-        
+
         // Metric rows - labels and values
         struct SRow { string key; string label; int y; double warn; double crit; bool pct; };
         SRow rows[] = {
@@ -163,20 +163,20 @@ private:
             {"UNREALIZED", "Unrealized PnL", 170, 0, 0, false},
             {"MODE", "EA Mode", 190, 0, 0, false}
         };
-        
+
         for(int i = 0; i < ArraySize(rows); i++) {
             SRow r = rows[i];
             AddLabel("LBL_" + r.key, r.label + ":", 15, r.y, 130, 18, clrGray, 9);
             AddLabel("VAL_" + r.key, "—", 150, r.y, 120, 18, clrWhite, 10);
         }
-        
+
         // Separator lines
         for(int i = 1; i < ArraySize(rows); i++) {
             int y = rows[i].y - 5;
             AddHLine("SEP_" + IntegerToString(i), m_xOffset + 10, m_yOffset + y, clrDarkGray);
         }
     }
-    
+
     void AddRectLabel(string suffix, int x, int y, int w, int h, color bgColor, color borderColor) {
         if(m_objectCount >= ArraySize(m_objectNames)) return;
         string name = m_prefix + suffix;
@@ -196,7 +196,7 @@ private:
         ObjectSetInteger(m_chartId, name, OBJPROP_BACK, true);
         m_objectNames[m_objectCount++] = name;
     }
-    
+
     void AddHLine(string suffix, int x, int y, color clr) {
         if(m_objectCount >= ArraySize(m_objectNames)) return;
         string name = m_prefix + suffix;
@@ -212,8 +212,8 @@ private:
         ObjectSetInteger(m_chartId, name, OBJPROP_SELECTABLE, false);
         m_objectNames[m_objectCount++] = name;
     }
-    
-    void AddLabel(string suffix, string text, int x, int y, int w, int h, 
+
+    void AddLabel(string suffix, string text, int x, int y, int w, int h,
                   color clr, int fontsize) {
         if(m_objectCount >= ArraySize(m_objectNames)) return;
         string name = m_prefix + suffix;
@@ -232,30 +232,30 @@ private:
         ObjectSetInteger(m_chartId, name, OBJPROP_ZORDER, 1002);
         m_objectNames[m_objectCount++] = name;
     }
-    
+
     // Update all displayed values
     void UpdateAll() {
         UpdateValue("VAL_PORTFOLIO", m_portfolioRiskPct, "%", m_thresholds.portfolioRiskWarn, m_thresholds.portfolioRiskCrit);
         UpdateValue("VAL_DAILY", m_dailyRiskPct, "%", m_thresholds.dailyRiskWarn, m_thresholds.dailyRiskCrit);
         UpdateValue("VAL_DD", m_drawdownPct, "%", m_thresholds.drawdownWarn, m_thresholds.drawdownCrit);
-        UpdateValue("VAL_POS", (double)m_positionsTotal, "/" + IntegerToString(m_positionsLimit), 
+        UpdateValue("VAL_POS", (double)m_positionsTotal, "/" + IntegerToString(m_positionsLimit),
                     m_thresholds.positionsWarn, m_thresholds.positionsCrit);
         UpdateValue("VAL_MARGIN", m_marginUsedPct, "%", m_thresholds.marginWarn, m_thresholds.marginCrit);
         UpdateValue("VAL_FREEMARGIN", m_freeMargin, "", 0, 0);
         UpdateValue("VAL_EQUITY", m_equity, "", 0, 0);
         UpdateValue("VAL_UNREALIZED", m_unrealizedPnl, "", 0, 0, m_unrealizedPnl >= 0 ? clrLime : clrRed);
         UpdateValue("VAL_MODE", 0, "", 0, 0, clrWhite, m_eaMode);
-        
+
         m_lastUpdate = TimeCurrent();
         ChartRedraw(m_chartId);
     }
-    
-    void UpdateValue(string suffix, double value, string suffixText, 
+
+    void UpdateValue(string suffix, double value, string suffixText,
                      double warn, double crit, color overrideClr = clrWhite, string overrideText = "") {
         string name = m_prefix + suffix;
         string text = overrideText != "" ? overrideText : DoubleToString(value, 2) + suffixText;
         color clr = overrideClr;
-        
+
         if(overrideText == "" && (warn > 0 || crit > 0)) {
             if(value >= crit) clr = clrRed;
             else if(value >= warn) clr = clrYellow;
@@ -263,11 +263,11 @@ private:
         } else if(overrideText == "" && value < 0 && suffixText == "") {
             clr = clrRed; // Negative PnL
         }
-        
+
         ObjectSetString(m_chartId, name, OBJPROP_TEXT, text);
         ObjectSetInteger(m_chartId, name, OBJPROP_COLOR, clr);
     }
-    
+
     void UpdateVisibility() {
         for(int i = 0; i < m_objectCount; i++) {
             if(m_objectNames[i] != "") {

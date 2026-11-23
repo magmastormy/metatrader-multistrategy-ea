@@ -56,7 +56,7 @@ struct SScalpIndicatorCache
    }
 };
 
-// UpdateOnNewBar()  = only place CopyBuffer is called
+// UpdateOnNewBar() = only place CopyBuffer is called
 // UpdateTickValues() = zero computation, only SymbolInfoDouble
 class CScalpSignalCache
 {

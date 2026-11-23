@@ -25,7 +25,7 @@ struct SPythonBridgeVersion
    int                minor;           // Minor version
    int                patch;           // Patch version
    bool               compatible;      // Is compatible with this client
-   
+
    SPythonBridgeVersion()
    {
       version = "";
@@ -48,7 +48,7 @@ struct SPythonBridgeHealthStatus
    int                error_count;     // Failed requests
    string             last_error;      // Last error message
    SPythonBridgeVersion version;       // Server version info
-   
+
    SPythonBridgeHealthStatus()
    {
       state = PYTHON_BRIDGE_DISCONNECTED;

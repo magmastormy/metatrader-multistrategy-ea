@@ -16,7 +16,7 @@
 
 // Per-symbol magic offset for family-specific magic number differentiation
 // (moved verbatim out of CTradeManager's translation unit position; it stays
-//  a top-level struct so any existing reference keeps resolving).
+// a top-level struct so any existing reference keeps resolving).
 struct SSymbolMagicOffset
 {
     string   symbol;
@@ -34,7 +34,7 @@ struct SSymbolMagicOffset
 class CTradeMgrSymbolTradeRegistry
 {
 private:
-    // Per-symbol CTrade instances to avoid race conditions in multi-symbol trading (L10-013)
+    // Per-symbol CTrade instances to avoid race conditions in multi-symbol trading
     struct SSymbolTradeObject {
         string symbol;
         CTrade trade;
@@ -48,7 +48,7 @@ private:
     SSymbolMagicOffset m_magicOffsets[];
     int m_magicOffsetCount;
 
-    // EA-owned position ticket cache for O(1) position management (L12-008)
+    // EA-owned position ticket cache for O(1) position management
     ulong m_eaOwnedPositionTickets[];
     int m_eaOwnedPositionCount;
 
@@ -65,7 +65,7 @@ public:
 // Reset the per-symbol CTrade pool (called from Initialize)
     void ResetSymbolTrades()
     {
-        // L10-013: Initialize per-symbol CTrade array
+        // Initialize per-symbol CTrade array
         m_symbolTradeCount = 0;
         ArrayResize(m_symbolTrades, 0);
     }
@@ -76,7 +76,7 @@ public:
         ArrayFree(m_magicOffsets);
     }
 
-// Get or create per-symbol CTrade instance (L10-013)
+// Get or create per-symbol CTrade instance
     CTrade* GetSymbolTrade(const string symbol,
                            const long magicNumber,
                            const uint slippage,
@@ -114,7 +114,7 @@ public:
         return GetPointer(m_symbolTrades[m_symbolTradeCount - 1].trade);
     }
 
-// L10-013: Update all per-symbol CTrade instances
+// Update all per-symbol CTrade instances
     void UpdatePerSymbolSlippage(const uint slippage)
     {
         for(int i = 0; i < m_symbolTradeCount; i++)
@@ -188,7 +188,7 @@ public:
         return 0;
     }
 
-// EA-owned position ticket cache helpers (L12-008)
+// EA-owned position ticket cache helpers
     void AddEAOwnedPosition(ulong ticket)
     {
         if(ticket == 0) return;

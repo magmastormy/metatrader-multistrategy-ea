@@ -22,7 +22,7 @@ private:
     int               m_divergenceLookback;
     double            m_extremeThreshold;
     int               m_cvdMALength;
-    
+
     datetime m_sessionStartDate;
     datetime m_lastProcessedBarTime;  // prevent CVD re-accumulation
     double   m_sessionCVD;
@@ -30,10 +30,10 @@ private:
     double   m_priceHistory[];
     int      m_historyIndex;
     int      m_historySize;
-    
+
     SCVDResult m_lastResult;
     bool       m_initialized;
-    
+
     void ResetSession()
     {
         m_sessionCVD = 0;
@@ -41,7 +41,7 @@ private:
         ArrayInitialize(m_cvdHistory, 0);
         ArrayInitialize(m_priceHistory, 0);
     }
-    
+
 public:
     CCVDEngine() : m_symbol(""), m_timeframe(PERIOD_CURRENT),
         m_divergenceLookback(30),
@@ -51,7 +51,7 @@ public:
     {
         ZeroMemory(m_lastResult);
     }
-    
+
     bool Initialize(string symbol, int divLookback = 30, double extremeThresh = 2.0, int cvdMALen = 20,
                     ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
     {
@@ -70,24 +70,24 @@ public:
         Print("[CVD-ENGINE] Initialized | symbol=", symbol, " | divLookback=", divLookback, " | timeframe=", EnumToString(m_timeframe));
         return true;
     }
-    
+
     SCVDResult Calculate()
     {
         ZeroMemory(m_lastResult);
         if(!m_initialized) return m_lastResult;
-        
+
         // Check for session reset
         datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
         MqlDateTime dt;
         TimeToStruct(currentBarTime, dt);
         datetime currentDay = StringToTime(IntegerToString(dt.year) + "." + IntegerToString(dt.mon) + "." + IntegerToString(dt.day));
-        
+
         if(m_sessionStartDate == 0 || currentDay != m_sessionStartDate)
         {
             ResetSession();
             m_sessionStartDate = currentDay;
         }
-        
+
         // Skip if same bar â€?prevent CVD re-accumulation
         if(currentBarTime == m_lastProcessedBarTime)
         {
@@ -95,14 +95,14 @@ public:
             return m_lastResult;
         }
         m_lastProcessedBarTime = currentBarTime;
-        
+
         // Calculate delta for recent bars
         for(int i = 1; i <= MathMin(m_divergenceLookback, Bars(m_symbol, m_timeframe) - 1); i++)
         {
             double open = iOpen(m_symbol, m_timeframe, i);
             double close = iClose(m_symbol, m_timeframe, i);
             double volume = (double)iVolume(m_symbol, m_timeframe, i);
-            
+
             // Classify bar: close > open = buy volume, close < open = sell volume
             double delta = 0;
             if(close > open)
@@ -110,18 +110,18 @@ public:
             else if(close < open)
                 delta = -volume; // Sell pressure
             // else delta = 0 (doji â€?neutral)
-            
+
             m_sessionCVD += delta;
-            
+
             int idx = (m_historyIndex + m_historySize - i) % m_historySize;
             m_cvdHistory[idx] = m_sessionCVD;
             m_priceHistory[idx] = close;
         }
-        
+
         m_lastResult.cvd = m_sessionCVD;
-        m_lastResult.delta = (iClose(m_symbol, m_timeframe, 1) > iOpen(m_symbol, m_timeframe, 1)) ? 
+        m_lastResult.delta = (iClose(m_symbol, m_timeframe, 1) > iOpen(m_symbol, m_timeframe, 1)) ?
                              (double)iVolume(m_symbol, m_timeframe, 1) : -(double)iVolume(m_symbol, m_timeframe, 1);
-        
+
         // Calculate CVD MA â€?include zero values (valid CVD reading)
         double sum = 0;
         int count = 0;
@@ -131,7 +131,7 @@ public:
             count++;
         }
         m_lastResult.cvdMA = (count > 0) ? sum / count : 0;
-        
+
         // Check for extremes (Â±2Ïƒ)
         double cvdMean = m_lastResult.cvdMA;
         double cvdVariance = 0;
@@ -142,10 +142,10 @@ public:
         }
         double cvdStdDev = (count > 1) ? MathSqrt(cvdVariance / (count - 1)) : 1;
         m_lastResult.isExtreme = (cvdStdDev > 0 && MathAbs(m_sessionCVD - cvdMean) > m_extremeThreshold * cvdStdDev);
-        
+
         m_lastResult.bullDivergence = false;
         m_lastResult.bearDivergence = false;
-        
+
         if(m_historyIndex >= m_divergenceLookback)
         {
             // Price making lower low but CVD making higher low = bullish divergence
@@ -153,20 +153,20 @@ public:
             double priceThen = iClose(m_symbol, m_timeframe, m_divergenceLookback);
             double cvdNow = m_sessionCVD;
             double cvdThen = m_cvdHistory[(m_historyIndex + m_historySize - m_divergenceLookback) % m_historySize];
-            
+
             if(priceNow < priceThen && cvdNow > cvdThen)
                 m_lastResult.bullDivergence = true;
-            
+
             if(priceNow > priceThen && cvdNow < cvdThen)
                 m_lastResult.bearDivergence = true;
         }
-        
+
         m_lastResult.isValid = true;
         m_historyIndex = (m_historyIndex + 1) % m_historySize;
-        
+
         return m_lastResult;
     }
-    
+
     // Get CVD direction: 1 = positive (buying), -1 = negative (selling), 0 = neutral
     int GetDirection()
     {
@@ -175,7 +175,7 @@ public:
         if(m_sessionCVD < 0) return -1;
         return 0;
     }
-    
+
     // Check if CVD confirms price direction
     bool ConfirmsPrice(double currentPrice, double previousPrice)
     {
@@ -184,7 +184,7 @@ public:
         bool cvdPositive = m_sessionCVD > 0;
         return (priceUp && cvdPositive) || (!priceUp && !cvdPositive);
     }
-    
+
     bool IsInitialized() const { return m_initialized; }
     SCVDResult GetLastResult() const { return m_lastResult; }
 

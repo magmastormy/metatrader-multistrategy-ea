@@ -11,7 +11,7 @@ struct SFibLevel
 {
     double price;
     double ratio;  // 0.382, 0.500, 0.618, etc.
-    
+
     SFibLevel() : price(0), ratio(0) {}
 };
 
@@ -20,22 +20,22 @@ class CFibConfluence
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     // Resolve PERIOD_CURRENT to actual chart timeframe
     void                ResolveTimeframe();
-    
+
 public:
                         CFibConfluence();
                        ~CFibConfluence();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe);
-    
+
     // Calculate Fibonacci levels from swing pair
     void                CalculateLevels(double swingHigh, double swingLow, SFibLevel &levels[], int &count);
-    
-    bool                IsNearFibLevel(double currentPrice, const SFibLevel &levels[], int count, 
+
+    bool                IsNearFibLevel(double currentPrice, const SFibLevel &levels[], int count,
                                       double tolerancePips, double &nearestRatio);
-    
+
     // Get confidence boost based on Fib ratio importance
     double              GetConfidenceBoost(double fibRatio);
 };
@@ -71,19 +71,19 @@ void CFibConfluence::CalculateLevels(double swingHigh, double swingLow, SFibLeve
         count = 0;
         return;
     }
-    
+
     double range = swingHigh - swingLow;
-    
+
     // Calculate only the 3 most important retracement levels
     count = 3;
     ArrayResize(levels, count);
-    
+
     levels[0].price = swingLow + range * 0.382;
     levels[0].ratio = 0.382;
-    
+
     levels[1].price = swingLow + range * 0.500;
     levels[1].ratio = 0.500;
-    
+
     levels[2].price = swingLow + range * 0.618;
     levels[2].ratio = 0.618;
 }
@@ -92,13 +92,13 @@ bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels
                                    double tolerancePips, double &nearestRatio)
 {
     if(count == 0) return false;
-    
+
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double tolerance = tolerancePips * point;
-    
+
     double closestDistance = DBL_MAX;
     nearestRatio = 0.0;
-    
+
     for(int i = 0; i < count; i++)
     {
         double distance = MathAbs(currentPrice - levels[i].price);
@@ -108,7 +108,7 @@ bool CFibConfluence::IsNearFibLevel(double currentPrice, const SFibLevel &levels
             nearestRatio = levels[i].ratio;
         }
     }
-    
+
     return (nearestRatio > 0);
 }
 
@@ -117,15 +117,15 @@ double CFibConfluence::GetConfidenceBoost(double fibRatio)
     // Golden ratio gets highest boost
     if(fibRatio == 0.618)
         return 1.30;  // 30% boost
-    
+
     // 50% retracement
     if(fibRatio == 0.500)
         return 1.15;  // 15% boost
-    
+
     // 38.2% retracement
     if(fibRatio == 0.382)
         return 1.10;  // 10% boost
-    
+
     return 1.0;  // No boost
 }
 

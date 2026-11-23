@@ -13,6 +13,10 @@ struct SConsensusCacheEntry
     ENUM_TRADE_SIGNAL   signal;
     double              confidence;
     int                 confluence;
+    // The decision context travels with the signal: reading the manager's live context after a
+    // cache hit would pair this signal with whatever evaluation ran most recently - possibly a
+    // different mode or a different decision entirely.
+    int                 dominantCluster;
     uint                computedAtMs;
     bool                valid;
 
@@ -22,6 +26,7 @@ struct SConsensusCacheEntry
         signal(TRADE_SIGNAL_NONE),
         confidence(0.0),
         confluence(0),
+        dominantCluster(-1),
         computedAtMs(0),
         valid(false)
     {
@@ -93,7 +98,8 @@ public:
                 ENUM_SIGNAL_EVAL_MODE evalMode,
                 ENUM_TRADE_SIGNAL &signal,
                 double &confidence,
-                int &confluence)
+                int &confluence,
+                int &dominantCluster)
     {
         int idx = FindIndex(symbol, evalMode);
         if(idx < 0 || !m_entries[idx].valid)
@@ -109,6 +115,7 @@ public:
         signal = m_entries[idx].signal;
         confidence = m_entries[idx].confidence;
         confluence = m_entries[idx].confluence;
+        dominantCluster = m_entries[idx].dominantCluster;
         return true;
     }
 
@@ -116,7 +123,8 @@ public:
                ENUM_SIGNAL_EVAL_MODE evalMode,
                ENUM_TRADE_SIGNAL signal,
                double confidence,
-               int confluence)
+               int confluence,
+               const int dominantCluster = -1)
     {
         int idx = FindIndex(symbol, evalMode);
         if(idx < 0)
@@ -127,6 +135,7 @@ public:
         m_entries[idx].signal = signal;
         m_entries[idx].confidence = confidence;
         m_entries[idx].confluence = confluence;
+        m_entries[idx].dominantCluster = dominantCluster;
         m_entries[idx].computedAtMs = EAClockMs();
         m_entries[idx].valid = true;
     }

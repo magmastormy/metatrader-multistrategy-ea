@@ -101,28 +101,28 @@ bool CStructureSwingDetector::IsSwingHigh(const MqlRates &rates[], int index, in
 {
     if(index < period || index >= ArraySize(rates) - period)
         return false;
-    
+
     double high = rates[index].high;
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].high >= high)
             return false;
     }
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].high > high)
             return false;
     }
-    
+
     double avgBody = 0;
     for(int i = index - period; i <= index + period; i++)
     {
         avgBody += MathAbs(rates[i].close - rates[i].open);
     }
     avgBody /= (period * 2 + 1);
-    
+
     if(m_useATR)
     {
         // Use body size as proxy for ATR
@@ -139,28 +139,28 @@ bool CStructureSwingDetector::IsSwingLow(const MqlRates &rates[], int index, int
 {
     if(index < period || index >= ArraySize(rates) - period)
         return false;
-    
+
     double low = rates[index].low;
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].low <= low)
             return false;
     }
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].low < low)
             return false;
     }
-    
+
     double avgBody = 0;
     for(int i = index - period; i <= index + period; i++)
     {
         avgBody += MathAbs(rates[i].close - rates[i].open);
     }
     avgBody /= (period * 2 + 1);
-    
+
     if(m_useATR)
     {
         return avgBody > 0 && (rates[index].high - low) > avgBody * 2;
@@ -177,16 +177,16 @@ bool CStructureSwingDetector::IsPotentialSwingHigh(const MqlRates &rates[], int 
 {
     if(index < period || index >= ArraySize(rates))
         return false;
-    
+
     double high = rates[index].high;
-    
+
     // Check left side only (historical confirmation)
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].high >= high)
             return false;
     }
-    
+
     // Verify minimum swing size (same logic as IsSwingHigh)
     double avgBody = 0;
     int count = 0;
@@ -199,7 +199,7 @@ bool CStructureSwingDetector::IsPotentialSwingHigh(const MqlRates &rates[], int 
         }
     }
     avgBody = (count > 0) ? avgBody / count : 0;
-    
+
     if(m_useATR)
     {
         return avgBody > 0 && (high - rates[index].low) > avgBody * 2;
@@ -216,16 +216,16 @@ bool CStructureSwingDetector::IsPotentialSwingLow(const MqlRates &rates[], int i
 {
     if(index < period || index >= ArraySize(rates))
         return false;
-    
+
     double low = rates[index].low;
-    
+
     // Check left side only (historical confirmation)
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].low <= low)
             return false;
     }
-    
+
     // Verify minimum swing size (same logic as IsSwingLow)
     double avgBody = 0;
     int count = 0;
@@ -238,7 +238,7 @@ bool CStructureSwingDetector::IsPotentialSwingLow(const MqlRates &rates[], int i
         }
     }
     avgBody = (count > 0) ? avgBody / count : 0;
-    
+
     if(m_useATR)
     {
         return avgBody > 0 && (rates[index].high - low) > avgBody * 2;
@@ -255,22 +255,22 @@ bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int 
 {
     if(index < period || index >= ArraySize(rates) - period)
         return false;
-    
+
     double high = rates[index].high;
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].high >= high)
             return false;
     }
-    
+
     // Check right side (future bars)
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].high > high)
             return false;
     }
-    
+
     double avgBody = 0;
     int count = 0;
     for(int i = index - period; i <= index + period; i++)
@@ -282,7 +282,7 @@ bool CStructureSwingDetector::IsConfirmedSwingHigh(const MqlRates &rates[], int 
         }
     }
     avgBody = (count > 0) ? avgBody / count : 0;
-    
+
     if(m_useATR)
     {
         return avgBody > 0 && (high - rates[index].low) > avgBody * 2;
@@ -299,22 +299,22 @@ bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int i
 {
     if(index < period || index >= ArraySize(rates) - period)
         return false;
-    
+
     double low = rates[index].low;
-    
+
     for(int i = 1; i <= period; i++)
     {
         if(rates[index - i].low <= low)
             return false;
     }
-    
+
     // Check right side (future bars)
     for(int i = 1; i <= period; i++)
     {
         if(rates[index + i].low < low)
             return false;
     }
-    
+
     double avgBody = 0;
     int count = 0;
     for(int i = index - period; i <= index + period; i++)
@@ -326,7 +326,7 @@ bool CStructureSwingDetector::IsConfirmedSwingLow(const MqlRates &rates[], int i
         }
     }
     avgBody = (count > 0) ? avgBody / count : 0;
-    
+
     if(m_useATR)
     {
         return avgBody > 0 && (rates[index].high - low) > avgBody * 2;

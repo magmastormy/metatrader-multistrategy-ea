@@ -36,20 +36,20 @@ private:
     double m_sweepThreshold;        // Liquidity sweep threshold
     bool m_useATR;                  // Use ATR for adaptive thresholds
     string m_symbol;                // Current symbol for logging
-    
+
         SwingPoint m_swingHighs[];     // Array of swing highs
         SwingPoint m_swingLows[];      // Array of swing lows
         MarketStructureState m_state;   // Current structure state
-    
+
         // Extracted modules (by value)
         CStructureSwingDetector m_swing;  // Swing detection + potential swing slots
-    
+
     CSignalDiagnostics* m_diagnostics;
-    
+
     // Internal methods - thin forwarders into the extracted modules
         bool IsSwingHigh(const MqlRates &rates[], int index, int period) { return m_swing.IsSwingHigh(rates, index, period); }
         bool IsSwingLow(const MqlRates &rates[], int index, int period) { return m_swing.IsSwingLow(rates, index, period); }
-    
+
         bool IsPotentialSwingHigh(const MqlRates &rates[], int index, int period) { return m_swing.IsPotentialSwingHigh(rates, index, period); }
         bool IsPotentialSwingLow(const MqlRates &rates[], int index, int period) { return m_swing.IsPotentialSwingLow(rates, index, period); }
         bool IsConfirmedSwingHigh(const MqlRates &rates[], int index, int period) { return m_swing.IsConfirmedSwingHigh(rates, index, period); }
@@ -61,29 +61,29 @@ private:
     bool DetectBOS(const SwingPoint &current, const SwingPoint &previous) { return CStructureBOSCHoCH::DetectBOS(current, previous); }
     bool DetectCHOCH(const SwingPoint &current, const SwingPoint &previous) { return CStructureBOSCHoCH::DetectCHOCH(m_state, current, previous); }
     bool DetectLiquiditySweep(const MqlRates &rates[], int index) { return CStructureLiquidity::DetectLiquiditySweep(rates, index, m_swingHighs, m_swingLows); }
-    
+
 public:
     CStructureEngine();
     ~CStructureEngine();
-    
-    bool Initialize(int swingPeriod = 10, double minSwingSize = 10.0, 
+
+    bool Initialize(int swingPeriod = 10, double minSwingSize = 10.0,
                    bool useATR = true, CSignalDiagnostics* diagnostics = NULL);
-    
+
     bool DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES timeframe);
     ENUM_STRUCTURE_TYPE GetCurrentStructure() const { return m_state.currentStructure; }
     MarketStructureState GetStructureState() const { return m_state; }
-    
+
     bool HasBullishBOS(int lookback = 3);
     bool HasBearishBOS(int lookback = 3);
     bool HasBullishCHOCH(int lookback = 3);
     bool HasBearishCHOCH(int lookback = 3);
     bool HasLiquiditySweep(int lookback = 5);
-    
+
     double GetStructureStrength() const { return m_state.structureStrength; }
     bool IsBullishStructure() const { return m_state.isBullish; }
     bool IsBearishStructure() const { return m_state.isBearish; }
     void Reset();
-    
+
     bool GetLastSwingHigh(SwingPoint &point);
     bool GetLastSwingLow(SwingPoint &point);
     int GetSwingHighCount() const { return ArraySize(m_swingHighs); }
@@ -110,7 +110,7 @@ CStructureEngine::~CStructureEngine()
     ArrayFree(m_swingLows);
 }
 
-bool CStructureEngine::Initialize(int swingPeriod, double minSwingSize, 
+bool CStructureEngine::Initialize(int swingPeriod, double minSwingSize,
                                  bool useATR, CSignalDiagnostics* diagnostics)
 {
     m_swingPeriod = swingPeriod;
@@ -118,15 +118,15 @@ bool CStructureEngine::Initialize(int swingPeriod, double minSwingSize,
     m_useATR = useATR;
     m_diagnostics = diagnostics;
     m_swing.Configure(m_minSwingSize, m_useATR);
-    
+
     Reset();
-    
+
     if(m_diagnostics != NULL)
     {
-        Print("[StructureEngine] Initialized | Period: ", swingPeriod, 
+        Print("[StructureEngine] Initialized | Period: ", swingPeriod,
               " | MinSize: ", minSwingSize, " | ATR: ", useATR);
     }
-    
+
     return true;
 }
 
@@ -134,26 +134,26 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    
+
     int copied = CopyRates(symbol, timeframe, 0, 100 + m_swingPeriod, rates);
     if(copied < m_swingPeriod * 2)
     {
         if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("StructureEngine", "INSUFFICIENT_BARS", 
+            m_diagnostics.LogStrategyError("StructureEngine", "INSUFFICIENT_BARS",
                                           "Not enough bars for swing detection");
         return false;
     }
-    
+
     m_symbol = symbol;
-    
+
     // First, confirm potential swings from previous calls
     // (right side data may now be available)
     ConfirmPotentialSwings(rates, copied - 1);
-    
+
     // Check for NEW potential swings at recent bars (indices < m_swingPeriod)
     // These bars don't have enough future data for full confirmation yet
     ScanPotentialSwings(rates, copied);
-    
+
     // Detect CONFIRMED swing points for historical bars (both sides available)
     // Only process bars that have enough left AND right context
     for(int i = m_swingPeriod; i < copied - m_swingPeriod; i++)
@@ -167,18 +167,18 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             point.type = STRUCT_TYPE_HH; // Will be updated based on comparison
             point.strength = CalculateSwingStrength(rates, i, true);
             point.isValid = true;
-            
+
             int size = ArraySize(m_swingHighs);
             ArrayResize(m_swingHighs, size + 1);
             m_swingHighs[size] = point;
-            
+
             UpdateStructureState(point, true);
-            
+
             if(m_diagnostics != NULL && size > 0)
             {
                 if(DetectBOS(point, m_swingHighs[size-1]))
                 {
-                    m_diagnostics.LogSMCDetection("BOS_HIGH", m_symbol, point.price, 
+                    m_diagnostics.LogSMCDetection("BOS_HIGH", m_symbol, point.price,
                                                  point.price, m_swingHighs[size-1].price,
                                                  true, point.strength);
                 }
@@ -190,7 +190,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
                 }
             }
         }
-        
+
         if(IsSwingLow(rates, i, m_swingPeriod))
         {
             SwingPoint point;
@@ -200,13 +200,13 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             point.type = STRUCT_TYPE_LL; // Will be updated based on comparison
             point.strength = CalculateSwingStrength(rates, i, false);
             point.isValid = true;
-            
+
             int size = ArraySize(m_swingLows);
             ArrayResize(m_swingLows, size + 1);
             m_swingLows[size] = point;
-            
+
             UpdateStructureState(point, false);
-            
+
             if(m_diagnostics != NULL && size > 0)
             {
                 if(DetectBOS(point, m_swingLows[size-1]))
@@ -223,7 +223,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
                 }
             }
         }
-        
+
         if(DetectLiquiditySweep(rates, i))
         {
             if(m_diagnostics != NULL)
@@ -234,13 +234,13 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             }
         }
     }
-    
+
     ScanPotentialSwings(rates, copied);
-    
+
     ConfirmPotentialSwings(rates, copied - 1);
-    
+
     CStructureScore::UpdateBiasAndStrength(m_state, m_swingHighs, m_swingLows, m_minSwingSize);
-    
+
     m_state.lastUpdate = TimeCurrent();
     return true;
 }
@@ -253,18 +253,18 @@ void CStructureEngine::ScanPotentialSwings(const MqlRates &rates[], int copied)
         if(IsPotentialSwingHigh(rates, i, m_swingPeriod))
         {
             m_swing.MarkPotentialHigh(i, rates[i].high);
-            
+
             if(m_diagnostics != NULL)
             {
                 m_diagnostics.LogSMCDetection("POTENTIAL_SWING_HIGH", m_symbol, rates[i].high,
                                              rates[i].high, 0, true, 0);
             }
         }
-        
+
         if(IsPotentialSwingLow(rates, i, m_swingPeriod))
         {
             m_swing.MarkPotentialLow(i, rates[i].low);
-            
+
             if(m_diagnostics != NULL)
             {
                 m_diagnostics.LogSMCDetection("POTENTIAL_SWING_LOW", m_symbol, rates[i].low,
@@ -283,7 +283,7 @@ void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int curre
         // satisfies the swing condition
         int potentialIndex = m_swing.PotentialHighIndex();
         int barsSincePotential = currentBarIndex - potentialIndex;
-        
+
         if(barsSincePotential >= m_swingPeriod)
         {
             if(IsConfirmedSwingHigh(rates, potentialIndex, m_swingPeriod))
@@ -295,16 +295,16 @@ void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int curre
                 point.type = STRUCT_TYPE_HH; // Will be updated by UpdateStructureState
                 point.strength = CalculateSwingStrength(rates, potentialIndex, true);
                 point.isValid = true;
-                
+
                 int size = ArraySize(m_swingHighs);
                 ArrayResize(m_swingHighs, size + 1);
                 m_swingHighs[size] = point;
-                
+
                 UpdateStructureState(point, true);
-                
+
                 if(m_diagnostics != NULL)
                 {
-                    m_diagnostics.LogSMCDetection("CONFIRMED_SWING_HIGH", m_symbol, point.price, 
+                    m_diagnostics.LogSMCDetection("CONFIRMED_SWING_HIGH", m_symbol, point.price,
                                                  point.price, 0, true, point.strength);
                 }
             }
@@ -312,12 +312,12 @@ void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int curre
             m_swing.ClearPotentialHigh();
         }
     }
-    
+
     if(m_swing.PotentialLowValid() && m_swing.PotentialLowIndex() >= 0)
     {
         int potentialIndex = m_swing.PotentialLowIndex();
         int barsSincePotential = currentBarIndex - potentialIndex;
-        
+
         if(barsSincePotential >= m_swingPeriod)
         {
             if(IsConfirmedSwingLow(rates, potentialIndex, m_swingPeriod))
@@ -329,13 +329,13 @@ void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int curre
                 point.type = STRUCT_TYPE_LL; // Will be updated by UpdateStructureState
                 point.strength = CalculateSwingStrength(rates, potentialIndex, false);
                 point.isValid = true;
-                
+
                 int size = ArraySize(m_swingLows);
                 ArrayResize(m_swingLows, size + 1);
                 m_swingLows[size] = point;
-                
+
                 UpdateStructureState(point, false);
-                
+
                 if(m_diagnostics != NULL)
                 {
                     m_diagnostics.LogSMCDetection("CONFIRMED_SWING_LOW", m_symbol, point.price,
@@ -378,7 +378,7 @@ bool CStructureEngine::GetLastSwingHigh(SwingPoint &point)
     int size = ArraySize(m_swingHighs);
     if(size == 0)
         return false;
-    
+
     point = m_swingHighs[size - 1];
     return true;
 }
@@ -388,7 +388,7 @@ bool CStructureEngine::GetLastSwingLow(SwingPoint &point)
     int size = ArraySize(m_swingLows);
     if(size == 0)
         return false;
-    
+
     point = m_swingLows[size - 1];
     return true;
 }
@@ -398,7 +398,7 @@ void CStructureEngine::Reset()
     ArrayResize(m_swingHighs, 0);
     ArrayResize(m_swingLows, 0);
     m_state = MarketStructureState();
-    
+
     m_swing.ResetPotentials();
 }
 

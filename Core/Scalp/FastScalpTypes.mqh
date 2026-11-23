@@ -64,7 +64,7 @@ struct SPendingScalpOrder
    datetime placedAt;
    bool     isActive;
 
-   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
    // count of the string member.
    void Reset()
    {
@@ -94,7 +94,7 @@ struct SScalpPendingAsync
    bool     confirmed;        // Whether deal was confirmed
    bool     expired;          // Whether order expired
 
-   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
    // count of the string member.
    void Reset()
    {
@@ -158,7 +158,7 @@ struct SScalpPositionState
    double   originalTP;
    double   oneRProfitPrice;   // Price at 1R profit (for partial close)
 
-   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // (S-M-04): field-wise reset - ZeroMemory corrupts the reference
    // count of the string member.
    void Reset()
    {

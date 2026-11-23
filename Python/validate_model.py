@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from itertools import combinations
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -11,57 +10,15 @@ try:
 except ImportError:  # pragma: no cover
     ort = None
 
-
-def purge_embargo(
-    train_idx: np.ndarray,
-    test_idx: np.ndarray,
-    starts_ns: np.ndarray,
-    horizon_ns: int,
-    embargo_ns: int = 0,
-) -> np.ndarray:
-    """Drop training samples whose label span [start, start + horizon] overlaps any test span."""
-    radius = horizon_ns + embargo_ns
-    test_starts = np.sort(starts_ns[test_idx])
-    s = starts_ns[train_idx]
-    lo = np.searchsorted(test_starts, s - radius, side="left")
-    hi = np.searchsorted(test_starts, s + radius, side="right")
-    return train_idx[hi == lo]
-
-
-def cpcv_folds(
-    starts_ns: np.ndarray,
-    horizon_ns: int,
-    n_splits: int = 6,
-    n_test: int = 2,
-    embargo_ns: int = 0,
-) -> List[Tuple[np.ndarray, np.ndarray]]:
-    n = len(starts_ns)
-    groups = np.array_split(np.arange(n), n_splits)
-    folds: List[Tuple[np.ndarray, np.ndarray]] = []
-    for test_groups in combinations(range(n_splits), n_test):
-        test_idx = np.concatenate([groups[i] for i in test_groups])
-        train_idx = np.concatenate([groups[i] for i in range(n_splits) if i not in test_groups])
-        train_idx = purge_embargo(train_idx, test_idx, starts_ns, horizon_ns, embargo_ns)
-        folds.append((train_idx, test_idx))
-    return folds
-
-
-def psr(sharpe_ratios: np.ndarray, sr_ref: float = 0.0) -> float:
-    from scipy.stats import norm
-
-    mu = sharpe_ratios.mean()
-    sig = sharpe_ratios.std(ddof=1) + 1e-9
-    z = (mu - sr_ref) / sig * np.sqrt(len(sharpe_ratios))
-    return float(norm.cdf(z))
-
-
-def label_horizon_ns(timestamps: np.ndarray, vertical_bars: int) -> int:
-    ts = np.unique(np.asarray(timestamps, dtype="datetime64[ns]").astype(np.int64))
-    diffs = np.diff(ts)
-    diffs = diffs[diffs > 0]
-    if len(diffs) == 0:
-        raise ValueError("Cannot infer bar spacing from timestamps for CPCV purging.")
-    return int(np.median(diffs)) * int(vertical_bars)
+# Canonical timestamp-purge / CPCV / PSR implementations live in
+# training_core.py (also vendored into the self-contained Colab script
+# mql5_v2.py via sync_mql5_v2.py).
+from training_core import (  # noqa: F401  (re-exported for existing callers)
+    cpcv_folds,
+    label_horizon_ns,
+    psr,
+    purge_embargo,
+)
 
 
 def run_cpcv(
@@ -72,12 +29,21 @@ def run_cpcv(
     fold_model_path: Callable[[int, np.ndarray], str],
     n_splits: int = 6,
     annualization: float = 252.0,
+    label_ends_ns: Optional[np.ndarray] = None,
 ) -> dict:
     if ort is None:
         raise ImportError("onnxruntime is required for CPCV validation but is not installed.")
 
     starts_ns = np.asarray(timestamps, dtype="datetime64[ns]").astype(np.int64)
-    folds = cpcv_folds(starts_ns, label_horizon_ns(timestamps, vertical_bars), n_splits=n_splits)
+    ends_ns = None
+    if label_ends_ns is not None:
+        ends_ns = np.asarray(label_ends_ns, dtype="datetime64[ns]").astype(np.int64)
+    folds = cpcv_folds(
+        starts_ns,
+        label_horizon_ns(timestamps, vertical_bars),
+        n_splits=n_splits,
+        ends_ns=ends_ns,
+    )
     sharpe = []
 
     for fold_no, (train_idx, test_idx) in enumerate(folds):
@@ -135,6 +101,7 @@ def main() -> None:
     X = np.concatenate([train[0], val[0], test[0]], axis=0)
     returns = np.concatenate([train[3], val[3], test[3]], axis=0)
     timestamps = np.concatenate([train[4], val[4], test[4]], axis=0)
+    label_ends = np.concatenate([train[5], val[5], test[5]], axis=0)
 
     result = run_cpcv(
         X=X,
@@ -144,6 +111,7 @@ def main() -> None:
         fold_model_path=lambda fold, _train_idx: args.fold_model_template.format(fold=fold),
         n_splits=args.splits,
         annualization=metadata.annualization,
+        label_ends_ns=label_ends,
     )
     if not result["deploy_gate"]:
         raise SystemExit(1)

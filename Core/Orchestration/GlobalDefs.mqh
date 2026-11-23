@@ -1,6 +1,6 @@
-// Shared global variable definitions for all .mq5 compilation units
+// Shared global variable definitions for all.mq5 compilation units
 // Declared extern in OrchestratorFwd.mqh
-// Each .mq5 must include this to get actual definitions
+// Each.mq5 must include this to get actual definitions
 
 #ifndef GLOBAL_DEFS_MQH
 #define GLOBAL_DEFS_MQH

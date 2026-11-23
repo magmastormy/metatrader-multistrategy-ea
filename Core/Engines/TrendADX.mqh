@@ -41,7 +41,7 @@ public:
     static bool UsesAdxTrendModel(const string symbol);
     static bool IsValidAdxDomainValue(const double value);
 
-    //--- Deferred reinit handshake (L4-008).
+    //--- Deferred reinit handshake.
     bool IsReinitPending() const { return m_adxReinitPending; }
     bool TryCompleteReinit(const string symbol,
                            ENUM_TIMEFRAMES timeframe,
@@ -206,9 +206,9 @@ void CTrendAdxHealth::MaybeReinitializeHandle(const string symbol,
         return;
     m_lastAdxReinitAttemptTime = nowTime;
 
-    // L4-008: Set reinit pending flag instead of immediate reinit to avoid race condition
+    // Set reinit pending flag instead of immediate reinit to avoid race condition
     m_adxReinitPending = true;
-    
+
     // Release old handle immediately
     if(handleADX != INVALID_HANDLE)
     {

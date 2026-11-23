@@ -31,7 +31,7 @@ private:
    CUnifiedRiskManager*            m_riskManager;
    CTradeManager*                  m_tradeManager;        // For safe trade execution via TradeManager
    CTrade                          m_trade;                // For synchronous order execution (legacy)
-   CAIAdapter*                     m_aiAdapter;            // L10-018: AI adapter for vote logging
+   CAIAdapter*                     m_aiAdapter;            // AI adapter for vote logging
 
    CSpikeHunterDetector*           m_detector;             // Per-symbol state owner (not owned)
 
@@ -245,7 +245,7 @@ public:
          }
       }
 
-      // L10-008: Use TradeManager for safety checks and execution
+      // Use TradeManager for safety checks and execution
       if(m_tradeManager != NULL)
       {
          bool result = m_tradeManager.OpenPosition(
@@ -259,7 +259,7 @@ public:
             (uint)magic
          );
 
-         // L10-018: AI-VOTE logging
+         // AI-VOTE logging
          if(m_aiAdapter != NULL)
          {
              PrintFormat("[AI-VOTE] symbol=%s strategy=SpikeHunter vote=%s",

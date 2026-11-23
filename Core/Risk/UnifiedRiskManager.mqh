@@ -35,6 +35,32 @@ struct SSymbolRiskBudget
 
 #define MAX_SYMBOL_BUDGETS 30
 
+// Risk-throttle utilization ladder: when the daily or portfolio budget is this
+// consumed, new-risk recommendations are scaled by the paired multiplier.
+// Named constants so the sweep in REMAINING_WORK item 19 has one place to audit;
+// behavior is unchanged from the previous inline literals.
+#define RISK_THROTTLE_DAILY_T1   0.95
+#define RISK_THROTTLE_DAILY_T2   0.85
+#define RISK_THROTTLE_DAILY_T3   0.70
+#define RISK_THROTTLE_DAILY_M1   0.25
+#define RISK_THROTTLE_DAILY_M2   0.50
+#define RISK_THROTTLE_DAILY_M3   0.80
+#define RISK_THROTTLE_PORTFOLIO_T1 0.92
+#define RISK_THROTTLE_PORTFOLIO_T2 0.80
+#define RISK_THROTTLE_PORTFOLIO_T3 0.65
+#define RISK_THROTTLE_PORTFOLIO_M1 0.30
+#define RISK_THROTTLE_PORTFOLIO_M2 0.60
+#define RISK_THROTTLE_PORTFOLIO_M3 0.85
+#define RISK_THROTTLE_CONSERVATIVE_M 0.80
+
+// Per-symbol budget performance weighting inside GetSymbolRiskAllocation.
+#define RISK_PERF_WINRATE_HIGH   55.0
+#define RISK_PERF_PROFIT_FACTOR_HIGH 1.3
+#define RISK_PERF_WEIGHT_HIGH    1.5
+#define RISK_PERF_WINRATE_LOW    40.0
+#define RISK_PERF_PROFIT_FACTOR_LOW 0.8
+#define RISK_PERF_WEIGHT_LOW     0.5
+
 // Wall-clock poll for the margin ladder: TimeCurrent() only advances with ticks, so a tick-gated poll would stall on a
 // quiet symbol exactly when the account is already leveraged. 30 s bounds how long a breach can go unnoticed and how
 // often the entry hold can flap at the 200% boundary.
@@ -104,7 +130,7 @@ private:
     bool m_marginEntriesHeld;
     uint m_lastMarginPollMs;
     ENUM_MARGIN_HEALTH_LEVEL m_marginHealthLevel;
-    
+
     CRiskCircuitBreaker m_circuitBreaker;
 
     int m_lastTradingDayKey;         // Cached trading day key (YYYYMMDD)
@@ -230,14 +256,14 @@ public:
 
     // Trading-day roll hour (0 = server midnight). No caller sets this setter, so the day always rolls at midnight server time, not at the 17:00 forex rollover.
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
-    
+
     // Push-synced: the validation pipeline mirrors this scalar, so both copies stay equal.
     void SetEAMagicNumber(long magic)
     {
         m_eaMagicNumber = magic;
         m_validationPipeline.SetEAMagicNumber(magic);
     }
-    
+
     virtual bool CheckDrawdownCircuitBreaker();
     double GetCurrentDrawdownPercent() const;
     bool IsTradingEnabled() const;
@@ -289,7 +315,7 @@ public:
     }
 
     virtual SDrawdownState GetDrawdownState();
-    
+
     double GetSymbolCorrelation(const string symbol1, const string symbol2);
     double CalculatePositionRiskPercent(ulong ticket);
 
@@ -654,7 +680,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(m_dailyStartEquity <= 0.0)
         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
-    
+
     // InitializeState also re-arms the daily P&L loss-limit breaker.
     m_circuitBreaker.InitializeState(m_dailyStartEquity);
 
@@ -669,7 +695,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     // Scale guard: active risk must land in [0.01, 20.0] %, i.e. inputs are 0-100 not 0-1.
     double activeRiskCheck = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     if(activeRiskCheck < 0.01 || activeRiskCheck > 20.0)
-        PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] �?verify input scale is 0-100 not 0-1",
+        PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] - verify input scale is 0-100 not 0-1",
                     activeRiskCheck);
 
     PrintFormat("[RISK-UNIFIED] Initialized | Base %.2f%% | Range %.2f-%.2f%% | Daily %.2f%% | Portfolio %.2f%%",
@@ -682,7 +708,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     // The margin ladder is a constant, not an input: hold under 200%, ask for a flatten under 150%, measure every 30 s.
     PrintFormat("[RISK-MARGIN] monitor armed | poll_ms=%d | hold_entries_below=200%% | request_flatten_below=150%% | free_margin_use_limit=80%% | min_post_trade_level=200%%",
                 MARGIN_HEALTH_POLL_MS);
-    
+
     PrintFormat("[RISK-CIRCUIT-BREAKER] Enabled | Initial Equity=%.2f | Drawdown Limits: Warning=%.1f%% Critical=%.1f%%",
                 m_circuitBreaker.GetPeakEquity(), m_config.drawdownWarningPercent, m_config.drawdownCriticalPercent);
 
@@ -817,7 +843,7 @@ void CUnifiedRiskManager::SyncClusterPositionCounts()
                     m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
         if(m_clusterSyncCounts[c] > m_maxConcurrentPerCluster)
         {
-            PrintFormat("[RISK-CLUSTER-SYNC]   WARNING: cluster=%s has %d inherited positions exceeding cap %d �?blocking new entries until positions close",
+            PrintFormat("[RISK-CLUSTER-SYNC]   WARNING: cluster=%s has %d inherited positions exceeding cap %d - blocking new entries until positions close",
                         m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
         }
     }
@@ -929,22 +955,22 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     double dailyUtilization = (m_config.maxDailyRiskPercent > 0.0) ? (effectiveDailyRisk / m_config.maxDailyRiskPercent) : 0.0;
     double portfolioUtilization = (m_config.maxPortfolioRiskPercent > 0.0) ? (openExposureRisk / m_config.maxPortfolioRiskPercent) : 0.0;
 
-    if(dailyUtilization >= 0.95)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.25);
-    else if(dailyUtilization >= 0.85)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.50);
-    else if(dailyUtilization >= 0.70)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.80);
+    if(dailyUtilization >= RISK_THROTTLE_DAILY_T1)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_DAILY_M1);
+    else if(dailyUtilization >= RISK_THROTTLE_DAILY_T2)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_DAILY_M2);
+    else if(dailyUtilization >= RISK_THROTTLE_DAILY_T3)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_DAILY_M3);
 
-    if(portfolioUtilization >= 0.92)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.30);
-    else if(portfolioUtilization >= 0.80)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.60);
-    else if(portfolioUtilization >= 0.65)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.85);
+    if(portfolioUtilization >= RISK_THROTTLE_PORTFOLIO_T1)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_PORTFOLIO_M1);
+    else if(portfolioUtilization >= RISK_THROTTLE_PORTFOLIO_T2)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_PORTFOLIO_M2);
+    else if(portfolioUtilization >= RISK_THROTTLE_PORTFOLIO_T3)
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_PORTFOLIO_M3);
 
     if(conservative)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.80);
+        pressureMultiplier = MathMin(pressureMultiplier, RISK_THROTTLE_CONSERVATIVE_M);
 
     m_adaptiveTuner.SetThrottlePressure(pressureMultiplier);
 
@@ -1274,17 +1300,17 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     if(!PositionSelectByTicket(ticket)) {
         return 0.0;
     }
-    
+
     double volume = PositionGetDouble(POSITION_VOLUME);
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
     double sl = PositionGetDouble(POSITION_SL);
     double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-    
+
     // MT5 quirk: closed/closing positions still pass PositionSelectByTicket but report zero volume or zero SL; skipping them avoids phantom risk.
     if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0) {
         return 0.0;
     }
-    
+
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
@@ -1299,12 +1325,12 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     // Units: slDistance is in POINTS (SYMBOL_POINT) while tickValue is per TICK; those coincide only when tickSize == point, so unscaled index/metal risk is understated.
     double ticksPerPoint = (tickSize > 0.0) ? (point / tickSize) : 1.0;
     double riskAmount = volume * slDistance * tickValue * ticksPerPoint;
-    
+
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(equity <= 0.0) {
         return 0.0;
     }
-    
+
     return (riskAmount / equity) * 100.0;  // fraction -> 0-100 % scale
 }
 
@@ -1410,10 +1436,10 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
     double profitFactor = GetSymbolProfitFactor(symbol);
 
     double perfWeight = 1.0;
-    if(winRate > 55.0 && profitFactor > 1.3)
-        perfWeight = 1.5;
-    else if(winRate < 40.0 || profitFactor < 0.8)
-        perfWeight = 0.5;
+    if(winRate > RISK_PERF_WINRATE_HIGH && profitFactor > RISK_PERF_PROFIT_FACTOR_HIGH)
+        perfWeight = RISK_PERF_WEIGHT_HIGH;
+    else if(winRate < RISK_PERF_WINRATE_LOW || profitFactor < RISK_PERF_PROFIT_FACTOR_LOW)
+        perfWeight = RISK_PERF_WEIGHT_LOW;
 
     double allocation = baseShare * perfWeight;
 
@@ -1660,7 +1686,7 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     if(risk > 0.0)
         return risk;
 
-    // Fallback manual math when OrderCalcProfit fails. Missing tick data means we cannot size risk �?refuse.
+    // Fallback manual math when OrderCalcProfit fails. Missing tick data means we cannot size risk - refuse.
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize  = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     if(tickValue <= 0 || tickSize <= 0)
@@ -1724,10 +1750,10 @@ bool CUnifiedRiskManager::IsSymbolDataValid(const string symbolParam)
 {
     if(!SymbolSelect(symbolParam, true))
         return false;
-    
+
     double bid = SymbolInfoDouble(symbolParam, SYMBOL_BID);
     double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
-    
+
     return (bid > 0 && ask > 0);
 }
 
@@ -1745,13 +1771,13 @@ bool CUnifiedRiskManager::CheckAccountTradingPermissions(void)
 {
     if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))
         return false;
-    
+
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
         return false;
-    
+
     if(!TerminalInfoInteger(TERMINAL_CONNECTED))
         return false;
-    
+
     return true;
 }
 
@@ -1804,7 +1830,7 @@ double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) cons
     if(ticket == 0 || !PositionSelectByTicket(ticket)) {
         return 0.0;
     }
-    
+
     string symbol = PositionGetString(POSITION_SYMBOL);
     double volume = PositionGetDouble(POSITION_VOLUME);
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -1812,24 +1838,24 @@ double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) cons
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     if(point <= 0.0)
         point = 0.00001;
-    
+
     if(stopLoss <= 0.0 || openPrice <= 0.0 || volume <= 0.0)
     {
         // Fail closed: a position with no SL is charged maxRiskPerTradePercent so the cluster budget is never underestimated.
         return m_config.maxRiskPerTradePercent;
     }
-    
+
     double slPoints = MathAbs(openPrice - stopLoss) / point;
     if(slPoints <= 0.0)
     {
         // Same conservative treatment for a zero-distance SL.
         return m_config.maxRiskPerTradePercent;
     }
-    
+
     double riskAmount = CalculateTradeRisk(symbol, volume, slPoints);
     if(riskAmount <= 0.0)
         return m_config.maxRiskPerTradePercent;
-    
+
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     double denominator = 0.0;
@@ -1837,10 +1863,10 @@ double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) cons
         denominator = MathMin(balance, equity);
     else
         denominator = MathMax(balance, equity);
-    
+
     if(denominator <= 0.0)
         return m_config.maxRiskPerTradePercent;
-    
+
     return (riskAmount / denominator) * 100.0;  // fraction -> 0-100 % scale
 }
 

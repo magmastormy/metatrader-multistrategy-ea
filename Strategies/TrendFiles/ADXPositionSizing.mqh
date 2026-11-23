@@ -25,25 +25,25 @@ class CADXPositionSizing
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
+
     int                 m_adxHandle;
-    
+
     // Configuration
     double              m_weakTrendMultiplier;
     double              m_normalMultiplier;     // 1.0x for normal trends
     double              m_strongMultiplier;     // 1.3x for strong trends
     double              m_veryStrongMultiplier;
-    
+
     // ADX tier boundaries - InitForAssetClass is the only writer
     double              m_noTrendThreshold;     // Below this = no trade
     double              m_weakThreshold;        // Weak trend threshold
     double              m_normalThreshold;      // Normal trend threshold
     double              m_strongThreshold;      // Strong trend threshold
-    
+
     // Internal methods
     double              GetADX();
     ENUM_ADX_TIER       GetADXTier(double adx);
-    
+
 public:
 // Standardized ADX tiers
 // Rationale:
@@ -54,17 +54,17 @@ public:
 // ADX > 40: Very strong trend - maximum conviction, 1.5x size
                         CADXPositionSizing();
                        ~CADXPositionSizing();
-    
+
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe);
     void                Deinit();
-    
+
     // Position sizing
     double              GetPositionSizeMultiplier();
     bool                ShouldTrade();
     bool                IsDirectionallyClear();
-    
+
     ENUM_ADX_TIER       GetCurrentTier();
-    
+
     // Configuration
     void                InitForAssetClass(int assetClass);
 };
@@ -78,7 +78,7 @@ CADXPositionSizing::CADXPositionSizing() :
     m_normalMultiplier(1.0),
     m_strongMultiplier(1.3),
     m_veryStrongMultiplier(1.5),
-// Initialize from standardized thresholds (hardcoded for .mqh compatibility)
+// Initialize from standardized thresholds (hardcoded for.mqh compatibility)
     m_noTrendThreshold(20.0),
     m_weakThreshold(25.0),
     m_normalThreshold(30.0),
@@ -95,15 +95,15 @@ bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
 {
     m_symbol = symbol;
     m_timeframe = timeframe;
-    
+
     m_adxHandle = CIndicatorManager::Instance().GetADXHandle(symbol, timeframe, 14);
-    
+
     if(m_adxHandle == INVALID_HANDLE)
     {
         Print("[ADXSizing] Failed to create ADX handle");
         return false;
     }
-    
+
     return true;
 }
 
@@ -125,13 +125,13 @@ void CADXPositionSizing::Deinit()
 double CADXPositionSizing::GetADX()
 {
     if(m_adxHandle == INVALID_HANDLE) return 0;
-    
+
     double adx[];
     ArraySetAsSeries(adx, true);
-    
+
     if(CopyBuffer(m_adxHandle, 0, 0, 1, adx) <= 0)
         return 0;
-    
+
     return adx[0];
 }
 
@@ -163,7 +163,7 @@ bool CADXPositionSizing::ShouldTrade()
 bool CADXPositionSizing::IsDirectionallyClear()
 {
     if(m_adxHandle == INVALID_HANDLE) return false;
-    
+
     double pDI[1], mDI[1], adxMain[1];
     if(CopyBuffer(m_adxHandle, 0, 0, 1, adxMain) <= 0 ||
        CopyBuffer(m_adxHandle, 1, 0, 1, pDI) <= 0 ||
@@ -171,23 +171,23 @@ bool CADXPositionSizing::IsDirectionallyClear()
     {
         return false;
     }
-    
+
     // ADX must be above minimum threshold
     if(adxMain[0] < m_noTrendThreshold) return false;
-    
+
     // There must be a clear separation between bulls (+DI) and bears (-DI).
     // Tangled DI lines mean high-volatility chop (ranging trap).
     // Lowered from 5.0 to 2.0 for synthetic CFDs where DI lines are typically close
     double diSpread = MathAbs(pDI[0] - mDI[0]);
     if(diSpread < 2.0) return false; // Chop zone lockout
-    
+
     return true;
 }
 
 double CADXPositionSizing::GetPositionSizeMultiplier()
 {
     ENUM_ADX_TIER tier = GetCurrentTier();
-    
+
     switch(tier)
     {
         case ADX_NO_TREND:      return 0.0;  // No trade

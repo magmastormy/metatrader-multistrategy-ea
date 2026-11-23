@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import os
+
+from safe_pickle import safe_pickle_load
 import threading
 import time
 from datetime import datetime, timezone
@@ -106,10 +109,8 @@ class SignalServer:
         if patchtst_onnx and lgbm_pkl and stacker_pkl:
             self.sess = ort.InferenceSession(patchtst_onnx)
             self.input_name = self.sess.get_inputs()[0].name
-            with open(lgbm_pkl, "rb") as handle:
-                self.lgbm = pickle.load(handle)
-            with open(stacker_pkl, "rb") as handle:
-                self.stacker = pickle.load(handle)
+            self.lgbm = safe_pickle_load(lgbm_pkl)
+            self.stacker = safe_pickle_load(stacker_pkl)
             self._has_universal = True
 
         # Family-specific models
@@ -138,6 +139,7 @@ class SignalServer:
         self.socket.bind(f"tcp://127.0.0.1:{zmq_port}")
         self.zmq_port = zmq_port
         self.heartbeat_timeout = heartbeat_timeout
+        self.auth_token = os.environ.get("ZMQ_AUTH_TOKEN", "")
         self.last_heartbeat = datetime.now(timezone.utc)
 
         self.doubleadapt = DoubleAdaptBridge()
@@ -188,13 +190,11 @@ class SignalServer:
         for gbdt_type in ["catboost", "xgboost", "lgbm"]:
             gbdt_path = self.model_dir / f"{prefix}_{gbdt_type}.pkl"
             if gbdt_path.exists():
-                with open(gbdt_path, "rb") as f:
-                    models[gbdt_type] = pickle.load(f)
+                models[gbdt_type] = safe_pickle_load(gbdt_path)
 
         stacker_path = self.model_dir / f"{prefix}_stacker.pkl"
         if stacker_path.exists():
-            with open(stacker_path, "rb") as f:
-                models["stacker"] = pickle.load(f)
+            models["stacker"] = safe_pickle_load(stacker_path)
 
         return models
 
@@ -213,13 +213,11 @@ class SignalServer:
         for gbdt_type in ["catboost", "xgboost", "lgbm"]:
             gbdt_path = self.model_dir / family_name / f"{gbdt_type}.pkl"
             if gbdt_path.exists():
-                with open(gbdt_path, "rb") as f:
-                    models[gbdt_type] = pickle.load(f)
+                models[gbdt_type] = safe_pickle_load(gbdt_path)
 
         stacker_path = self.model_dir / family_name / "stacker.pkl"
         if stacker_path.exists():
-            with open(stacker_path, "rb") as f:
-                models["stacker"] = pickle.load(f)
+            models["stacker"] = safe_pickle_load(stacker_path)
 
         return models
 
@@ -580,6 +578,13 @@ class SignalServer:
                     if not isinstance(message, dict) or "features" not in message:
                         try:
                             self.socket.send_json({"error": "Missing required key: 'features'"})
+                        except:
+                            pass
+                        continue
+
+                    if self.auth_token and message.get("token") != self.auth_token:
+                        try:
+                            self.socket.send_json({"error": "Unauthorized"})
                         except:
                             pass
                         continue

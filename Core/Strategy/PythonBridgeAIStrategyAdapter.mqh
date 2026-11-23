@@ -35,7 +35,7 @@ private:
     int               m_barCounter;
     int               m_familyId;
     string            m_predictionMode;
-    
+
     // Direction calibration
     int  m_directionWindow[20];
     int  m_directionWindowIdx;
@@ -46,7 +46,7 @@ private:
     int  m_calibrationWindowSize;
     double m_calibrationRatioThreshold;
     int  m_minDirectionalCount;
-    
+
     CFeaturePipelineONNX* m_featurePipeline;
     bool              m_ownsPipeline;
 
@@ -60,12 +60,12 @@ private:
         int dirValue = 0;
         if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
-        
+
         m_directionWindow[m_directionWindowIdx] = dirValue;
         m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
         if(m_directionWindowCount < 20)
             m_directionWindowCount++;
-        
+
         if(IsDirectionDegenerate())
         {
             m_consecutiveBiasedVotes++;
@@ -106,7 +106,7 @@ private:
     }
 
 public:
-    CPythonBridgeAIStrategyAdapter(CPythonBridge* pythonBridge = NULL, 
+    CPythonBridgeAIStrategyAdapter(CPythonBridge* pythonBridge = NULL,
                                    const string predictionMode = "ensemble",
                                    int familyId = -1)
     {
@@ -144,7 +144,7 @@ public:
         ArrayInitialize(m_directionWindow, 0);
     }
 
-    virtual ~CPythonBridgeAIStrategyAdapter() 
+    virtual ~CPythonBridgeAIStrategyAdapter()
     {
         if(m_ownsPipeline && m_featurePipeline != NULL)
         {
@@ -179,7 +179,7 @@ public:
             m_lastDecisionReasonTag = "PYTHON_BRIDGE_INITIALIZED";
             return true;
         }
-        
+
         m_lastDecisionReasonTag = "PYTHON_BRIDGE_UNAVAILABLE";
         return false;
     }
@@ -211,7 +211,7 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        
+
         datetime now = TimeCurrent();
         if(now - m_lastVoteLogTime >= 86400)
         {
@@ -249,14 +249,14 @@ public:
         LogVoteHeartbeat();
         return TRADE_SIGNAL_NONE;
     }
-    
+
     virtual string GetName(void) const override { return "Python Bridge AI (" + m_predictionMode + ")"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
     virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
-    
+
     virtual bool IsDirectionDegenerate(void) const override
     {
         int windowSize = m_calibrationWindowSize;
@@ -275,7 +275,7 @@ public:
         double sellRatio = (double)sellCount / (double)directionalCount;
         return (buyRatio > m_calibrationRatioThreshold || sellRatio > m_calibrationRatioThreshold);
     }
-    
+
     double GetDirectionalBias(void) const
     {
         int windowSize = m_calibrationWindowSize;
@@ -291,7 +291,7 @@ public:
         if(directionalCount < m_minDirectionalCount) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
-    
+
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
         if(!IsDirectionDegenerate())
@@ -305,31 +305,31 @@ public:
             return baseWeight * 0.50;
         return baseWeight * 0.70;
     }
-    
-    virtual bool ValidateParameters(void) override 
-        { 
-            return (m_pythonBridge != NULL && m_pythonBridge.IsInitialized()); 
+
+    virtual bool ValidateParameters(void) override
+        {
+            return (m_pythonBridge != NULL && m_pythonBridge.IsInitialized());
         }
-    
+
         virtual bool ValidateRiskManagerInjection(void) const override
         {
             return false; // Default: risk manager not injected
         }
-    
+
         virtual bool ShouldBypassTierConfidenceFloor(void) const override
         {
             return false; // Default: no bypass
         }
-    
+
         virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
-    
+
     // Configurable direction calibration setters
     virtual void SetCalibrationWindowSize(int size) { m_calibrationWindowSize = MathMax(5, MathMin(size, 20)); }
     virtual void SetCalibrationRatioThreshold(double threshold) { m_calibrationRatioThreshold = MathMax(0.5, MathMin(threshold, 0.95)); }
     virtual void SetMinDirectionalCount(int count) { m_minDirectionalCount = MathMax(1, MathMin(count, 20)); }
-    
+
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {
         signals = (int)m_voteCount;
@@ -434,39 +434,39 @@ public:
     {
         return 1.0 - m_cachedConfidence;
     }
-    
+
     virtual bool IsModelHealthy(void) const override
     {
         return (m_pythonBridge != NULL && m_pythonBridge.IsConnected());
     }
-    
+
     virtual bool IsTraining(void) const override
     {
         return false;
     }
-    
+
     virtual int GetTrainingSteps(void) const override
     {
         return 0;
     }
-    
+
     virtual double GetTemperature(void) const override
     {
         return 1.0;
     }
-    
+
     virtual void SetTemperature(const double temperature) override {}
-    
+
     virtual int GetCurrentRegime(void) const override
     {
         return 0;
     }
-    
+
     virtual bool SaveCheckpoint(void) override
     {
         return false;
     }
-    
+
     // IUncertaintyEstimation
     virtual void GetConfidenceInterval(double &lower, double &upper) const override
     {
@@ -480,44 +480,44 @@ public:
             upper = MathMin(1.0, confidence + uncertainty);
         }
     }
-    
+
     virtual double GetHealthScore(void) const override
     {
         return IsModelHealthy() ? 1.0 : 0.0;
     }
-    
+
     virtual void EnableOnlineTraining(const bool enable) override
     {
         // Python bridge doesn't support online training
     }
-    
+
     virtual bool TrainStep(void) override
     {
         return false;
     }
-    
+
     virtual string GetTrainingState(void) const override
     {
         return "NOT_SUPPORTED";
     }
-    
+
     virtual void OnRegimeChange(const int newRegime) override
     {
         // Python bridge doesn't have regime awareness
     }
-    
+
     // ICheckpointing
     virtual string GetLastLoadStatus(void) const override
     {
         return m_pythonBridge != NULL ? "LOADED" : "NOT_INITIALIZED";
     }
-    
+
     // Set Python Bridge reference
     void SetPythonBridge(CPythonBridge* bridge) { m_pythonBridge = bridge; }
-    
+
     // Set family ID for family-aware predictions
     void SetFamilyId(int familyId) { m_familyId = familyId; }
-    
+
     // Set prediction mode (ensemble, doubleadapt, maml_ppo, family)
     void SetPredictionMode(const string mode) { m_predictionMode = mode; }
 };

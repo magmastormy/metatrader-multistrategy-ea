@@ -123,12 +123,13 @@ public:
 
     void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
                            bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
-                           double baseSpreadATRRatio, double syntheticSpreadATRRatio);
+                           double baseSpreadATRRatio, double syntheticSpreadATRRatio,
+                           double atrCrisisCeilingSynthetic = 2.5, double atrCrisisCeilingForex = 2.0);
 
 public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
-    
+
     CTradeAttributionManager* GetAttribution() { return m_infra.GetAttribution(); }
     void SetAttributionManager(CTradeAttributionManager* attribution)
          { m_infra.SetAttributionManager(attribution); m_attributionDelegator.SetAttribution(m_infra.GetAttribution()); }
@@ -292,7 +293,7 @@ public:
     double GetSupportFloorNewBar() const             { return m_quorumConfig.GetSupportFloorNewBar(); }
     double GetSupportFloorIntrabar() const           { return m_quorumConfig.GetSupportFloorIntrabar(); }
 
-    //--- Per-symbol loss-streak breaker (Batch 286). The policy is pushed once by the orchestrator, the streak is
+    //--- Per-symbol loss-streak breaker. The policy is pushed once by the orchestrator, the streak is
     //--- fed by the close path (StrategyMgrTradeFeedback) and read by the per-symbol entry gate. Limit <= 0 means
     //--- the feature is off and none of these touch the decision path.
     void SetSymbolLossStreakPolicy(const int limit, const int cooldownSec)
@@ -317,7 +318,7 @@ public:
     }
 
     //--- Returns true when this very close is the one that triggers a block, so the caller can print the trigger.
-    //--- The streak is counted whether or not a block policy is configured, because Batch 287 reads the same
+    //--- The streak is counted whether or not a block policy is configured, because reads the same
     //--- counter to size the next entry down instead of refusing it (InpSymbolLossStreakLimit = 0 keeps the brake
     //--- off while the count still exists).
     bool RecordSymbolClose(const double netProfit)
@@ -327,6 +328,9 @@ public:
             m_symbolLossStreak = 0;
             return false;
         }
+        // A scratch close carries no information either way: it neither extends the losing run nor
+        // proves recovery, so the streak holds its count instead of being fed a phantom loss.
+        if(netProfit == 0.0) return false;
         m_symbolLossStreak++;
         if(m_symbolStreakLimit <= 0) return false;
         if(m_symbolLossStreak < m_symbolStreakLimit) return false;
@@ -336,7 +340,7 @@ public:
 
     //--- Risk scale for the next entry on this symbol: `factor` once the losing run reaches `minStreak`, else 1.0.
     //--- Sizing down in place is the alternative to holding the row: a held entry hands its slot and its risk
-    //--- budget to the next symbol, which measurably moved the book to worse hands (Batch 286).
+    //--- budget to the next symbol, which measurably moved the book to worse hands.
     double GetSymbolStreakRiskScale(const int minStreak, const double factor) const
     {
         if(minStreak <= 0 || factor <= 0.0 || factor >= 1.0) return 1.0;
@@ -348,15 +352,15 @@ public:
     double GetParticipationFormulaMin() const        { return m_quorumConfig.GetParticipationFormulaMin(); }
     double GetParticipationFormulaMax() const        { return m_quorumConfig.GetParticipationFormulaMax(); }
 
-    bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
+    bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                    bool usePipeline = true,
                    CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL,
                    CUnifiedRiskManager* unifiedRiskManagerPtr = NULL,
                    const long managedMagic = 0);
-    
+
     void SetStrategyRegistry(CStrategyRegistry* registry) { m_infra.SetStrategyRegistry(registry); }
-    
-    bool RegisterStrategy(IStrategy* strategy, const string name, 
+
+    bool RegisterStrategy(IStrategy* strategy, const string name,
                              bool enabled = true, double weight = 1.0,
                              ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3,
                              ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
@@ -364,7 +368,7 @@ public:
                              ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
                              ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
                              bool liveVotingEnabled = false);
-    
+
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
 
     // Single-voter confidence floor, forwarded to the consensus core. The orchestrator sets it once at
@@ -391,7 +395,7 @@ public:
     void SetConflictDeadband(const double deadband);
     void SetMinReadyWeightRatio(const double ratio);
     void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
-    
+
     void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
     void SetStrategyTimeframeConfig(int strategyIndex, ENUM_TIMEFRAMES tf);
 
@@ -416,8 +420,8 @@ public:
                                        bool liveVotingEnabled);
 
     ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
-    
-    
+
+
     enum ENUM_QUORUM_PROFILE
     {
         QUORUM_CONSERVATIVE,
@@ -442,10 +446,10 @@ public:
     CUnifiedSignalPipeline* GetPipeline();
     bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
-    
+
 
     void UpdatePerformance(const string strategyName, double netProfit);
-    
+
     void Deinit();
 
     bool UpdateStrategyWeight(const string strategyName, const double newWeight)
@@ -458,18 +462,18 @@ public:
     void UpdateStrategyWeights();
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
-    
+
     bool ShouldDisableStrategy(const int index);
     bool ShouldReEnableStrategy(const int index);
 
     void SetDrawingManager(CChartDrawingManager* drawingManager);
     CChartDrawingManager* GetDrawingManager();
-    
+
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
-    
+
     //--- Manager-owned trade outcome tracking.
     void OnTradeTransaction(const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result);
-    
+
         void AutoRegisterStrategies(bool &enabledFlags[]);
         void SyncEnabledWithRegistry();
 
@@ -1090,11 +1094,14 @@ void CEnterpriseStrategyManager::SetValidatorConfig(double intrabarMinQuality,
                                                     bool enableOFI,
                                                     bool enableVPIN,
                                                     double baseSpreadATRRatio,
-                                                    double syntheticSpreadATRRatio)
+                                                    double syntheticSpreadATRRatio,
+                                                    double atrCrisisCeilingSynthetic,
+                                                    double atrCrisisCeilingForex)
 {
     m_postConsensusValidator.SetValidatorConfig(intrabarMinQuality, newBarMinQuality, hardSpreadCutoff,
                                                 spikeHunterEnabled, enableOFI, enableVPIN,
-                                                baseSpreadATRRatio, syntheticSpreadATRRatio);
+                                                baseSpreadATRRatio, syntheticSpreadATRRatio,
+                                                atrCrisisCeilingSynthetic, atrCrisisCeilingForex);
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH

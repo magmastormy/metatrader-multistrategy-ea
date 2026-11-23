@@ -7,17 +7,17 @@
 // ICT treats as the balance point, and the detector already tracks whether the gap is still open.
 //
 // Shape:
-//   - The gap must be valid by the detector's own minimum-size filter and must not be filled yet.
-//   - Price must currently sit INSIDE the gap, and on the far side of the midpoint from where it is
-//     being drawn - the entry is toward the midpoint, so it needs the midpoint ahead of it.
-//   - Stop sits beyond the gap edge on the entry side by 0.2 ATR, not at a fixed distance: the gap
-//     edge is the level that invalidates the premise, so it is the only honest invalidation price.
-//   - Target is the midpoint itself. `CSignalGuards::IsSignalTradable` refuses the request when that
-//     geometry does not cover the stop, which is exactly the deep-gap case where filling to CE is not
-//     worth the risk.
-//   - Category is `STRATEGY_SUPPORT_RESISTANCE` (regime-neutral): a gap fill is a level trade, and
-//     `STRATEGY_MEAN_REVERSION` is hard-zeroed by `RegimeStateHardGate` in `REGIME_TREND` - the state
-//     a gap most often forms in.
+// - The gap must be valid by the detector's own minimum-size filter and must not be filled yet.
+// - Price must currently sit INSIDE the gap, and on the far side of the midpoint from where it is
+// being drawn - the entry is toward the midpoint, so it needs the midpoint ahead of it.
+// - Stop sits beyond the gap edge on the entry side by 0.2 ATR, not at a fixed distance: the gap
+// edge is the level that invalidates the premise, so it is the only honest invalidation price.
+// - Target is the midpoint itself. `CSignalGuards::IsSignalTradable` refuses the request when that
+// geometry does not cover the stop, which is exactly the deep-gap case where filling to CE is not
+// worth the risk.
+// - Category is `STRATEGY_SUPPORT_RESISTANCE` (regime-neutral): a gap fill is a level trade, and
+// `STRATEGY_MEAN_REVERSION` is hard-zeroed by `RegimeStateHardGate` in `REGIME_TREND` - the state
+// a gap most often forms in.
 #ifndef ICT_SESSION_GAP_STRATEGY_MQH
 #define ICT_SESSION_GAP_STRATEGY_MQH
 
@@ -37,6 +37,7 @@ private:
     double m_nearEdgeAtr;       // "entered from the edge" bonus band
 
     int    m_atrHandle;
+    int    m_d1AtrHandle;       // gap.size is a daily-scale distance; size filters need D1 ATR
     datetime m_lastSignalBar;
 
     double PointSize() const
@@ -57,6 +58,7 @@ public:
         m_minGapAtr(0.25),
         m_nearEdgeAtr(0.3),
         m_atrHandle(INVALID_HANDLE),
+        m_d1AtrHandle(INVALID_HANDLE),
         m_lastSignalBar(0)
     {
         m_strategyPrefix = "ICTSG";
@@ -70,6 +72,7 @@ public:
             return false;
 
         m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
+        m_d1AtrHandle = iATR(symbol, PERIOD_D1, m_atrPeriod);
         if(m_atrHandle == INVALID_HANDLE)
         {
             PrintFormat("[ICTSG] Init failed | %s %s | atr=%d", symbol, EnumToString(timeframe), m_atrHandle);
@@ -91,6 +94,7 @@ public:
     virtual void Deinit() override
     {
         if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
+        if(m_d1AtrHandle != INVALID_HANDLE) { IndicatorRelease(m_d1AtrHandle); m_d1AtrHandle = INVALID_HANDLE; }
         m_detectorReady = false;
         CStrategyBase::Deinit();
     }
@@ -136,9 +140,18 @@ public:
             haveGap = m_gapDetector.GetNWOG(gap);
         if(!haveGap || !gap.isValid)
             return RejectSignal("ICTSG_NO_GAP");
+        // gap.size is a daily-scale price distance; comparing it to the chart-timeframe ATR
+        // made the minimum-gap filter toothless on low timeframes. Use D1 ATR, falling back
+        // to the chart ATR only when the D1 handle has no value yet.
+        double d1Atr[1];
+        double gapAtr = atr[0];
+        if(m_d1AtrHandle != INVALID_HANDLE &&
+           CopyBuffer(m_d1AtrHandle, 0, 1, 1, d1Atr) == 1 && d1Atr[0] > 0.0)
+            gapAtr = d1Atr[0];
+
         if(gap.isFilled)
             return RejectSignal("ICTSG_GAP_FILLED");
-        if(gap.size < atr[0] * m_minGapAtr)
+        if(gap.size < gapAtr * m_minGapAtr)
             return RejectSignal("ICTSG_GAP_TOO_SMALL");
 
         const double price = barClose[0];
@@ -174,7 +187,7 @@ public:
             return RejectSignal("ICTSG_NOT_TRADABLE");
 
         confidence = 0.58;
-        if(gap.size >= atr[0] * 1.0) confidence += 0.06;
+        if(gap.size >= gapAtr * 1.0) confidence += 0.06;
         // Entered close to the edge: the whole gap is still ahead.
         const double distanceFromEdge = isBuy ? (price - gap.gapBottom) : (gap.gapTop - price);
         if(distanceFromEdge <= atr[0] * m_nearEdgeAtr) confidence += 0.04;

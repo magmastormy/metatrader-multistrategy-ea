@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from data_pipeline import build_scaled_dataset_splits
-from train_common import FAMILY_PREFIXES, adjust_seq_len_for_family, compute_test_ic, load_split, save_pickle
+from train_common import FAMILY_PREFIXES, adjust_seq_len_for_family, report_trained_model, save_train_meta
 
 
 def main() -> None:
@@ -78,15 +78,10 @@ def main() -> None:
     )
 
     pkl_output = args.output or f"{prefix}_xgboost.pkl"
-    save_pickle(model, pkl_output)
-
-    preds = model.predict_proba(X_te)
-    test_ic = compute_test_ic(preds, y_te)
-    print(
-        f"trained=deriv_xgboost family={prefix}({args.family_id}) "
-        f"samples={metadata.train_size}/{metadata.val_size}/{metadata.test_size} "
-        f"test_ic={float(test_ic):.4f} pkl={pkl_output}"
-    )
+    report_trained_model(model, X_te, y_te, pkl_output,
+                         f"deriv_xgboost family={prefix}({args.family_id})",
+                         metadata)
+    save_train_meta(pkl_output, train[4], val[4], seq_len=args.seq_len, k=args.k, vert=args.vert, family_id=args.family_id)
 
 
 if __name__ == "__main__":

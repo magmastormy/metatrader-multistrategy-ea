@@ -62,11 +62,11 @@ bool WriteCrashRecoveryState(const string &fileName,
 
     // FILE_REWRITE replaces the destination in one step, so the last good state
     // is never deleted ahead of a failed move.
-    // Batch 272: on the live terminal FILE_REWRITE itself failed with err=5020
+    // on the live terminal FILE_REWRITE itself failed with err=5020
     // ("cannot rewrite") whenever the destination already existed, so every save after the
     // first one in a session was lost and the on-disk state stayed at the first write. The
     // retry below deletes the destination and moves plainly; the state being replaced is
-    // superseded by the .tmp already on disk, and if the retry also fails the .tmp is kept
+    // superseded by the.tmp already on disk, and if the retry also fails the.tmp is kept
     // rather than deleted, because it is now the only copy of the newest state.
     static bool s_rewriteUnsupported = false;   // learned once per terminal session
     const bool dstExists = FileIsExist(fileName, 0);

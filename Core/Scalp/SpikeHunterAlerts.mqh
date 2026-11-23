@@ -12,7 +12,7 @@ class CSpikeHunterAlerts
 {
 private:
    SSpikeHunterConfig   m_config;
-   ulong                m_lastPushAlertTick;    // L10-016: Use GetTickCount() instead of TimeCurrent()
+   ulong                m_lastPushAlertTick;    // Use GetTickCount() instead of TimeCurrent()
    int                  m_pushAlertCount;
 
 public:
@@ -32,7 +32,7 @@ public:
       if(!m_config.enablePushAlerts)
          return;
 
-      // L10-016: Use GetTickCount() (millisecond) instead of TimeCurrent() (second resolution)
+      // Use GetTickCount() (millisecond) instead of TimeCurrent() (second resolution)
       ulong now = GetTickCount();
       int elapsedMs = (int)(now - m_lastPushAlertTick);
       int throttleMs = m_config.alertThrottleSeconds * 1000;

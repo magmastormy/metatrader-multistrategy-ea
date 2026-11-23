@@ -1,19 +1,19 @@
 // Live symbol health monitoring - detect frozen feeds, spread spikes
 //
-// Batch 272 rewrite. Three defects in the previous version, all observable in the journal:
-//  1. The verdict came from `CSymbolHealthMonitor::OnTick(_Symbol)`, which the orchestrator calls
-//     once per timer tick with the CHART symbol only. A 13-symbol book therefore had 12 symbols
-//     whose `tickCount` could never move, so every attach printed
-//     "[SYM-HEALTH] Symbol X NEVER RECEIVED TICK - disabling trading" for all of them within the
-//     first second and reported `frozen=13 total=13`. The feed is now judged from
-//     `SymbolInfoTick(symbol, tick)`, which works for every symbol in the list regardless of which
-//     chart the EA runs on, so the verdict describes the broker's feed rather than our call sites.
-//  2. Nothing outside this file read `IsHealthy()`, so "disabling trading" disabled nothing. The
-//     orchestrator now gates the per-symbol candidate path on it, and every refusal names itself
-//     (a silently held symbol is the "blocked book looks like a quiet market" failure shape).
-//  3. The record for each symbol was a hand-built JSON string, re-serialised and re-parsed with
-//     StringFind on every tick - ~200 chars of allocation per call per symbol on the tick path.
-//     The state is now a plain struct array: no strings, no parser, no allocation.
+// rewrite. Three defects in the previous version, all observable in the journal:
+// 1. The verdict came from `CSymbolHealthMonitor::OnTick(_Symbol)`, which the orchestrator calls
+// once per timer tick with the CHART symbol only. A 13-symbol book therefore had 12 symbols
+// whose `tickCount` could never move, so every attach printed
+// "[SYM-HEALTH] Symbol X NEVER RECEIVED TICK - disabling trading" for all of them within the
+// first second and reported `frozen=13 total=13`. The feed is now judged from
+// `SymbolInfoTick(symbol, tick)`, which works for every symbol in the list regardless of which
+// chart the EA runs on, so the verdict describes the broker's feed rather than our call sites.
+// 2. Nothing outside this file read `IsHealthy()`, so "disabling trading" disabled nothing. The
+// orchestrator now gates the per-symbol candidate path on it, and every refusal names itself
+// (a silently held symbol is the "blocked book looks like a quiet market" failure shape).
+// 3. The record for each symbol was a hand-built JSON string, re-serialised and re-parsed with
+// StringFind on every tick - ~200 chars of allocation per call per symbol on the tick path.
+// The state is now a plain struct array: no strings, no parser, no allocation.
 //
 // A symbol whose market is genuinely closed is reported as closed and is NOT counted as a feed
 // failure: a 24/5 FX pair and a cash-index CFD are not unhealthy because the exchange is shut.
@@ -33,8 +33,8 @@ enum ENUM_SYMBOL_FEED_STATE
 {
     SYMBOL_FEED_WARMING = 0,   // inside the grace window, no verdict yet
     SYMBOL_FEED_LIVE    = 1,   // quote age <= stale threshold
-    SYMBOL_FEED_STALE   = 2,   // quote age >  stale threshold
-    SYMBOL_FEED_FROZEN  = 3,   // quote age >  frozen threshold, or never quoted while in session
+    SYMBOL_FEED_STALE   = 2,   // quote age > stale threshold
+    SYMBOL_FEED_FROZEN  = 3,   // quote age > frozen threshold, or never quoted while in session
     SYMBOL_FEED_CLOSED  = 4    // broker session closed: no quotes are expected, nothing to judge
 };
 

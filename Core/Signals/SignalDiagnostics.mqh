@@ -35,7 +35,7 @@ struct SSignalRecord
     double   confidence;
     string   reasoning;
     bool     wasExecuted;
-    
+
     // Detailed factors
     double   trendScore;
     double   volatilityLevel;
@@ -43,11 +43,11 @@ struct SSignalRecord
     double   spreadCost;
     int      conflictCount;
     string   conflictingStrategies;
-    
+
     // Timeframe analysis
     bool     timeframeAligned;
     string   timeframeConflicts;
-    
+
     SSignalRecord()
     {
         timestamp = 0;
@@ -77,7 +77,7 @@ private:
     int           m_currentIndex;
     bool          m_enabled;
     int           m_logLevel; // 0=Error, 1=Warning, 2=Info, 3=Debug, 4=Trace
-    
+
     // Statistics
     int           m_totalSignals;
     int           m_buySignals;
@@ -85,69 +85,69 @@ private:
     int           m_noSignals;
     int           m_conflicts;
     int           m_timeframeConflicts;
-    
+
     // File logging
     int           m_fileHandle;
     string        m_logFileName;
     string        m_lastNoSignalKey;
     datetime      m_lastNoSignalTime;
     int           m_pendingFlushCount;
-    
+
 public:
     CSignalDiagnostics();
     ~CSignalDiagnostics();
-    
+
     bool Initialize(int maxRecords = 1000, int logLevel = 3);
     void Shutdown();
-    
+
     // Main logging methods
-    void LogSignalGeneration(const string strategyName, 
+    void LogSignalGeneration(const string strategyName,
                            const string symbol,
                            const int timeframe,
                            const ENUM_TRADE_SIGNAL signal,
                            const double confidence,
                            const string reasoning);
-                           
+
     void LogNoSignal(const string strategyName,
                     const string symbol,
                     const int timeframe,
                     const string reason);
-                    
+
     void LogSignalConflict(const string &strategies[],
                           const ENUM_TRADE_SIGNAL &signals[],
                           const int count,
                           const string resolution);
-                          
+
     void LogTimeframeConflict(const string strategy,
                              const int tf1, const ENUM_TRADE_SIGNAL signal1,
                              const int tf2, const ENUM_TRADE_SIGNAL signal2);
-                             
+
     void LogStrategyError(const string strategyName,
                          const string errorType,
                          const string details);
-                         
+
     void LogOrchestrationDecision(const string &selectedStrategies[],
                                  const double &weights[],
                                  const int count,
                                  const ENUM_TRADE_SIGNAL finalSignal,
                                  const double finalConfidence,
                                  const string reason = "");
-                                 
+
     void LogHedgingPrevented(const string strategy,
                             ENUM_TRADE_SIGNAL attemptedSignal,
                             const string reason);
-                         
+
     void LogStrategySelection(const string &selectedStrategies[], const double &weights[],
                                const string reason);
-    
+
     void LogEnsembleDecision(const string &strategies[], ENUM_TRADE_SIGNAL &signals[],
                              const string &selectedStrategies[], const double &weights[],
                              ENUM_TRADE_SIGNAL finalSignal, double finalConfidence,
                              const string reason);
-    
+
     void LogMultiTimeframeAnalysis(const string &strategies[], ENUM_TRADE_SIGNAL &signals[],
                                    const double &confidences[], const ENUM_TIMEFRAMES &timeframes[]);
-    
+
     // Unified ICT structure logging
     void LogSMCDetection(const string type,
                         const string symbol,
@@ -156,32 +156,32 @@ public:
                         const double bottom,
                         const bool bullish,
                         const double score);
-                        
+
     void LogSMCMitigation(const string type,
                          const double price,
                          const bool successful);
-                         
+
     void LogBOSCHOCH(const bool isBOS,
                     const double level,
                     const bool bullish);
-    
+
     // Analysis methods
     string GetDiagnosticSummary();
     string GetStrategyPerformance(const string strategyName);
     string GetConflictAnalysis();
     string GetTimeframeAnalysis();
-    
+
     int GetTotalSignals() const { return m_totalSignals; }
     int GetConflictCount() const { return m_conflicts; }
     double GetConflictRate() const { return m_totalSignals > 0 ? (double)m_conflicts / m_totalSignals : 0.0; }
-    
+
     // Configuration
     void SetLogLevel(int level) { m_logLevel = level; }
     void EnableDiagnostics(bool enable) { m_enabled = enable; }
-    
+
     // Validation
     bool ValidateAndLogConfidence(const string strategyName, const string symbol, const double confidence);
-    
+
 private:
     void WriteToFile(const string message);
     void AddRecord(const SSignalRecord &record);
@@ -220,20 +220,20 @@ bool CSignalDiagnostics::Initialize(int maxRecords = 1000, int logLevel = 3)
     m_lastNoSignalKey = "";
     m_lastNoSignalTime = 0;
     ArrayResize(m_records, m_maxRecords);
-    
+
     // Create log file with proper directory
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     StringReplace(timestamp, ":", "-");
     StringReplace(timestamp, " ", "_");
     g_signalDiagnosticsFileSequence++;
     string uniqueSuffix = IntegerToString((int)GetTickCount()) + "_" + IntegerToString(g_signalDiagnosticsFileSequence);
-    
+
     // Use userReports directory (same as EA logs)
     string logDir = "userReports";
     ResetLastError();
     FolderCreate(logDir);
     m_logFileName = logDir + "\\SignalDiagnostics_" + timestamp + "_" + uniqueSuffix + ".log";
-    
+
     // Try terminal-local file first
     m_fileHandle = FileOpen(m_logFileName, FILE_WRITE|FILE_TXT|FILE_ANSI);
     if(m_fileHandle == INVALID_HANDLE)
@@ -254,13 +254,13 @@ bool CSignalDiagnostics::Initialize(int maxRecords = 1000, int logLevel = 3)
             return true;
         }
     }
-    
+
     WriteToFile("=== Signal Diagnostics System Initialized ===");
     WriteToFile("Max Records: " + IntegerToString(m_maxRecords));
     WriteToFile("Log Level: " + IntegerToString(m_logLevel));
     WriteToFile("Timestamp: " + TimeToString(TimeCurrent()));
     WriteToFile("==========================================\n");
-    
+
     Print("[SignalDiagnostics] Initialized successfully. Log file: ", m_logFileName);
     return true;
 }
@@ -273,13 +273,13 @@ void CSignalDiagnostics::Shutdown()
         WriteToFile(GetDiagnosticSummary());
         WriteToFile("=== Shutdown at " + TimeToString(TimeCurrent()) + " ===");
         FileFlush(m_fileHandle);
-        
+
         FileClose(m_fileHandle);
         m_fileHandle = INVALID_HANDLE;
     }
 }
 
-void CSignalDiagnostics::LogSignalGeneration(const string strategyName, 
+void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
                                             const string symbol,
                                             const int timeframe,
                                             const ENUM_TRADE_SIGNAL signal,
@@ -287,9 +287,9 @@ void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
                                             const string reasoning)
 {
     if(!m_enabled) return;
-    
+
     ValidateAndLogConfidence(strategyName, symbol, confidence);
-    
+
     SSignalRecord record;
     record.timestamp = TimeCurrent();
     record.strategyName = strategyName;
@@ -298,13 +298,13 @@ void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
     record.signal = signal;
     record.confidence = confidence;
     record.reasoning = reasoning;
-    
+
     AddRecord(record);
     m_totalSignals++;
-    
+
     if(signal == TRADE_SIGNAL_BUY) m_buySignals++;
     else if(signal == TRADE_SIGNAL_SELL) m_sellSignals++;
-    
+
     if(m_logLevel >= 2)
     {
         string msg = StringFormat("[SIGNAL] %s | %s | %s | Signal: %s | Confidence: %.2f%% | Reason: %s",
@@ -329,12 +329,12 @@ void CSignalDiagnostics::LogNoSignal(const string strategyName,
         return;
     m_lastNoSignalKey = signalKey;
     m_lastNoSignalTime = nowTime;
-    
+
     m_noSignals++;
-    
+
     string msg = StringFormat("[NO_SIGNAL] %s | %s | %s | Reason: %s",
                             strategyName, symbol, TimeframeToString(timeframe), reason);
-    
+
     if(m_logLevel >= 3)
     {
         Print(msg);
@@ -348,9 +348,9 @@ void CSignalDiagnostics::LogSignalConflict(const string &strategies[],
                                           const string resolution)
 {
     if(!m_enabled) return;
-    
+
     m_conflicts++;
-    
+
     string conflictDetails = "[CONFLICT] Strategies: ";
     for(int i = 0; i < count; i++)
     {
@@ -358,7 +358,7 @@ void CSignalDiagnostics::LogSignalConflict(const string &strategies[],
         if(i < count - 1) conflictDetails += " vs ";
     }
     conflictDetails += " | Resolution: " + resolution;
-    
+
     Print(conflictDetails);
     WriteToFile(conflictDetails);
 }
@@ -368,14 +368,14 @@ void CSignalDiagnostics::LogTimeframeConflict(const string strategy,
                                              const int tf2, const ENUM_TRADE_SIGNAL signal2)
 {
     if(!m_enabled) return;
-    
+
     m_timeframeConflicts++;
-    
+
     string msg = StringFormat("[TF_CONFLICT] %s | %s(%s) vs %s(%s)",
                             strategy,
                             TimeframeToString(tf1), SignalToString(signal1),
                             TimeframeToString(tf2), SignalToString(signal2));
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -400,7 +400,7 @@ void CSignalDiagnostics::LogStrategyError(const string strategyName,
 
     string msg = StringFormat("%s %s | Type: %s | Details: %s",
                             levelTag, strategyName, errorType, details);
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -413,16 +413,16 @@ void CSignalDiagnostics::LogOrchestrationDecision(const string &selectedStrategi
                                                  const string reason = "")
 {
     if(!m_enabled || m_logLevel < 2) return;
-    
+
     string msg = "[ORCHESTRATOR] Selected: ";
     for(int i = 0; i < count; i++)
     {
         msg += StringFormat("%s(%.2f)", selectedStrategies[i], weights[i]);
         if(i < count - 1) msg += ", ";
     }
-    msg += StringFormat(" | Final: %s (%.2f%%)", 
+    msg += StringFormat(" | Final: %s (%.2f%%)",
                        SignalToString(finalSignal), finalConfidence * 100);
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -432,12 +432,12 @@ void CSignalDiagnostics::LogHedgingPrevented(const string strategy,
                                             const string reason)
 {
     if(!m_enabled) return;
-    
+
     string msg = StringFormat("[HEDGE_PREVENTED] Strategy: %s | Attempted: %s | Reason: %s",
                             strategy,
                             SignalToString(attemptedSignal),
                             reason);
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -452,12 +452,12 @@ void CSignalDiagnostics::LogSMCDetection(const string type,
                                         const double score)
 {
     if(!m_enabled || m_logLevel < 3) return;
-    
+
     string msg = StringFormat("[ICT_STRUCT_%s] %s | Price: %.5f | Zone: %.5f-%.5f | %s | Score: %.1f",
                             type, symbol, price, bottom, top,
                             bullish ? "BULLISH" : "BEARISH",
                             score);
-    
+
     if(m_logLevel >= 3)
     {
         Print(msg);
@@ -471,11 +471,11 @@ void CSignalDiagnostics::LogSMCMitigation(const string type,
                                          const bool successful)
 {
     if(!m_enabled || m_logLevel < 3) return;
-    
+
     string msg = StringFormat("[ICT_MITIGATED] %s | Price: %.5f | %s",
                             type, price,
                             successful ? "SUCCESS" : "FAILED");
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -485,12 +485,12 @@ void CSignalDiagnostics::LogBOSCHOCH(const bool isBOS,
                                     const bool bullish)
 {
     if(!m_enabled || m_logLevel < 3) return;
-    
+
     string msg = StringFormat("[%s] Level: %.5f | Direction: %s",
                             isBOS ? "BOS" : "CHOCH",
                             level,
                             bullish ? "BULLISH" : "BEARISH");
-    
+
     Print(msg);
     WriteToFile(msg);
 }
@@ -505,7 +505,7 @@ string CSignalDiagnostics::GetDiagnosticSummary()
     summary += "Conflicts: " + IntegerToString(m_conflicts) + "\n";
     summary += "Timeframe Conflicts: " + IntegerToString(m_timeframeConflicts) + "\n";
     summary += StringFormat("Conflict Rate: %.2f%%\n", GetConflictRate() * 100);
-    
+
     return summary;
 }
 
@@ -530,7 +530,7 @@ void CSignalDiagnostics::AddRecord(const SSignalRecord &record)
 {
     if(m_currentIndex >= m_maxRecords)
         m_currentIndex = 0;
-        
+
     m_records[m_currentIndex] = record;
     m_currentIndex++;
 }
@@ -574,18 +574,18 @@ bool CSignalDiagnostics::ValidateAndLogConfidence(const string strategyName, con
     {
         string msg = StringFormat("[CRITICAL_ALERT] INVALID_CONFIDENCE | %s | %s | Value: %.4f | Range: [0.0, 1.0]",
                                 strategyName, symbol, confidence);
-        
+
         Print(msg);
         WriteToFile(msg);
-        
+
         // Also log to error handler if available
         CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
         if(CheckPointer(localErrorHandler) != POINTER_INVALID)
         {
-            localErrorHandler.LogError(ERROR_CRITICAL, "SignalDiagnostics", 
+            localErrorHandler.LogError(ERROR_CRITICAL, "SignalDiagnostics",
                                 "Confidence out of bounds: " + DoubleToString(confidence, 4));
         }
-        
+
         return false;
     }
     return true;

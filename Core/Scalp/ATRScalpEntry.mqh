@@ -15,6 +15,7 @@
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Trading/TradeMgrPricing.mqh"
 #include "../Trading/TradeMgrPreflight.mqh"
+#include "../Trading/TradeManager.mqh"
 #include <Trade\Trade.mqh>
 
 #include "ATRScalpTypes.mqh"
@@ -27,6 +28,7 @@ private:
    int                    m_baseMagic;
    CPositionSizer*        m_positionSizer;
    CUnifiedRiskManager*   m_riskManager;
+   CTradeManager*         m_tradeManager;
    int                    m_totalTradesOpened;
 
 public:
@@ -38,17 +40,19 @@ public:
    {
    }
 
-   void Configure(int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager)
+   void Configure(int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager,
+                  CTradeManager *pTradeManager = NULL)
    {
       m_baseMagic     = baseMagic;
       m_positionSizer = pSizer;
       m_riskManager   = pRiskManager;
+      m_tradeManager  = pTradeManager;
    }
 
    int TotalTradesOpened() const { return m_totalTradesOpened; }
 
    bool OpenScalpTrade(int idx, int direction, SATRScalpSymbolState &state,
-                       const SATRScalpingConfig &config, CTrade &trade)
+                       const SATRScalpingConfig &config)
    {
       string symbol = state.symbol;
       double atr = state.currentATR;
@@ -139,7 +143,7 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Stop validation must happen here: this engine sends through its own CTrade object, not CTradeManager, so the broker minimum stop distance, sized-stop widening rejection and take-profit-must-clear-spread tests are absent from the shared path - stops are validated before the send, not adjusted after.
+      // Pre-send stop validation: NormalizeAndValidateStops applies the broker minimum stop distance, sized-stop widening rejection and take-profit-must-clear-spread tests before the order reaches CTradeManager.
       string scalpStopError = "";
       if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, scalpStopError))
       {
@@ -180,29 +184,31 @@ public:
          }
       }
 
-      trade.SetExpertMagicNumber(magic);
-      const long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-      trade.SetDeviationInPoints((uint)MathMax(10, MathMin(100, spreadPoints * 2)));
-      // honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
-      long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
-      ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
-                                         (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
-      trade.SetTypeFilling(scalpFill);
+      if(m_tradeManager == NULL)
+      {
+         PrintFormat("[ATR-SCALP-FAILED] %s | no CTradeManager configured - entry refused", symbol);
+         return false;
+      }
 
       bool result = false;
       string dirStr = (direction == 1) ? "BUY" : "SELL";
 
-      if(direction == 1)
-         result = trade.Buy(lotSize, symbol, entryPrice, sl, tp,
-                     "ATR-SCALP|" + dirStr);
-      else
-         result = trade.Sell(lotSize, symbol, entryPrice, sl, tp,
-                     "ATR-SCALP|" + dirStr);
+      // Route through CTradeManager so the send reaches the confirmation queue,
+      // per-symbol trade objects, execution-quality metrics and journal that the
+      // raw CTrade path bypassed. OpenPosition takes stop distances in points
+      // (measured from the fill price), so the ATR-derived absolute stops become
+      // point distances off the pre-send quote.
+      double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double slDistPoints = (pointSize > 0.0) ? MathAbs(entryPrice - sl) / pointSize : 0.0;
+      double tpDistPoints = (pointSize > 0.0) ? MathAbs(entryPrice - tp) / pointSize : 0.0;
+      result = m_tradeManager.OpenPosition(symbol, orderType, lotSize, entryPrice,
+                                           slDistPoints, tpDistPoints,
+                                           "ATR-SCALP|" + dirStr, (uint)magic);
 
-      uint retcode = trade.ResultRetcode();
+      uint retcode = m_tradeManager.GetLastRetcode();
 
-      // this engine sends on its own CTrade, so it never reaches the
-      // confirmation queue CTradeManager runs sends through. A DONE_PARTIAL retcode
+      // Sends now go through CTradeManager, which runs its own confirmation queue;
+      // a DONE_PARTIAL retcode
       // arrives here as result == false while a position exists, and the caller would
       // re-fire the same scalp on the next scan - duplicating exposure the engine
       // believes it never opened. Confirm from the position before declaring failure.

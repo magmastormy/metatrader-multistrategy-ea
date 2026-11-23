@@ -16,14 +16,14 @@ class IStrategy
 public:
     // Virtual destructor
     virtual ~IStrategy(void) {}
-    
+
     // Initialize strategy
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
                      void* tradeManager, void* positionSizer, void* unifiedRiskManager = NULL) = 0;
-    
+
     // Deinitialize strategy
     virtual void Deinit(void) = 0;
-    
+
     // Get trading signal
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) = 0;
 
@@ -33,36 +33,36 @@ public:
     // -> the candidate builder keeps its existing fallback). Strategies that
     // compute real stops override this via CStrategyBase::SetProposedStops().
     virtual bool GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const { return false; }
-    
+
     // Update strategy on new bar
         virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) = 0;
-    
+
         // Tick and timer events
         virtual void OnTick(void) = 0;
         virtual void OnTimer(void) = 0;
-    
+
     // Get strategy name
     virtual string GetName(void) const = 0;
-    
+
     virtual ENUM_STRATEGY_TYPE GetType(void) const = 0;
-    
+
     // Check if strategy is enabled
     virtual bool IsEnabled(void) const = 0;
-    
+
     // Enable/disable strategy
     virtual void SetEnabled(const bool enabled) = 0;
-    
+
     // Get strategy weight
     virtual double GetWeight(void) const = 0;
-    
+
     // Set strategy weight
     virtual void SetWeight(const double weight) = 0;
-    
+
     // Validate strategy parameters
     virtual bool ValidateParameters(void) = 0;
-    
+
     virtual datetime GetLastSignalTime(void) const = 0;
-    
+
     // Get strategy statistics
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) = 0;
 // Set confidence threshold for the strategy

@@ -88,30 +88,22 @@ bool CTrendMath::CalculateEmaFallbackSeries(const string symbol,
     double alpha = 2.0 / ((double)period + 1.0);
     double invAlpha = 1.0 - alpha;
 
-    // Initialize with SMA for first 'period' bars (stable starting point)
-    double smaSum = 0.0;
-    for(int i = 0; i < period; i++)
-        smaSum += closes[i];
-    double ema = smaSum / (double)period;
-
-    // closes[0] = most recent, closes[copied-1] = oldest
-    for(int i = 0; i < copied; i++)
-    {
-        ema = (alpha * closes[i]) + (invAlpha * ema);
-
-        // output index maps: output[0] = EMA at closes[0] (most recent)
-        int outputIdx = i;  // Will be offset from end when we collect output
-    }
-
-    // We need to recalculate to get the last 'count' values properly
-    smaSum = 0.0;
-    for(int i = 0; i < period; i++)
-        smaSum += closes[i];
-    ema = smaSum / (double)period;
+    // Initialize with SMA for first 'period' bars (stable starting point).
+    // closes[0] = most recent, closes[copied-1] = oldest, so the recursion must
+    // walk i = copied-1 -> 0 (oldest to newest) for a real EMA.
 
     double emaBuffer[];
     ArrayResize(emaBuffer, copied);
-    for(int i = 0; i < copied; i++)
+
+    // Seed at the oldest bar with the SMA of the 'period' bars ending there,
+    // then recurse forward in time.
+    double smaSum = 0.0;
+    for(int i = copied - period; i < copied; i++)
+        smaSum += closes[i];
+    double ema = smaSum / (double)period;
+    emaBuffer[copied - 1] = ema;
+
+    for(int i = copied - 2; i >= 0; i--)
     {
         ema = (alpha * closes[i]) + (invAlpha * ema);
         emaBuffer[i] = ema;
@@ -134,14 +126,14 @@ double CTrendMath::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES timefr
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    
+
     if(CopyRates(symbol, timeframe, 0, period + 1, rates) < period + 1)
         return 0;
-    
+
     if(rates[period].close <= 0.0)
         return 0.0;
     double roc = ((rates[0].close - rates[period].close) / rates[period].close) * 100;
-    
+
     return roc;
 }
 
@@ -149,41 +141,41 @@ double CTrendMath::CalculateTrendAngle(double &ma[], int period)
 {
     if(ArraySize(ma) < 2 || period < 2)
         return 0;
-    
+
     // Ensure period doesn't exceed array bounds
     int effectivePeriod = MathMin(period, ArraySize(ma) - 1);
     if(effectivePeriod < 2)
         return 0;
-    
+
     // Calculate average price for normalization
     double avgPrice = 0.0;
     double oldestValue = ma[effectivePeriod];
     double newestValue = ma[0];
-    
+
     if(!MathIsValidNumber(oldestValue) || !MathIsValidNumber(newestValue))
         return 0;
-    
+
     avgPrice = (newestValue + oldestValue) / 2.0;
     if(avgPrice <= 0 || !MathIsValidNumber(avgPrice))
         return 0;
-    
+
     // Calculate slope as percentage change per bar
     double pctChange = ((newestValue - oldestValue) / avgPrice) * 100.0;
     double slopePerBar = pctChange / effectivePeriod;
-    
+
     // Scale factor to get meaningful angles (0.1% per bar = ~45 degrees)
     double scaledSlope = slopePerBar * 10.0;
-    
+
     // Clamp to prevent extreme values
     scaledSlope = MathMax(-10.0, MathMin(10.0, scaledSlope));
-    
+
     // Convert to angle in degrees
     double angle = MathArctan(scaledSlope) * 180.0 / M_PI;
-    
+
     // Final validation
     if(!MathIsValidNumber(angle))
         return 0;
-    
+
     return angle;
 }
 

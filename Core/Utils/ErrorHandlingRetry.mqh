@@ -32,14 +32,14 @@ bool CEnhancedErrorHandler::HandleMT5Error(const string context)
             int delay = m_defaultRetryConfig.retryDelay;
             if(m_defaultRetryConfig.exponentialBackoff)
             {
-                delay = (int)MathMin((double)m_defaultRetryConfig.maxDelayMs, 
+                delay = (int)MathMin((double)m_defaultRetryConfig.maxDelayMs,
                                    m_defaultRetryConfig.retryDelay * MathPow(2.0, attempt));
             }
-            
+
             m_lastRetryTime[error % 100] = TimeCurrent();
             PrintFormat("Retryable error %d in %s, attempt %d/%d, retrying immediately (non-blocking)",
                        error, context, attempt + 1, m_defaultRetryConfig.maxRetries);
-            
+
             return true;
         }
     }

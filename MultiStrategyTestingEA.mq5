@@ -25,7 +25,7 @@
 CStructuredLogger     g_structLog;
 CCorrelationIdManager g_corrIdManager;
 
-// L2-001: Global shutdown flag to prevent OnTimer accessing resources during deinit
+// Global shutdown flag to prevent OnTimer accessing resources during deinit
 bool g_shuttingDown;
 
 // Forward declaration for GetDeInitReasonText
@@ -228,8 +228,8 @@ bool ApplyCompleteTestProfile(ENUM_COMPLETE_TEST_PROFILE profile, SCompleteTestF
         case TEST_PROFILE_SINGLE_RANGECOMP:   flags.rangeCompression = true;  return true;
 
         //--- Profiles whose class no longer exists (Unified ICT / Unicorn Model / Power of Three left
-        //    the roster in Batch 207 - no class, so nothing could register them). They resolve to an
-        //    empty set rather than a false success, and print the reason.
+        // the roster - no class, so nothing could register them). They resolve to an
+        // empty set rather than a false success, and print the reason.
         case TEST_PROFILE_SINGLE_ICT:
         case TEST_PROFILE_SINGLE_UNICORN:
         case TEST_PROFILE_SINGLE_POT:
@@ -351,7 +351,7 @@ input double   InpMaxPortfolioRisk = 60.0;
 input double   InpDailyLossLimitPercent = 10.0;
 input bool     InpAllowMinLotRoundUp = false;
 input double   InpMinLotRiskMultiplier = 1.0;
-input bool     InpScaleLotToSymbolBudget = false;
+input bool     InpScaleLotToSymbolBudget = true;  // cap by resizing to remaining symbol budget instead of dropping the candidate
 
 input group "=== STRATEGY ENABLE / DISABLE ==="
 input bool     InpUseCuratedStrategySet = false;
@@ -780,7 +780,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
     // Symbol Universe
     config.autoAddChartSymbol = InpAutoAddChartSymbol;
 
-    // Batch 99
+    //
     config.equityCurveEmaPeriod = InpEquityCurveEmaPeriod;
     config.equityCurveReductionFactor = InpEquityCurveReductionFactor;
     config.kellyFraction = InpKellyFraction;
@@ -801,10 +801,10 @@ int OnInit()
             Print("[CRITICAL] Input validation failed - EA will not start");
             return INIT_FAILED;
         }
-    
-        // L2-001: Initialize global shutdown flag
+
+        // Initialize global shutdown flag
         g_shuttingDown = false;
-    
+
         // Clamp log level
     if(InpLogLevel < 0 || InpLogLevel > 4)
     {
@@ -951,7 +951,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
     {
         g_orchestrator.GetTradeManager().ProcessTradeTransaction(trans, request, result);
 
-        // Batch 154: closed-trade feedback - per-strategy attribution/health
+        // closed-trade feedback - per-strategy attribution/health
         // fan-out plus account-level learners (performance analytics, loss
         // guard, live-authority outcome recording).
         g_orchestrator.ProcessManagerTradeTransactions(trans, request, result);
@@ -1037,7 +1037,7 @@ void RestoreEngineStates()
         datetime timeOpen = (datetime)PositionGetInteger(POSITION_TIME);
         string comment = PositionGetString(POSITION_COMMENT);
 
-        // Batch 152 (T-03): range-based ownership check (the old magic/100 prefix
+        // (T-03): range-based ownership check (the old magic/100 prefix
         // test truncated two digits and never matched InpMagicNumber).
         if(!g_orchestrator.GetTradeManager().IsEAOwnedMagic((long)magic)) continue;
 

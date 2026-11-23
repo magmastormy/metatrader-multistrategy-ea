@@ -19,7 +19,7 @@ private:
 public:
    CFastScalpPositionTracker() : m_scalpPositionCount(0)
    {
-      // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the string
+      // (S-M-04): field-wise reset - ZeroMemory corrupts the string
       // member's reference count (see SScalpPositionState::Reset).
       for(int i = 0; i < ArraySize(m_scalpPositions); i++)
          m_scalpPositions[i].Reset();
@@ -89,7 +89,7 @@ public:
             for(int j = i; j < m_scalpPositionCount - 1; j++)
                m_scalpPositions[j] = m_scalpPositions[j + 1];
             m_scalpPositionCount--;
-            // Clear last slot (field-wise - Batch 152 S-M-04)
+            // Clear last slot (field-wise - S-M-04)
             m_scalpPositions[m_scalpPositionCount].Reset();
             return;
          }
@@ -118,7 +118,7 @@ public:
          if(PositionSelectByTicket(ticket))
          {
             string comment = PositionGetString(POSITION_COMMENT);
-            // Batch 170: prefix, not substring. "ATR-SCALP" contains "SCALP", so the
+            // prefix, not substring. "ATR-SCALP" contains "SCALP", so the
             // old test made this engine claim the ATR scalp engine's positions - and
             // FastScalpExit would then close them.
             if(StringFind(comment, "SCALP") == 0)

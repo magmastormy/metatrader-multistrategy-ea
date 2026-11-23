@@ -316,7 +316,7 @@ private:
             integrated[i + 1] = integrated[i] + (logPrices[i] - mean);
 
         // Step 2: For each box size (log-spaced), compute F(n)
-        // Use integer-safe progression: 4, 6, 8, 12, 16, 24, 32, 48, 64, ...
+        // Use integer-safe progression: 4, 6, 8, 12, 16, 24, 32, 48, 64,...
         double logBoxSizes[];
         double logFluctuations[];
         int validCount = 0;

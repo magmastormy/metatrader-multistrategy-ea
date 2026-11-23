@@ -31,7 +31,7 @@ struct SGridRecoveryConfig
    int      cooldownMs;              // Cooldown between grid entries in ms (30000)
    double   maxCumulativeLotMultiplier; // Cap on total lots vs base lot (3.0)
    double   equityFloorPercent;      // Min equity % of initial before blocking new levels (50)
-   bool     enableAIMode;            // L10-018: Enable AI-VOTE logging
+   bool     enableAIMode;            // Enable AI-VOTE logging
 
    // Default constructor with production defaults
    SGridRecoveryConfig()
@@ -49,7 +49,7 @@ struct SGridRecoveryConfig
       cooldownMs               = 30000;
       maxCumulativeLotMultiplier = 3.0; // Cap total exposure at 3x base lot
       equityFloorPercent       = 50.0;  // Stop grid if equity drops below 50% of initial
-      enableAIMode             = false; // L10-018: AI-VOTE logging disabled by default
+      enableAIMode             = false; // AI-VOTE logging disabled by default
    }
 };
 
@@ -75,7 +75,7 @@ struct SGridSymbolState
    int         direction;              // 1=BUY, -1=SELL
    datetime    lastGridEntryTime;      // When last grid entry was placed
    double      currentATR;             // Current ATR value
-   double      atrSMA;                 // ATR EMA value (L10-017: incremental EMA)
+   double      atrSMA;                 // ATR EMA value (: incremental EMA)
    bool        hurstRegimeConfirmed;   // Hurst < threshold = mean-reversion confirmed
    double      initialEquity;          // Equity at grid activation (for floor check)
 };

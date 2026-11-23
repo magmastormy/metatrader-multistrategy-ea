@@ -90,7 +90,7 @@ class CDerivAssetProfiler
 {
 private:
    SDerivProfile  m_profiles[19];  // 18 families + unknown
-   bool           m_logFamilyDetection;  // L7-013: Enable logging for family detection
+   bool           m_logFamilyDetection;  // Enable logging for family detection
    // DetectFamily runs per scan per symbol, so an unrecognised name (a forex pair on a synthetic-heavy
    // roster) printed the same UNKNOWN line every scan - 18,718 of 237,954 journal lines in the
    // 2026-10-23 session. Report each symbol's UNKNOWN result once; the printable state never changes.
@@ -554,7 +554,12 @@ public:
       if(IsStepSyntheticSymbolName(symbol))
          return DERIV_STEP;
 
-      // Any name carrying "VOLATILITY " lands here, including the "Spot Volatility" names the DERIV_SPOT_VOLATILITY arm below is meant for
+      // Spot Volatility names also carry "VOLATILITY ", so the specific arm must precede the generic one
+      // or DERIV_SPOT_VOLATILITY is unreachable.
+      if(IsSpotVolatilitySyntheticSymbolName(symbol))
+         return DERIV_SPOT_VOLATILITY;
+
+      // Any name carrying "VOLATILITY " lands here.
       if(IsVolatilitySyntheticSymbolName(symbol))
          return DERIV_VOLATILITY;
 
@@ -581,9 +586,6 @@ public:
 
       if(IsPairsArbitrageSyntheticSymbolName(symbol))
          return DERIV_PAIRS_ARBITRAGE;
-
-      if(IsSpotVolatilitySyntheticSymbolName(symbol))
-         return DERIV_SPOT_VOLATILITY;
 
             ENUM_DERIV_FAMILY result = DERIV_UNKNOWN;
             if(m_logFamilyDetection && !IsUnknownAlreadyReported(symbol))

@@ -95,7 +95,6 @@ public:
 
         // Unmitigated breaker OBs only; price reads bar 1 (last closed bar), not the forming bar
         double currentClose = iClose(m_symbol, m_timeframe, 1);
-        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
         int bestBreakerIdx = -1;
         ENUM_ORDER_BLOCK_TYPE bestBreakerType = OB_NONE;
@@ -143,6 +142,10 @@ public:
 
         // Bullish breaker retest = BUY, bearish breaker retest = SELL
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+
+        // A long fills at the ask; pricing its stop distance off the bid understated it by the spread
+        double currentPrice = (bullish) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK)
+                                        : SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
         double freshness = m_obDetector.GetFreshness(bestBreakerIdx);
 

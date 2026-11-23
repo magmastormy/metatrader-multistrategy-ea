@@ -23,7 +23,7 @@
 
 //--- Management includes
 #include "Core\Strategy\StrategyRegistry.mqh"
-// CStrategyRegistry* g_strategyRegistry = NULL;  // REMOVED: Unused global
+// CStrategyRegistry* g_strategyRegistry = NULL; // REMOVED: Unused global
 #include "Core\Management\EnterpriseStrategyManager.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
@@ -222,7 +222,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         100.0,   // tierRiskPerTradePct
         999,     // tierMaxPositions
         100.0,   // effectiveDaily
-        100.0,   // effectivePortfolio  (was 0.0 -> rejected all)
+        100.0,   // effectivePortfolio (was 0.0 -> rejected all)
         100.0,   // effectiveDdWarning
         100.0,   // effectiveDdCritical
         100.0,   // effectiveDailyLossLimit
@@ -715,7 +715,7 @@ void Cleanup()
         // InitializeStrategies). Its destructor tears them down via CStrategyMgrRoster
         // (Deinit+delete). Deleting them here too caused a double-free / invalid-pointer
         // crash (StrategyMgrRoster.mqh:392). Do NOT delete g_contexts[i].strategies[s]
-        // directly �?let the manager own them. Only delete the manager below.
+        // directly - let the manager own them. Only delete the manager below.
 
         // Delete manager
         if(g_contexts[i].strategyManager != NULL)
@@ -787,7 +787,7 @@ int OnInit()
 
         if(!InitializeEngines(activeSymbols, InpExportTimeframe))
         {
-            PrintFormat("[TRAIN-EXPORT] Engine init failed for %s �?skipping", symbol);
+            PrintFormat("[TRAIN-EXPORT] Engine init failed for %s - skipping", symbol);
             continue;
         }
 
@@ -795,7 +795,7 @@ int OnInit()
         {
             if(!InitializeStrategies(activeSymbols, InpExportTimeframe))
             {
-                PrintFormat("[TRAIN-EXPORT] Strategy init failed for %s �?skipping", symbol);
+                PrintFormat("[TRAIN-EXPORT] Strategy init failed for %s - skipping", symbol);
                 continue;
             }
         }
@@ -830,7 +830,7 @@ void OnDeinit(const int reason)
     Cleanup();
 }
 
-// Tick handler (unused �?one-shot exporter)
+// Tick handler (unused - one-shot exporter)
 void OnTick()
 {
 }

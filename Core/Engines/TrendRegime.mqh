@@ -62,7 +62,7 @@ ENUM_TREND_TYPE CTrendRegime::DetermineTrendType(double strength,
         else if(angle < -20)
             return TREND_BEARISH_STRONG;
     }
-    
+
     // Moderate trending conditions
     if(adx > trendThreshold && strength > 50)
     {
@@ -71,36 +71,36 @@ ENUM_TREND_TYPE CTrendRegime::DetermineTrendType(double strength,
         else if(angle < -10)
             return TREND_BEARISH_WEAK;
     }
-    
+
     // Ranging or volatile conditions
     if(adx < 20)
         return TREND_RANGING;
-    
+
     if(strength < 30 && MathAbs(angle) > 30)
         return TREND_VOLATILE;
-    
+
     // Transitioning
     if(strength < 50 && MathAbs(angle) < 10)
         return TREND_TRANSITIONING;
-    
+
     return TREND_NONE;
 }
 
 bool CTrendRegime::IsBullish(const ENUM_TREND_TYPE type)
 {
-    return type == TREND_BULLISH_STRONG || 
+    return type == TREND_BULLISH_STRONG ||
            type == TREND_BULLISH_WEAK;
 }
 
 bool CTrendRegime::IsBearish(const ENUM_TREND_TYPE type)
 {
-    return type == TREND_BEARISH_STRONG || 
+    return type == TREND_BEARISH_STRONG ||
            type == TREND_BEARISH_WEAK;
 }
 
 bool CTrendRegime::IsStrong(const ENUM_TREND_TYPE type)
 {
-    return type == TREND_BULLISH_STRONG || 
+    return type == TREND_BULLISH_STRONG ||
            type == TREND_BEARISH_STRONG;
 }
 
