@@ -96,7 +96,27 @@ input group "Symbol Universe & Liquidity";
 // worst window that is +1.63% instead of -3.58% on the same five windows and the same binary. Three of
 // five pairings are flat, so the removed rows only ever mattered when they were losing.
 // Restore any row by naming it here. The chart symbol is never added implicitly.
-input string   InpSymbolsToTrade = "Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,GBPUSD,AUDUSD,BTCUSD";
+// Batch 300: the remaining seven rows are out. Per-symbol attribution on the eight-symbol book, five cold
+// windows on HEAD f0c1bea, every close reconciled to the heartbeat delta to the cent:
+//   08.01  +222.44 / 74 closes   08.08 +1,128.57 / 76   09.01 +220.74 / 74
+//   09.15  +948.82 / 69          10.06  +464.22 / 73   -> Crash 1000 = +2,984.79 total, positive in all five
+//   every other row summed: Jump 75 -146.82 / 452, Jump 25 -290.02 / 191, Step -305.98 / 63,
+//   GBPUSD -3.85 / 35, AUDUSD -20.55 / 14 -> -767.07 across 755 closes, while consuming daily budget that
+//   would otherwise size Crash. Deleting rows outright had failed before (Batch 298, -0.61 pp) because two rows
+//   left still competed; with only the payer left, Crash's own throughput doubles (74 -> 157-186 closes/window).
+// Crash-only arm, same binary, same five windows, only this input changed, cold each run:
+//   08.01 +10.837% (min 9,997.40 / max 11,107.95, 168 closes)
+//   08.08 +15.786% (min 9,997.71 / max 11,680.49, 166)
+//   09.01  +2.614% (min 9,755.57 / max 10,261.75, 164)
+//   09.15 +17.682% (min 9,877.35 / max 11,823.56, 157)
+//   10.06  +5.134% (min 9,709.67 / max 10,513.62, 186)
+// arm mean +10.41%, sd 6.53 pp, t 3.56, 5 of 5 positive, worst +2.614%
+// paired against the eight-symbol arm on the same windows: +10.520 / +6.608 / +0.626 / +10.958 / +1.164 pp,
+// mean +5.98 pp, sd 4.94 pp, t 2.70, 5 of 5 positive, worst drawdown 2.9% against a +10.41% mean.
+// The trade-off is concentration, not loss of ballast: the arm is one instrument, so it carries no
+// cross-symbol insurance if Crash stops paying. Restore any row by naming it here; the universe is
+// authoritative and the chart symbol is never added implicitly (InpAutoAddChartSymbol no longer exists).
+input string   InpSymbolsToTrade = "Crash 1000 Index";
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
 input bool     InpSymbolEnableVolumeCheck = true;

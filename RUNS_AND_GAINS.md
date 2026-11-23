@@ -457,6 +457,79 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 300 — the logs were never missing, and the August loss has a name: `Crash 1000` throughput
+
+**Question.** The previous batch recorded an "observability regression" — receipts and close P&L gone from the
+rebuilt engine — which would make every "which symbol pays" question unanswerable. Restore them, re-record the
+results, and then act on what they say.
+
+**Answer to the logging question: nothing was broken.** A full-file tag scan (not a tail slice, which is what
+produced the wrong claim) counts, in each `w1` journal:
+
+| journal | `[EXECUTION-RECEIPT]` | `Trade Closed ... Net Profit:` | `[RISK-LOT-FLOOR]` | `[INTENT-STAGE]` |
+|---|---|---|---|---|
+| merged `f0c1bea` | **472** | **472** | 2,820 | 21,166 |
+| pre-merge `09e18b0` | **404** | **403** | 0 | 0 |
+
+The prints are unconditional on the live path: `Core\Trading\TradeManager.mqh:1428` (receipt, inside
+`CTradeManager::ExecuteMarketOrder`, reached through `OpenPosition`) and
+`Core\Management\StrategyMgrTradeFeedback.mqh:217` (close, in `OnTradeTransaction`). Async sending, the only path
+that would bypass the receipt, defaults off (`TradeManager.mqh:293` `m_useAsyncMode(false)`). No source change was
+needed or made for this.
+
+**The attribution, and it reconciles to the cent.** `08.01 -> 08.08`, identical inputs, cold both arms:
+
+| arm | fills / closes | close net | `Crash 1000` | `Jump 75` | `Jump 25` | `Step` | `Volatility 75` |
+|---|---|---|---|---|---|---|---|
+| `09e18b0` | 256 | **+372.81** | **+489.07 / 106** | -70.76 / 96 | -91.12 / 41 | -25.96 / 6 | **+72.77 / 3** |
+| `f0c1bea` (HEAD) | 215 | **+31.72** | **+222.44 / 74** | -88.26 / 89 | -62.19 / 35 | -38.92 / 9 | **0 / 0** |
+
+`close net` equals the 10,080-heartbeat delta exactly in both arms, so this is reconciliation, not a lower bound.
+The loser rows are flat (-190.36 vs -190.87). **The 3.4 pp difference between the two builds is one row's
+throughput**: `Crash 1000` closed 106 times for +489 and now closes 74 times for +222, and `Volatility 75`
+disappeared from the book entirely.
+
+**What the lot floor actually does.** `[RISK-LOT-FLOOR]` fires 1,484 times in the merged window — `Jump 25` 502,
+`Jump 75` 490, `Crash 1000` 273, `GBPUSD` 127, `AUDUSD` 66, `Step` 26 — at `uplift=1.10x <= cap=3.00x`, with mean
+sizes `0.0097 -> 0.0100` (min-lot rows), `0.1935 -> 0.2000` (`Crash`), `0.0959 -> 0.1000` (`Step`). It is min-lot
+rounding with a ceiling, not a size lever: the average uplift is 1.10x and the cap never binds.
+
+**The gate that moved instead.** Pre-merge `[RISK-GATE-REJECT]`: **894 `final_lot_validation`, 142
+`symbol_budget_lot_cap`, 13 `correlation_reduce_below_min_lot`**. Merged: **5, 0, 99**, with
+`[INTENT-STAGE] scaled_lot_not_tradeable` **1,637** taking their place. So the merged build does not resize — it
+converts "the scaled lot is untradeable, refuse" into "trade it at the broker minimum", 1,637 candidates becoming
+1,484 min-lot fills. Those small rows consume the 4% daily budget, and the tickets that pay are the large ones.
+
+**Consequence for the queue.** The "per-symbol cap that binds on lot size" is now answerable in two parts: the lot
+floor already exists and is capped at 1.10x effective, so a cap on it buys nothing; the binding constraint is the
+*daily budget being spent on min-lot rows*. The experiment that decides it is `InpMinLotRiskMultiplier=1.0`
+(any sub-min-lot scale is refused rather than lifted), run on `08.01` and `09.01`.
+### The decisive test: give the book only the row that pays (Crash-only arm), and it ships
+
+`InpSymbolsToTrade="Crash 1000 Index"`, everything else factory, same binary, same five cold windows:
+
+| window | eight-symbol arm (HEAD) | **Crash-only** | delta | fills | closes | min / max |
+|---|---|---|---|---|---|---|
+| 08.01 -> 08.08 | +0.317% (10,031.72) | **+10.837%** (11,083.66) | **+10.52 pp** | 168 | 168 | 9,997.40 / 11,107.95 |
+| 08.08 -> 08.15 | +9.178% (10,917.78) | **+15.786%** (11,578.65) | **+6.61 pp** | 166 | 166 | 9,997.71 / 11,680.49 |
+| 09.01 -> 09.08 | +1.988% (10,198.79) | **+2.614%** (10,261.40) | **+0.63 pp** | 164 | 164 | 9,755.57 / 10,261.75 |
+| 09.15 -> 09.22 | +6.724% (10,672.39) | **+17.682%** (11,768.17) | **+10.96 pp** | 157 | 157 | 9,877.35 / 11,823.56 |
+| 10.06 -> 10.13 | +3.970% (10,397.04) | **+5.134%** (10,513.41) | **+1.16 pp** | 186 | 186 | 9,709.67 / 10,513.62 |
+
+**Arm mean +10.41%, sd 6.53 pp, t 3.56, 5/5 positive, worst +2.614%.** Paired deltas mean **+5.98 pp**, sd
+4.94, **t 2.70**, 5/5 positive. Every window's closes reconcile to its heartbeat delta; the worst drawdown of
+the whole arm is 2.9% (09.15's 9,877.35), and the best window gained 17.7%.
+
+**The mechanism is throughput, not a better entry.** The same signals produce roughly twice the closes -
+74 in each eight-symbol window, 157-186 here - because the daily budget is no longer spent on rows that lose.
+Dollars per close move both ways against the book (`08.01` +3.0 -> +6.4, `08.08` +14.8 -> +9.5), so the size of a
+single close is not the effect; the count is.
+
+**What it costs.** Concentration. There is no second instrument to absorb a Crash regime change, and this is the
+same failure mode every previous trim argument had - except this one is measured on five paired windows instead
+of one. **Shipped:** `Core\Config\SharedEAInputs.mqh` now reads `InpSymbolsToTrade = "Crash 1000 Index"` with the
+five-window table and the restore instructions above it. `InpAutoAddChartSymbol` no longer exists in the merged
+tree, so the universe is authoritative and no chart symbol is injected.
 ## Batch 299b — the merged build (HEAD `f0c1bea`): mean +4.435%, and four of five windows are bit-identical to the pre-merge build
 
 **Question.** Batch 299 measured `09e18b0` because that was the tree when the binary was compiled. HEAD also
@@ -565,12 +638,14 @@ worst-case of Batch 297 (+1.630%) becomes +1.988% while the spread widens from 2
 (variance is machine load, not the EA): a five-window sweep is an afternoon, not two hours. Compile is also much
 heavier — root EA **285,687 ms** against Batch 297's 74,406 ms, Testing EA 307,721 ms.
 
-**Observability regression (found, not fixed).** The rebuilt engine no longer prints `[EXECUTION-RECEIPT]` or
-`Trade Closed ... Net Profit:`. Fill counts, and therefore the per-symbol dollar attribution that `attr.py` /
-`attr2.py` produced for Batches 285–298, are no longer available from the journal at all; what remains is the
-10,080-sample `[COMPOUNDING-TIER-HEARTBEAT] balance=` stream plus `strategy_scoreboard.csv`. Per-symbol
-attribution has to be rebuilt (or the log lines restored) before any "which symbol pays" question can be asked
-again on this engine.
+**Observability: corrected same day - nothing was missing.** A full-file scan (not a tail slice) counts
+`[EXECUTION-RECEIPT]` **472** and `Trade Closed ... Net Profit:` **472** in the merged `w1` journal and
+**404 / 403** in the `09e18b0` one. The lines are printed unconditionally at
+`Core\Trading\TradeManager.mqh:1428` and `Core\Management\StrategyMgrTradeFeedback.mqh:217`, on the
+`OpenPosition -> ExecuteMarketOrder` path, which is the live path because async sending defaults off
+(`TradeManager.mqh:293`). No code change was required; the earlier claim was a measurement error, and per-symbol
+dollars are available again - see Batch 300 below, where the close sums reconcile to the heartbeat delta to the
+cent.
 
 **New hazard, cost two windows and three control runs — port 3000.** An unrelated Node dev server on this machine
 (`D:\MoneyBuildersProject\...`, `next start`) bound `127.0.0.1:3000`, which is the local MetaTester agent port. The

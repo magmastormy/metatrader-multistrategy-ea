@@ -506,8 +506,11 @@ to it.
 1. **Per-symbol risk cap that binds on lot size** - still the only untested lever. `GetSymbolRiskAllocation`
    never binds because the min-lot floor sets absolute size; Batch 298 proved deleting the small rows is worse
    than keeping them, so the cap must bind on size, not admission.
-2. **Restore per-trade logging.** The rebuilt engine dropped `[EXECUTION-RECEIPT]` and `Trade Closed ... Net
-   Profit:`; without them there is no fill count and no per-symbol attribution on this build.
+2. ~~**Restore per-trade logging.**~~ **Closed same day - nothing was broken.** Full-file counts: 472
+   `[EXECUTION-RECEIPT]` / 472 `Trade Closed` in the merged `w1` journal, 404 / 403 in the `09e18b0` one. The
+   prints are unconditional (`TradeManager.mqh:1428`, `StrategyMgrTradeFeedback.mqh:217`) and async sending is off
+   by default (`TradeManager.mqh:293`). The earlier "dropped" claim was a tail-read error; attribution reconciles
+   to the cent in both arms.
 3. **Port-3000 guard in the harness.** `Tools\run_window.ps1` / `run_windows.ps1` should assert that
    `127.0.0.1:3000` is owned by `metatester64` before launching, and fail loudly otherwise - this batch lost two
    windows and three control runs to an unrelated Node dev server.
@@ -532,3 +535,52 @@ to it.
 - Consequence for item 1 below: the "bind on lot size" idea now exists in code as an **uplift with a 3x cap**,
   not as a per-symbol risk cap. Whether a per-symbol cap is still worth building depends on measuring the
   uplift's behaviour first (`[RISK-LOT-FLOOR]` counts per window), which the current engine does log.
+## Status update - Batch 300 (2026-11-23)
+
+**Context.** The previous batch's "observability regression" was wrong, and the check that produced it (a 2 MB tail
+read) was the bug. Full-file counts settle it, and the same full-file read is what made per-symbol attribution
+reliable enough to name the August loss.
+
+**Done:**
+- [x] **Logging was never broken.** `472` `[EXECUTION-RECEIPT]` and `472` `Trade Closed ... Net Profit:` in the merged
+      w1 journal (`404 / 403` in the `09e18b0` one). Prints are unconditional (`TradeManager.mqh:1428`,
+      `StrategyMgrTradeFeedback.mqh:217`); the only path that skips a receipt is async sending, off by default
+      (`TradeManager.mqh:293`). No source change, three docs corrected.
+- [x] **Per-symbol attribution reconciles to the cent** in every window (each window's close-net equals its heartbeat
+      delta). `08.01` pre-merge 256 fills / Crash +489.07 / 106 closes vs merged 215 / +222.44 / 74 closes - the
+      three-point drop is payer throughput, not size, because the losing rows are identical (-190.36 vs -190.87).
+- [x] **`[RISK-LOT-FLOOR]` measured, and it is inert as a lever.** 1,484 firing lines in merged w1 (Jump25 502,
+      Jump75 490, Crash 273, GBPUSD 127, AUDUSD 66, Step 26); effective uplift 1.10x against a 3.00x cap that never
+      binds. `InpMinLotRiskMultiplier=1.0` (uplift becomes a reject) on two cold windows: +0.740% vs +0.317%, and
+      +1.425% vs +1.988% -> paired **-0.070 pp, t -0.14**. Default stays 3.0.
+- [x] **The gate substitution is the real change:** `[RISK-GATE-REJECT]` 894/142/13 -> 5/0/99, with
+      `[INTENT-STAGE] scaled_lot_not_tradeable` 1,637 replacing it. "Scaled lot untradeable" became "trade the broker
+      minimum", so small rows now spend the 4% daily budget.
+- [x] **The book, per symbol, five windows:** `Crash 1000` **+2,984.79 / 366 closes**, all other rows together
+      **-767.07 / 755 closes** (Jump75 -146.82/452, Jump25 -290.02/191, Step -305.98/63, GBPUSD -3.85/35,
+      AUDUSD -20.55/14).
+- [x] **SHIPPED: `InpSymbolsToTrade = "Crash 1000 Index"`.** Five paired cold windows: **+10.837 / +15.786 / +2.614
+      / +17.682 / +5.134 %** vs **+0.317 / +9.178 / +1.988 / +6.724 / +3.970 %**. Arm mean **+10.41%**, sd 6.53,
+      t 3.56, 5/5; paired **+5.98 pp**, sd 4.94, **t 2.70**, 5/5; worst window +2.614%, worst drawdown 2.9%.
+      Compile `OVERALL SUCCESS`, 0 errors / 0 warnings on eight programs.
+- [x] **Default verified by omission**, `.set` parked as `.parked_b300b`, ini without `InpSymbolsToTrade`,
+      `2026.08.01`->`08.07`: **10,000.00 -> 11,083.66, +10.837%**, 168 fills, min 9,997.40 / max 11,107.95 - identical
+      to the arm to the cent, 171 `[RISK-LOT-FLOOR]` lines, all on `Crash 1000`.
+- [x] **`InpAutoAddChartSymbol` no longer exists** in the merged tree, so universe authority is structural; the old
+      chart-symbol exclusion item closes without a measurement.
+
+**Open, in priority order (reordered by what the measurements say):**
+1. **Out-of-regime for the single instrument.** Every shipped window is 2026-08..10, and the book now has one row.
+   Next: Crash-only on windows outside that slice (2026-06/07) and one month-length window.
+2. **Does a second payer exist?** Only `Crash 1000` netted positive across five windows, so a diversifier has to be
+   found by measurement, not by restoring a row that lost. Candidate arms: `Crash + Boom 1000`, and `Crash + Jump 75`
+   with a per-symbol cap (see 3).
+3. **Per-symbol cap at sizing** - status unchanged in *form* but now better understood: the code path is an uplift
+   with a 3x cap, and the uplift is inert. Building a real cap means changing the formula, not the input.
+4. **Port-3000 guard** still lives only in the ad-hoc drivers (`b300_*.ps1`), not in `Tools\run_window.ps1`; it killed
+   a node holder again at 23:04:25 this batch.
+5. **`InpMaxDailyRisk` 4% -> 6%** - unrun; now interacts with a single-symbol book, so re-measure before trusting.
+6. **`[ENGINE-CLOSE]` / scalp-on window** (`Tools\backtest_b290_scalp2.ini`) - still unrun.
+7. **Demo attach** - the EA has still never been attached to a chart.
+8. **`.set` parks not restored**: `.parked_b291`, `.parked_b291b`, `.parked_b292`, `.parked_b297`, `.parked_b299`,
+   `.parked_b300`, `.parked_b300b`.

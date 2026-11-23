@@ -1,3 +1,42 @@
+## [Unreleased] - 2026-11-23 (batch 300 - per-symbol attribution back, lot-floor uplift measured, uplift-off A/B)
+### Attribution works on both builds (no code change)
+- Full-file tag scan of the two `w1` journals: `[EXECUTION-RECEIPT]` and `Trade Closed ... Net Profit:` are
+  present in both (472 / 472 merged, 404 / 403 pre-merge). The print sites are unconditional and async sending is
+  off by default, so nothing needed restoring - the earlier claim was a tail-read error and is corrected in the
+  Batch 299 entry above.
+- Last-run close sums equal the heartbeat delta to the cent in both arms (+372.81 and +31.72), so this is
+  reconciliation, not a lower bound.
+
+### Why the August open moved 3.4 pp: Crash exposure, not the lot floor's size
+`08.01 -> 08.08`, same window, same inputs, merged vs pre-merge:
+
+| arm | fills | closes | close net | `Crash 1000` | `Jump 75` | `Jump 25` | `Step` | `Volatility 75` |
+|---|---|---|---|---|---|---|---|---|
+| pre-merge `09e18b0` | 256 | 256 | **+372.81** | **+489.07 / 106 closes** | -70.76 / 96 | -91.12 / 41 | -25.96 / 6 | **+72.77 / 3** |
+| merged `f0c1bea` | 215 | 215 | **+31.72** | **+222.44 / 74 closes** | -88.26 / 89 | -62.19 / 35 | -38.92 / 9 | **0 / 0** |
+
+The loser rows are flat across arms (-190.36 vs -190.87). The whole delta is one row: `Crash 1000` took **106**
+closes for **+489.07** and now takes **74** for **+222.44**, and `Volatility 75` disappeared entirely.
+`08.01`'s gain is Crash throughput, so the merged build's change is a throughput cut on the one instrument that pays.
+
+### The lot floor is real but small; the gate that replaced it is not
+- `[RISK-LOT-FLOOR]` fires **1,484** times in the merged window: `Jump 25` 502, `Jump 75` 490, `Crash 1000` 273,
+  `GBPUSD` 127, `AUDUSD` 66, `Step` 26. Mean uplift is trivial - min-lot symbols `0.0097 -> 0.0100`,
+  `Crash 1000` `0.1935 -> 0.2000` (3.4%), `Step` `0.0959 -> 0.1000`. So the uplift is essentially the old
+  min-lot rounding, capped at 1.10x of the resolved size, and it does **not** explain the fill drop.
+- What moved is the gate: pre-merge `[RISK-GATE-REJECT]` = **894 `final_lot_validation` + 142
+  `symbol_budget_lot_cap` + 13 `correlation_reduce_below_min_lot`**; merged = **5 `final_lot_validation` + 99
+  `correlation_reduce_below_min_lot`**, with `[INTENT-STAGE] scaled_lot_not_tradeable` **1,637** instead. The
+  merged build converts "reject because the scaled lot is untradeable" into a trade at min lot - 1,637 candidates
+  became 1,484 min-lot fills, which consumes daily budget on the small rows and leaves less room for the
+  `Crash 1000` tickets that pay.
+- `[ENTRY-GATE] cycle_send_cap` is 33 merged vs 34 pre-merge, so this is not a send-rate cap.
+
+### A/B in flight: `InpMinLotRiskMultiplier=1.0`
+- `Tools\backtest_b300_floor1_w1.ini` (`08.01 -> 08.08`) and `_w3.ini` (`09.01 -> 09.08`), otherwise identical to
+  `b299_cold` inis. With the cap at 1.0 the pipeline rejects any sub-min-lot scale instead of lifting it
+  (`CandidateBuilder.mqh:593`, `RiskValidationPipeline.mqh:575`), which is how to test whether the uplift trades
+  are the ones crowding out Crash.
 # Changelog
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
@@ -54,11 +93,15 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
   0 warnings on all eight programs** (root EA 285,687 ms, Testing 307,721 ms, Exporter 90,029 ms).
   Compile cost is ~4x the Batch 297 build (74,406 ms), consistent with the larger engine.
 
-### Observability regression found (open, not fixed)
-- The rebuilt engine no longer emits `[EXECUTION-RECEIPT]` or `Trade Closed ... Net Profit:`. Fill
-  counts and per-symbol dollar attribution (`Tools/attribute_pnl.ps1`, `attr2.py`) are unavailable on
-  this build; only `[COMPOUNDING-TIER-HEARTBEAT] balance=` and `strategy_scoreboard.csv` remain.
-  `Core/...` trade-feedback logging needs to be restored before the next "which symbol pays" question.
+### Observability: nothing was broken - the earlier "regression" was a bad tail read (corrected same day)
+- A full-file scan of the two `w1` journals counts `[EXECUTION-RECEIPT]` **472** and `Trade Closed ...
+  Net Profit:` **472** on the merged build, and **404 / 403** on `09e18b0`. Both lines were never
+  missing; the earlier claim came from reading a tail slice, not the file. `Core\Trading\TradeManager.mqh:1428`
+  prints the receipt and `Core\Management\StrategyMgrTradeFeedback.mqh:217` prints the close, both
+  unconditionally on the `OpenPosition` -> `ExecuteMarketOrder` path (async mode is off by default:
+  `TradeManager.mqh:293` `m_useAsyncMode(false)`), so no code change is needed.
+- Attribution reconciles **exactly**: last-run close net equals the heartbeat delta to the cent in both
+  arms (+372.81 and +31.72), so per-symbol dollars are a measurement here, not a lower bound.
 
 ### Test-harness hazard (new, cost 2 windows + 3 control runs)
 - An unrelated supervised Node dev server bound `127.0.0.1:3000`, the local MetaTester agent port.
@@ -5548,3 +5591,45 @@ Findings were re-verified against source before editing, and two earlier claims 
 
 #### Verification
 - `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
+
+### The five-window book on HEAD: one payer, five rows that tax it
+Per-symbol net from each window's own `Trade Closed ... Net Profit:` lines (all reconcile to the heartbeat delta):
+
+| window | net | `Crash 1000` | `Jump 75` | `Jump 25` | `Step` | `GBPUSD` | `AUDUSD` |
+|---|---|---|---|---|---|---|---|
+| 08.01 | +31.72 | **+222.44 / 74** | -88.26 / 89 | -62.19 / 35 | -38.92 / 9 | -1.50 / 6 | +0.15 / 2 |
+| 08.08 | +917.78 | **+1,128.57 / 76** | -81.39 / 63 | -148.34 / 39 | +18.48 / 16 | +0.73 / 5 | -0.27 / 2 |
+| 09.01 | +198.79 | **+220.74 / 74** | -22.64 / 85 | +27.45 / 35 | -23.61 / 15 | -3.15 / 10 | - |
+| 09.15 | +672.39 | **+948.82 / 69** | -36.98 / 92 | -107.23 / 41 | -125.93 / 14 | -5.67 / 8 | -0.62 / 2 |
+| 10.06 | +397.04 | **+464.22 / 73** | +82.45 / 123 | +0.29 / 41 | -136.00 / 9 | +5.74 / 6 | -19.66 / 5 |
+| **sum** | **+2,217.72** | **+2,984.79 / 366** | -146.82 / 452 | -290.02 / 191 | -305.98 / 63 | -3.85 / 35 | -20.55 / 14 |
+
+`Crash 1000` is positive in every window and carries the whole account; every other row sums negative over the
+five windows to the tune of **-767.07 USD across 755 closes**. That is the arithmetic behind "one payer, five taxes".
+It is not a removal argument - Batch 298 measured removal at -0.605 pp on the same kind of paired test because
+deleting a row concentrates the budget and *lowers* `Crash` closes (114 -> 94 on `08.01`).
+
+### `InpMinLotRiskMultiplier=1.0` (uplift refused instead of lifted): neutral, do not ship
+Both arms cold, same build, only that input differs:
+
+| window | factory (cap 3.0) | cap 1.0 | delta | fills f -> 1.0 | `Crash` closes f -> 1.0 |
+|---|---|---|---|---|---|
+| 08.01 | +31.72 (+0.317%) | **+74.02 (+0.740%)** | **+0.423 pp** | 215 -> 214 | 74 -> 78 |
+| 09.01 | +198.79 (+1.988%) | **+142.47 (+1.425%)** | **-0.563 pp** | 218 -> 219 | 74 -> 72 |
+
+Paired mean **-0.070 pp**, sd 0.72, t **-0.14**, 1/2 positive. The gate does fire - 1,209 rejects
+`lot_floor_risk_multiplier` on `08.01`, 2,358 on `09.01` (about half of all validated candidates) - but the book
+barely moves: fills change by one, and the two windows disagree on sign. **Conclusion: the min-lot uplift is inert
+as a lever. It does not explain the August collapse and turning it off is not a gain.** The default stays at 3.0.
+### Shipped: the universe is `Crash 1000 Index` only
+- Five paired cold windows, same binary, only `InpSymbolsToTrade` changed: `+10.837 / +15.786 / +2.614 /
+  +17.682 / +5.134 %` against the eight-symbol arm's `+0.317 / +9.178 / +1.988 / +6.724 / +3.970 %`.
+- Arm mean **+10.41%**, sd 6.53 pp, t 3.56, 5/5 positive, worst **+2.614%**, worst drawdown 2.9%.
+  Paired mean **+5.98 pp**, sd 4.94, **t 2.70**, 5/5 positive.
+- Mechanism is throughput: 74 closes per window in the eight-symbol book, 157-186 with only the payer left, because
+  the daily budget stops being spent on rows that net negative (-767.07 across 755 closes over the same five windows).
+- `Core\Config\SharedEAInputs.mqh` `InpSymbolsToTrade = "Crash 1000 Index"` with the full table above it.
+  Compile `OVERALL SUCCESS`, 0 errors / 0 warnings on all eight programs (root EA 58,463 ms).
+- Cost accepted: one instrument, no ballast. Restore any row by naming it in the input.
+- `InpAutoAddChartSymbol` is gone from the merged tree, so the universe is authoritative - one open item closes
+  without a measurement.
