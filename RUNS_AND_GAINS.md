@@ -530,6 +530,30 @@ same failure mode every previous trim argument had - except this one is measured
 of one. **Shipped:** `Core\Config\SharedEAInputs.mqh` now reads `InpSymbolsToTrade = "Crash 1000 Index"` with the
 five-window table and the restore instructions above it. `InpAutoAddChartSymbol` no longer exists in the merged
 tree, so the universe is authoritative and no chart symbol is injected.
+### Out of the 2026-08..10 slice: the single row holds up in July and survives June's truncated window
+
+Two cold windows outside the shipped distribution, `Tools\backtest_b300_crash_x1.ini` / `_x2.ini`, same binary,
+only dates changed:
+
+| window | result | fills / closes | min / max | note |
+|---|---|---|---|---|
+| 07.01 -> 07.08 | **+4.075%** (10,407.45) | 183 / 183 | 9,995.60 / 10,628.27 | seven full days, reconciles to the cent |
+| 06.01 -> 06.08 | **+4.208%** (10,470.48 -> 10,910.99) | 81 / 81 | 10,448.85 / 11,045.66 | history for `Crash 1000` starts **06.04 01:57**, so this is 3.9 days, and the run's equity was already 10,470.48 at its first heartbeat |
+
+**The June window's "+9.110%" is an artifact, not a result.** My delta base is the heartbeat whose balance is
+exactly 10,000.00 within the first ten samples; this run had no such sample because the tester's tick history for
+`Crash 1000` begins at `2026.06.04 01:57` and the pre-rotation part of the journal was already 470 USD up. Using
+10,470.48 as the base gives **+440.51, exactly the sum of the 81 `Trade Closed` nets** - the same reconciliation
+standard as every other window. Recorded so the next reader does not quote +9.110%.
+
+**Seven-window Crash-only record:** +10.837 / +15.786 / +2.614 / +17.682 / +5.134 / +4.075 / +4.208 -> mean
+**+8.619%**, sd **6.15 pp**, **t 3.71**, **7/7 positive**, worst **+2.614%**, worst drawdown 2.9%. The two
+out-of-slice weeks are the weakest of the seven, which is the honest read: the edge is smaller outside August-October
+but it does not invert.
+
+**Data boundary found:** `Crash 1000` tick history in this terminal is not guaranteed before `2026.06.04`, so any
+"out-of-regime" test earlier than June silently produces a shorter run. Check the first heartbeat timestamp against
+the ini `FromDate` before believing any window.
 ## Batch 299b — the merged build (HEAD `f0c1bea`): mean +4.435%, and four of five windows are bit-identical to the pre-merge build
 
 **Question.** Batch 299 measured `09e18b0` because that was the tree when the binary was compiled. HEAD also
