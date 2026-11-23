@@ -554,6 +554,30 @@ but it does not invert.
 **Data boundary found:** `Crash 1000` tick history in this terminal is not guaranteed before `2026.06.04`, so any
 "out-of-regime" test earlier than June silently produces a shorter run. Check the first heartbeat timestamp against
 the ini `FromDate` before believing any window.
+### Month-length window: 31 days, 836 closes, +50.565% - and the gain scales with equity
+
+`Tools\backtest_b300_crash_m1.ini`, `2026.07.01` -> `2026.08.01`, cold, same binary, Crash-only:
+
+- 10,000.00 -> **15,056.49**, **+50.565%**, **836 fills / 836 closes**, close-net **+5,056.49** = the heartbeat delta
+  to the cent. Opening balance is exactly 10,000.00 (verified at `07.01 00:00:01`), so no base artifact here.
+- Lowest balance inside the month **9,995.60**, highest **15,732.36**; **max drawdown from running peak 9.51%**.
+- Day-by-day: **22 of 31 days positive**, mean **+1.348%** per day, sd 1.994 pp, best **+6.32%**, worst **-1.85%**.
+- 98 minutes of wall clock for 31 days (vs 21 for 7), i.e. the harness cost is linear in simulated days.
+
+**Why the month prints far more than 4.4 weekly windows would imply** (weekly arm = +4.075% on 07.01->07.08; four
+weeks compounded at that rate is ~+17%): the book is not flat-bet. Lot floor, compounding tiers and the daily budget
+all scale with balance, so the same edge is applied to a growing equity - 10,000 -> 10,247 -> 11,041 -> 12,254 ->
+13,799 -> 15,539 across the month. That is compounding on top of the edge, and it cuts both ways: the 9.51% peak-to-
+trough drawdown happens at month-end when the lots are 50% larger, not in week one.
+
+**Read this as one sample, not a distribution.** It is one month, one instrument, tester ticks, no live attach. The
+seven-window weekly record (mean +8.619%, sd 6.15, t 3.71) is the distribution; the month is the persistence check
+that says the edge survives 31 consecutive days and does not die after the first week.
+
+**Harness note:** the month run's journal is 849 MB and shares its first slice with the previous June run, so the
+"last run" reader must key on the `07.01 00:00:01` boundary, not on the file's first heartbeat. Balance parsing also
+produced a spurious `min=1460.00` from a non-heartbeat field once; report min/max drawdown only from lines that carry
+`[COMPOUNDING-TIER-HEARTBEAT]` and a numeric `balance`.
 ## Batch 299b — the merged build (HEAD `f0c1bea`): mean +4.435%, and four of five windows are bit-identical to the pre-merge build
 
 **Question.** Batch 299 measured `09e18b0` because that was the tree when the binary was compiled. HEAD also

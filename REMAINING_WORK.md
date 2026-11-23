@@ -573,8 +573,9 @@ reliable enough to name the August loss.
 1. **Out-of-regime for the single instrument - partly done.** Two windows outside the slice ran: July `07.01->07.08`
    **+4.075%** and June `06.04->06.08` **+4.208%** (truncated - `Crash 1000` history starts `06.04 01:57`, and the
    run's first heartbeat was already 10,470.48, so the "+9.110%" a naive 10,000 base gives is an artifact). Seven
-   windows now: mean **+8.619%**, sd 6.15 pp, t 3.71, 7/7 positive. The month-length window `07.01->08.01` is
-   running; earlier history than June is not available in this terminal.
+   windows now: mean **+8.619%**, sd 6.15 pp, t 3.71, 7/7 positive. Month-length window `07.01->08.01` finished:
+   **+50.565%** (10,000 -> 15,056.49), 836 closes, max drawdown **9.51%**, 22/31 positive days, mean +1.348%/day.
+   Earlier history than `2026.06.04` is not available in this terminal.
 2. **Does a second payer exist?** Only `Crash 1000` netted positive across five windows, so a diversifier has to be
    found by measurement, not by restoring a row that lost. Candidate arms: `Crash + Boom 1000`, and `Crash + Jump 75`
    with a per-symbol cap (see 3).
