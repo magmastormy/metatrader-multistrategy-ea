@@ -530,6 +530,10 @@ same failure mode every previous trim argument had - except this one is measured
 of one. **Shipped:** `Core\Config\SharedEAInputs.mqh` now reads `InpSymbolsToTrade = "Crash 1000 Index"` with the
 five-window table and the restore instructions above it. `InpAutoAddChartSymbol` no longer exists in the merged
 tree, so the universe is authoritative and no chart symbol is injected.
+
+**Default proved by omission, not by reading code:** `Tools\backtest_b300_default_w1.ini` omits `InpSymbolsToTrade`
+and the tester `.set` was parked as `.set.parked_b300b`. Cold run: **10,000.00 -> 11,083.66, +10.837%**, 168 fills,
+min 9,997.40 / max 11,107.95, 171 `[RISK-LOT-FLOOR]` lines all on `Crash 1000` - identical to the arm to the cent.
 ### Out of the 2026-08..10 slice: the single row holds up in July and survives June's truncated window
 
 Two cold windows outside the shipped distribution, `Tools\backtest_b300_crash_x1.ini` / `_x2.ini`, same binary,
