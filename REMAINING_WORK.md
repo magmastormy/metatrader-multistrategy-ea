@@ -576,9 +576,16 @@ reliable enough to name the August loss.
    windows now: mean **+8.619%**, sd 6.15 pp, t 3.71, 7/7 positive. Month-length window `07.01->08.01` finished:
    **+50.565%** (10,000 -> 15,056.49), 836 closes, max drawdown **9.51%**, 22/31 positive days, mean +1.348%/day.
    Earlier history than `2026.06.04` is not available in this terminal.
-2. **Does a second payer exist?** Only `Crash 1000` netted positive across five windows, so a diversifier has to be
-   found by measurement, not by restoring a row that lost. Candidate arms: `Crash + Boom 1000`, and `Crash + Jump 75`
-   with a per-symbol cap (see 3).
+2. **Does a second payer exist? - ANSWERED (Batch 300d): yes, `Boom 1000`, and it is now the factory book.**
+   `Crash + Jump 75` was measured first and rejected (-6.28 / -4.17 / -4.88 pp on three cold windows; it dragged
+   `Crash` itself net-negative in two). `Crash + Boom 1000` only fills once the send-time spread backstop is widened
+   (`InpMaxEntrySpreadPoints` 15000 -> 25000; Boom quotes ~17,185 constantly and was vetoed 1,077 times/window),
+   and with that amendment it ran **+14.714 / +20.169 / +6.871 / +19.809 / +16.135 %** against `Crash`-only
+   **+10.837 / +15.786 / +2.614 / +17.682 / +5.134 %** - paired mean **+5.13 pp**, sd 3.41, **t 3.37**, **5/5**.
+   Out of slice, July is **-2.00 pp**, so the row is 5-of-5 in-slice and 1-of-1 negative outside it. Control arm
+   (`Crash`-only at 25000) reproduced the 15000 arm **to the cent** on two windows, so the wider gate is inert for
+   the payer. Open here: a per-symbol spread override would let `Boom` fill without loosening the disaster-quote
+   backstop for the whole book, and it is not built.
 3. **Per-symbol cap at sizing** - status unchanged in *form* but now better understood: the code path is an uplift
    with a 3x cap, and the uplift is inert. Building a real cap means changing the formula, not the input.
 4. **Port-3000 guard** - `Tools\run_window.ps1` already refuses to launch when anything owns `:3000` (it enumerates
@@ -591,3 +598,51 @@ reliable enough to name the August loss.
 7. **Demo attach** - the EA has still never been attached to a chart.
 8. **`.set` parks not restored**: `.parked_b291`, `.parked_b291b`, `.parked_b292`, `.parked_b297`, `.parked_b299`,
    `.parked_b300`, `.parked_b300b`.
+## Status update - Batch 300d (2026-11-24)
+
+**Context.** Batch 300 closed the book to one payer and left the diversifier question open. This batch measured
+both candidate rows rather than guessing, and shipped the one that pays.
+
+**Done:**
+- [x] **`Crash + Jump 75` measured and rejected.** Three cold windows against `Crash`-only on the same binary:
+      +4.553 / -1.559 / -0.805 % vs +10.837 / +2.614 / +4.075 % -> paired **-6.28 / -4.17 / -4.88 pp**. The
+      mechanism is throughput, not the row's own P&L: payer closes fell from 168/164/183 to 92/94/96, and `Crash`
+      went net-negative in two of the three windows.
+- [x] **The first `Crash + Boom` arms were dead on a gate, not on signal.** Three windows reproduced `Crash`-only
+      **to the cent** with zero Boom closes; the row was scanned (~50,000 journal lines) and vetoed every entry by
+      `hard_spread_cutoff` (`spread_points=17185.0 > 15000.0`, 1,077 vetoes/window). `InpSymbolMaxSpreadPoints`
+      (universe filter) was the wrong knob; the gate is `MathMax(hardSpreadCutoffPoints, maxEntrySpreadPoints)`
+      (`EAOrchestrator.mqh:1956`), i.e. `InpMaxEntrySpreadPoints`.
+- [x] **`InpMaxEntrySpreadPoints=25000` with `Crash` only (control)** reproduced the 15,000 arm to the cent on
+      `08.01` (+10.837% / 168 fills / min 9,997.40 / max 11,107.95) and `09.01` (+2.614% / 164 / 9,755.57 /
+      10,261.75). The loosening is inert for the payer, so the paired deltas belong to Boom.
+- [x] **`Crash + Boom` @25000, five windows:** **+14.714 / +20.169 / +6.871 / +19.809 / +16.135 %**; Boom's own net
+      +705.38 / +376.54 / +623.66 / +764.13 / +909.36 on 31-44 closes. Paired **+3.88 / +4.38 / +4.26 / +2.13 /
+      +11.00 pp**, mean **+5.13 pp**, sd 3.41, **t 3.37**, **5/5**. Out of slice `07.01` is **-2.00 pp** (Boom
+      -104.62 / 35 closes).
+- [x] **SHIPPED:** `InpSymbolsToTrade = "Crash 1000 Index,Boom 1000 Index"` and `InpMaxEntrySpreadPoints = 25000.0`
+      in `Core\Config\SharedEAInputs.mqh`, both with the measured block above them. Compile `OVERALL SUCCESS`,
+      0 errors / 0 warnings on all eight programs.
+- [x] **Default verified by omission:** `.set` parked as `.parked_b300d`, ini carrying neither input, cold
+      `08.01->08.07`: **+14.714%** (10,000 -> 11,471.44), 165 fills, Boom 31 closes +705.38, Crash 134 closes
+      +766.06, min 9,966.75 / max 11,485.28 - the arm to the cent.
+
+**Open, in priority order:**
+1. **Per-symbol spread override.** The shipped 25,000 cap admits Boom by loosening the send-time disaster-quote
+   backstop ~67% for the whole book. A per-symbol limit (`Boom` ~17,185 allowed, everything else unchanged) would
+   buy the same fills with no global loosening. Not built; no code change measured.
+2. **Boom outside the slice.** Only July disagrees (-2.00 pp). Boom's history starts `2026.06.04`, so more
+   out-of-slice windows are possible but few; `06.x` and `10.13->10.20` are the candidates.
+3. **Crash + Boom on the month-length window** (`07.01->08.01`, where the July week loses) - unrun, and it is the
+   one window that would show whether Boom's July loss compounds or averages out.
+4. **`InpMaxDailyRisk` 4% -> 6%** - still unrun, now on a two-row book.
+5. **`[ENGINE-CLOSE]` / scalp-on window** (`Tools\backtest_b290_scalp2.ini`) - still unrun.
+6. **Demo attach** - the EA has still never been attached to a chart.
+7. **`.set` parks not restored**: `.parked_b291`, `.parked_b291b`, `.parked_b292`, `.parked_b297`, `.parked_b299`,
+   `.parked_b300`, `.parked_b300b`, `.parked_b300ab`, `.parked_b300ab2`, `.parked_b300be`, `.parked_b300c`,
+   `.parked_b300m`, `.parked_b300d`.
+- **Harness note:** this batch lost the machine three times (~13:35, ~16:41, ~21:35) and one window with it; a
+  killed run leaves its journal truncated mid-window, so a window counts only when the terminal log says
+  `successfully finished` and the heartbeat slice is 10,080 samples starting at the ini `FromDate`. `booment_w2`
+  also showed the pacing is not linear - `processing` went 0->48 % over 71 minutes and finished at 95, because
+  history synchronisation (11 min) precedes the clock.

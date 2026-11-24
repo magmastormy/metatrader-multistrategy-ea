@@ -457,6 +457,70 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 300d — the second payer was measured, not guessed: `Jump 75` rejected, `Boom 1000` shipped
+
+**Question.** Batch 300 left the book at one instrument and one payer. The open question was whether a second
+instrument can add, given that every other row on the eight-symbol book summed negative. Two candidate arms, both
+measured against the same shipped `Crash 1000` binary on the same cold windows.
+
+**Arm B — `Crash + Jump 75`, rejected on three windows.**
+
+| window | `Crash+Jump 75` | `Crash` only | paired | `Jump 75` own net | `Crash` own net |
+|---|---|---|---|---|---|
+| 08.01→08.08 | +4.553% (201 fills) | +10.837% | **−6.28 pp** | −72.35 / 109 closes | +527.66 / 92 |
+| 09.01→09.08 | −1.559% (214) | +2.614% | **−4.17 pp** | −28.61 / 120 | **−127.29** / 94 |
+| 07.01→07.08 | −0.805% (225) | +4.075% | **−4.88 pp** | +11.41 / 129 | **−91.86** / 96 |
+
+The mechanism is not the losers' own P&L, it is throughput: a small row eats the lot floor and the daily budget,
+and the payer's closes fall from 168/164/183 to 92/94/96. `Crash` itself went net-negative in two of the three
+windows. Rejected — `InpSymbolsToTrade` stays as it was.
+
+**Arm A — `Crash + Boom 1000`: the row was never alive, and the knob was not the one assumed.**
+Three windows of `Crash+Boom` reproduced the `Crash`-only arm **to the cent** (+10.837 / +2.614 / +4.075), with
+zero Boom closes. The journal was not empty — `Boom 1000 Index` appears ~50,000 lines per window, scanned and
+scored — it was vetoed:
+`[SIGNAL-REJECTED] Boom 1000 Index | reason=hard_spread_cutoff | spread_points=17185.0 > 15000.0` (1,077 vetoes
+per window). The gate is `validatorHardSpreadCutoff = MathMax(hardSpreadCutoffPoints, maxEntrySpreadPoints)`
+(`EAOrchestrator.mqh:1956`), so the knob is **`InpMaxEntrySpreadPoints`** (15000), not `InpSymbolMaxSpreadPoints`
+— raising the latter to 20,000 changed nothing, the log still printed 15000.0.
+
+**Control arm, because a wider gate is not free.** `Crash`-only with `InpMaxEntrySpreadPoints=25000`, cold, same
+windows: `08.01` **+10.837%** (168 fills, min 9,997.40 / max 11,107.95) and `09.01` **+2.614%** (164 fills, min
+9,755.57 / max 10,261.75) — identical to the 15,000 arm to the cent. The loosening is inert for `Crash` (its
+quotes never approach even 15,000), so every delta below belongs to Boom.
+
+**Arm A with the right knob, five windows plus one out of slice.**
+
+| window | `Crash+Boom` @25000 | `Boom 1000` own net | `Crash` only | paired |
+|---|---|---|---|---|
+| 08.01→08.08 | **+14.714%** (11,471.44 / 165 fills) | +705.38 / 31 closes | +10.837% | **+3.88 pp** |
+| 08.08→08.15 | **+20.169%** (12,016.89 / 170) | +376.54 / 34 | +15.786% | **+4.38 pp** |
+| 09.01→09.08 | **+6.871%** (10,687.08 / 167) | +623.66 / 44 | +2.614% | **+4.26 pp** |
+| 09.15→09.22 | **+19.809%** (11,980.91 / 162) | +764.13 / 39 | +17.682% | **+2.13 pp** |
+| 10.06→10.13 | **+16.135%** (11,613.45 / 175) | +909.36 / 38 | +5.134% | **+11.00 pp** |
+| 07.01→07.08 (out of slice) | +2.075% (10,207.47 / 181) | −104.62 / 35 | +4.075% | **−2.00 pp** |
+
+Paired distribution over the five in-slice windows: mean **+5.13 pp**, sd 3.41, **t 3.37**, **5 of 5 positive**.
+Boom's own average close is ≈ +22–24 USD — a real second payer, not a rounding effect — and it costs 31–44 closes
+per window, so the payer's own throughput is unharmed (134–146 `Crash` closes, versus 157–186 alone).
+
+**The one honest caveat.** July, outside the slice, is negative: Boom lost 104.62 over 35 closes while `Crash`
+kept paying. So this is a 5-of-5 in-slice distribution with one out-of-slice window that disagrees, at a t of 3.37
+rather than the 3.56 the shipped single-symbol arm holds. And the price of admission is a real risk change: the
+send-time disaster-quote backstop moves 15,000 → 25,000 points, about +67%. With only two symbols in the universe,
+Boom is the sole beneficiary, but that is an argument about exposure, not about safety — a per-symbol spread
+override would be strictly better and is not built.
+
+**What shipped (compiled 0 errors / 0 warnings on all eight programs):**
+1. `Core\Config\SharedEAInputs.mqh` → `InpSymbolsToTrade = "Crash 1000 Index,Boom 1000 Index"`, with the measured
+   five-window block above it.
+2. `Core\Config\SharedEAInputs.mqh` → `InpMaxEntrySpreadPoints = 25000.0`, with the reason (Boom quotes ~17,185
+   constantly) and the inert-for-Crash control result written above it.
+
+**Default-by-omission witness.** `.set` parked to `.parked_b300d`, ini carrying neither `InpSymbolsToTrade` nor
+`InpMaxEntrySpreadPoints`, cold, `08.01→08.08`: **+14.714%** (10,000 → 11,471.44), 165 fills, `Boom` 31 closes
++705.38, `Crash` 134 closes +766.06, min 9,966.75 / max 11,485.28 — the arm's number to the cent.
+
 ## Batch 300 — the logs were never missing, and the August loss has a name: `Crash 1000` throughput
 
 **Question.** The previous batch recorded an "observability regression" — receipts and close P&L gone from the

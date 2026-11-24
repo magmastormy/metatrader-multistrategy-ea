@@ -116,7 +116,22 @@ input group "Symbol Universe & Liquidity";
 // The trade-off is concentration, not loss of ballast: the arm is one instrument, so it carries no
 // cross-symbol insurance if Crash stops paying. Restore any row by naming it here; the universe is
 // authoritative and the chart symbol is never added implicitly (InpAutoAddChartSymbol no longer exists).
-input string   InpSymbolsToTrade = "Crash 1000 Index";
+// Batch 300d: Boom 1000 comes back as the second payer, and it is the only row that ever did. Same binary,
+// same five windows, cold each run, only this input plus InpMaxEntrySpreadPoints (15000 -> 25000) changed:
+//   08.01  Crash+Boom +14.714% (Boom +705.38 / 31 closes)  vs Crash-only +10.837%  -> +3.88 pp
+//   08.08             +20.169% (Boom +376.54 / 34)          vs +15.786%            -> +4.38 pp
+//   09.01              +6.871% (Boom +623.66 / 44)          vs  +2.614%            -> +4.26 pp
+//   09.15             +19.809% (Boom +764.13 / 39)          vs +17.682%            -> +2.13 pp
+//   10.06             +16.135% (Boom +909.36 / 38)          vs  +5.134%            -> +11.00 pp
+//   paired mean +5.13 pp, sd 3.41, t 3.37, 5 of 5 positive
+//   out of slice 07.01: +2.075% (Boom -104.62 / 35)         vs  +4.075%            -> -2.00 pp
+// The wider backstop is the price of the row: Boom quotes a constant ~17,185 points, so the 15,000 send-time
+// disaster guard vetoed every Boom entry (hard_spread_cutoff, 1,077 vetoes/window). The same 25,000 cap on a
+// Crash-only book reproduced the 15,000 arm to the cent (+10.837% / 168 fills, min 9,997.40 max 11,107.95;
+// +2.614% / 164, min 9,755.57 max 10,261.75), so the loosening is inert for Crash and the paired deltas above
+// belong entirely to Boom. Crash+Jump 75 was measured first and rejected: -6.28 / -4.17 / -4.88 pp on three
+// windows, and it dragged Crash's own net negative in two of them.
+input string   InpSymbolsToTrade = "Crash 1000 Index,Boom 1000 Index";
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
 input bool     InpSymbolEnableVolumeCheck = true;
@@ -322,7 +337,11 @@ input double   InpValidatorIntrabarMinQuality = 0.70;
 input group "Execution & Orders";
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
 input int      InpTradeSlippagePoints = 50;
-input double   InpMaxEntrySpreadPoints = 15000.0;
+// Batch 300d: 15000 -> 25000. The guard is MathMax(InpHardSpreadCutoffPoints, InpMaxEntrySpreadPoints) at
+// send time; Boom 1000 Index quotes ~17,185 points permanently, so at 15,000 it never filled. 25,000 admits it
+// and leaves Crash untouched (identical results to the cent on two cold Crash-only windows). Only the two
+// named symbols are in the universe, so the widened backstop has no other exposure.
+input double   InpMaxEntrySpreadPoints = 25000.0;
 input double   InpMaxEntryDriftPoints = 80.0;
 input int      InpProtectiveModifyCooldownSec = 5;
 

@@ -1,3 +1,56 @@
+## [Unreleased] - 2026-11-24 (batch 300d - second-payer search: `Jump 75` rejected, `Boom 1000` shipped)
+### The first answer was a gate, not a signal
+Three cold `Crash + Boom 1000` windows reproduced the `Crash`-only arm **to the cent** (+10.837 / +2.614 / +4.075)
+with zero Boom closes. The row was neither missing nor unscanned - `Boom 1000 Index` appears ~50,000 lines per
+journal - it was vetoed on every candidate entry:
+`[SIGNAL-REJECTED] Boom 1000 Index | reason=hard_spread_cutoff | spread_points=17185.0 > 15000.0` (1,077 vetoes per
+window). Boom's quote is a constant ~17,185 points, so it can never pass a 15,000 send-time guard.
+
+### The knob was `InpMaxEntrySpreadPoints`, not `InpSymbolMaxSpreadPoints`
+`InpSymbolMaxSpreadPoints` (1500, `SharedEAInputs.mqh:120`) only feeds the universe builder (10x allowance for
+synthetic indices). Raising it to 20,000 changed nothing - the log still printed `15000.0`. The gate is
+`validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, m_config.maxEntrySpreadPoints)`
+(`EAOrchestrator.mqh:1956`), i.e. `InpMaxEntrySpreadPoints` (default 15000, `SharedEAInputs.mqh:325`). Two
+windows of that arm were discarded as invalid data.
+
+### A wider gate had to be proved inert before it could explain anything
+`Crash`-only with `InpMaxEntrySpreadPoints=25000`, cold, same windows: `08.01` **+10.837%** (168 fills, min 9,997.40 /
+max 11,107.95) and `09.01` **+2.614%** (164 fills, min 9,755.57 / max 10,261.75) - the 15,000 numbers to the cent.
+`Crash` never quotes near even 15,000, so the loosening has no effect on the payer and every delta below is Boom's.
+
+### `Crash + Boom 1000` @25000 - five windows, all positive
+
+| window | arm | Boom own net | `Crash` only | paired |
+|---|---|---|---|---|
+| 08.01 -> 08.08 | **+14.714%** (11,471.44 / 165 fills) | +705.38 / 31 closes | +10.837% | **+3.88 pp** |
+| 08.08 -> 08.15 | **+20.169%** (12,016.89 / 170) | +376.54 / 34 | +15.786% | **+4.38 pp** |
+| 09.01 -> 09.08 | **+6.871%** (10,687.08 / 167) | +623.66 / 44 | +2.614% | **+4.26 pp** |
+| 09.15 -> 09.22 | **+19.809%** (11,980.91 / 162) | +764.13 / 39 | +17.682% | **+2.13 pp** |
+| 10.06 -> 10.13 | **+16.135%** (11,613.45 / 175) | +909.36 / 38 | +5.134% | **+11.00 pp** |
+| 07.01 -> 07.08 (out of slice) | +2.075% (10,207.47 / 181) | -104.62 / 35 | +4.075% | **-2.00 pp** |
+
+Paired mean **+5.13 pp**, sd 3.41, **t 3.37**, **5 of 5** in slice; one out-of-slice window disagrees. Boom's mean
+close is +22-24 USD, and it costs only 31-44 closes per window, so the payer's own throughput is unharmed (134-146
+`Crash` closes against 157-186 alone).
+
+### `Crash + Jump 75` was measured first and is dead
++4.553 / -1.559 / -0.805 % against `Crash`-only +10.837 / +2.614 / +4.075 % -> **-6.28 / -4.17 / -4.88 pp**. It is
+throughput, not the row's own P&L: the payer's closes drop to 92/94/96 and `Crash` goes net-negative (-127.29, -91.86)
+in two of the three windows. `Jump 75` stays out.
+
+### Shipped (compile `OVERALL SUCCESS`, 0 errors / 0 warnings on all eight programs)
+- `Core\Config\SharedEAInputs.mqh` -> `InpSymbolsToTrade = "Crash 1000 Index,Boom 1000 Index"`, with the five-window
+  block and the rejected arm written above it.
+- `Core\Config\SharedEAInputs.mqh` -> `InpMaxEntrySpreadPoints = 25000.0`, with the reason (Boom ~17,185 constant)
+  and the inert-for-`Crash` control result written above it.
+- Default proved by omission: `.set` parked as `.parked_b300d`, ini carrying neither input, cold `08.01->08.07` ->
+  **+14.714%** (10,000 -> 11,471.44), 165 fills, Boom 31 closes +705.38, `Crash` 134 closes +766.06 - identical to
+  the arm to the cent.
+
+### Risk this ships with, stated plainly
+The send-time disaster-quote backstop moves 15,000 -> 25,000 points (~+67%). Only two symbols are in the universe,
+so Boom is the sole beneficiary, but that is an exposure argument, not a safety one. A per-symbol spread override
+is strictly better and is not built - it is the first open item.
 ## [Unreleased] - 2026-11-23 (batch 300 - per-symbol attribution back, lot-floor uplift measured, uplift-off A/B)
 ### Attribution works on both builds (no code change)
 - Full-file tag scan of the two `w1` journals: `[EXECUTION-RECEIPT]` and `Trade Closed ... Net Profit:` are
