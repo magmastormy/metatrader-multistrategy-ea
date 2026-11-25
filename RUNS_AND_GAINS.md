@@ -457,6 +457,123 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 300e — the loosening became per-symbol, the ceiling moved up, and the scalp engine was measured dead
+
+**Question.** Batch 300d shipped `Crash + Boom 1000` by raising the global send-time disaster-quote backstop
+`InpMaxEntrySpreadPoints` from 15000 to 25000 — a ~67% loosening for the whole book to admit one instrument whose
+quote is a constant ~17,185 points. Six open items were left behind: a per-symbol override instead of the global
+loosening, Boom outside the slice, the month-length window, the daily risk ceiling on the two-row book, the
+scalp-on window, and the parked `.set` files. This batch ran them.
+
+### 1. Per-symbol override replaced the global loosening, and reproduced it to the cent
+
+New input `InpSymbolHardSpreadOverridesCsv` (`Symbol=Points` pairs, default `"Boom 1000 Index=25000"`) with the
+global `InpMaxEntrySpreadPoints` restored to 15000. There are **two** live gates, not one, and the second one is
+the lesson:
+
+- pre-consensus: `validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, <per-symbol limit>)`
+  (`EAOrchestrator.mqh`), logged as `[VALIDATOR-CONFIG] ... hard_spread_cutoff=25000.0pts (... symbol_limit=25000.0)`;
+- send-time: `TradeMgrPreflight.mqh:127` `spread_points > maxEntrySpreadPoints` fed by
+  `TradeManager::ValidateExecutionPreflight`. Opening the validator alone still produced **0 Boom closes** (202
+  `[INTENT-STAGE] Boom ... outcome=REJECTED reason=Success` inside 17 ms); the send-time path had to learn the
+  override too (`TradeManager::EffectiveEntrySpreadLimit`).
+
+| arm (08.01 to 08.08, cold) | return | balance | fills | Boom own net | Crash own net |
+|---|---|---|---|---|---|
+| 300d: global `InpMaxEntrySpreadPoints=25000` | +14.714% | 11,471.44 | 165 | +705.38 / 31 closes | +766.06 / 134 |
+| 300e: override `Boom=25000`, global back to 15000 | **+14.714%** | **11,471.44** | **165** | **+705.38 / 31** | **+766.06 / 134** |
+
+Same min 9,966.75 / max 11,485.28, same 268 `[RISK-LOT-FLOOR]` lines (Crash 160 / Boom 108). The override buys the
+Boom fills without loosening the backstop for anything else.
+
+### 2. Boom outside the slice: 2 of 3 windows add, one loses, mean positive but noisy
+
+Two windows never used in the Boom search, each paired with a fresh `Crash`-only control on the same cold binary:
+
+| window | `Crash+Boom` | `Crash` only | paired | Boom own net |
+|---|---|---|---|---|
+| 09.22 to 09.29 | +36.017% (171 fills) | +15.353% (165) | **+20.66 pp** | +1,407.71 / 42 closes |
+| 10.13 to 10.20 | +9.171% (169) | +8.368% (175) | **+0.80 pp** | +178.87 / 28 closes |
+| 07.01 to 07.08 (300d) | +2.075% | +4.075% | **-2.00 pp** | -104.62 / 35 closes |
+
+Out-of-slice mean **+6.49 pp**, sd 12.36, 2/3. The direction holds; the size does not. `09.22` says Boom is a
+second payer, `10.13` says it is nearly inert, July says it can cost. All nine paired windows counted so far
+(5 in-slice from 300d, these two, July, plus 08.01) are positive except July.
+
+### 3. The month-length window: the July week's loss does not compound
+
+`07.01 to 08.01`, 31 days, 44,629 heartbeats, 99 minutes wall:
+
+| metric | value |
+|---|---|
+| return | **+66.520%** (10,000 to 16,652.05) |
+| fills / closes | 834 / 833 |
+| Boom own net | **+2,758.92** / 153 closes |
+| Crash own net | +3,876.80 / 680 closes |
+| min / max balance | 9,986.33 / 17,226.43 |
+
+No 31-day `Crash`-only control exists, so this is not an attribution — it is a shape check: the window whose week
+lost 2 pp still paid, and Boom's own line is the largest single-row contribution the book has produced. Caveat
+that matters: this is a 31-day run of a compounding book, so +66.5% is not a per-week rate to multiply.
+
+### 4. `InpMaxDailyRisk` 4% to 6% (with `InpMaxPortfolioRisk` 12% to 18%) on the two-row book: 4/4, t 2.99
+
+Same 1% per-trade ask; only the concurrency ceiling moved. Four cold paired windows against the 4/12 arm:
+
+| window | 6/18 | 4/12 | paired | fills 6/18 vs 4/12 |
+|---|---|---|---|---|
+| 08.01 to 08.08 | +21.100% (12,110.05) | +14.714% | **+6.386 pp** | 193 vs 165 |
+| 09.01 to 09.08 | +9.770% (10,976.98) | +6.871% | **+2.899 pp** | 194 vs 164 |
+| 09.22 to 09.29 | +39.266% (13,926.57) | +36.017% | **+3.249 pp** | 194 vs 171 |
+| 10.13 to 10.20 | +20.793% (12,079.30) | +9.171% | **+11.622 pp** | 201 vs 169 |
+
+Paired mean **+6.04 pp**, sd 4.04, **t 2.99**, **4/4**. The mechanism is visible in the journal: the 4% arm was
+refusing entries with `[RISK-DAILY-LIMIT] reason=daily_risk_would_exceed effective=3.97% + new=1.00% >= limit=4.00%`,
+i.e. the ceiling, not the signal, was the constraint; at 6% those entries became Boom closes (Boom 31 to 42, 42 to
+50, 28 to 38 across the windows).
+
+This contradicts Batch 294, where the same lever at 8/24 on the **eight-symbol** book measured **-5.26 pp**
+(t -1.61). The book changed, so the lever changed meaning: on eight rows the ceiling re-selected a worse book, on
+two rows it just lets the second payer trade more.
+
+### 5. Scalp engine on: structurally dead on synthetic spreads, zero effect on P&L
+
+`InpEnableScalpEngine=true`, same `Crash+Boom` book, cold 08.01 to 08.08:
+
+| metric | result |
+|---|---|
+| return | **+14.714%** — identical to scalp-off, to the cent |
+| fills | 165 — identical |
+| `[SCALP-CLOSE]` | 0 |
+| `[SCALP-SIGNAL-REJECT]` | 19,897 — **all** `gate=spread_vs_atr` (Boom 10,008 / Crash 9,887) |
+
+The engine initialises (`[SCALP-DIAG] initialized=true`, 10,079 lines) and produces no fillable signal because
+Crash/Boom quotes are far too wide relative to their ATR. Scalp is not a lever for this book; it needs either a
+`spread_vs_atr` gate change or a non-synthetic universe, and neither was run here. The old
+`Tools\backtest_b290_scalp2.ini` (`XAUUSD,Step Index`) still has not been run as written.
+
+### What shipped
+
+- `InpSymbolHardSpreadOverridesCsv = "Boom 1000 Index=25000"` (new input, `SharedEAInputs.mqh`) and
+  `InpMaxEntrySpreadPoints` back to **15000.0**.
+- `InpMaxDailyRisk = 6.0`, `InpMaxPortfolioRisk = 18.0` in `MultiStrategyAutonomousEA.mq5`.
+- Override plumbed through both gates: `OrchestratorConfig` field + reset, `EAOrchestrator` CSV parse and
+  `TradeManager::SetSymbolSpreadOverrides` / `EffectiveEntrySpreadLimit` (`TradeManager.mqh`, used by
+  `TradeMgrPreflight.mqh:127`), plus the duplicate mapping block in `MultiStrategyAutonomousEA.mq5` that the
+  shared populate does not cover.
+- Compile: `OVERALL SUCCESS`, 0 errors / 0 warnings, all eight programs (root EA 75,688 ms).
+- **Defaults verified by omission:** `.set` parked, ini carrying only `InpQuorumProfile` / `InpMinLiveVoters` /
+  `InpMaxRiskPerTrade` — no universe, no spread, no override, no risk ceiling — cold 08.01 to 08.08:
+  **+21.100%** (10,000 to 12,110.05), 193 fills, Boom 42 closes +1,131.48, Crash 151 closes +978.57, min 9,966.75 /
+  max 12,171.48 — the 6/18 arm to the cent.
+
+### Harness note that cost a window
+
+MT5 reads a `.ini` duplicate key **first occurrence wins**. The first `risk6_w1` arm carried both
+`InpMaxDailyRisk=4.0` and `InpMaxDailyRisk=6.0`; the run came back +14.714%, identical to the 4% baseline, and the
+journal proved it: `limit=4.00%` in `[RISK-DAILY-LIMIT]`. The arm was null, not inert. Both files were de-duplicated
+and re-run (+21.100%). Every `.ini` in `Tools\b300e_*` was then scanned key-by-key for duplicates.
+
 ## Batch 300d — the second payer was measured, not guessed: `Jump 75` rejected, `Boom 1000` shipped
 
 **Question.** Batch 300 left the book at one instrument and one payer. The open question was whether a second

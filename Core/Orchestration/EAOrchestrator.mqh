@@ -797,6 +797,7 @@ bool InitializeSubsystems()
     m_tradeManager.SetOrderFillMode(m_config.orderFillingMode);
     m_tradeManager.SetSlippage((uint)MathMax(1, m_config.tradeSlippagePoints));
     m_tradeManager.SetExecutionCostLimits(m_config.maxEntrySpreadPoints, m_config.maxEntryDriftPoints);
+    m_tradeManager.SetSymbolSpreadOverrides(m_config.symbolHardSpreadOverridesCsv);
     m_tradeManager.SetProtectiveModifyCooldownSeconds(m_config.protectiveModifyCooldownSec);
     m_tradeManager.SetDynamicSlippageConfig(m_config.enableDynamicSlippage, m_config.dynamicSlippageAtrPercent,
     (uint)m_config.dynamicSlippageMinPoints, (uint)m_config.dynamicSlippageMaxMultiplier,
@@ -1953,7 +1954,32 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
     // constructor defaults - OFI/VPIN off whatever the inputs said, floors 0.72/0.75 not 0.70/0.68.
     // The spread cutoff must not come straight from config: the 200-point default sits below synthetic
     // spreads of 1,727-11,140 points and would veto the whole synthetic book, so floor it at entry spread.
-    double validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, m_config.maxEntrySpreadPoints);
+    // Batch 300e: the global entry-spread max is a disaster-quote guard, not a per-instrument policy. Boom 1000
+    // quotes ~17,185 points permanently, so it needs its own limit while every other symbol keeps the global one.
+    // `InpSymbolHardSpreadOverridesCsv` is `Symbol=Points` pairs; unmatched or unparsable entries are ignored and
+    // the global limit stands (fail-closed).
+    double symbolEntrySpreadLimit = m_config.maxEntrySpreadPoints;
+    if(StringLen(m_config.symbolHardSpreadOverridesCsv) > 0)
+    {
+        string overridePairs[];
+        int pairCount = StringSplit(m_config.symbolHardSpreadOverridesCsv, ',', overridePairs);
+        for(int pairIndex = 0; pairIndex < pairCount; pairIndex++)
+        {
+            string kv[];
+            if(StringSplit(overridePairs[pairIndex], '=', kv) != 2)
+                continue;
+            string overrideSymbol = kv[0];
+            StringTrimLeft(overrideSymbol);
+            StringTrimRight(overrideSymbol);
+            if(StringCompare(overrideSymbol, symbol, false) != 0)
+                continue;
+            double overridePoints = StringToDouble(kv[1]);
+            if(overridePoints > 0.0)
+                symbolEntrySpreadLimit = MathMax(symbolEntrySpreadLimit, overridePoints);
+        }
+    }
+
+    double validatorHardSpreadCutoff = MathMax(m_config.hardSpreadCutoffPoints, symbolEntrySpreadLimit);
     manager.SetValidatorConfig(MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
                                MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
                                validatorHardSpreadCutoff,
@@ -1961,13 +1987,14 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool& strategyFla
                                m_config.enableVPINFilter,
                                VALIDATOR_BASE_SPREAD_ATR_RATIO,
                                VALIDATOR_SYNTHETIC_SPREAD_ATR_RATIO);
-    PrintFormat("[VALIDATOR-CONFIG] %s | quality_newbar=%.3f quality_intrabar=%.3f | hard_spread_cutoff=%.1fpts (input=%.1f entry_max=%.1f) | OFI=%s VPIN=%s | spread_atr=%.2f/%.2f",
+    PrintFormat("[VALIDATOR-CONFIG] %s | quality_newbar=%.3f quality_intrabar=%.3f | hard_spread_cutoff=%.1fpts (input=%.1f entry_max=%.1f symbol_limit=%.1f) | OFI=%s VPIN=%s | spread_atr=%.2f/%.2f",
                 symbol,
                 MathMax(0.0, MathMin(1.0, m_config.validatorIntrabarMinQuality)),
                 MathMax(0.0, MathMin(1.0, m_config.validatorNewBarMinQuality)),
                 validatorHardSpreadCutoff,
                 m_config.hardSpreadCutoffPoints,
                 m_config.maxEntrySpreadPoints,
+                symbolEntrySpreadLimit,
                 m_config.enableOFIProxy ? "ON" : "OFF",
                 m_config.enableVPINFilter ? "ON" : "OFF",
                 VALIDATOR_BASE_SPREAD_ATR_RATIO,

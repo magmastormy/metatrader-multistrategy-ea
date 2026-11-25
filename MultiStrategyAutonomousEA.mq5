@@ -27,8 +27,11 @@ string GetDeInitReasonText(int reasonCode);
 
 input group "Risk & Money Management";
 input double   InpMaxRiskPerTrade = 1.0;
-input double   InpMaxDailyRisk = 4.0;
-input double   InpMaxPortfolioRisk = 12.0;
+// Batch 300e: 4.0/12.0 -> 6.0/18.0. Same 1% per-trade ask; only the concurrency ceiling moved, and only on
+// the two-row book, where it unlocked more Boom closes instead of re-selecting the book. Four cold paired
+// windows vs 4.0/12.0: +6.386 / +2.899 / +3.249 / +11.622 pp, mean +6.04 pp, sd 4.04, t 2.99, 4/4.
+input double   InpMaxDailyRisk = 6.0;
+input double   InpMaxPortfolioRisk = 18.0;
 input double   InpDailyLossLimitPercent = 4.0;
 input bool     InpBasketEquityStopEnabled = true;
 input double   InpBasketEquityStopDrawdownPct = 10.0;
@@ -344,6 +347,7 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.symbolMaxSpreadPoints = InpSymbolMaxSpreadPoints;
         config.symbolMinDailyVolumeLots = InpSymbolMinDailyVolumeLots;
         config.symbolEnableVolumeCheck = InpSymbolEnableVolumeCheck;
+        config.symbolHardSpreadOverridesCsv = InpSymbolHardSpreadOverridesCsv;  // Batch 300e: per-symbol spread override
     
                         config.logLevel = InpLogLevel;
                         config.logVerbosity = InpLogVerbosity;

@@ -82,6 +82,7 @@ private:
     int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
     double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
     double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
+    string m_symbolSpreadOverridesCsv;       // Batch 300e: `Symbol=Points` pairs widening the spread gate per symbol
 
     bool m_enableDynamicSlippage;            // Enable ATR-based dynamic slippage
     double m_dynamicSlippageAtrPercent;
@@ -262,7 +263,7 @@ private:
     {
         return CTradeMgrPreflight::ValidateExecutionPreflight(symbolName, orderType, executionPrice, requestedPrice,
                                                               m_sessionManager, m_atrCache,
-                                                              m_maxEntrySpreadPoints, m_maxEntryDriftPoints,
+                                                              EffectiveEntrySpreadLimit(symbolName), m_maxEntryDriftPoints,
                                                               m_dynamicSlippageAtrPeriod, reason);
     }
 
@@ -377,6 +378,35 @@ public:
     {
         m_maxEntrySpreadPoints = MathMax(0.0, maxEntrySpreadPoints);
         m_maxEntryDriftPoints = MathMax(0.0, maxEntryDriftPoints);
+    }
+
+    // Batch 300e: the global entry-spread gate stays a disaster-quote backstop sized for the payer's instrument.
+    // Instruments whose normal quote is wider than that (Boom 1000 quotes ~17,185 points permanently) get their
+    // own limit here instead of loosening the global one. Unparsable or unmatched entries leave the global limit.
+    void SetSymbolSpreadOverrides(const string csv) { m_symbolSpreadOverridesCsv = csv; }
+
+    double EffectiveEntrySpreadLimit(const string symbolName)
+    {
+        double limit = m_maxEntrySpreadPoints;
+        if(StringLen(m_symbolSpreadOverridesCsv) <= 0)
+            return limit;
+        string pairs[];
+        int pairCount = StringSplit(m_symbolSpreadOverridesCsv, ',', pairs);
+        for(int i = 0; i < pairCount; i++)
+        {
+            string kv[];
+            if(StringSplit(pairs[i], '=', kv) != 2)
+                continue;
+            string overrideSymbol = kv[0];
+            StringTrimLeft(overrideSymbol);
+            StringTrimRight(overrideSymbol);
+            if(StringCompare(overrideSymbol, symbolName, false) != 0)
+                continue;
+            double overridePoints = StringToDouble(kv[1]);
+            if(overridePoints > 0.0)
+                limit = MathMax(limit, overridePoints);
+        }
+        return limit;
     }
 
     void SetAsyncMode(bool enabled) { m_asyncExecutor.SetAsyncModeEnabled(enabled); m_trade.SetAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); UpdatePerSymbolAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); }

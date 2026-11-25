@@ -333,6 +333,7 @@ struct SOrchestratorConfig
     long    symbolMaxSpreadPoints;
     long    symbolMinDailyVolumeLots;
     bool    symbolEnableVolumeCheck;
+    string  symbolHardSpreadOverridesCsv;   // `Symbol=Points` pairs; widens the send-time spread backstop per symbol only
 
         int     logLevel;
         int     logVerbosity;  // ENUM_LOG_VERBOSITY
@@ -646,6 +647,7 @@ struct SOrchestratorConfig
 
 
         symbolMaxSpreadPoints = 1500;
+        symbolHardSpreadOverridesCsv = "";
         symbolMinDailyVolumeLots = 1000;
         symbolEnableVolumeCheck = true;
 

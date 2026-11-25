@@ -1,3 +1,62 @@
+## [Unreleased] - 2026-11-25 (batch 300e - per-symbol override, risk ceiling on the two-row book, scalp verdict)
+
+### The 25,000 loosening was replaced by a per-symbol override, and it reproduced the arm to the cent
+New input `InpSymbolHardSpreadOverridesCsv = "Boom 1000 Index=25000"` (`Core\Config\SharedEAInputs.mqh`, right
+after `InpSymbolsToTrade`); global `InpMaxEntrySpreadPoints` restored **25000 -> 15000**. Cold `08.01->08.08`,
+nothing else changed: **+14.714%** (10,000 -> 11,471.44), 165 fills, Boom 31 closes +705.38, Crash 134 closes
++766.06, min 9,966.75 / max 11,485.28 — identical to the 300d 25,000 arm including all 268 `[RISK-LOT-FLOOR]` lines.
+
+Two gates had to learn the override, and only one of them was obvious:
+- `EAOrchestrator.mqh` (pre-consensus cutoff, `MathMax(hardSpreadCutoffPoints, symbolEntrySpreadLimit)`, CSV parsed
+  case-insensitively with an invalid-entry fallback to the global value; `[VALIDATOR-CONFIG]` now prints
+  `symbol_limit=`);
+- `TradeMgrPreflight.mqh:127` (send-time). Opening only the first one still gave **0 Boom closes** — 202
+  `[INTENT-STAGE] Boom ... outcome=REJECTED reason=Success` 17 ms after submit. The wrapper
+  `TradeManager::ValidateExecutionPreflight` now passes `EffectiveEntrySpreadLimit(symbolName)` instead of
+  `m_maxEntrySpreadPoints`; new members `m_symbolSpreadOverridesCsv` / `SetSymbolSpreadOverrides(csv)`, wired at
+  `EAOrchestrator.mqh` next to `SetExecutionCostLimits`.
+- Mapping: `MultiStrategyAutonomousEA.mq5` keeps its own duplicated input->config block (it does not call
+  `PopulateSharedOrchestratorConfig`), so the new field had to be assigned there as well. This is audit item 35
+  biting for real, a second time.
+
+### `InpMaxDailyRisk` 4.0 -> 6.0, `InpMaxPortfolioRisk` 12.0 -> 18.0 (`MultiStrategyAutonomousEA.mq5`)
+1% per trade unchanged, only the concurrency ceiling moved, four cold paired windows vs 4/12:
+**+6.386 / +2.899 / +3.249 / +11.622 pp**, mean **+6.04 pp**, sd 4.04, **t 2.99**, **4/4**.
+Mechanism from the journal: at 4% the engine refused entries with
+`[RISK-DAILY-LIMIT] reason=daily_risk_would_exceed effective=3.97% + new=1.00% >= limit=4.00%`; at 6% the same
+signals became Boom closes (31 -> 42, 42 -> 50, 28 -> 38). Batch 294 measured the same lever at 8/24 as **-5.26 pp**
+on the eight-symbol book — the book changed, so the lever changed meaning.
+
+### Boom outside the slice: +20.66 / +0.80 / -2.00 pp
+`09.22->09.29`: `Crash+Boom` **+36.017%** (171 fills, Boom +1,407.71 / 42) vs fresh `Crash`-only control
+**+15.353%** (165). `10.13->10.20`: **+9.171%** (169, Boom +178.87 / 28) vs **+8.368%** (175). July week stays
+**-2.00 pp**. Out-of-slice mean +6.49 pp, sd 12.36, 2/3.
+
+### Month-length window `07.01->08.01`: **+66.520%**, Boom +2,758.92 / 153 closes
+834 fills, 99 min wall, min 9,986.33 / max 17,226.43. No 31-day `Crash`-only control exists, so this is not
+attribution; it is evidence that the July week's loss does not compound, and Boom's own line is the largest
+single-row contribution measured so far.
+
+### Scalp engine: structurally dead on `Crash+Boom`, zero effect on P&L
+`InpEnableScalpEngine=true`, cold `08.01->08.08`: **+14.714%**, 165 fills — identical to scalp-off to the cent.
+0 `[SCALP-CLOSE]`, 19,897 `[SCALP-SIGNAL-REJECT]`, **all** `gate=spread_vs_atr` (Boom 10,008 / Crash 9,887). The
+engine initialises and scans, and never produces a fillable signal, because synthetic quotes are far too wide
+against ATR. No input changed; scalp needs a gate change or a non-synthetic universe, and `backtest_b290_scalp2.ini`
+as written (`XAUUSD,Step Index`) is still unrun.
+
+### Verified, built, and left parked clean
+- Compile `OVERALL SUCCESS`, 0 errors / 0 warnings, eight programs (root EA 75,688 ms), after `sync_files.ps1` + `sync_and_compile.ps1 -All`.
+- Defaults verified by omission (`b300e_final_w1.ini` carries only `InpQuorumProfile`, `InpMinLiveVoters`,
+  `InpMaxRiskPerTrade`): cold `08.01->08.08` **+21.100%** (10,000 -> 12,110.05), 193 fills, Boom 42 closes
+  +1,131.48, Crash 151 closes +978.57 — the 6/18 arm to the cent.
+- Parked `.set` history cleared: every `MultiStrategyAutonomousEA.set.parked_*` (15 files, `b291` through `b300e`)
+  removed; the Tester profile holds one `.set`.
+
+### Harness note: a duplicate `.ini` key is a null arm, not a neutral one
+MT5 takes the **first** occurrence of a duplicate key. The first `risk6_w1` ini carried `InpMaxDailyRisk=4.0`
+followed by `=6.0`; the window returned +14.714%, exactly the 4% baseline, and the journal showed `limit=4.00%`.
+Re-running after de-duplication gave +21.100%. All `Tools\b300e_*.ini` were then scanned key-by-key.
+
 ## [Unreleased] - 2026-11-24 (batch 300d - second-payer search: `Jump 75` rejected, `Boom 1000` shipped)
 ### The first answer was a gate, not a signal
 Three cold `Crash + Boom 1000` windows reproduced the `Crash`-only arm **to the cent** (+10.837 / +2.614 / +4.075)

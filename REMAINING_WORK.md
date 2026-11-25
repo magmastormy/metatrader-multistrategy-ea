@@ -646,3 +646,54 @@ both candidate rows rather than guessing, and shipped the one that pays.
   `successfully finished` and the heartbeat slice is 10,080 samples starting at the ini `FromDate`. `booment_w2`
   also showed the pacing is not linear - `processing` went 0->48 % over 71 minutes and finished at 95, because
   history synchronisation (11 min) precedes the clock.
+
+## Status update - Batch 300e (2026-11-25)
+
+**Context.** Batch 300d left a priority list of seven items behind after shipping the two-row book. Six were
+measurable in code and backtests; item 6 (demo attach) is not this batch's work. This batch ran the six.
+
+**Done:**
+- [x] **1. Per-symbol spread override built and shipped.** New `InpSymbolHardSpreadOverridesCsv`
+      (`"Boom 1000 Index=25000"`), global `InpMaxEntrySpreadPoints` back to 15000. Reproduced the 300d 25,000 arm
+      **to the cent** on `08.01`: +14.714% / 11,471.44 / 165 fills / Boom +705.38 on 31 closes. Two gates had to
+      learn it — the pre-consensus cutoff in `EAOrchestrator.mqh` *and* the send-time `TradeMgrPreflight.mqh:127`
+      path via `TradeManager::EffectiveEntrySpreadLimit`; opening only the first still produced 0 Boom closes.
+      The duplicated input->config block in `MultiStrategyAutonomousEA.mq5` also needed the field (audit item 35).
+- [x] **2. Boom outside the slice, two fresh windows with fresh controls.** `09.22->09.29`: +36.017% (171 fills,
+      Boom +1,407.71 / 42) vs `Crash`-only +15.353% (165) -> **+20.66 pp**. `10.13->10.20`: +9.171% (169, Boom
+      +178.87 / 28) vs +8.368% (175) -> **+0.80 pp**. July week remains **-2.00 pp**. Out-of-slice mean **+6.49 pp**,
+      sd 12.36, 2/3 — direction holds, size does not.
+- [x] **3. Month-length window `07.01->08.01` run.** **+66.520%** (10,000 -> 16,652.05), 834 fills, Boom
+      +2,758.92 / 153 closes, Crash +3,876.80 / 680, min 9,986.33 / max 17,226.43, 99 min wall. No 31-day
+      `Crash`-only control, so this is not attribution; it does show the losing July week does not compound.
+- [x] **4. `InpMaxDailyRisk` 4.0 -> 6.0 and `InpMaxPortfolioRisk` 12.0 -> 18.0 shipped.** Four cold paired windows
+      vs 4/12: **+6.386 / +2.899 / +3.249 / +11.622 pp**, mean **+6.04 pp**, sd 4.04, **t 2.99**, **4/4**. The 4% arm
+      was refusing entries (`[RISK-DAILY-LIMIT] ... effective=3.97% + new=1.00% >= limit=4.00%`); at 6% they became
+      Boom closes. Contradicts Batch 294's **-5.26 pp** on the eight-symbol book — the lever changed meaning with
+      the book.
+- [x] **5. Scalp-on window run and answered.** `InpEnableScalpEngine=true` on the two-row book: **+14.714%**,
+      165 fills, identical to scalp-off to the cent. 0 `[SCALP-CLOSE]`; 19,897 `[SCALP-SIGNAL-REJECT]`, all
+      `gate=spread_vs_atr`. Dead on synthetic spreads; no input changed.
+- [x] **7. Parked `.set` files restored.** All 15 `MultiStrategyAutonomousEA.set.parked_*` backups (`b291` through
+      `b300e`) deleted; the Tester profile carries one `.set`.
+- [x] **Compile and default witness.** `OVERALL SUCCESS`, 0 errors / 0 warnings, eight programs. Omission ini
+      (`InpQuorumProfile` / `InpMinLiveVoters` / `InpMaxRiskPerTrade` only) cold `08.01`: **+21.100%**,
+      12,110.05, 193 fills, Boom 42 closes +1,131.48, Crash 151 +978.57 — the 6/18 arm to the cent.
+- **Harness note:** a duplicate key in a MT5 `.ini` takes the **first** value. One `risk6_w1` window was a null
+  arm (4.0 listed before 6.0, journal printed `limit=4.00%`) and had to be de-duplicated and re-run.
+
+**Open, in priority order:**
+1. **Demo attach** — unchanged, and by agreement this one is not mine this batch: the EA has still never been
+   attached to a chart.
+2. **Boom's out-of-slice variance** — 2/3 positive with sd 12.36 pp. The remaining candidates are `06.x` (Boom's
+   history starts `2026.06.04`) and more October sub-windows; a 31-day `Crash`-only control for July is still
+   missing, so the month window stays unattributed.
+3. **Risk ceiling beyond 6%** — 8/24 was never run on the two-row book; the 6/18 arm has four windows and a
+   t of 2.99, so a 7.5/22.5 or 8/24 arm is the next natural single-variable step, with the same paired protocol.
+4. **Scalp** — needs a `spread_vs_atr` gate change (or a non-synthetic universe) before it is a lever at all;
+   `Tools\backtest_b290_scalp2.ini` as written (`XAUUSD,Step Index`) is still unrun.
+5. **Process hygiene** — every `.ini` in `Tools\` should be duplicate-key checked before a run; the chain scripts
+   cannot detect a null arm by design (a neutral result looks like a neutral result).
+6. **`[ENGINE-CLOSE]`** still compiles but has never printed in a run; `Tools\backtest_hal_w3/w4.ini` remain
+   unfinished; `test_headers.ps1 -AllInOne` has not been re-run since Batch 282.
+

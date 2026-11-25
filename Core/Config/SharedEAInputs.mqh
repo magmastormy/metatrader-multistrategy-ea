@@ -132,6 +132,10 @@ input group "Symbol Universe & Liquidity";
 // belong entirely to Boom. Crash+Jump 75 was measured first and rejected: -6.28 / -4.17 / -4.88 pp on three
 // windows, and it dragged Crash's own net negative in two of them.
 input string   InpSymbolsToTrade = "Crash 1000 Index,Boom 1000 Index";
+// Batch 300e: per-symbol entry-spread override, `Symbol=Points` pairs. The global send-time backstop
+// (InpMaxEntrySpreadPoints) is a disaster-quote guard sized for the payer's instrument; Boom 1000 quotes a
+// constant ~17,185 points, so admitting it must not loosen that guard for everything else. Empty = no overrides.
+input string   InpSymbolHardSpreadOverridesCsv = "Boom 1000 Index=25000";
 input long     InpSymbolMaxSpreadPoints = 1500;
 input long     InpSymbolMinDailyVolumeLots = 1000;
 input bool     InpSymbolEnableVolumeCheck = true;
@@ -337,11 +341,10 @@ input double   InpValidatorIntrabarMinQuality = 0.70;
 input group "Execution & Orders";
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
 input int      InpTradeSlippagePoints = 50;
-// Batch 300d: 15000 -> 25000. The guard is MathMax(InpHardSpreadCutoffPoints, InpMaxEntrySpreadPoints) at
-// send time; Boom 1000 Index quotes ~17,185 points permanently, so at 15,000 it never filled. 25,000 admits it
-// and leaves Crash untouched (identical results to the cent on two cold Crash-only windows). Only the two
-// named symbols are in the universe, so the widened backstop has no other exposure.
-input double   InpMaxEntrySpreadPoints = 25000.0;
+// Batch 300d: shipped at 25000 to admit Boom. Batch 300e puts the per-symbol override
+// (`InpSymbolHardSpreadOverridesCsv`) in place and restores this global guard to 15000, so only the instrument
+// that quotes above it is admitted above it.
+input double   InpMaxEntrySpreadPoints = 15000.0;
 input double   InpMaxEntryDriftPoints = 80.0;
 input int      InpProtectiveModifyCooldownSec = 5;
 
@@ -731,6 +734,7 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.symbolMaxSpreadPoints = InpSymbolMaxSpreadPoints;
     config.symbolMinDailyVolumeLots = InpSymbolMinDailyVolumeLots;
     config.symbolEnableVolumeCheck = InpSymbolEnableVolumeCheck;
+    config.symbolHardSpreadOverridesCsv = InpSymbolHardSpreadOverridesCsv;
 
     config.logLevel = InpLogLevel;
     config.logVerbosity = InpLogVerbosity;
