@@ -1,16 +1,3 @@
-### FX sizing arms: per-trade risk 2% and floor off - both neutral-to-negative
-| window | 1% shipped | 2% per trade | floor off (`InpMinLotRiskMultiplier=1.0`) |
-|---|---|---|---|
-| 08.01 to 08.08 | -4.632% (203 fills) | **-5.830%** (211) | **-4.632%** (203), identical to the cent |
-| 09.22 to 09.29 | -5.615% (209 fills) | **-5.487%** (208) | **-5.615%** (209), identical to the cent |
-
-The lot floor is inert on FX - it logged 371 / 522 `[RISK-LOT-FLOOR]` lines and disabling it changed nothing (same
-fills, closes, net, balance). Doubling per-trade risk moves the two windows in opposite directions (-1.20 / +0.13 pp)
-and both stay negative, because the 6/18 ceilings clamp concurrent size. Wall-clock oddity: the floor-off 09.22 arm
-took 68 min / 464 MB journal versus 29 min on the baseline arm of the same window; cause not established, trades
-identical. Conclusion: the FX loss is signal quality plus modelled 1-minute spread, not position size; currencies
-stay out of the universe.
-
 ## [Unreleased] - 2026-11-25 (batch 300f - currencies measured for the first time: rejected)
 
 ### Seven majors, cold, on the shipped 6/18 defaults
@@ -36,6 +23,19 @@ lot); on majors it collects a couple of dollars per trade against a 1-minute-OHL
 ### Shape caveat
 FX heartbeats stop at Friday 20:54, so the slice is 7,179-7,182 samples versus 10,079 on synthetics. FX numbers
 must be compared heartbeat-normalised, never as raw totals.
+
+### FX sizing arms: per-trade risk 2% and floor off - both neutral-to-negative
+| window | 1% shipped | 2% per trade | floor off (`InpMinLotRiskMultiplier=1.0`) |
+|---|---|---|---|
+| 08.01 to 08.08 | -4.632% (203 fills) | **-5.830%** (211) | **-4.632%** (203), identical to the cent |
+| 09.22 to 09.29 | -5.615% (209 fills) | **-5.487%** (208) | **-5.615%** (209), identical to the cent |
+
+The lot floor is inert on FX - it logged 371 / 522 `[RISK-LOT-FLOOR]` lines and disabling it changed nothing (same
+fills, closes, net, balance). Doubling per-trade risk moves the two windows in opposite directions (-1.20 / +0.13 pp)
+and both stay negative, because the 6/18 ceilings clamp concurrent size. Wall-clock oddity: the floor-off 09.22 arm
+took 68 min / 464 MB journal versus 29 min on the baseline arm of the same window; cause not established, trades
+identical. Conclusion: the FX loss is signal quality plus modelled 1-minute spread, not position size; currencies
+stay out of the universe.
 
 ### Nothing shipped
 Universe stays `Crash 1000 Index,Boom 1000 Index`. The remaining FX question is a different experiment: per-trade

@@ -86,6 +86,27 @@ Settings are exposed as EA inputs in these groups:
 
 Startup risk inputs define the hard operator envelope; risk tiers and compounding can only reduce it. The live override file is a second, risk-only control channel that can tighten this envelope, not raise it above startup inputs. Risk-tier policy is startup-only and requires reinitialization; a `risk.riskTier` override is logged and ignored. Compounding can be toggled live, and unrelated or unchanged file edits preserve the current adaptive/compounding state. Verify effective values in `[RISK-TIER]`, `[COMPOUNDING-TIER]`, `[RISK-OVERRIDE]`, and `[LIVE-CONFIG-RISK]` logs.
 
+## Current state (2026-11-25)
+
+**Shipped configuration.** Universe `Crash 1000 Index,Boom 1000 Index`; per-symbol entry-spread override
+`InpSymbolHardSpreadOverridesCsv="Boom 1000 Index=25000"` with the global `InpMaxEntrySpreadPoints` at 15000;
+`InpMaxRiskPerTrade=1.0`, `InpMaxDailyRisk=6.0`, `InpMaxPortfolioRisk=18.0`; `InpQuorumProfile=QUORUM_BALANCED`,
+`InpQuorumThreshold=0.60`, `InpMinLiveVoters=1`, `InpEnableScalpEngine=false`, `InpMinLotRiskMultiplier=3.0`.
+Compiles with zero errors and zero warnings across all eight MetaTrader targets (2026-11-25).
+
+**Measured record on that configuration** (cold windows, four state files cleared per launch, 10,000 USD start):
+08.01→08.08 **+21.100%** (12,110.05, 193 fills), 09.22→09.29 **+39.266%** (13,926.57, 194 fills),
+07.01→08.01 (31 days) **+66.520%** (16,652.05, 834 fills). The daily/portfolio ceiling at 6/18 beat 4/12 on four
+paired windows (+6.04 pp mean, t 2.99, 4/4). Rejected on measurement: FX majors (-4.632% / -5.615%, sizing levers
+neutral), the scalp engine (identical to scalp-off, 0 closes, all signals refused on `spread_vs_atr`), `Jump 75` as
+a second row (-6.28 / -4.17 / -4.88 pp), and the eight-symbol book before it.
+
+**Limitations that bound these numbers.** Every window here is `Model=1` (one-minute OHLC), not real ticks, so
+spread is charged per quote rather than per tick; there is no MT5 report file, so profit factor, drawdown, and
+Sharpe are reconstructed from heartbeat series rather than broker statistics; and negative week-level variance is
+live — Boom's out-of-slice paired delta has sd 12.36 pp and one July week ran -2.00 pp. The EA has **never been
+attached to a chart on demo or live**, so every result is backtest-only and no forward-test exists.
+
 ## Strategy Roster
 
 ### Indicator-based strategies
