@@ -185,7 +185,7 @@ docs/                           Supplementary documentation
 | [RUNTIME_DECISION_GRAPH.md](RUNTIME_DECISION_GRAPH.md) | How a signal becomes a trade decision (runtime signal-to-execution flow) |
 | [SYSTEM_AUDIT_TRACE.md](SYSTEM_AUDIT_TRACE.md) | End-to-end lifecycle and logic traces (OnInit, tick/timer cycle, signal path) |
 | [changelogs.md](changelogs.md) | Dated record of changes by batch (Batch 282–300f) |
-| [docs/changelogs_batch170-281.md](docs/changelogs_batch170-281.md) | Dated record of changes by batch (Batch 170–281, archived) |
+| [docs/changelogs_batch170-299.md](docs/changelogs_batch170-299.md) | Dated record of changes by batch (Batches 170–299, archived) |
 | [docs/changelogs_batch102-169.md](docs/changelogs_batch102-169.md) | Dated record of changes by batch (Batch 102–169, archived) |
 | [docs/changelogs_old.md](docs/changelogs_old.md) | Dated record of changes by batch (Batch 101 and earlier, archived) |
 | [AGENTS.md](AGENTS.md) | Development workflow rules and runtime invariants |

@@ -2,7 +2,7 @@
 
 Archive of the batch entries that existed for 2026-08 through 2026-10. Despite the file name, the earliest entry
 here is Batch 140: **batches 102–139 were never written**, so there is nothing to archive for them. Batches 170–281
-live in `docs/changelogs_batch170-281.md`, batches 1–101 in `docs/changelogs_old.md`, and batches 282 and later in
+live in `docs/changelogs_batch170-299.md`, batches 1–101 in `docs/changelogs_old.md`, and batches 282 and later in
 the repository-root `changelogs.md`.
 
 Two known defects in this copy, left as recorded rather than reordered: Batch 158 appears twice, and Batches
