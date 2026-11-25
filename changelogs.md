@@ -1,7 +1,7 @@
 # Changelog
 
-Batches 282 and later, newest first. Batches 281 and earlier are archived - see the pointer list at the bottom.
-`RUNS_AND_GAINS.md` holds the consolidated measured record; `REMAINING_WORK.md` holds what is still open.
+Batches 282 and later, newest first. Batches 281 and earlier are archived - see the pointer table at the bottom
+of this file. `RUNS_AND_GAINS.md` holds the consolidated measured record; `REMAINING_WORK.md` holds what is open.
 
 ## [Unreleased] - 2026-11-25 (batch 300f - currencies measured for the first time: rejected)
 
@@ -158,6 +158,7 @@ in two of the three windows. `Jump 75` stays out.
 The send-time disaster-quote backstop moves 15,000 -> 25,000 points (~+67%). Only two symbols are in the universe,
 so Boom is the sole beneficiary, but that is an exposure argument, not a safety one. A per-symbol spread override
 is strictly better and is not built - it is the first open item.
+
 ## [Unreleased] - 2026-11-23 (batch 300 - per-symbol attribution back, lot-floor uplift measured, uplift-off A/B)
 ### Attribution works on both builds (no code change)
 - Full-file tag scan of the two `w1` journals: `[EXECUTION-RECEIPT]` and `Trade Closed ... Net Profit:` are
@@ -192,18 +193,35 @@ closes for **+489.07** and now takes **74** for **+222.44**, and `Volatility 75`
   `Crash 1000` tickets that pay.
 - `[ENTRY-GATE] cycle_send_cap` is 33 merged vs 34 pre-merge, so this is not a send-rate cap.
 
-### A/B in flight: `InpMinLotRiskMultiplier=1.0`
+### The lot-floor uplift A/B: `InpMinLotRiskMultiplier=1.0` measured - neutral, do not ship
 - `Tools\backtest_b300_floor1_w1.ini` (`08.01 -> 08.08`) and `_w3.ini` (`09.01 -> 09.08`), otherwise identical to
   `b299_cold` inis. With the cap at 1.0 the pipeline rejects any sub-min-lot scale instead of lifting it
   (`CandidateBuilder.mqh:593`, `RiskValidationPipeline.mqh:575`), which is how to test whether the uplift trades
   are the ones crowding out Crash.
-# Changelog
+Both arms cold, same build, only that input differs:
 
-All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
+| window | factory (cap 3.0) | cap 1.0 | delta | fills f -> 1.0 | `Crash` closes f -> 1.0 |
+|---|---|---|---|---|---|
+| 08.01 | +31.72 (+0.317%) | **+74.02 (+0.740%)** | **+0.423 pp** | 215 -> 214 | 74 -> 78 |
+| 09.01 | +198.79 (+1.988%) | **+142.47 (+1.425%)** | **-0.563 pp** | 218 -> 219 | 74 -> 72 |
 
-This file starts at **Batch 170**. The previous history is preserved unchanged:
-- Batches 140–169 (2026-08 → 2026-10): [`docs/changelogs_batch102-169.md`](docs/changelogs_batch102-169.md) (the file name overstates the range)
-- Batch 101 and earlier: [`docs/changelogs_old.md`](docs/changelogs_old.md)
+Paired mean **-0.070 pp**, sd 0.72, t **-0.14**, 1/2 positive. The gate does fire - 1,209 rejects
+`lot_floor_risk_multiplier` on `08.01`, 2,358 on `09.01` (about half of all validated candidates) - but the book
+barely moves: fills change by one, and the two windows disagree on sign. **Conclusion: the min-lot uplift is inert
+as a lever. It does not explain the August collapse and turning it off is not a gain.** The default stays at 3.0.
+
+### Shipped: the universe is `Crash 1000 Index` only
+- Five paired cold windows, same binary, only `InpSymbolsToTrade` changed: `+10.837 / +15.786 / +2.614 /
+  +17.682 / +5.134 %` against the eight-symbol arm's `+0.317 / +9.178 / +1.988 / +6.724 / +3.970 %`.
+- Arm mean **+10.41%**, sd 6.53 pp, t 3.56, 5/5 positive, worst **+2.614%**, worst drawdown 2.9%.
+  Paired mean **+5.98 pp**, sd 4.94, **t 2.70**, 5/5 positive.
+- Mechanism is throughput: 74 closes per window in the eight-symbol book, 157-186 with only the payer left, because
+  the daily budget stops being spent on rows that net negative (-767.07 across 755 closes over the same five windows).
+- `Core\Config\SharedEAInputs.mqh` `InpSymbolsToTrade = "Crash 1000 Index"` with the full table above it.
+  Compile `OVERALL SUCCESS`, 0 errors / 0 warnings on all eight programs (root EA 58,463 ms).
+- Cost accepted: one instrument, no ballast. Restore any row by naming it in the input.
+- `InpAutoAddChartSymbol` is gone from the merged tree, so the universe is authoritative - one open item closes
+  without a measurement.
 
 ## [Unreleased] - 2026-11-23 (batch 299b - merged build sweep)
 
@@ -224,11 +242,29 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
 - Scoreboards archived as `Tools/artifacts/scoreboards/scoreboard_b299b_w1..w5.csv`; journals as
   `journal_b299b_w1..w5` in the agent temp dir.
 
+### The five-window book on HEAD: one payer, five rows that tax it
+Per-symbol net from each window's own `Trade Closed ... Net Profit:` lines (all reconcile to the heartbeat delta):
+
+| window | net | `Crash 1000` | `Jump 75` | `Jump 25` | `Step` | `GBPUSD` | `AUDUSD` |
+|---|---|---|---|---|---|---|---|
+| 08.01 | +31.72 | **+222.44 / 74** | -88.26 / 89 | -62.19 / 35 | -38.92 / 9 | -1.50 / 6 | +0.15 / 2 |
+| 08.08 | +917.78 | **+1,128.57 / 76** | -81.39 / 63 | -148.34 / 39 | +18.48 / 16 | +0.73 / 5 | -0.27 / 2 |
+| 09.01 | +198.79 | **+220.74 / 74** | -22.64 / 85 | +27.45 / 35 | -23.61 / 15 | -3.15 / 10 | - |
+| 09.15 | +672.39 | **+948.82 / 69** | -36.98 / 92 | -107.23 / 41 | -125.93 / 14 | -5.67 / 8 | -0.62 / 2 |
+| 10.06 | +397.04 | **+464.22 / 73** | +82.45 / 123 | +0.29 / 41 | -136.00 / 9 | +5.74 / 6 | -19.66 / 5 |
+| **sum** | **+2,217.72** | **+2,984.79 / 366** | -146.82 / 452 | -290.02 / 191 | -305.98 / 63 | -3.85 / 35 | -20.55 / 14 |
+
+`Crash 1000` is positive in every window and carries the whole account; every other row sums negative over the
+five windows to the tune of **-767.07 USD across 755 closes**. That is the arithmetic behind "one payer, five taxes".
+It is not a removal argument - Batch 298 measured removal at -0.605 pp on the same kind of paired test because
+deleting a row concentrates the budget and *lowers* `Crash` closes (114 -> 94 on `08.01`).
+
 ### Harness hardening for this sweep
 - Per-launch port guard added to the driver: `netstat -ano`, kill only a `node` holder of
   `127.0.0.1:3000`, re-check before every window launch (the dev server respawned at least twice: pids
   7124, 100, 4568). Scoreboards are now archived **after** the run, not before, so the file name matches
   the run that produced it.
+
 ## [Unreleased] - 2026-11-23 (batch 299 - post-refactor cold baseline)
 
 ### Measurement - the rebuild still pays, within noise (no code change, nothing shipped)
@@ -270,6 +306,7 @@ This file starts at **Batch 170**. The previous history is preserved unchanged:
   lines. A known-good ini also failed, which is how the ini was excluded. Fix: check
   `netstat -ano | findstr :3000`, kill any non-`metatester64` holder, confirm `metatester64` owns the
   port, then launch - **before every launch**, because the server respawns.
+
 ## [Unreleased] - 2026-11-23 (batch 3)
 
 ### MQL5 - policy literals named, behavior identical
@@ -433,6 +470,19 @@ No MQL5 changes this batch - no recompile needed. Not performance-measured.
 
 ## [Unreleased] - 2026-11-19
 
+### 2026-11-19 - Exposure caps include in-flight reservations (work log, not performance-tested)
+- Per-symbol and total position caps now count open EA-owned positions plus outstanding virtual reservations; the current candidate's own reservation is excluded so it is neither double-counted nor lost from concurrent capacity accounting.
+- Removed the unreferenced fast-scalp pending-order sender, its stale enabled/TTL settings, and its no-op orchestration polling. The async tracker send is cancellation-only.
+- Closed remaining-work item 15 for reachable entry paths. Lifecycle pyramiding is still disabled/unconfigured and remains out of scope until its add path gets unified-risk validation and a valid stop.
+- This supersedes the preceding historical note that engine entries still bypass `CTradeManager`: the ATR, grid, spike, and live fast-scalp market senders now route through it. The remaining raw send calls belong to the shared async executor or order cancellation.
+- Verification: all eight MetaTrader targets compile with 0 errors and 0 warnings; `git diff --check` passes. No live run or backtest was performed.
+
+### 2026-11-21 - Full sync and compile (work log, not performance-tested)
+- Anchored `sync_and_compile.ps1` to `$PSScriptRoot`; the previous hard-coded `D:\TraeProjects\metatrader-multistrategy-ea` path pointed at a separate clean `main` checkout rather than the active Tempo worktree.
+- The first full build found and fixed invalid C++ pointer syntax in `FastScalpEngine.mqh` and a missing `CDashBridgeTransport::LogState` definition.
+- Final `-All -KeepLog -MaxCompileWaitSec 900` run: all eight root programs compiled with **0 errors / 0 warnings**. SHA-256 checks confirmed the fixed headers match the MT5 mirror.
+- No live/demo run or backtest was performed.
+
 ### Risk correctness and evidence-based cleanup (not performance-tested)
 
 - Specialized fast-scalp, spike-hunter, and grid-recovery entries fail closed when risk authority is unavailable; grid risk validation now sits at the send boundary. ATR, spike, and grid entries reconcile reservations to accepted fill volume and release them on definite send failure. ATR scalp entries use the initialized unified risk manager and shared CTradeManager execution/receipt path rather than raw CTrade sends.
@@ -579,6 +629,47 @@ tuning: they change what the strategies emit, so they need paired cold-window ru
 - `LiquiditySweepStrategy.mqh`, `TurtleSoupStrategy.mqh`: chase cap - a sweep found several bars back could leave
   the stop multiple ATRs away; both now refuse `stopDistance > 3 * ATR`. LiquiditySweep round-number pip size now
   follows SYMBOL_DIGITS parity instead of hardcoded 5-digit FX.
+
+### Audit round - execution-side price references and family classification (code review pass, not performance-tested)
+#### Fixed - bid/ask execution-side measurement
+- **S/R consensus path measured stops off BID for buys.** `StrategySupportResistance` converted the sub-strategies' BID-anchored `entryPrice`/`stopLoss`/`takeProfit` into pip distances and fed them to `IsSignalTradable` and `SetProposedStops`. A BUY fills at ASK, so the stop distance was understated by the spread in both the guard and the proposed stops. Distances and the guard now measure off `execPrice` (ASK for BUY, BID for SELL).
+- **Same defect in the trend path.** `StrategyTrend` + `CTrendEntryTypes`: every entry type anchors `entryPrice`/`takeProfit` on `SYMBOL_BID` for both directions; the consumer now measures guard and pip distances off the execution side.
+- **`TrendTrailingStop::ShouldMoveToBreakeven` priced sells off BID.** The sibling `CalculateTrailingStop` already used the correct side ("sell positions close at ASK"); the breakeven check was missed, so a sell's breakeven triggered ~spread early. Now direction-aware.
+- **`NYOpenGapStrategy` measured SL/TP distances off unconditional BID** for both directions (the BID quote is still used for the NDOG midpoint proximity check, which is analysis-only). Distances and the tradability guard now use a direction-aware `distPrice`.
+- **`StrategyCandlestick` measured pattern geometry off the pattern bar's price.** `patternPrice` is a historical close, not the fill; a drifted market could pass an inverted or understated stop through the gate. Guard and pip distances now measure off live ASK/BID.
+- Verified clean: all eight ATR-stop strategies already use `isBuy ? ASK : BID`; `ICTSessionGapStrategy`, `MeanReversionStrategy` (both paths), `FVGScalper`, `BreakerBlock`, `AsianRangeBreak`, `SimpleMomentum`, `TurtleSoup` already direction-aware; `VolatilityBreakout`/`LiquiditySweep`/`RangeCompression` derive SL/TP from absolute levels so distances are anchor-honest.
+
+#### Fixed - dead family arm
+- **`DERIV_SPOT_VOLATILITY` was unreachable.** "Spot Volatility" symbol names also contain `"VOLATILITY "`, and `IsVolatilitySyntheticSymbolName` ran first in three places, so every spot-vol name classified as plain `DERIV_VOLATILITY`: `CDerivAssetProfiler::DetectFamily`, `DetectFamilyId` in `Core/Utils/Instruments.mqh`, and `GetInstrumentExecutionProfileName` (which returned `SYNTHETIC_VOLATILITY` instead of `SYNTHETIC_SPOT_VOLATILITY`). The specific arm now precedes the generic one in all three. Latent today - no shipped symbol carries `SPOT VOL` - but the profile (grid recovery enabled, family weights 1.3/0.7/0.6/1.4) was dead config.
+
+#### Verified clean this pass
+- `CTradeManager::MoveToBreakeven`/`SetTrailingStop`/`ModifyPosition` - tighten-only ratchets, correct bid/ask sides, broker min-distance normalization.
+- `RiskCircuitBreaker` drawdown math, auto-recovery levels, emergency flatten.
+- `CGridRecoveryEngine` - martingale progression bounded by maxDrawdownPercent, cumulative-lot cap (3x) and equity floor (50%); all family profiles currently disable it except SpotVolatility.
+- `WalkForwardValidator` IS/OOS attribution arrays sized `cAll+1`, every trade accounted exactly once.
+- `CDerivAssetProfiler` profile table - newer Deriv families (Pain, Switch, GainFlip...) intentionally fall through to `DERIV_UNKNOWN` (minimal profile), not a bug.
+
+#### Verification
+- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
+- Caveat: the bid/ask measurement fixes change proposed stop distances by ~spread on BUY signals - correctness fix, needs the paired cold-window batch before any performance claim.
+
+### Remaining-work completion pass (code review, compile-verified, not performance-tested)
+#### Fixed - neural trade-linked labels
+- **Double-counted and sign-biased label counter.** `UpdateTradeResultByPredictionId`/`UpdateTradeResult` incremented `m_tradeLinkedLabels` only when `profitLoss > 0`, while `ResolveBarriers` also increments it for every `linkedToTrade` example at label resolution - so wins counted twice and losses never. The counter is now owned solely by label resolution, which counts every linked outcome once regardless of sign; the update paths only set `linkedToTrade`. Stale comment claiming the path was unwired corrected (it is wired: reserve -> order comment/position map -> close-drain -> `UpdateTradeResultByPredictionId`).
+- **Same-bar double-touch now resolves adverse-first.** `NeuralNetworkStrategy::ResolveBarriers` took `upperHit` before `lowerHit`, so a bar touching both barriers always labelled BUY-class - the opposite of the Python `triple_barrier` stop-first convention (and of `CNeuralTrainingDataManager`, which already tests the stop first). A both-touch bar now resolves to the barrier adverse to the predicted signal (BUY obs -> lower/SELL label, SELL obs -> upper/BUY label), i.e. an ambiguous bar is a loss, matching training-data semantics.
+
+#### Enabled - the measured lot-size cap lever
+- **`InpScaleLotToSymbolBudget` default false -> true** in both EAs. The mechanism (`ApplySymbolBudgetLotCap`) already existed and was correct - shrink the lot to remaining per-symbol budget with broker step/min rounding and a post-round `CalculateTradeRisk` re-check - but was opt-in "experimental". With the default on, a candidate over its symbol allocation is resized instead of dropped whenever the remaining budget can still fund the broker minimum; only genuinely exhausted budgets reject. This is the lever AGENTS.md Batch 298 identified as the only remaining path (deleting symbols measured worse). **Requires the paired cold-window batch before any performance claim** - it changes sizing on every window that does not override the input.
+
+#### Verified already-complete (no change needed)
+- Engine sends: `SpikeHunterExecutor` and `GridRecoveryExecution` already route through `CTradeManager::OpenPosition` with `NormalizeAndValidateStops` + retcode diagnostics; `FastScalpPendingOrders` keeps raw `OrderSend` only because pending orders have no `CTradeManager` path, and it has stop validation + ambiguous-send recovery.
+- Neural label wiring: reserve/release/bind/drain chain fully wired through `TradeExecutor` comment suffix, `UpsertPredictionPositionMap`, and `ProcessClosedPositionsForNNTraining`.
+- Async reconciliation: `OnTradeTransaction` -> `ProcessTradeTransaction`, `OnTimer` -> `CheckAsyncTimeouts` -> quarantine-vs-broker-history reconciliation all wired.
+- Dormant lifecycle features (pyramiding, dynamic SL/TP, partial profit taking) default disabled with no config path - cleanly inert opt-in infrastructure, deliberately not wired to new unmeasured behavior.
+- `AIPerformanceFeedback` record/outcome path remains inert (no callers); neutral-zero metrics keep AI weight adaptation at baseline - documented dormant infrastructure.
+
+#### Verification
+- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
 
 ### Batch 298: MEASURED, NOT SHIPPED - removing the last two loss-making rows makes the distribution worse, not better
 
@@ -883,6 +974,7 @@ The recommendation from Batches 283-287 was narrow on purpose: of every "thresho
 **Tooling observed, both worth keeping:** (1) `Tools\run_window.ps1` backgrounded through the sandbox is now killed mid-run on this host (`kill sandbox processes failed`, terminal64 torn down at 9%), so the working launch is `Start-Process terminal64.exe -ArgumentList /config:<ini> -WindowStyle Hidden` with the cold reset done explicitly (archive `strategy_scoreboard.csv`, delete `strategy_scoreboard.csv`, `compounding_tier_state.csv`, `CrashRecoveryState.json`, `AI_Health_Dashboard.csv`), then poll the terminal log for `processing N %` and `last test passed`; wall clock 42-43 min per 7-day window under current load. (2) `Tools\run_summary.ps1` segments by simulation-time regression, which cannot split two adjacent runs that meet at midnight (09.21 23:59 -> 09.22 00:00 is monotonic), so a two-run journal reads as one 21,596-sample run; the reliable read is "the last 10,080 heartbeats are the last run", and fills are the `[EXECUTION-RECEIPT]` count between the first and last of those samples.
 
 New test inis: `Tools\backtest_def_w3.ini`, `_w4`, `_w5`, `_w6` (all explicit `InpQuorumProfile=1` + `InpMinLiveVoters=1`); probes `Tools\backtest_probe_ctl.ini` (explicit 2), `backtest_probe_def.ini` (omitted), `backtest_probe_crash.ini` (omitted, fresh symbol). Verification: compile `OVERALL SUCCESS`; four windows reproduce their baselines to the cent; default probe 0 vs 264 `min_voters`. Not done: the default was not tested in six windows by omission (four windows used explicit 1, and one probe proves the default), `backtest_report.htm` is still not written so still no MT5 profit factor / drawdown / Sharpe, and nothing committed.
+
 ### Batch 287: the same streak rule, applied to size instead of entry — measured on two windows and rejected
 
 Batch 286 proved that holding a symbol's entry after a losing run moves the risk rather than removing it (-4.75 pp), so this batch took the other half of the idea: keep the entry and the slot, shrink the stake. The streak counter now exists regardless of the brake policy (`RecordSymbolClose` counts every close; the brake still gates on `InpSymbolLossStreakLimit`, default 0 = off), and `GetSymbolStreakRiskScale(minStreak, factor)` returns the multiplier once the run is long enough. `CCandidateBuilder::BuildCandidate` gained a trailing `double symbolStreakScale = 1.0`, applied to `proposedRisk` **before** `CalculatePositionSizeWithRisk` — the same slot and the same reason as the Batch 278 volatility band, because the lot and the booked `riskPercent` have to remain one number — with one throttled `[STREAK-SIZE] <sym> | losing run N | risk x% -> y%` line per five minutes. The orchestrator computes the scale beside the existing entry gate and passes it in. New inputs `InpSymbolStreakRiskScale` (**1.0 = off**) and `InpSymbolStreakRiskMinCount` (2), wired through `SharedEAInputs`, `OrchestratorConfig` (fields plus ctor defaults) and both root `.mq5` config assignments.
@@ -896,6 +988,7 @@ Batch 286 proved that holding a symbol's entry after a losing run moves the risk
 **New document:** `RUNS_AND_GAINS.md` at the repository root — every batch's runs, numbers and conclusion in one place, with the method (harness, cold rules, P&L source, determinism, the 0.92 pp noise floor) stated before the numbers.
 
 Verification: `sync_files.ps1` then `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> **`OVERALL SUCCESS` - 0 errors, 0 total warnings** on all eight programs (root EAs 144.4 s / 131.8 s). Not done: two windows only, no third window for the rule, `backtest_report.htm` still not written so still no MT5 profit factor / drawdown / Sharpe, and the port-3000 dependency is documented rather than removed. Nothing committed.
+
 ### Batch 286: a per-symbol loss-streak brake was built, tested and rejected — the losses are a run, but breaking the run does not save the money
 
 Batch 285 established *where* the money is (11-15 closes of `Volatility 75 Index` at ±23 a close). This batch asked the obvious next question: if the damage arrives as a *series*, does stopping the series help? It now has a measured answer instead of an opinion — **no**, not in this form.
@@ -1017,6 +1110,7 @@ a row winning one trade in three for 0.65 units average is the first cost suspec
 **Not done:** per-window per-strategy attribution for the other six windows (their archives are gone; the re-run
 with the new archive is the fix); `backtest_report.htm` is still not written by this terminal, so there is still
 no MT5 profit factor, max drawdown or Sharpe; no walk-forward segment; nothing committed.
+
 ### Batch 283: three "thresholds" were inert and the fourth one is the whole book
 
 Batch 282 made the tester deterministic, so a single cold window became readable. This batch used that to
@@ -1093,104 +1187,6 @@ Same binary. Same window (`2026.09.01`->`09.08`, Model=1, M15, Volatility 75 Ind
 
 Verification: `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> **`OVERALL SUCCESS` - 0 errors, 0 total warnings** on all eight programs (`MultiStrategyAutonomousEA.mq5` 61.9 s, `MultiStrategyTestingEA.mq5` 59.8 s, `TrainingDataExporter.mq5` 17.8 s, five others 0/0). Not done: the determinism proof is two runs of one window, not a distribution; `backtest_report.htm` still is not written by this terminal, so MT5's own profit factor / drawdown / Sharpe remain unavailable and every figure here is rebuilt from `[COMPOUNDING-TIER-HEARTBEAT] balance=` samples plus receipt/deal lines.
 
-## 2026-11-19 — Exposure Caps Include In-Flight Reservations
-
-- Per-symbol and total position caps now count open EA-owned positions plus outstanding virtual reservations; the current candidate's own reservation is excluded so it is neither double-counted nor lost from concurrent capacity accounting.
-- Removed the unreferenced fast-scalp pending-order sender, its stale enabled/TTL settings, and its no-op orchestration polling. The async tracker send is cancellation-only.
-- Closed remaining-work item 15 for reachable entry paths. Lifecycle pyramiding is still disabled/unconfigured and remains out of scope until its add path gets unified-risk validation and a valid stop.
-- This supersedes the preceding historical note that engine entries still bypass `CTradeManager`: the ATR, grid, spike, and live fast-scalp market senders now route through it. The remaining raw send calls belong to the shared async executor or order cancellation.
-- Verification: all eight MetaTrader targets compile with 0 errors and 0 warnings; `git diff --check` passes. No live run or backtest was performed.
-
-## 2026-11-21 — Full Sync and Compile
-
-- Anchored `sync_and_compile.ps1` to `$PSScriptRoot`; the previous hard-coded `D:\TraeProjects\metatrader-multistrategy-ea` path pointed at a separate clean `main` checkout rather than the active Tempo worktree.
-- The first full build found and fixed invalid C++ pointer syntax in `FastScalpEngine.mqh` and a missing `CDashBridgeTransport::LogState` definition.
-- Final `-All -KeepLog -MaxCompileWaitSec 900` run: all eight root programs compiled with **0 errors / 0 warnings**. SHA-256 checks confirmed the fixed headers match the MT5 mirror.
-- No live/demo run or backtest was performed.
-## Audit round - execution-side price references and family classification
-
-#### Fixed - bid/ask execution-side measurement
-- **S/R consensus path measured stops off BID for buys.** `StrategySupportResistance` converted the sub-strategies' BID-anchored `entryPrice`/`stopLoss`/`takeProfit` into pip distances and fed them to `IsSignalTradable` and `SetProposedStops`. A BUY fills at ASK, so the stop distance was understated by the spread in both the guard and the proposed stops. Distances and the guard now measure off `execPrice` (ASK for BUY, BID for SELL).
-- **Same defect in the trend path.** `StrategyTrend` + `CTrendEntryTypes`: every entry type anchors `entryPrice`/`takeProfit` on `SYMBOL_BID` for both directions; the consumer now measures guard and pip distances off the execution side.
-- **`TrendTrailingStop::ShouldMoveToBreakeven` priced sells off BID.** The sibling `CalculateTrailingStop` already used the correct side ("sell positions close at ASK"); the breakeven check was missed, so a sell's breakeven triggered ~spread early. Now direction-aware.
-- **`NYOpenGapStrategy` measured SL/TP distances off unconditional BID** for both directions (the BID quote is still used for the NDOG midpoint proximity check, which is analysis-only). Distances and the tradability guard now use a direction-aware `distPrice`.
-- **`StrategyCandlestick` measured pattern geometry off the pattern bar's price.** `patternPrice` is a historical close, not the fill; a drifted market could pass an inverted or understated stop through the gate. Guard and pip distances now measure off live ASK/BID.
-- Verified clean: all eight ATR-stop strategies already use `isBuy ? ASK : BID`; `ICTSessionGapStrategy`, `MeanReversionStrategy` (both paths), `FVGScalper`, `BreakerBlock`, `AsianRangeBreak`, `SimpleMomentum`, `TurtleSoup` already direction-aware; `VolatilityBreakout`/`LiquiditySweep`/`RangeCompression` derive SL/TP from absolute levels so distances are anchor-honest.
-
-#### Fixed - dead family arm
-- **`DERIV_SPOT_VOLATILITY` was unreachable.** "Spot Volatility" symbol names also contain `"VOLATILITY "`, and `IsVolatilitySyntheticSymbolName` ran first in three places, so every spot-vol name classified as plain `DERIV_VOLATILITY`: `CDerivAssetProfiler::DetectFamily`, `DetectFamilyId` in `Core/Utils/Instruments.mqh`, and `GetInstrumentExecutionProfileName` (which returned `SYNTHETIC_VOLATILITY` instead of `SYNTHETIC_SPOT_VOLATILITY`). The specific arm now precedes the generic one in all three. Latent today - no shipped symbol carries `SPOT VOL` - but the profile (grid recovery enabled, family weights 1.3/0.7/0.6/1.4) was dead config.
-
-#### Verified clean this pass
-- `CTradeManager::MoveToBreakeven`/`SetTrailingStop`/`ModifyPosition` - tighten-only ratchets, correct bid/ask sides, broker min-distance normalization.
-- `RiskCircuitBreaker` drawdown math, auto-recovery levels, emergency flatten.
-- `CGridRecoveryEngine` - martingale progression bounded by maxDrawdownPercent, cumulative-lot cap (3x) and equity floor (50%); all family profiles currently disable it except SpotVolatility.
-- `WalkForwardValidator` IS/OOS attribution arrays sized `cAll+1`, every trade accounted exactly once.
-- `CDerivAssetProfiler` profile table - newer Deriv families (Pain, Switch, GainFlip...) intentionally fall through to `DERIV_UNKNOWN` (minimal profile), not a bug.
-
-#### Verification
-- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
-- Caveat: the bid/ask measurement fixes change proposed stop distances by ~spread on BUY signals - correctness fix, needs the paired cold-window batch before any performance claim.
-
-## Remaining-work completion pass
-
-#### Fixed - neural trade-linked labels
-- **Double-counted and sign-biased label counter.** `UpdateTradeResultByPredictionId`/`UpdateTradeResult` incremented `m_tradeLinkedLabels` only when `profitLoss > 0`, while `ResolveBarriers` also increments it for every `linkedToTrade` example at label resolution - so wins counted twice and losses never. The counter is now owned solely by label resolution, which counts every linked outcome once regardless of sign; the update paths only set `linkedToTrade`. Stale comment claiming the path was unwired corrected (it is wired: reserve -> order comment/position map -> close-drain -> `UpdateTradeResultByPredictionId`).
-- **Same-bar double-touch now resolves adverse-first.** `NeuralNetworkStrategy::ResolveBarriers` took `upperHit` before `lowerHit`, so a bar touching both barriers always labelled BUY-class - the opposite of the Python `triple_barrier` stop-first convention (and of `CNeuralTrainingDataManager`, which already tests the stop first). A both-touch bar now resolves to the barrier adverse to the predicted signal (BUY obs -> lower/SELL label, SELL obs -> upper/BUY label), i.e. an ambiguous bar is a loss, matching training-data semantics.
-
-#### Enabled - the measured lot-size cap lever
-- **`InpScaleLotToSymbolBudget` default false -> true** in both EAs. The mechanism (`ApplySymbolBudgetLotCap`) already existed and was correct - shrink the lot to remaining per-symbol budget with broker step/min rounding and a post-round `CalculateTradeRisk` re-check - but was opt-in "experimental". With the default on, a candidate over its symbol allocation is resized instead of dropped whenever the remaining budget can still fund the broker minimum; only genuinely exhausted budgets reject. This is the lever AGENTS.md Batch 298 identified as the only remaining path (deleting symbols measured worse). **Requires the paired cold-window batch before any performance claim** - it changes sizing on every window that does not override the input.
-
-#### Verified already-complete (no change needed)
-- Engine sends: `SpikeHunterExecutor` and `GridRecoveryExecution` already route through `CTradeManager::OpenPosition` with `NormalizeAndValidateStops` + retcode diagnostics; `FastScalpPendingOrders` keeps raw `OrderSend` only because pending orders have no `CTradeManager` path, and it has stop validation + ambiguous-send recovery.
-- Neural label wiring: reserve/release/bind/drain chain fully wired through `TradeExecutor` comment suffix, `UpsertPredictionPositionMap`, and `ProcessClosedPositionsForNNTraining`.
-- Async reconciliation: `OnTradeTransaction` -> `ProcessTradeTransaction`, `OnTimer` -> `CheckAsyncTimeouts` -> quarantine-vs-broker-history reconciliation all wired.
-- Dormant lifecycle features (pyramiding, dynamic SL/TP, partial profit taking) default disabled with no config path - cleanly inert opt-in infrastructure, deliberately not wired to new unmeasured behavior.
-- `AIPerformanceFeedback` record/outcome path remains inert (no callers); neutral-zero metrics keep AI weight adaptation at baseline - documented dormant infrastructure.
-
-#### Verification
-- `sync_and_compile.ps1 -All -KeepLog -MaxCompileWaitSec 900` -> OVERALL SUCCESS, 0 errors / 0 total warnings, all eight programs.
-
-### The five-window book on HEAD: one payer, five rows that tax it
-Per-symbol net from each window's own `Trade Closed ... Net Profit:` lines (all reconcile to the heartbeat delta):
-
-| window | net | `Crash 1000` | `Jump 75` | `Jump 25` | `Step` | `GBPUSD` | `AUDUSD` |
-|---|---|---|---|---|---|---|---|
-| 08.01 | +31.72 | **+222.44 / 74** | -88.26 / 89 | -62.19 / 35 | -38.92 / 9 | -1.50 / 6 | +0.15 / 2 |
-| 08.08 | +917.78 | **+1,128.57 / 76** | -81.39 / 63 | -148.34 / 39 | +18.48 / 16 | +0.73 / 5 | -0.27 / 2 |
-| 09.01 | +198.79 | **+220.74 / 74** | -22.64 / 85 | +27.45 / 35 | -23.61 / 15 | -3.15 / 10 | - |
-| 09.15 | +672.39 | **+948.82 / 69** | -36.98 / 92 | -107.23 / 41 | -125.93 / 14 | -5.67 / 8 | -0.62 / 2 |
-| 10.06 | +397.04 | **+464.22 / 73** | +82.45 / 123 | +0.29 / 41 | -136.00 / 9 | +5.74 / 6 | -19.66 / 5 |
-| **sum** | **+2,217.72** | **+2,984.79 / 366** | -146.82 / 452 | -290.02 / 191 | -305.98 / 63 | -3.85 / 35 | -20.55 / 14 |
-
-`Crash 1000` is positive in every window and carries the whole account; every other row sums negative over the
-five windows to the tune of **-767.07 USD across 755 closes**. That is the arithmetic behind "one payer, five taxes".
-It is not a removal argument - Batch 298 measured removal at -0.605 pp on the same kind of paired test because
-deleting a row concentrates the budget and *lowers* `Crash` closes (114 -> 94 on `08.01`).
-
-### `InpMinLotRiskMultiplier=1.0` (uplift refused instead of lifted): neutral, do not ship
-Both arms cold, same build, only that input differs:
-
-| window | factory (cap 3.0) | cap 1.0 | delta | fills f -> 1.0 | `Crash` closes f -> 1.0 |
-|---|---|---|---|---|---|
-| 08.01 | +31.72 (+0.317%) | **+74.02 (+0.740%)** | **+0.423 pp** | 215 -> 214 | 74 -> 78 |
-| 09.01 | +198.79 (+1.988%) | **+142.47 (+1.425%)** | **-0.563 pp** | 218 -> 219 | 74 -> 72 |
-
-Paired mean **-0.070 pp**, sd 0.72, t **-0.14**, 1/2 positive. The gate does fire - 1,209 rejects
-`lot_floor_risk_multiplier` on `08.01`, 2,358 on `09.01` (about half of all validated candidates) - but the book
-barely moves: fills change by one, and the two windows disagree on sign. **Conclusion: the min-lot uplift is inert
-as a lever. It does not explain the August collapse and turning it off is not a gain.** The default stays at 3.0.
-### Shipped: the universe is `Crash 1000 Index` only
-- Five paired cold windows, same binary, only `InpSymbolsToTrade` changed: `+10.837 / +15.786 / +2.614 /
-  +17.682 / +5.134 %` against the eight-symbol arm's `+0.317 / +9.178 / +1.988 / +6.724 / +3.970 %`.
-- Arm mean **+10.41%**, sd 6.53 pp, t 3.56, 5/5 positive, worst **+2.614%**, worst drawdown 2.9%.
-  Paired mean **+5.98 pp**, sd 4.94, **t 2.70**, 5/5 positive.
-- Mechanism is throughput: 74 closes per window in the eight-symbol book, 157-186 with only the payer left, because
-  the daily budget stops being spent on rows that net negative (-767.07 across 755 closes over the same five windows).
-- `Core\Config\SharedEAInputs.mqh` `InpSymbolsToTrade = "Crash 1000 Index"` with the full table above it.
-  Compile `OVERALL SUCCESS`, 0 errors / 0 warnings on all eight programs (root EA 58,463 ms).
-- Cost accepted: one instrument, no ballast. Restore any row by naming it in the input.
-- `InpAutoAddChartSymbol` is gone from the merged tree, so the universe is authoritative - one open item closes
-  without a measurement.
 
 ## Earlier batches (archives)
 
