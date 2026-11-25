@@ -40,6 +40,18 @@ carry the configuration across asset classes without re-measuring.
 
 The EA runs a multi-strategy consensus engine on MetaTrader 5. Each enabled strategy casts a weighted vote per symbol; votes are aggregated, quorum and confidence gates are applied, and a centralized risk authority validates exposure, drawdown, margin, and correlation before any order is sent. Approved orders flow through a shared execution path with position-lifecycle management (stops, trailing, breakeven, max hold time).
 
+## How a signal becomes an order
+
+```
+Strategies --> Signal Pipeline --> Weighted Consensus --> Risk Gate --> Execution --> Position Lifecycle
+(indicator / AI)   (configured checks; engine-backed filters are opt-in)
+```
+
+Strategies produce votes; configured pipeline checks run, while registry-backed trend, volatility, liquidity,
+structure, and regime/cost filters pass through by default when `InpPipelineEngineRegistry=false`. Consensus applies
+its configured quorum, the risk gate validates exposure and drawdown, execution places approved orders, and the
+lifecycle manager handles stops and exits.
+
 ## Quick Start
 
 1. **Install.** Copy the repository into a folder under your MT5 `MQL5/Experts/` directory, keeping the folder structure intact. The EA uses relative includes, so partial copies will fail to compile.
