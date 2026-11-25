@@ -84,6 +84,13 @@ private:
     double                      m_aiDrawdownSizingLimit;
     bool                        m_antiMartingaleEnabled;
     int                         m_maxPositionsPerSymbol;
+
+    // Stop-geometry experiment switches. All zero = the shipped resolver, byte for byte.
+    int                         m_stopAtrTimeframe;
+    double                      m_swingSnapAtrMin;
+    double                      m_swingSnapAtrMax;
+    double                      m_swingSnapBufferPips;
+    int                         m_swingSnapLookbackBars;
     
     double                      m_minRRByCluster[];
     
@@ -224,6 +231,8 @@ public:
             m_maxSpreadToTpRatio(0.15),
             m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
             m_maxPositionsPerSymbol(0),
+            m_stopAtrTimeframe(0), m_swingSnapAtrMin(0.0), m_swingSnapAtrMax(0.0),
+            m_swingSnapBufferPips(5.0), m_swingSnapLookbackBars(15),
             m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
                 m_aiStandaloneRelaxedConfidence(0.65), m_symbolCycleCount(0),
                 m_symbolHybridGateRelaxedCount(0),
@@ -370,6 +379,69 @@ public:
         m_hybridGateRelaxAfterCycles = hybridRelaxCycles;
         m_aiStandaloneMinConfidence = aiStandaloneConf;
         m_aiStandaloneRelaxedConfidence = aiRelaxedConf;
+    }
+
+    // Stop-geometry arm selector. Called once at init; 0/0 keeps the resolver on its shipped path.
+    void ConfigureStopGeometry(int atrTimeframe, double swingSnapMin, double swingSnapMax,
+                               double swingSnapBuffer, int swingSnapLookback)
+    {
+        m_stopAtrTimeframe = atrTimeframe;
+        m_swingSnapAtrMin = swingSnapMin;
+        m_swingSnapAtrMax = swingSnapMax;
+        m_swingSnapBufferPips = swingSnapBuffer;
+        m_swingSnapLookbackBars = swingSnapLookback;
+    }
+
+    // Swing snap: move the stop just past the most recent H1 swing when that stop is tighter than the
+    // designed one but still sits inside the configured ATR band. Returns false (and changes nothing)
+    // when the switch is off, the band is not satisfied, or no swing exists.
+    bool ApplySwingSnap(const string symbol, bool isBuy, double price, double atrValue,
+                        double &stopLossPips, double &takeProfitPips, double minRR)
+    {
+        if(m_swingSnapAtrMin <= 0.0 || m_swingSnapAtrMax < m_swingSnapAtrMin || atrValue <= 0.0)
+            return false;
+
+        int lookback = MathMax(3, m_swingSnapLookbackBars);
+        double high[], low[];
+        if(CopyHigh(symbol, PERIOD_H1, 0, lookback + 2, high) < lookback + 2)
+            return false;
+        if(CopyLow(symbol, PERIOD_H1, 0, lookback + 2, low) < lookback + 2)
+            return false;
+
+        // ArraySetAsSeries is not needed: CopyHigh returns bar 0 first by default for the requested range.
+        double swing = 0.0;
+        for(int i = 1; i <= lookback; i++)
+        {
+            bool isHigh = (high[i] > high[i-1]) && (high[i] > high[i+1]);
+            bool isLow  = (low[i] < low[i-1])  && (low[i] < low[i+1]);
+            if(isBuy && isLow)  { swing = low[i];  break; }
+            if(!isBuy && isHigh){ swing = high[i]; break; }
+        }
+        if(swing <= 0.0)
+            return false;
+
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+        if(point <= 0.0) return false;
+        double pip = ((digits == 3 || digits == 5) ? 10.0 : 1.0) * point;
+        double buffer = m_swingSnapBufferPips * pip;
+
+        double swSL = isBuy ? (swing - buffer) : (swing + buffer);
+        double sd = isBuy ? (price - swSL) : (swSL - price);
+        if(sd <= 0.0) return false;
+
+        double designed = stopLossPips * point;
+        double bandMin = m_swingSnapAtrMin * atrValue;
+        double bandMax = m_swingSnapAtrMax * atrValue;
+        if(!(sd < designed && sd >= bandMin && sd <= bandMax))
+            return false;
+
+        stopLossPips = sd / point;
+        takeProfitPips = MathMax(takeProfitPips, stopLossPips * minRR);
+        PrintFormat("[STOP-SWING-SNAP] %s | %s | designed=%.1f snapped=%.1f atr=%.5f band=[%.2f,%.2f]",
+                    symbol, (isBuy ? "BUY" : "SELL"), designed / point, stopLossPips, atrValue,
+                    bandMin / point, bandMax / point);
+        return true;
     }
 
     // The resolver owns the bar it compares; handing it this symbol's floor is what keeps
@@ -738,9 +810,11 @@ public:
         if(ctx.dominantCluster == MEAN_REVERSION_CLUSTER)
             minRR = m_minRRMeanReversion;
         
-        // ATR14 on the current chart timeframe, through CIndicatorManager's shared handle cache.
+        // ATR14 through CIndicatorManager's shared handle cache, on the chart timeframe by default.
+        // InpStopAtrTimeframe=1 reads H1 ATR(14) instead - the switch this arm exists to measure.
         // A zero (no cache, no data) leaves the fixed band below in charge, as before.
-        double atrValue = CTradeMgrPricing::CalculateATR(symbol, PERIOD_CURRENT, 14);
+        ENUM_TIMEFRAMES atrTf = (m_stopAtrTimeframe == 1) ? PERIOD_H1 : PERIOD_CURRENT;
+        double atrValue = CTradeMgrPricing::CalculateATR(symbol, atrTf, 14);
         
         double stopLossPips = 0;
         double takeProfitPips = 0;
@@ -809,6 +883,10 @@ public:
                         symbol, intendedSlPips, minSlPips, spreadPoints, takeProfitPips,
                         spreadPoints / takeProfitPips, m_maxSpreadToTpRatio);
         
+        // Swing snap runs after the clamp, on the shipped stop, and only when the arm turns it on.
+        ApplySwingSnap(symbol, (candidate.orderType == ORDER_TYPE_BUY), candidate.entryPrice, atrValue,
+                       stopLossPips, takeProfitPips, minRR);
+
         candidate.stopLossPips = stopLossPips;
         candidate.takeProfitPips = takeProfitPips;
         

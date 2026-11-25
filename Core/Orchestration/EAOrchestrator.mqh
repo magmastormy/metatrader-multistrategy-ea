@@ -1044,6 +1044,9 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
     m_config.lifecycleTrailingDistancePoints,
     (int)m_config.lifecycleTrailingStepPoints,
     m_config.lifecycleUseATRTrailing, m_config.lifecycleATRMultiplier);
+    m_lifecycleManager.ConfigureAtrExits(m_config.lifecycleAtrBreakevenMult,
+    m_config.lifecycleAtrTrailingMult,
+    m_config.lifecycleAtrActivationMult);
     m_lifecycleManager.ConfigureMaxHoldTime(m_config.enableMaxHoldTime,
     m_config.maxHoldHoursIntraday,
     m_config.maxHoldHoursSwing,
@@ -1535,6 +1538,16 @@ bool InitializeComponents()
                                  true, safeModeMaxPositionsPerSymbol,
                                  m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
                                  m_config.aiStandaloneRelaxedConfidence);
+    m_candidateBuilder.ConfigureStopGeometry(m_config.stopAtrTimeframe,
+                                             m_config.swingSnapAtrMin, m_config.swingSnapAtrMax,
+                                             m_config.swingSnapBufferPips, m_config.swingSnapLookbackBars);
+    PrintFormat("[STOP-GEOMETRY] atrTf=%d (0=chart,1=H1) | swingSnap=%s min=%.2f max=%.2f buffer=%.1f bars=%d | exitATR be=%.2f trail=%.2f act=%.2f",
+                m_config.stopAtrTimeframe,
+                ((m_config.swingSnapAtrMin > 0.0 && m_config.swingSnapAtrMax > 0.0) ? "ON" : "off"),
+                m_config.swingSnapAtrMin, m_config.swingSnapAtrMax,
+                m_config.swingSnapBufferPips, m_config.swingSnapLookbackBars,
+                m_config.lifecycleAtrBreakevenMult, m_config.lifecycleAtrTrailingMult,
+                m_config.lifecycleAtrActivationMult);
 
     Print("[INIT] TradeExecutor initialized");
 

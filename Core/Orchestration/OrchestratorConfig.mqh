@@ -226,6 +226,16 @@ struct SOrchestratorConfig
     bool    lifecycleUseATRTrailing;
     double  lifecycleATRMultiplier;
 
+    // Stop-geometry experiment switches. Every 0 here is the shipped path.
+    int     stopAtrTimeframe;
+    double  swingSnapAtrMin;
+    double  swingSnapAtrMax;
+    double  swingSnapBufferPips;
+    int     swingSnapLookbackBars;
+    double  lifecycleAtrBreakevenMult;
+    double  lifecycleAtrTrailingMult;
+    double  lifecycleAtrActivationMult;
+
     bool    enableMaxHoldTime;
     int     maxHoldHoursIntraday;
     int     maxHoldHoursSwing;
@@ -551,6 +561,15 @@ struct SOrchestratorConfig
         lifecycleTrailingStepPoints = 30.0;
         lifecycleUseATRTrailing = false;
         lifecycleATRMultiplier = 1.5;
+
+        stopAtrTimeframe = 0;
+        swingSnapAtrMin = 0.0;
+        swingSnapAtrMax = 0.0;
+        swingSnapBufferPips = 5.0;
+        swingSnapLookbackBars = 15;
+        lifecycleAtrBreakevenMult = 0.0;
+        lifecycleAtrTrailingMult = 0.0;
+        lifecycleAtrActivationMult = 0.0;
 
         enableMaxHoldTime = true;
         maxHoldHoursIntraday = 24;

@@ -3,6 +3,76 @@
 Batch 300 and later, newest first. Batches 299 and earlier are archived - see the pointer table at the bottom
 of this file. `RUNS_AND_GAINS.md` holds the consolidated measured record; `REMAINING_WORK.md` holds what is open.
 
+## [Unreleased] - 2026-11-25 (batch 300g - three stop-geometry arms measured: all three rejected, two were inert)
+
+### The three switches, all default-off
+A reader of the repo argued that fixed stops are wrong (2xATR stop, 4xATR target, snap to the last H1 swing
+when it is tighter but still 1.5-3 ATR away, min RR 2.0, lot size following the stop) and that our stops/trailing
+are too tight for a real account. Instead of rewriting the resolver, the three claims became three arms with
+explicit switches, shipped at 0:
+
+| switch | effect when > 0 |
+|---|---|
+| `InpStopAtrTimeframe` | 1 reads **H1 ATR(14)** for the stop resolver instead of the chart timeframe |
+| `InpSwingSnapAtrMin` / `Max` / `BufferPips` / `LookbackBars` | snap the stop just past the last H1 swing when that stop is tighter than the designed one and still 1.5-3 ATR away |
+| `InpLifecycleAtrBreakevenMult` / `TrailingMult` / `ActivationMult` | breakeven buffer, trailing distance and trailing activation scale with ATR instead of fixed points (activation replaces the `min(distance,100)` cap) |
+
+### Window and arm results (cold, `Model=1`, 6/18 shipped defaults, `Crash+Boom`)
+Window `2026.08.01`->`08.04` (3 simulated days, 4,320 one-minute samples), every switch written explicitly in
+every `.ini`:
+
+| arm | balance | delta | fills | closes |
+|---|---|---|---|---|
+| witness, all eight switches at 0 | 10,351.85 | **+3.519%** | 82 | 82 |
+| `InpStopAtrTimeframe=1` (H1 ATR) | 10,351.85 | +3.519% | 82 | 82 |
+| swing snap 1.5-3.0 ATR, 5 pips, 15 H1 bars | 10,351.85 | +3.519% | 82 | 82 |
+| ATR exits, breakeven 1.0 / trailing 2.0 / activation 1.0 ATR | 9,515.69 | **-4.843%** | 107 | 107 |
+
+**None of the three ships.** Two arms are identical to the witness to the cent, the third is -8.36 pp.
+
+### Why the H1 ATR arm is inert
+With `InpUseStrategyStops=true`, every candidate arrives carrying a stop the contributing strategy already
+proposed, so `CalculateStops` never enters its own ATR branch - swapping the ATR timeframe there changes
+nothing that reaches an order. The "ATR-based stop" the reader described is not our SL logic: the fixed
+constants live in the strategy layer (candlestick 2xATR / swing +/-10 points capped at 3xATR, support-resistance
+1.0xATR stop with 2.0xATR target, momentum 2xATR with a 1% fallback), and the resolver only clamps them
+(`minSlPips = max(brokerMin, STOPS_LEVEL)*1.5, max(spread*3, 8)`, ceiling `3xATR` or %-of-price) and lifts the
+target to `SL*minRR`. If fixed stops are the complaint, the change has to happen where the constants are - not
+in the resolver.
+
+### Why the swing-snap arm is inert
+**0** `[STOP-SWING-SNAP]` events in 82 trades. The designed stop is already at or above the spread floor on this
+book (176 `stop pinned to floor` lines in the same run), so the band where a swing stop is *tighter than the
+designed stop* and still >= 1.5 ATR is nearly empty. It also produced 0 events when the same switch ran with the
+H1 ATR band, so the ATR source is not the only reason. This arm cannot be judged without a probe line that
+reports the swing distance and band it rejected; that is open work, not a result.
+
+### Why the looser exits lose
+Widening breakeven/trailing to 1.0/2.0/1.0 ATR did not let trades breathe into profit: it produced **25 more
+fills** and a net of **-484.31** (Crash -329.46 over 82 closes, Boom -154.85 over 25). Rerunning the combined
+arm (H1 ATR + snap + ATR exits) reproduced -4.843% to the cent, so the number is stable, not noise. On this book
+the tight trailing is not what costs money - the extra trades are. The reader's commission argument is still
+untested: this tester models spread in 1-minute OHLC and has no commission field, which is why a wider-trailing
+arm can only be judged on a real-commission account.
+
+### Two harness lessons from this batch
+- **MT5 reuses the previous run's input value for any key the `.ini` omits.** A `snap` arm silently inherited
+  `InpStopAtrTimeframe=1` from the run before it. Every switch is now written explicitly in every arm file.
+- **A `.set` string input must be stored as a plain value.** Writing
+  `InpSymbolsToTrade=...||...||0||...||N` (the numeric metadata form) made the terminal parse it as four
+  symbols, accept one, and report `Accepted: 1 | Rejected: 3`. The first witness run of this session was lost
+  that way and rerun.
+- The tester agent log is truncated at the start of each run, so a run's journal must be copied before the next
+  run starts.
+
+### Code
+`Core/Config/SharedEAInputs.mqh` (8 inputs + mappings), `Core/Orchestration/OrchestratorConfig.mqh` (fields +
+reset), `Core/Orchestration/CandidateBuilder.mqh` (`ConfigureStopGeometry`, `ApplySwingSnap`, ATR timeframe),
+`Core/Trading/TradeManager.mqh` (ATR breakeven/trailing/activation, `activationPointsOverride`),
+`Core/Management/PositionLifecycleManager.mqh` (`ConfigureAtrExits`, range-branch ATR buffer),
+`Core/Orchestration/EAOrchestrator.mqh` (wiring + `[STOP-GEOMETRY]` line), `MultiStrategyAutonomousEA.mq5`
+(duplicate mapping block). Eight-target compile: **0 errors, 0 warnings**.
+
 ## [Unreleased] - 2026-11-25 (batch 300f - currencies measured for the first time: rejected)
 
 ### Seven majors, cold, on the shipped 6/18 defaults

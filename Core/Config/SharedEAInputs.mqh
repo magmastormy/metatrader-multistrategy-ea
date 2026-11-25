@@ -363,6 +363,18 @@ input double   InpLifecycleTrailingDistancePoints = 150.0;
 input double   InpLifecycleTrailingStepPoints = 30.0;
 input bool     InpLifecycleUseATRTrailing = false;
 input double   InpLifecycleATRMultiplier = 1.5;
+// Stop-geometry switches: every default here is the shipped behaviour, so an arm that omits
+// them must reproduce the factory result to the cent. One arm = one switch.
+input group "Stop geometry (0 = shipped behaviour, one switch per arm)";
+input int      InpStopAtrTimeframe = 0;             // 0 = chart timeframe ATR (shipped), 1 = H1 ATR(14)
+input double   InpSwingSnapAtrMin = 0.0;            // >0 with Max enables: swing stop must sit >= this x ATR away
+input double   InpSwingSnapAtrMax = 0.0;            // >0 with Min enables: and <= this x ATR away
+input double   InpSwingSnapBufferPips = 5.0;        // buffer past the swing point
+input int      InpSwingSnapLookbackBars = 15;       // H1 bars searched for the swing
+input double   InpLifecycleAtrBreakevenMult = 0.0;  // >0: breakeven buffer = this x ATR instead of points
+input double   InpLifecycleAtrTrailingMult = 0.0;   // >0: trailing distance = this x ATR instead of points
+input double   InpLifecycleAtrActivationMult = 0.0; // >0: trailing activation = this x ATR instead of min(distance,100)
+
 input bool     InpEnableStructuralInvalidation = true;
 input bool     InpEnableMaxHoldTime = true;
 input int      InpMaxHoldHoursIntraday = 24;
@@ -646,6 +658,15 @@ void PopulateSharedOrchestratorConfig(SOrchestratorConfig &config)
     config.lifecycleTrailingStepPoints = InpLifecycleTrailingStepPoints;
     config.lifecycleUseATRTrailing = InpLifecycleUseATRTrailing;
     config.lifecycleATRMultiplier = InpLifecycleATRMultiplier;
+
+    config.stopAtrTimeframe = InpStopAtrTimeframe;
+    config.swingSnapAtrMin = InpSwingSnapAtrMin;
+    config.swingSnapAtrMax = InpSwingSnapAtrMax;
+    config.swingSnapBufferPips = InpSwingSnapBufferPips;
+    config.swingSnapLookbackBars = InpSwingSnapLookbackBars;
+    config.lifecycleAtrBreakevenMult = InpLifecycleAtrBreakevenMult;
+    config.lifecycleAtrTrailingMult = InpLifecycleAtrTrailingMult;
+    config.lifecycleAtrActivationMult = InpLifecycleAtrActivationMult;
 
     config.enableMaxHoldTime = InpEnableMaxHoldTime;
     config.maxHoldHoursIntraday = InpMaxHoldHoursIntraday;

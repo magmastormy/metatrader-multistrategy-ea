@@ -710,3 +710,41 @@ measurable in code and backtests; item 6 (demo attach) is not this batch's work.
   clamp concurrent size. Currencies stay out of `InpSymbolsToTrade`.
 - **Shape rule:** FX heartbeats stop at Friday 20:54 (7,179-7,182 samples vs 10,079), so FX results must be
   compared heartbeat-normalised.
+
+
+## Stop geometry (Batch 300g, 2026-11-25)
+
+### 44. Open: the swing-snap arm has never fired, so it is unjudged
+- **State:** `InpSwingSnapAtrMin/Max/BufferPips/LookbackBars` are wired and default-off. On the 3-day window
+  (08.01->08.04, 82 trades) the arm logged **0** `[STOP-SWING-SNAP]` events and reproduced the witness to the cent,
+  with the H1 ATR band as well as the chart-TF band.
+- **Why that is not a rejection:** the designed stop already sits at or above the spread floor on this book
+  (176 `stop pinned to floor` lines), which leaves almost no room where a swing stop is tighter than the designed
+  stop and still >= 1.5 ATR away. The two candidate causes - no qualifying swing in the 15 H1 bars, or an
+  unavailable/near-swing series - were not separated.
+- **Next:** add a defaults-off probe line inside `ApplySwingSnap` that logs the detected swing, the `sd` it
+  computed and which band test rejected it, run one 3-day window, then decide whether the band values (not the
+  mechanism) are wrong.
+
+### 45. Open: strategy-layer ATR stop geometry was never built
+- **Finding (measured, not assumed):** `InpStopAtrTimeframe=1` is inert because with `InpUseStrategyStops=true`
+  every candidate arrives with a strategy-proposed stop, so `CalculateStops`'s own ATR branch never runs.
+  A resolver-level ATR switch therefore cannot express the reader's critique.
+- **Where the constants actually are:** candlestick 2xATR or swing +/-10 points capped at 3xATR;
+  support-resistance 1.0xATR stop / 2.0xATR target; momentum 2xATR with a 1% fallback; then the resolver clamps
+  to `max(brokerMin, STOPS_LEVEL)*1.5, max(spread*3, 8)` with a `3xATR` / %-of-price ceiling.
+- **Next:** if this is pursued, it has to be one strategy at a time behind its own default-off switch, with the
+  paired-window protocol. Not started.
+
+### 46. Open: the looser-trailing result is one window, and commissions are not modelled
+- **Measured:** `InpLifecycleAtrBreakevenMult=1.0 / TrailingMult=2.0 / ActivationMult=1.0` gives **-4.843%**
+  vs the witness **+3.519%** (107 vs 82 fills) on 08.01->08.04; the combined arm reproduced the same figure.
+- **Gaps:** one 3-day window only (no paired distribution), and `Model=1` has no commission field, so the
+  reader's "commission eats the profit" half is untested. A real-commission account or a commission-modelling
+  harness is required before any wider-trailing arm can be judged.
+
+### 47. Open: default-path parity with the pre-change build was not re-measured on 7 days
+- **State:** the witness for this batch (all eight new inputs explicitly 0) reproduced its own earlier 3-day run
+  to the cent (10,351.85 / 82 fills), but the 7-day factory baselines (+21.100% / +39.266%) predate this build and
+  were not rerun. A 7-day witness run on the current build is the missing certificate that the new inputs add
+  nothing to the shipped path.

@@ -55,6 +55,9 @@ private:
     int    m_trailingStepPoints;
     bool   m_useATRTrailing;
     double m_atrMultiplier;
+    double m_atrBreakevenMult;    // 0 = point-based buffer (shipped)
+    double m_atrTrailingMult;     // 0 = point-based distance (shipped)
+    double m_atrActivationMult;   // 0 = min(distance,100) (shipped)
 
     int    m_magicNumber;
 
@@ -90,6 +93,9 @@ public:
         m_trailingStepPoints(5),
         m_useATRTrailing(false),
         m_atrMultiplier(1.5),
+        m_atrBreakevenMult(0.0),
+        m_atrTrailingMult(0.0),
+        m_atrActivationMult(0.0),
         m_magicNumber(0),
         m_regimeEngine(NULL)
     {}
@@ -148,6 +154,14 @@ public:
         m_trailingStepPoints = trailingStep;
         m_useATRTrailing = useATR;
         m_atrMultiplier = atrMult;
+    }
+
+    // ATR-proportional exit arm. All three multipliers at 0 is the shipped point-based path.
+    void ConfigureAtrExits(double atrBreakevenMult, double atrTrailingMult, double atrActivationMult)
+    {
+        m_atrBreakevenMult = atrBreakevenMult;
+        m_atrTrailingMult = atrTrailingMult;
+        m_atrActivationMult = atrActivationMult;
     }
 
     void ConfigurePyramiding(bool enabled, double stepPips, double sizeMultiplier, int maxLayers)
@@ -421,6 +435,12 @@ public:
 
                 bool isBuy = (type == POSITION_TYPE_BUY);
                 double buffer = m_breakevenBufferPts * point;
+                if(m_atrBreakevenMult > 0.0 && m_tradeManager != NULL)
+                {
+                    double atrRange = CTradeMgrPricing::CalculateATR(PositionGetString(POSITION_SYMBOL), PERIOD_CURRENT, 14);
+                    if(atrRange > 0.0)
+                        buffer = atrRange * m_atrBreakevenMult;
+                }
 
                 // Only move to breakeven - no trailing in ranging market
                 if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
@@ -454,7 +474,10 @@ public:
                                               m_trailingDistancePts,
                                               m_trailingStepPoints,
                                               m_useATRTrailing,
-                                              m_atrMultiplier);
+                                              m_atrMultiplier,
+                                              m_atrBreakevenMult,
+                                              m_atrTrailingMult,
+                                              m_atrActivationMult);
         }
 
         m_lastManageTimeMs = nowMs;

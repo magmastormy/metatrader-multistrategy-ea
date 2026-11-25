@@ -1356,3 +1356,60 @@ instrument, and any live attach. So "profitable system" is now a claim about a m
 not out-of-regime, and not yet a live result.
 
 
+
+
+## Batch 300g - the three stop-geometry claims, measured: two inert, one worse
+
+**Question.** A reader argued our stops are wrong in principle: a fixed 15-pip stop is tight when gold moves 300
+pips an hour, so stops and targets should be sized from ATR (2xATR stop, 4xATR target), the stop should snap just
+past the last H1 swing when that is tighter but still 1.5-3 ATR away, the target should be stretched to keep at
+least 1:2, and the lot size should follow the stop. He also said our dashboard does not show what the EA is doing
+and that our stops/trailing are too tight, so commission eats the profit on a real account. Point 1 (the geometry)
+became three arms with explicit switches, all shipped at 0, and nothing in the default path was rewritten.
+
+**Design.** Window `2026.08.01`->`08.04` (3 simulated days, 4,320 one-minute samples), cold, `Model=1`, shipped
+6/18 defaults, `Crash 1000 Index + Boom 1000 Index`. Every switch is written explicitly in every arm file.
+
+| arm | balance | delta | fills | closes |
+|---|---|---|---|---|
+| witness, all eight switches at 0 | 10,351.85 | **+3.519%** | 82 | 82 |
+| `InpStopAtrTimeframe=1` (H1 ATR(14) instead of chart TF) | 10,351.85 | +3.519% | 82 | 82 |
+| swing snap, band 1.5-3.0 ATR, buffer 5 pips, 15 H1 bars | 10,351.85 | +3.519% | 82 | 82 |
+| ATR exits, breakeven 1.0 / trailing 2.0 / activation 1.0 ATR | 9,515.69 | **-4.843%** | 107 | 107 |
+
+Witness per-row: Crash +419.28 / 67 closes, Boom -67.43 / 15. ATR-exit arm per-row: Crash -329.46 / 82, Boom
+-154.85 / 25. Wall clock 21-26 min per 3-day window.
+
+**The H1 ATR arm is inert, and that is the finding.** Identical to the witness to the cent. With
+`InpUseStrategyStops=true` every candidate arrives already carrying a stop proposed by the contributing strategy,
+so the resolver's own ATR branch never runs: swapping the ATR timeframe there cannot reach an order. **Our SL
+logic is not ATR-sized in the resolver at all** - the constants live in the strategy layer (candlestick 2xATR,
+swing +/-10 points capped at 3xATR; support-resistance 1.0xATR stop with 2.0xATR target; momentum 2xATR with a
+1% fallback) and the resolver only clamps them to `minSlPips = max(brokerMin, STOPS_LEVEL)*1.5, max(spread*3,
+8)` with a `3xATR` / %-of-price ceiling, then lifts the target to `SL*minRR`. If fixed stops are the complaint,
+the change belongs where those constants are - a resolver switch cannot express it.
+
+**The swing-snap arm is inert too.** 0 `[STOP-SWING-SNAP]` events in 82 trades. On this book the designed stop is
+already at or above the spread floor (176 `stop pinned to floor` lines in the same run), so the window where a
+swing stop is *tighter than the designed stop* and still >= 1.5 ATR is almost empty. It also produced 0 events
+when the same switch ran with the H1 ATR band, so the ATR source is not the only cause. This arm is **unjudged,
+not rejected**: it needs a probe line reporting the swing distance and the band that rejected it.
+
+**Looser exits lose, measured twice.** Widening breakeven/trailing/activation to 1.0/2.0/1.0 ATR produced 25
+**more** fills and -484.31 net (-8.36 pp vs the witness). A separately-run combined arm (H1 ATR + snap + ATR
+exits) returned exactly -4.843% and 107 fills, so the number is stable, not noise. The claim that tight trailing
+chokes trades does not hold on this instrument: the extra trades that looser trailing admits are the loss.
+The commission half of the argument stays untested - this harness models spread in 1-minute OHLC and has no
+commission field, so only a real-commission account can settle it.
+
+**Harness facts worth keeping.**
+1. MT5 reuses the previous run's value for any input key the `.ini` omits - a snap arm silently inherited
+   `InpStopAtrTimeframe=1`. Write every switch explicitly.
+2. A `.set` string input must be a plain value. The numeric `a||b||0||c||N` form made the terminal split the
+   symbol list, accept one symbol and report `Accepted: 1 | Rejected: 3`; one witness run was lost to it.
+3. The tester agent log is truncated at the start of each run, so copy a run's journal before the next starts.
+
+**Verdict.** No arm ships; all eight switches stay 0. Two of the three claims are not expressible in the current
+resolver (they are strategy-layer constants), and the third - looser ATR-proportional trailing - loses 8.36 pp
+on the one window it was given.
+

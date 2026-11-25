@@ -524,9 +524,13 @@ public:
                            const double trailingDistance = 50.0,
                            const double trailingStep = 10.0,
                            const bool useATRTrailing = false,
-                           const double atrMultiplier = 2.0);
+                           const double atrMultiplier = 2.0,
+                           const double atrBreakevenMult = 0.0,
+                           const double atrTrailingMult = 0.0,
+                           const double atrActivationMult = 0.0);
 
-    bool SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR = false, const double atrMult = 2.0);
+    bool SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR = false, const double atrMult = 2.0,
+                         const double activationPointsOverride = 0.0);
     bool MoveToBreakeven(const ulong ticket, const double buffer);
 
     double NormalizePrice(const string symbol, const double price);
@@ -1713,7 +1717,10 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                                        const double trailingDistance,
                                        const double trailingStep,
                                        const bool useATRTrailing,
-                                       const double atrMultiplier)
+                                       const double atrMultiplier,
+                                       const double atrBreakevenMult,
+                                       const double atrTrailingMult,
+                                       const double atrActivationMult)
 {
     //--- Scan live positions through the ownership authority: the ticket cache only ever reaches positions this
     //--- process opened synchronously, so after a restart or an async fill surviving positions got no breakeven or trailing stop.
@@ -1734,20 +1741,46 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
         double stopLoss = PositionGetDouble(POSITION_SL);
         double takeProfit = PositionGetDouble(POSITION_TP);
         ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+        if(point <= 0.0) point = 0.00001;
 
         if(breakevenBuffer > 0)
         {
-            MoveToBreakeven(ticket, breakevenBuffer);
+            double effectiveBeBuffer = breakevenBuffer;
+            if(atrBreakevenMult > 0.0)
+            {
+                double atrBe = CalculateATR(symbolName, PERIOD_CURRENT, 14);
+                if(atrBe > 0.0)
+                    effectiveBeBuffer = atrBe * atrBreakevenMult / point;
+            }
+            MoveToBreakeven(ticket, effectiveBeBuffer);
         }
 
-        if(useATRTrailing || (trailingDistance > 0 && trailingStep > 0))
+        double effectiveTrailing = trailingDistance;
+        if(atrTrailingMult > 0.0)
         {
-            SetTrailingStop(ticket, trailingDistance, trailingStep, useATRTrailing, atrMultiplier);
+            double atrTr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
+            if(atrTr > 0.0)
+                effectiveTrailing = atrTr * atrTrailingMult / point;
+        }
+
+        double activationOverride = 0.0;
+        if(atrActivationMult > 0.0)
+        {
+            double atrAc = CalculateATR(symbolName, PERIOD_CURRENT, 14);
+            if(atrAc > 0.0)
+                activationOverride = atrAc * atrActivationMult / point;
+        }
+
+        if(useATRTrailing || (effectiveTrailing > 0 && trailingStep > 0))
+        {
+            SetTrailingStop(ticket, effectiveTrailing, trailingStep, useATRTrailing, atrMultiplier, activationOverride);
         }
     }
 }
 
-bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR, const double atrMult)
+bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR, const double atrMult,
+                                    const double activationPointsOverride)
 {
     if(ticket <= 0) return false;
     if(!PositionSelectByTicket(ticket)) return false;
@@ -1774,8 +1807,11 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
 
     double newStopLoss = 0;
     // activationPoints = distance: the minimum profit that keeps the trailing stop above entry for a BUY.
-    // Capped at 100 points (10 pips) so trailing activates on smaller forex moves.
-    double activationPoints = MathMin(distance, 100.0);
+    // Capped at 100 points (10 pips) so trailing activates on smaller forex moves. An override from the
+    // ATR-activation arm replaces both the cap and the distance-derived value.
+    double activationPoints = (activationPointsOverride > 0.0)
+                              ? activationPointsOverride
+                              : MathMin(distance, 100.0);
 
     if(useATR)
     {

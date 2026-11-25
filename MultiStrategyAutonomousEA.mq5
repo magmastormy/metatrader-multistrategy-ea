@@ -260,6 +260,15 @@ SOrchestratorConfig BuildOrchestratorConfig()
     config.lifecycleTrailingStepPoints = InpLifecycleTrailingStepPoints;
     config.lifecycleUseATRTrailing = InpLifecycleUseATRTrailing;
     config.lifecycleATRMultiplier = InpLifecycleATRMultiplier;
+
+    config.stopAtrTimeframe = InpStopAtrTimeframe;
+    config.swingSnapAtrMin = InpSwingSnapAtrMin;
+    config.swingSnapAtrMax = InpSwingSnapAtrMax;
+    config.swingSnapBufferPips = InpSwingSnapBufferPips;
+    config.swingSnapLookbackBars = InpSwingSnapLookbackBars;
+    config.lifecycleAtrBreakevenMult = InpLifecycleAtrBreakevenMult;
+    config.lifecycleAtrTrailingMult = InpLifecycleAtrTrailingMult;
+    config.lifecycleAtrActivationMult = InpLifecycleAtrActivationMult;
     
     config.enableMaxHoldTime = InpEnableMaxHoldTime;
     config.maxHoldHoursIntraday = InpMaxHoldHoursIntraday;
