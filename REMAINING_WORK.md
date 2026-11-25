@@ -696,4 +696,14 @@ measurable in code and backtests; item 6 (demo attach) is not this batch's work.
    cannot detect a null arm by design (a neutral result looks like a neutral result).
 6. **`[ENGINE-CLOSE]`** still compiles but has never printed in a run; `Tools\backtest_hal_w3/w4.ini` remain
    unfinished; `test_headers.ps1 -AllInOne` has not been re-run since Batch 282.
-
+### Currencies (batch 300f, measured 2026-11-25) - OPEN, not part of the shipped book
+- **Done, measured, rejected:** seven majors cold on the shipped 6/18 defaults, universe gate clean
+  (`Accepted: 7 | Rejected: 0`), 08.01 **-4.632%** (203 fills) and 09.22 **-5.615%** (209 fills) against
+  +21.100% and +39.266% on the synthetic book over the same windows. Six of seven rows negative in both.
+- **Mechanism:** fills are healthy, the spread gate is not the constraint; the loss is per trade
+  (**-2.28 / -2.69** USD per close) because the book sits on the lot floor (371 / 536 `[RISK-LOT-FLOOR]` lines)
+  and a 1% risk ask at 0.01 FX lots is a couple of dollars. 1-minute-OHLC modelled spread is the other half.
+- **Still open, and it is a different experiment:** raise per-trade risk or disable the lot floor **for the FX
+  universe only**, run as its own book. Do not add currencies to `InpSymbolsToTrade` on the strength of this run.
+- **Shape rule:** FX heartbeats stop at Friday 20:54 (7,179-7,182 samples vs 10,079), so FX results must be
+  compared heartbeat-normalised.

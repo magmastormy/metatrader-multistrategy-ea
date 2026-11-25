@@ -1,3 +1,33 @@
+## [Unreleased] - 2026-11-25 (batch 300f - currencies measured for the first time: rejected)
+
+### Seven majors, cold, on the shipped 6/18 defaults
+`InpSymbolsToTrade = "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD"`, tester chart `EURUSD M15`, `Model=1`,
+nothing else changed. Universe gate passed cleanly: `[SYMBOL-VALIDATION] Accepted: 7 | Rejected: 0`, avg tick
+volume 66,963-130,805 per row, so this is a strategy result, not a data result.
+
+| window | currencies | synthetics (`Crash+Boom`, same defaults) | gap |
+|---|---|---|---|
+| 08.01 to 08.08 | **-4.632%** (9,536.78), 203 fills | +21.100% (12,110.05), 193 fills | -25.73 pp |
+| 09.22 to 09.29 | **-5.615%** (9,438.49), 209 fills | +39.266% (13,926.57), 194 fills | -44.88 pp |
+
+Six of seven rows negative in both windows (08.01: USDJPY -246.55, GBPUSD -144.46, EURUSD -43.19, USDCAD -41.85,
+USDCHF -33.92, NZDUSD -0.66, AUDUSD +47.41).
+
+### The loss is per trade, not per signal
+Fill count is healthy (203 / 209 vs 193 / 194 on the synthetic book) and the spread gate is not the constraint.
+Average net per close **-2.28 / -2.69** USD. The book trades at the lot floor throughout - 371 and 536
+`[RISK-LOT-FLOOR]` lines - because a 1% risk ask at a 3x minimum-lot multiplier cannot be sized on 0.01 FX lots
+with FX-sized stops on a 10k account. On Crash/Boom that floor is a feature (large point increments per minimum
+lot); on majors it collects a couple of dollars per trade against a 1-minute-OHLC modelled spread.
+
+### Shape caveat
+FX heartbeats stop at Friday 20:54, so the slice is 7,179-7,182 samples versus 10,079 on synthetics. FX numbers
+must be compared heartbeat-normalised, never as raw totals.
+
+### Nothing shipped
+Universe stays `Crash 1000 Index,Boom 1000 Index`. The remaining FX question is a different experiment: per-trade
+risk above 1% or lot-floor disabled, run as its own universe. Not run here.
+
 ## [Unreleased] - 2026-11-25 (batch 300e - per-symbol override, risk ceiling on the two-row book, scalp verdict)
 
 ### The 25,000 loosening was replaced by a per-symbol override, and it reproduced the arm to the cent

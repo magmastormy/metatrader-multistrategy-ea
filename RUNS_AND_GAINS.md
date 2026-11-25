@@ -457,6 +457,46 @@ test is not another threshold — it is (a) one window on the post-logging build
 and (b) the paired scalp-on arm bounded to `XAUUSD,Step Index` (`Tools\backtest_b290_scalp2.ini`, still unrun),
 which decides whether the engine is wrong or merely wrong on eleven of thirteen symbols.
 
+## Batch 300f — currencies were never in the universe; now they were, and they lose
+
+**Question.** Every measured window since Batch 273 has been synthetic. Is the shipped mechanism book-dependent,
+or was the currency case simply never tested? Seven majors were put in the input universe and run cold on the
+shipped 6/18 defaults: `InpSymbolsToTrade = "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD"`, nothing else
+changed, tester chart `EURUSD M15`, `Model=1`, deposit 10,000, four state files cleared per launch.
+
+**Universe gate passed cleanly** — this is not a data problem:
+`[SYMBOL-VALIDATION] Accepted: 7 | Rejected: 0`; `[SYMBOL-UNIVERSE] chart=EURUSD | configured_list_authoritative=true
+| resolved=EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD`; per-symbol `avg tick volume` 66,963–130,805 (min
+1000). All seven rows traded.
+
+| window | currencies (7 majors) | synthetics (`Crash+Boom`, same defaults) | gap |
+|---|---|---|---|
+| 08.01 to 08.08 | **-4.632%** (10,000 -> 9,536.78), 203 fills, 7,182 hb | +21.100% (12,110.05), 193 fills | **-25.73 pp** |
+| 09.22 to 09.29 | **-5.615%** (10,000 -> 9,438.49), 209 fills, 7,179 hb | +39.266% (13,926.57), 194 fills | **-44.88 pp** |
+
+Per-row net, 08.01: USDJPY -246.55 / 26 closes, GBPUSD -144.46 / 31, EURUSD -43.19 / 31, USDCAD -41.85 / 43,
+USDCHF -33.92 / 44, NZDUSD -0.66 / 3, AUDUSD +47.41 / 25. 09.22: USDJPY -302.68 / 25, USDCHF -121.48 / 48,
+AUDUSD -67.36 / 17, NZDUSD -65.49 / 8, USDCAD -33.72 / 27, EURUSD -26.63 / 58, GBPUSD +55.85 / 26. Six of seven
+rows negative in both windows; the two positive rows are 1-2 orders of magnitude below the synthetic Boom row.
+
+**Why it loses, in the journal's own terms.** Fill count is healthy (203 / 209, comparable to 193 / 194 on the
+synthetic book), so this is not a signal-starvation problem and not the spread gate. The damage is per trade:
+average net per close **-2.28** and **-2.69** USD across 203-209 closes. The book still trades at the **lot
+floor** - 371 `[RISK-LOT-FLOOR]` lines on 08.01, 536 on 09.22, i.e. the 1%-risk ask and the 3x minimum-lot
+multiplier cannot be satisfied at 0.01 lots on a 10k account with FX-sized stops, so every position is
+minimum-size and the per-trade edge is a couple of dollars against a 1-minute-OHLC modelled spread. On Crash/Boom
+the same floor is a *feature*: the synthetic rows move in large point increments, so a minimum lot captures a
+large per-trade move. On majors the same lot captures a few dollars.
+
+**Wall clock and shape.** 26 and 29 minutes; heartbeats stop at Friday 20:54 instead of 23:59 because the FX
+market closes - so the heartbeat slice is 7,179-7,182 samples, not 10,079. Any future FX comparison has to be
+made on heartbeat-length-normalised numbers, not on raw totals.
+
+**Conclusion: nothing shipped, and currencies stay out of the universe.** The measured edge is
+synthetic-spike-specific, as the prior said. The honest open candidate is not "add currencies to the book" but
+"can the FX book be made to pay at a different size" - i.e. per-trade risk above 1% or lot-floor disabled, run as
+its own universe - which is a separate experiment and was not run here.
+
 ## Batch 300e — the loosening became per-symbol, the ceiling moved up, and the scalp engine was measured dead
 
 **Question.** Batch 300d shipped `Crash + Boom 1000` by raising the global send-time disaster-quote backstop
