@@ -492,6 +492,30 @@ large per-trade move. On majors the same lot captures a few dollars.
 market closes - so the heartbeat slice is 7,179-7,182 samples, not 10,079. Any future FX comparison has to be
 made on heartbeat-length-normalised numbers, not on raw totals.
 
+### Sizing arms: per-trade risk 2% and the lot floor disabled, same two windows
+
+If the FX loss were a size problem, these two arms would fix it. Neither does.
+
+| window | 1% risk, floor 3x (shipped) | `InpMaxRiskPerTrade=2.0` | `InpMinLotRiskMultiplier=1.0` |
+|---|---|---|---|
+| 08.01 to 08.08 | -4.632% (203 fills) | **-5.830%** (211), -1.20 pp | **-4.632%** (203) — identical to the cent |
+| 09.22 to 09.29 | -5.615% (209 fills) | **-5.487%** (208), +0.13 pp | **-5.615%** (209) — identical to the cent |
+
+- **The lot floor is inert on FX.** Disabling it (`InpMinLotRiskMultiplier=1.0`) removed all 371 and 522
+  `[RISK-LOT-FLOOR]` lines and changed the outcome by exactly zero on both windows: same fills, same closes, same
+  net, same balance (9,536.78 and 9,438.49). The floor was logging, not resizing.
+- **Doubling per-trade risk does not double the harm, and does not help.** The two windows move in opposite
+  directions (-1.20 pp / +0.13 pp), i.e. inside noise, and both stay solidly negative. Exposure cannot have
+  doubled: the 6/18 daily and portfolio ceilings clamp concurrent size, so the second 1% mostly re-times entries.
+- **Wall clock is the oddity, not the result.** The floor-off arm on 09.22 took **68 minutes** and produced a
+  464 MB journal versus 29 minutes on the baseline arm of the same window; the floor-off arm on 08.01 took
+  ~45 minutes and 1.14 GB. Identical trades, different log volume and runtime. Cause not established (candidate:
+  a per-candidate sizing path that logs before it clamps); not chased, because the trades are identical.
+
+**Answer to "can the FX book be made to pay at a different size": no, not on this architecture.** Both sizing
+levers are neutral-to-negative, so the loss is signal quality on majors and the modelled 1-minute spread, not
+position size. Currencies stay out of `InpSymbolsToTrade`.
+
 **Conclusion: nothing shipped, and currencies stay out of the universe.** The measured edge is
 synthetic-spike-specific, as the prior said. The honest open candidate is not "add currencies to the book" but
 "can the FX book be made to pay at a different size" - i.e. per-trade risk above 1% or lot-floor disabled, run as
